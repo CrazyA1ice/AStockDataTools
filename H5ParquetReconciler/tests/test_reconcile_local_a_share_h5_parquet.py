@@ -255,6 +255,62 @@ class ReconcileTest(unittest.TestCase):
         self.assertTrue(result["pq_footer_row_count_not_equity_filtered"])
         self.assertFalse(result["safe_to_automatically_union"])
 
+    def test_cli_module_paths_are_independent_of_cwd_and_reject_external(self):
+        module=self.dir/"AStockDataTools"/"H5ParquetReconciler"
+        module.mkdir(parents=True)
+        output, scratch=M.resolve_module_artifact_paths(None,None,module)
+        self.assertEqual(output,module/"reports"/"h5-parquet-audit.json")
+        self.assertEqual(scratch,module/"work"/"_union_scratch")
+        self.assertTrue(output.is_relative_to(module))
+        self.assertTrue(scratch.is_relative_to(module))
+        rel_output,rel_scratch=M.resolve_module_artifact_paths(
+            "h5-private-candidates/h5-parquet-day-audit.json",
+            "scratch/sqlite",module)
+        self.assertEqual(rel_output,module/"h5-private-candidates"/"h5-parquet-day-audit.json")
+        self.assertEqual(rel_scratch,module/"scratch"/"sqlite")
+        with self.assertRaisesRegex(ValueError,"must stay inside"):
+            M.resolve_module_artifact_paths(self.dir/"other"/"audit.json",None,module)
+        with self.assertRaisesRegex(ValueError,"must stay inside"):
+            M.resolve_module_artifact_paths(None,self.dir/"external_tmp",module)
+        with self.assertRaisesRegex(ValueError,"must stay inside"):
+            M.resolve_module_artifact_paths("../audit.json",None,module)
+
+    def test_moved_legacy_report_remains_resumable_in_module_root(self):
+        module=self.dir/"AStockDataTools"/"H5ParquetReconciler"
+        module.mkdir(parents=True)
+        name="h5-parquet-day-equity-2025-2026.json"
+        out, temp=M.resolve_module_artifact_paths(name,None,module)
+        self.assertEqual(out,module/name)
+        self.write_h5("day","sh","SH600000",[(202610250000,20,30)])
+        self.other_markets("day")
+        with self.fake_arrow():
+            original=M.run(self.root,out,temp,[2026],["day"],512,False,
+                           universe="a-share-candidate")
+            with patch.object(M,"MODULE_DIR",module):
+                M.main([str(self.root),"--years","2026","--periods","day",
+                        "--universe","a-share-candidate","--read-only",
+                        "--out",name,"--resume"])
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8")),original)
+        self.assertTrue(out.with_suffix(".md").is_file())
+
+    def test_default_cli_writes_only_inside_reconciler(self):
+        module=self.dir/"AStockDataTools"/"H5ParquetReconciler"
+        module.mkdir(parents=True)
+        self.write_h5("day","sh","SH600000",[(202610250000,20,30)])
+        self.other_markets("day")
+        with self.fake_arrow(), patch.object(M,"MODULE_DIR",module):
+            M.main([str(self.root),"--years","2026","--periods","day",
+                    "--read-only"])
+        result=module/"reports"/"h5-parquet-audit.json"
+        self.assertTrue(result.exists())
+        self.assertTrue(result.with_suffix(".md").exists())
+        self.assertTrue((module/"work"/"_union_scratch").is_dir())
+        self.assertFalse(self.out.exists())
+        with patch.object(M,"MODULE_DIR",module):
+            with self.assertRaises(SystemExit):
+                M.main([str(self.root),"--years","2026","--periods","day",
+                        "--read-only","--out",str(self.dir/"stray"/"out.json")])
+
     def test_5min_start_time_and_bj_aliases(self):
         self.assertEqual(M.pq_stamp(self.epoch_ms("202607161410"), "5min"), 202607161415)
         self.assertEqual(M.symbol_id("920000.XBSE"), "BJ920000")

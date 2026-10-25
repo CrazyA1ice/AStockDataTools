@@ -91,3 +91,24 @@ py -3.11 -m venv .venv
 ## 既有研究背景
 
 此前在本地抽查发现H5部分2026-07-16日线与分钟累计成交额异常、Parquet时间/单位与H5口径存在差异；同时H5早期分钟数据未手工下载。历史样本验证已证明**不能用有日线推断有分钟线**，因此本项目按每个周期独立核验，先验证重叠，再找差集。具体核验事实与新数据报告以后保存在本目录的 `docs` 内。
+
+
+## 2026-10-25：真实16年日线报告后的A股候选范围核验
+
+原先的`--universe all`（默认值）包含H5指数、B股及其他非A股品种。例如`SH000001` 被纳入H5独有，导致旧报告的数百万条“差集”**不能直接理解为可以补齐的A股股票K线**；一些BJ920xxx在2015年就被Parquet标为北交所，也可能是历史证券代码回溯。
+
+现在可选 `--universe a-share-candidate`：用沪市600/601/603/605/688/689、深市000/001/002/003/300/301、2022年起的京市920/430/830/870股票**代码前缀**初步隔离指数、B股和北交所开市前代码回溯。它并没有独立上市/退市证券主数据，**只能称为A股候选证券集**，不能认证所有入选代码皆为股票或覆盖所有真实A股。默认 `all` 不变，以兼容旧报告。Parquet年度footer若仅用元数据估计，仍无法依代码过滤，状态字段 `pq_footer_row_count_not_equity_filtered` 会显式提示。
+
+从原仓库根目录运行**不同的输出路径**（不要在旧JSON上`--resume`）：
+
+```powershell
+git pull --ff-only origin main
+
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_reconcile_local_a_share_h5_parquet.py" -v
+
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 2026 --periods day --universe a-share-candidate --read-only --scratch "D:\AStockAuditScratch" --out "D:\AStockAuditReports\h5-parquet-day-equity-2025-2026.json"
+```
+
+检查完成后，扩大到2011—2026年整段；**无法直接将旧16年报告合并为新报告**，两种证券集分母不同、交易日及历史代码口径不同，且候选代码仍有风险。新模式仍只读、未处理跨批次重复键，不允许直接生成并集库。
+
+旧16年数据报告的具体统计与风险见 [日线16年全量核对分析](docs/DAY_AUDIT_20261025.md)。

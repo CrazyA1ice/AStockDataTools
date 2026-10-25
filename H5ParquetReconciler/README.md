@@ -179,6 +179,21 @@ git pull --ff-only origin main
 
 [本轮证据、指标定义及验收要求](docs/5MIN_SESSION_CONSERVATION_20251025.md)。报告仅生成在本模块的 `reports/` 目录中，付费行情源文件保持只读。本轮添加7项合成测试，当前总共44项，仍需在用户本机实际验收。
 
+## 只读并集预检：开始整理可补录键和隔离冲突
+
+2025-09-30守恒实测发现：四只股票的逐根成交量毛差约0.9%—1.25%，全天净差仅0.0009%—0.0039%，且168组相邻非零差额中118组方向相反。这支持进一步研究不同五分钟窗口划分，但**不能选定任何一个来源为最终真值**。
+
+新增 `tools/plan-5min-readonly-union.py`：按证券、单日、五分钟标准键划分H5独有、Parquet独有、完全一致、未经认证的容差一致和量价冲突，生成**候选补录计划和冲突隔离报告**。它不会将原始K线转换/写入任何文件；未认证的证券类型、时间标签、量额单位及冲突规则全部保持阻断状态，避免未经审查就自动合并。
+
+```powershell
+git status -sb
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\plan-5min-readonly-union.py "D:\stock" --date 2025-09-30 --symbols SH600000 SZ000636 SH603181 SZ300747 BJ920680 --read-only --out "reports\5min-union-preflight-2025-09-30.json"
+```
+
+所有产物只位于 `H5ParquetReconciler` 内，报告保存在 `reports/`。本轮新增8项合成测试，目前全部合成测试共52项，仍需本机执行验证。[开发说明及验收边界](docs/5MIN_UNION_PREFLIGHT_20251025.md)。
+
 ## 输出
 
 程序在输出目录产生：

@@ -12,8 +12,9 @@ import math
 import re
 import sqlite3
 import tempfile
+import time
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 PERIODS = ("day", "5min", "1min")
@@ -103,6 +104,50 @@ def h5_year_slice(ds, year):
     return lower(lo_key), lower(hi_key)
 
 
+def parse_day_range(year, from_date=None, to_date=None):
+    """Validated inclusive Beijing-calendar bounds, or full year when omitted."""
+    left=date.fromisoformat(from_date) if from_date else date(year,1,1)
+    right=date.fromisoformat(to_date) if to_date else date(year,12,31)
+    if left.year != year or right.year != year or left > right:
+        raise ValueError(f"Date window must be within {year}, start<=end")
+    lower=int(left.strftime("%Y%m%d"))*10000
+    upper=int((right+timedelta(days=1)).strftime("%Y%m%d"))*10000
+    lower_ms=int(datetime(left.year,left.month,left.day,tzinfo=UTC8).timestamp()*1000)
+    after=right+timedelta(days=1)
+    upper_ms=int(datetime(after.year,after.month,after.day,tzinfo=UTC8).timestamp()*1000)
+    return lower, upper, lower_ms, upper_ms
+
+
+def h5_key_slice(ds, lower_key, upper_key):
+    """Binary search sorted H5 dataset datetime without loading full history."""
+    def lower(target):
+        lo,hi=0,len(ds)
+        while lo<hi:
+            mid=(lo+hi)//2
+            if int(ds[mid]["datetime"])<target:
+                lo=mid+1
+            else:
+                hi=mid
+        return lo
+    return lower(lower_key),lower(upper_key)
+
+
+def row_group_overlaps_timestamp(row_group, low_ms, high_ms):
+    """Only skip a row group when trustworthy ts min/max proves non-overlap."""
+    for c in range(row_group.num_columns):
+        column=row_group.column(c)
+        if column.path_in_schema != "ts":
+            continue
+        st=column.statistics
+        if st is None or not st.has_min_max:
+            return True
+        try:
+            return not (int(st.max)<low_ms or int(st.min)>=high_ms)
+        except (ValueError,TypeError,OverflowError):
+            return True
+    return True
+
+
 def db_open(path):
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=OFF")
@@ -126,10 +171,12 @@ def update_bounds(stats, origin, low, high):
         stats[hk] = high
 
 
-def store_h5(db, root, period, year, stats, universe="all"):
+def store_h5(db, root, period, year, stats, universe="all", from_date=None, to_date=None, progress=False):
     import h5py
 
     total = 0
+    lower,upper,_,_=parse_day_range(year,from_date,to_date)
+    started=time.monotonic()
     for market in ("sh", "sz", "bj"):
         path = root / "HikyuuData" / f"{market}_{period}.h5"
         if not path.is_file():
@@ -140,20 +187,25 @@ def store_h5(db, root, period, year, stats, universe="all"):
             if not isinstance(group, h5py.Group):
                 stats["h5_schema_errors"] += 1
                 continue
-            for symbol in group.keys():
+            symbols=list(group.keys())
+            for idx,symbol in enumerate(symbols):
+                if progress and idx and idx % 400 == 0:
+                    print(f"  H5 {market.upper()} symbols {idx:,}/{len(symbols):,}, "
+                          f"indexed bars={total:,}, elapsed={time.monotonic()-started:.1f}s",
+                          flush=True)
                 if not re.fullmatch(market.upper() + r"\d{6}", symbol):
                     continue
                 ds = group.get(symbol)
                 if universe == "a-share-candidate" and not is_a_share_candidate(symbol, year):
                     if isinstance(ds, h5py.Dataset) and "datetime" in (ds.dtype.names or ()):
-                        left_skip, right_skip = h5_year_slice(ds, year)
+                        left_skip, right_skip = h5_key_slice(ds, lower,upper)
                         stats["h5_excluded_non_equity_rows"] += right_skip - left_skip
                     stats["h5_excluded_non_equity_symbol_datasets"] += 1
                     continue
                 if not isinstance(ds, h5py.Dataset) or not set(H5_FIELDS).issubset(ds.dtype.names or ()):
                     stats["h5_schema_errors"] += 1
                     continue
-                left, right = h5_year_slice(ds, year)
+                left, right = h5_key_slice(ds,lower,upper)
                 for begin in range(left, right, 8192):
                     block = ds[begin:min(right, begin + 8192)]
                     vals = []
@@ -179,6 +231,8 @@ def store_h5(db, root, period, year, stats, universe="all"):
                     if vals:
                         update_bounds(stats, "h5", vals[0][1], vals[-1][1])
         db.commit()
+        if progress:
+            print(f"  H5 {market.upper()} completed: {total:,} indexed bars, {time.monotonic()-started:.1f}s elapsed",flush=True)
     stats["h5_rows"] = total
     return total
 
@@ -290,49 +344,84 @@ def check_batch(db, rows, stats, period):
     db.commit()
 
 
-def scan_parquet(db, paths, period, year, stats, batch_size, universe="all"):
+def scan_parquet(db, paths, period, year, stats, batch_size, universe="all",
+                 from_date=None, to_date=None, progress=False):
     import pyarrow.parquet as pq
 
+    lower, upper, low_ms, high_ms = parse_day_range(year,from_date,to_date)
+    bounded=from_date is not None or to_date is not None
+    started=time.monotonic()
+    last_progress=started
     for file in paths:
         try:
-            pf = pq.ParquetFile(str(file))
+            pf=pq.ParquetFile(str(file))
             if not set(NEEDED).issubset(pf.schema_arrow.names):
-                stats["schema_errors"] += 1
+                stats["schema_errors"]+=1
                 continue
-            for batch in pf.iter_batches(batch_size=batch_size, columns=list(NEEDED), use_threads=True):
-                times = batch.column(0).to_pylist()
-                symbols = batch.column(1).to_pylist()
-                cols = [batch.column(i).to_pylist() for i in range(2, 8)]
-                selected = []
-                for i, (time, raw) in enumerate(zip(times, symbols)):
-                    stats["pq_source_rows_scanned"] += 1
-                    sym = symbol_id(raw)
-                    if sym is None:
-                        stats["unknown_pq_symbols"] += 1
+            groups=pf.metadata.num_row_groups
+            stats["pq_row_groups_total"]+=groups
+            for group_i in range(groups):
+                row_group=pf.metadata.row_group(group_i)
+                if bounded and not row_group_overlaps_timestamp(row_group,low_ms,high_ms):
+                    stats["pq_row_groups_skipped_by_time"]+=1
+                    continue
+                stats["pq_row_groups_read"]+=1
+                for batch in pf.iter_batches(row_groups=[group_i],batch_size=batch_size,
+                                             columns=list(NEEDED),use_threads=True):
+                    timestamps=batch.column(0).to_pylist()
+                    symbols=batch.column(1).to_pylist()
+                    # Fast day filter before decoding six numeric arrays
+                    indices=[]
+                    if bounded:
+                        for i,ts in enumerate(timestamps):
+                            try:
+                                if low_ms<=int(ts)<high_ms:
+                                    indices.append(i)
+                            except (ValueError,TypeError,OverflowError):
+                                stats["timestamp_or_value_errors"]+=1
+                    else:
+                        indices=list(range(len(timestamps)))
+                    stats["pq_source_rows_scanned"]+=len(timestamps)
+                    if not indices:
                         continue
-                    if universe == "a-share-candidate" and not is_a_share_candidate(sym, year):
-                        stats["pq_excluded_non_equity_rows"] += 1
-                        continue
-                    stats["pq_rows"] += 1
-                    try:
-                        t = pq_stamp(time, period)
-                        if t // 100000000 != year:
-                            stats["pq_rows_outside_filename_year"] += 1
+                    cols=[batch.column(i).to_pylist() for i in range(2,8)]
+                    selected=[]
+                    for i in indices:
+                        sym=symbol_id(symbols[i])
+                        if sym is None:
+                            stats["unknown_pq_symbols"]+=1
                             continue
-                        vals = [float(col[i]) for col in cols]
-                        if not all(math.isfinite(v) for v in vals):
-                            stats["nonfinite_parquet_rows"] += 1
+                        if universe=="a-share-candidate" and not is_a_share_candidate(sym,year):
+                            stats["pq_excluded_non_equity_rows"]+=1
                             continue
-                    except (TypeError, ValueError, OverflowError, OSError):
-                        stats["timestamp_or_value_errors"] += 1
-                        continue
-                    selected.append((sym, t, *vals))
-                    update_bounds(stats, "pq", t, t)
-                check_batch(db, selected, stats, period)
-        except (OSError, ValueError, RuntimeError, TypeError) as exc:
-            stats["parquet_file_read_errors"] += 1
-            example(stats, "scan_error", file.name, 0, [type(exc).__name__])
-
+                        stats["pq_rows"]+=1
+                        try:
+                            t=pq_stamp(timestamps[i],period)
+                            if not lower<=t<upper:
+                                stats["pq_rows_outside_filename_year"]+=1
+                                continue
+                            vals=[float(col[i]) for col in cols]
+                            if not all(math.isfinite(v) for v in vals):
+                                stats["nonfinite_parquet_rows"]+=1
+                                continue
+                        except (ValueError,TypeError,OverflowError,OSError):
+                            stats["timestamp_or_value_errors"]+=1
+                            continue
+                        selected.append((sym,t,*vals))
+                        update_bounds(stats,"pq",t,t)
+                    check_batch(db,selected,stats,period)
+                now=time.monotonic()
+                if progress and (now-last_progress>=20 or group_i==groups-1):
+                    print(f"  Parquet {file.name} group {group_i+1}/{groups}, "
+                          f"read groups={stats['pq_row_groups_read']}, "
+                          f"skipped={stats['pq_row_groups_skipped_by_time']}, "
+                          f"source rows scanned={stats['pq_source_rows_scanned']:,}, "
+                          f"window rows={stats['pq_rows']:,}, "
+                          f"elapsed={now-started:.1f}s",flush=True)
+                    last_progress=now
+        except (OSError,ValueError,RuntimeError,TypeError) as exc:
+            stats["parquet_file_read_errors"]+=1
+            example(stats,"scan_error",file.name,0,[type(exc).__name__])
 
 def h5_remaining(db, stats):
     for sym, t in db.execute("SELECT s,t FROM h WHERE seen=0 ORDER BY t"):
@@ -343,29 +432,35 @@ def h5_remaining(db, stats):
         example(stats, "h5_only", sym, t)
 
 
-def reconcile_section(root, scratch, period, year, batch_size, universe="all"):
+def reconcile_section(root, scratch, period, year, batch_size, universe="all",
+                      from_date=None, to_date=None, progress=False):
     if universe not in ("all", "a-share-candidate"):
         raise ValueError("Invalid universe mode")
     stats = Counter()
     stats.update({
         "period": period, "year": year, "universe_mode": universe,
+        "from_date": from_date, "to_date": to_date,
         "h5_rows": 0, "pq_rows": 0, "matched_keys": 0,
         "h5_only_rows": 0, "pq_only_rows": 0,
         "pq_0930_extra_candidate_rows": 0,
         "value_mismatch_rows": 0, "opening_candidate_mismatch_rows": 0,
         "price_mismatch_rows": 0, "quantity_mismatch_rows": 0
     })
+    parse_day_range(year,from_date,to_date)
     paths = year_files(root, period, year)
     stats["parquet_year_files"] = len(paths)
     with tempfile.TemporaryDirectory(prefix="h5pq_", dir=str(scratch)) as temporary:
         db = db_open(Path(temporary)/"join.sqlite")
         try:
-            count = store_h5(db, root, period, year, stats, universe)
-            if not count:
-                if paths:
-                    pq_metadata_only(paths, stats, universe)
+            count = store_h5(db, root, period, year, stats, universe,
+                             from_date,to_date,progress)
+            if not count and paths and from_date is None and to_date is None:
+                pq_metadata_only(paths, stats, universe)
             elif paths:
-                scan_parquet(db, paths, period, year, stats, batch_size, universe)
+                # With a bounded window, even an empty H5 slice needs exact
+                # Parquet key enumeration, not an annual footer estimate.
+                scan_parquet(db, paths, period, year, stats, batch_size, universe,
+                             from_date,to_date,progress)
             h5_remaining(db, stats)
         finally:
             db.close()
@@ -538,8 +633,13 @@ def resolve_safe_paths(root, out, scratch):
     return root, out, scratch
 
 
-def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
+def run(root, out, scratch, years, periods, batch_size, resume, universe="all",
+        from_date=None, to_date=None, progress=False):
     root, out, scratch = resolve_safe_paths(root, out, scratch)
+    if from_date is not None or to_date is not None:
+        if len(years)!=1:
+            raise ValueError("Bounded --from-date/--to-date audits require exactly one --years value")
+        parse_day_range(years[0],from_date,to_date)
     if not (root/"HikyuuData").is_dir() or not (root/"AllCycleAStockData").is_dir():
         raise ValueError("Both HikyuuData and AllCycleAStockData are required")
     if out.exists():
@@ -552,12 +652,16 @@ def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
             raise ValueError("Resume request years/periods must match the saved plan")
         if report.get("universe_mode", "all") != universe:
             raise ValueError("Resume universe mode must match the saved plan")
+        if (report.get("requested_from_date") != from_date
+                or report.get("requested_to_date") != to_date):
+            raise ValueError("Resume date window must match the saved plan")
     else:
         report = {
             "format": "AStockDataTools H5-Parquet local coverage/difference report v1",
             "status": "partial",
             "requested_years": years, "requested_periods": periods,
             "universe_mode": universe,
+            "requested_from_date": from_date, "requested_to_date": to_date,
             "security_master_certified": False,
             "unit_hypotheses": {
                 "H5_prices": "int/1000",
@@ -584,7 +688,8 @@ def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
                 print("SKIP completed", key, flush=True)
                 continue
             print("AUDIT", key, "(bounded memory, no raw OHLCV in report)", flush=True)
-            result = reconcile_section(root, scratch, period, year, batch_size, universe)
+            result = reconcile_section(root, scratch, period, year, batch_size,
+                                       universe,from_date,to_date,progress)
             report["results"][key] = result
             completed = sum(bool(r.get("scan_complete")) for r in report["results"].values())
             report["status"] = "complete" if completed == len(years)*len(periods) else "partial"
@@ -612,6 +717,10 @@ def main(argv=None):
     ap.add_argument("--scratch", type=Path, default=None,
                     help="Temporary files inside H5ParquetReconciler, default work/_union_scratch")
     ap.add_argument("--batch-size", type=int, default=8192)
+    ap.add_argument("--from-date", type=str, default=None, help="Inclusive YYYY-MM-DD, bounded scan")
+    ap.add_argument("--to-date", type=str, default=None, help="Inclusive YYYY-MM-DD, bounded scan")
+    ap.add_argument("--allow-full-year-minute", action="store_true",
+                    help="Opt-in to slow, large temp SQLite full-year 5min/1min scans")
     ap.add_argument("--universe", choices=("all", "a-share-candidate"),
                     default="all",
                     help="all preserves legacy counts; a-share-candidate excludes obvious indices/B shares and pre-2022 BJ retrospective records")
@@ -622,11 +731,17 @@ def main(argv=None):
         ap.error("years must be distinct and between 2000-2030")
     if len(set(options.periods)) != len(options.periods) or not 512 <= options.batch_size <= 65536:
         ap.error("periods must be distinct, batch size in 512..65536")
+    if any(p in options.periods for p in ("1min","5min")) and not (
+        options.from_date or options.to_date or options.allow_full_year_minute):
+        ap.error("Full-year minute scan is expensive. Specify --years YYYY "
+                 "--from-date YYYY-MM-DD --to-date YYYY-MM-DD, "
+                 "or explicitly --allow-full-year-minute")
     try:
         output, workspace = resolve_module_artifact_paths(options.out, options.scratch)
         report = run(
             options.root, output, workspace, sorted(options.years),
-            options.periods, options.batch_size, options.resume, options.universe
+            options.periods, options.batch_size, options.resume, options.universe,
+            options.from_date, options.to_date, True
         )
     except (OSError, ValueError) as exc:
         ap.error(str(exc))

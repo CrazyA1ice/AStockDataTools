@@ -42,11 +42,26 @@ class FakeParquetFile:
     def __init__(self, name):
         self.records = self.files[Path(name).name]
         self.schema_arrow = types.SimpleNamespace(names=list(M.NEEDED))
-        self.metadata = types.SimpleNamespace(num_rows=len(self.records), num_row_groups=0)
+        self.groups = [self.records[i:i+2] for i in range(0,len(self.records),2)]
+        self.metadata = types.SimpleNamespace(
+            num_rows=len(self.records),
+            num_row_groups=len(self.groups),
+            row_group=self.row_group
+        )
+    def row_group(self, group_i):
+        stamps=[r[0] for r in self.groups[group_i]]
+        stats=types.SimpleNamespace(has_min_max=True,min=min(stamps),max=max(stamps))
+        return types.SimpleNamespace(
+            num_columns=1,
+            column=lambda i: types.SimpleNamespace(path_in_schema="ts",statistics=stats)
+        )
     def iter_batches(self, **kwargs):
         batch = kwargs.get("batch_size", 512)
-        for start in range(0, len(self.records), batch):
-            yield FakeBatch(self.records[start:start+batch])
+        rgids = kwargs.get("row_groups")
+        all_rows = (self.records if rgids is None
+                    else [r for group in rgids for r in self.groups[group]])
+        for start in range(0, len(all_rows), batch):
+            yield FakeBatch(all_rows[start:start+batch])
 
 
 class ReconcileTest(unittest.TestCase):
@@ -310,6 +325,76 @@ class ReconcileTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 M.main([str(self.root),"--years","2026","--periods","day",
                         "--read-only","--out",str(self.dir/"stray"/"out.json")])
+
+    def test_bounded_5min_date_window_skips_nonoverlap_groups(self):
+        self.write_h5("5min","sh","SH600000",[
+            (202501020935,100,100), (202501030935,120,200),
+            (202501060935,130,300)
+        ])
+        self.other_markets("5min")
+        self.fake_parquet("5min",2025,[
+            (self.epoch_ms("202501020930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202501030930"),"600000.XSHG",10,10,10,10,120,200000),
+            (self.epoch_ms("202501060930"),"600000.XSHG",10,10,10,10,130,300000)
+        ])
+        with self.fake_arrow():
+            r=M.reconcile_section(self.root,self.scratch,"5min",2025,512,
+                                  "a-share-candidate","2025-01-06","2025-01-06")
+        self.assertEqual(r["h5_rows"],1)
+        self.assertEqual(r["pq_rows"],1)
+        self.assertEqual(r["matched_keys"],1)
+        self.assertEqual(r["h5_only_rows"],0)
+        self.assertEqual(r["pq_only_rows"],0)
+        self.assertEqual(r["pq_row_groups_total"],2)
+        self.assertEqual(r["pq_row_groups_read"],1)
+        self.assertEqual(r["pq_row_groups_skipped_by_time"],1)
+        self.assertEqual(r["from_date"],"2025-01-06")
+        self.assertTrue(r["scan_complete"])
+
+    def test_bounded_window_empty_h5_scans_exact_parquet_keys_not_footer(self):
+        self.write_h5("5min","sh","SH600000",[(202501020935,100,100)])
+        self.other_markets("5min")
+        self.fake_parquet("5min",2025,[
+            (self.epoch_ms("202501020930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202501030930"),"600000.XSHG",10,10,10,10,120,200000)
+        ])
+        with self.fake_arrow():
+            r=M.reconcile_section(self.root,self.scratch,"5min",2025,512,
+                                  "a-share-candidate","2025-01-03","2025-01-03")
+        self.assertEqual(r["h5_rows"],0)
+        self.assertEqual(r["pq_only_rows"],1)
+        self.assertFalse(r["pq_year_metadata_only_no_h5_rows"])
+        self.assertEqual(r["pq_only_examples"][0]["bar_end"],"202501030935")
+        self.assertEqual(r["pq_rows"],1)
+
+    def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
+        self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
+        self.other_markets("day")
+        with self.fake_arrow():
+            report=M.run(self.root,self.out,self.scratch,[2025],["day"],512,False,
+                         "a-share-candidate","2025-01-02","2025-01-02")
+            again=M.run(self.root,self.out,self.scratch,[2025],["day"],512,True,
+                        "a-share-candidate","2025-01-02","2025-01-02")
+        self.assertEqual(again,report)
+        with self.assertRaisesRegex(ValueError,"Resume date window"):
+            M.run(self.root,self.out,self.scratch,[2025],["day"],512,True,
+                  "a-share-candidate","2025-01-03","2025-01-03")
+        with self.assertRaisesRegex(ValueError,"exactly one"):
+            M.run(self.root,self.dir/"other.json",self.scratch,[2025,2026],["day"],
+                  512,False,"a-share-candidate","2025-01-02","2025-01-02")
+        with self.assertRaises(ValueError):
+            M.parse_day_range(2025,"2026-01-01","2026-01-01")
+        with self.assertRaises(ValueError):
+            M.parse_day_range(2025,"2025-01-04","2025-01-03")
+
+    def test_full_year_minute_cli_requires_explicit_opt_in(self):
+        module=self.dir/"AStockDataTools"/"H5ParquetReconciler"
+        module.mkdir(parents=True)
+        with patch.object(M,"MODULE_DIR",module):
+            with self.assertRaises(SystemExit):
+                M.main([str(self.root),"--years","2025","--periods","5min",
+                        "--universe","a-share-candidate","--read-only"])
+        self.assertFalse((module/"reports").exists())
 
     def test_5min_start_time_and_bj_aliases(self):
         self.assertEqual(M.pq_stamp(self.epoch_ms("202607161410"), "5min"), 202607161415)

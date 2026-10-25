@@ -444,7 +444,13 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
         "h5_only_rows": 0, "pq_only_rows": 0,
         "pq_0930_extra_candidate_rows": 0,
         "value_mismatch_rows": 0, "opening_candidate_mismatch_rows": 0,
-        "price_mismatch_rows": 0, "quantity_mismatch_rows": 0
+        "price_mismatch_rows": 0, "quantity_mismatch_rows": 0,
+        # Coverage provenance flags must exist even if the fallback path
+        # was not taken. Their absence caused KeyError in bounded 5min
+        # audits where H5 had zero rows and Parquet was scanned exactly.
+        "pq_year_metadata_only_no_h5_rows": False,
+        "pq_footer_contains_unfiltered_security_types": False,
+        "pq_footer_row_count_not_equity_filtered": False
     })
     parse_day_range(year,from_date,to_date)
     paths = year_files(root, period, year)

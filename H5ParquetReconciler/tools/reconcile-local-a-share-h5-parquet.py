@@ -400,6 +400,7 @@ def render_markdown(report):
     lines = [
         "# H5 与 Parquet 全量覆盖、差集、重叠K线核对报告",
         "", f"状态：**{report['status']}**。原始文件未修改。未认证的单位/时间映射只用于定位，不自动合并。",
+        f"证券范围：**{report.get('universe_mode', 'all')}**；a-share-candidate仅是股票代码前缀过滤，尚非正式证券类型认证。",
         "", "| 周期 | 年份 | H5行 | Parquet行* | 交集键 | H5独有 | Parquet独有 | 量价差异 | 09:30候选 | 来源首末时间与状态 |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
     ]
@@ -421,6 +422,17 @@ def render_markdown(report):
             span+"; "+status
         ]
         lines.append("| "+" | ".join(cells)+" |")
+    if report.get("universe_mode") == "a-share-candidate":
+        lines.extend(["", "## 证券范围过滤统计", "",
+                      "| 年份/周期 | H5排除的非候选行数 | Parquet排除的非候选行数 | Parquet仅Footer未过滤 |",
+                      "|---|---:|---:|---|"])
+        for item in sections:
+            lines.append(
+                f"| {item['year']}/{item['period']} | "
+                f"{item.get('h5_excluded_non_equity_rows',0)} | "
+                f"{item.get('pq_excluded_non_equity_rows',0)} | "
+                f"{'是（无从按股票过滤）' if item.get('pq_footer_row_count_not_equity_filtered') else '否'} |"
+            )
     lines.extend([
         "", "*Parquet仅使用年度文件元数据统计的行数是候选覆盖量，不等于逐股票/分钟已核实的差集。",
         "", "## 时间重叠以外的数据与不一致K线（每类至多24个示例）"

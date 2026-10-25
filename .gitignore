@@ -30,6 +30,7 @@ __pycache__/
 # H5ParquetReconciler generated local-only artifacts (never publish audits).
 /H5ParquetReconciler/reports/
 /H5ParquetReconciler/work/
+/H5ParquetReconciler/outputs/
 /H5ParquetReconciler/scratch/
 /H5ParquetReconciler/h5-private-candidates/
 /H5ParquetReconciler/h5-parquet-*.json

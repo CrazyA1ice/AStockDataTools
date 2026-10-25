@@ -366,7 +366,7 @@ def main(argv=None):
         pq_rows,pq_details=load_parquet(root,symbols,day,True)
         print(f"Parquet selected bars: {len(pq_rows)}",flush=True)
         report={
-            "format":"AStockDataTools 5min alignment diagnostics v1",
+            "format":"AStockDataTools 5min alignment diagnostics v2",
             "date":day.isoformat(),
             "symbols":list(symbols),
             "source_files_modified":False,

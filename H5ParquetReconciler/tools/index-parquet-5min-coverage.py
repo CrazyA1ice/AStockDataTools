@@ -240,8 +240,8 @@ def index_summary(db, manifest, row_groups_total):
         "files": len(manifest["files"]),
         "row_groups_total": row_groups_total,
         "row_groups_complete": totals.pop("row_groups_complete"),
-        "index_complete": (row_groups_total == len(list(db.execute(
-            "SELECT file_id,row_group FROM groups_done")))),
+        "index_complete": (row_groups_total == db.execute(
+            "SELECT COUNT(*) FROM groups_done").fetchone()[0]),
         "source_fingerprint_uses_only_file_size_mtime": True,
         "unique_regular_session_keys": int(unique_key_count),
         "candidate_source_rows": int(raw_key_rows),
@@ -306,6 +306,8 @@ def main(argv=None):
                     help="SQLite coverage index under module, default work/indexes/...")
     ap.add_argument("--report", type=Path, default=None,
                     help="JSON summary under module, default reports/...")
+    ap.add_argument("--max-new-groups", type=int, default=None,
+                    help="Optional smoke run limit; index stays incomplete and can resume later")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--read-only", action="store_true", required=True,
                     help="Protect original data; local index and report are created inside module")
@@ -330,27 +332,39 @@ def main(argv=None):
         manifest = file_manifest(root, paths, args.year, args.universe)
         db = open_index(out, manifest, args.resume)
         import pyarrow.parquet as pq
+        if args.max_new_groups is not None and args.max_new_groups < 1:
+            raise ValueError("--max-new-groups must be >=1")
         started = time.monotonic()
-        total_groups = 0
-        for file_id, filename in enumerate(paths):
-            pf = pq.ParquetFile(str(filename))
+        open_files = [(filename, pq.ParquetFile(str(filename))) for filename in paths]
+        total_groups = sum(pf.metadata.num_row_groups for _, pf in open_files)
+        newly_processed = 0
+        limit_reached = False
+        for file_id, (filename, pf) in enumerate(open_files):
             if not {"ts","symbol"}.issubset(pf.schema_arrow.names):
                 raise ValueError(f"Parquet key columns absent in {filename.name}")
             for rg in range(pf.metadata.num_row_groups):
-                total_groups += 1
                 if db.execute("SELECT 1 FROM groups_done WHERE file_id=? AND row_group=?",
                               (file_id, rg)).fetchone():
                     continue
+                if args.max_new_groups is not None and newly_processed >= args.max_new_groups:
+                    limit_reached = True
+                    break
                 batches = pf.iter_batches(row_groups=[rg], columns=["ts", "symbol"],
                                           batch_size=65536, use_threads=True)
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
                 insert_group(db, file_id, rg, packed, counts)
-                if total_groups % 10 == 0 or rg == pf.metadata.num_row_groups-1:
+                newly_processed += 1
+                if newly_processed % 5 == 0 or rg == pf.metadata.num_row_groups-1:
                     print(f"Index {filename.name} group {rg+1}/{pf.metadata.num_row_groups}, "
                           f"source rows in group={counts['source_rows']:,}, "
                           f"distinct stock-days in group={len(packed):,}, "
+                          f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
+            if limit_reached:
+                break
         result = index_summary(db, manifest, total_groups)
+        result["new_row_groups_this_run"] = newly_processed
+        result["run_limited_before_complete"] = limit_reached
         with db:
             db.execute("UPDATE meta SET value=? WHERE key='completed'",
                        ("true" if result["index_complete"] else "false",))

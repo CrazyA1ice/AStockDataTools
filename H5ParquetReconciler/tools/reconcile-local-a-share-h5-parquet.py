@@ -12,8 +12,9 @@ import math
 import re
 import sqlite3
 import tempfile
+import time
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 PERIODS = ("day", "5min", "1min")
@@ -103,6 +104,50 @@ def h5_year_slice(ds, year):
     return lower(lo_key), lower(hi_key)
 
 
+def parse_day_range(year, from_date=None, to_date=None):
+    """Validated inclusive Beijing-calendar bounds, or full year when omitted."""
+    left=date.fromisoformat(from_date) if from_date else date(year,1,1)
+    right=date.fromisoformat(to_date) if to_date else date(year,12,31)
+    if left.year != year or right.year != year or left > right:
+        raise ValueError(f"Date window must be within {year}, start<=end")
+    lower=int(left.strftime("%Y%m%d"))*10000
+    upper=int((right+timedelta(days=1)).strftime("%Y%m%d"))*10000
+    lower_ms=int(datetime(left.year,left.month,left.day,tzinfo=UTC8).timestamp()*1000)
+    after=right+timedelta(days=1)
+    upper_ms=int(datetime(after.year,after.month,after.day,tzinfo=UTC8).timestamp()*1000)
+    return lower, upper, lower_ms, upper_ms
+
+
+def h5_key_slice(ds, lower_key, upper_key):
+    """Binary search sorted H5 dataset datetime without loading full history."""
+    def lower(target):
+        lo,hi=0,len(ds)
+        while lo<hi:
+            mid=(lo+hi)//2
+            if int(ds[mid]["datetime"])<target:
+                lo=mid+1
+            else:
+                hi=mid
+        return lo
+    return lower(lower_key),lower(upper_key)
+
+
+def row_group_overlaps_timestamp(row_group, low_ms, high_ms):
+    """Only skip a row group when trustworthy ts min/max proves non-overlap."""
+    for c in range(row_group.num_columns):
+        column=row_group.column(c)
+        if column.path_in_schema != "ts":
+            continue
+        st=column.statistics
+        if st is None or not st.has_min_max:
+            return True
+        try:
+            return not (int(st.max)<low_ms or int(st.min)>=high_ms)
+        except (ValueError,TypeError,OverflowError):
+            return True
+    return True
+
+
 def db_open(path):
     db = sqlite3.connect(path)
     db.execute("PRAGMA journal_mode=OFF")
@@ -126,10 +171,12 @@ def update_bounds(stats, origin, low, high):
         stats[hk] = high
 
 
-def store_h5(db, root, period, year, stats, universe="all"):
+def store_h5(db, root, period, year, stats, universe="all", from_date=None, to_date=None, progress=False):
     import h5py
 
     total = 0
+    lower,upper,_,_=parse_day_range(year,from_date,to_date)
+    started=time.monotonic()
     for market in ("sh", "sz", "bj"):
         path = root / "HikyuuData" / f"{market}_{period}.h5"
         if not path.is_file():
@@ -146,14 +193,14 @@ def store_h5(db, root, period, year, stats, universe="all"):
                 ds = group.get(symbol)
                 if universe == "a-share-candidate" and not is_a_share_candidate(symbol, year):
                     if isinstance(ds, h5py.Dataset) and "datetime" in (ds.dtype.names or ()):
-                        left_skip, right_skip = h5_year_slice(ds, year)
+                        left_skip, right_skip = h5_key_slice(ds, lower,upper)
                         stats["h5_excluded_non_equity_rows"] += right_skip - left_skip
                     stats["h5_excluded_non_equity_symbol_datasets"] += 1
                     continue
                 if not isinstance(ds, h5py.Dataset) or not set(H5_FIELDS).issubset(ds.dtype.names or ()):
                     stats["h5_schema_errors"] += 1
                     continue
-                left, right = h5_year_slice(ds, year)
+                left, right = h5_key_slice(ds,lower,upper)
                 for begin in range(left, right, 8192):
                     block = ds[begin:min(right, begin + 8192)]
                     vals = []
@@ -179,6 +226,8 @@ def store_h5(db, root, period, year, stats, universe="all"):
                     if vals:
                         update_bounds(stats, "h5", vals[0][1], vals[-1][1])
         db.commit()
+        if progress:
+            print(f"  H5 {market.upper()} completed: {total:,} indexed bars, {time.monotonic()-started:.1f}s elapsed",flush=True)
     stats["h5_rows"] = total
     return total
 

@@ -26,3 +26,15 @@ __pycache__/
 .mypy_cache/
 .vscode/
 .idea/
+
+# H5ParquetReconciler generated local-only artifacts (never publish audits).
+/H5ParquetReconciler/reports/
+/H5ParquetReconciler/work/
+/H5ParquetReconciler/outputs/
+/H5ParquetReconciler/scratch/
+/H5ParquetReconciler/h5-private-candidates/
+/H5ParquetReconciler/h5-parquet-*.json
+/H5ParquetReconciler/h5-parquet-*.md
+/H5ParquetReconciler/*-audit.json
+/H5ParquetReconciler/*-audit.md
+/H5ParquetReconciler/*.tmp

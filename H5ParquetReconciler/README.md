@@ -39,37 +39,49 @@ D:\stock\
 
 ## Windows PowerShell 快速开始
 
-在 **AStockDataTools 仓库根目录**打开终端（不是 GLSSTKGM），准备虚拟环境：
+**统一输出目录要求：所有生成文件只能位于 `AStockDataTools\H5ParquetReconciler` 下。** 程序不再依赖PowerShell当前工作目录来决定报告或临时文件的存放位置。默认结构：
+
+```text
+AStockDataTools\
+└─ H5ParquetReconciler\
+   ├─ tools\          # 核对源码
+   ├─ tests\          # 合成测试
+   ├─ docs\           # 需求与技术记录
+   ├─ reports\        # 自动生成的JSON、Markdown报告；Git忽略
+   └─ work\           # SQLite临时索引；Git忽略
+```
+
+在 **AStockDataTools仓库根目录**打开PowerShell，首次准备虚拟环境和运行测试：
 
 ```powershell
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r H5ParquetReconciler\requirements.txt -i https://pypi.org/simple
+.\.venv\Scripts\python.exe -m pip install -r H5ParquetReconciler\requirements.txt
 
 .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_reconcile_local_a_share_h5_parquet.py" -v
 ```
 
-**建议先跑日线，检查结果后再跑分钟线**（年度Parquet可能超过1GB，且读取过程有临时磁盘需求）：
-
-**Windows路径注意事项：** `D:\stock` 是源数据目录，报告及SQLite临时文件必须在此目录**之外**。新版本默认把临时文件存放在 `--out` 的同级 `_union_scratch` 目录，不再依赖PowerShell的当前工作目录。如果你将仓库放在 `D:\stock` 之下，下面的相对 `--out` 也会被安全校验拒绝；建议直接使用以下与工作目录无关的绝对路径命令：
+推荐先执行2025—2026年日线的A股候选差集检查（使用新文件名，保留你已移动的历史报告）：
 
 ```powershell
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --periods day --read-only --scratch "D:\AStockAuditScratch" --out "D:\AStockAuditReports\h5-parquet-day-audit.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 2026 --periods day --universe a-share-candidate --read-only --out "reports\h5-parquet-day-equity-2025-2026-v2.json"
 ```
 
-该错误发生在数据读取之前，**不代表H5或Parquet损坏**。路径报错会显示解析后的实际目录，便于查看PowerShell当前位置造成的相对路径差异。
+**不传 `--out` 时**，默认输出：
+- `H5ParquetReconciler\reports\h5-parquet-audit.json`
+- `H5ParquetReconciler\reports\h5-parquet-audit.md`
+- `H5ParquetReconciler\work\_union_scratch`（任务临时数据库，分区运行完自动清理）
 
+`--out` 与 `--scratch` 的**相对路径以模块根目录为基准**，与当前PowerShell所在文件夹无关。指定模块外的绝对路径，或者使用 `..` 逃出模块，会被拒绝。
+
+执行2011—2026年全量三周期：
 
 ```powershell
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --periods day --read-only --out "h5-private-candidates\h5-parquet-day-audit.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026 --periods day 5min 1min --universe a-share-candidate --read-only --out "reports\h5-parquet-union-audit.json"
 ```
 
-再执行完整的三个H5已有周期（2011—2026年，按周期/年串行执行）：
+中断后使用**相同的参数与报告路径**追加 `--resume`；原有已完成的年度/周期不会重跑。已有报告若已移动到模块**根目录**（例如 `H5ParquetReconciler\h5-parquet-day-equity-2025-2026.json`），可以用 `--out h5-parquet-day-equity-2025-2026.json --resume` 精确指定它；不要把不同证券集、年份或周期的报告混用resume。工具不会挪动或覆盖你已整理的旧报告。
 
-```powershell
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --periods day 5min 1min --read-only --out "h5-private-candidates\h5-parquet-union-audit.json"
-```
-
-中断后：使用**原命令、原参数、原输出文件名**，仅追加 `--resume`；已成功完成的年度/周期将跳过。也可独立执行 `--years 2025 2026 --periods day 5min`，通过较小的目标检查性能和脚本兼容性，但结果仅覆盖明确指定的范围。
+真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
 ## 输出
 
@@ -99,14 +111,14 @@ py -3.11 -m venv .venv
 
 现在可选 `--universe a-share-candidate`：用沪市600/601/603/605/688/689、深市000/001/002/003/300/301、2022年起的京市920/430/830/870股票**代码前缀**初步隔离指数、B股和北交所开市前代码回溯。它并没有独立上市/退市证券主数据，**只能称为A股候选证券集**，不能认证所有入选代码皆为股票或覆盖所有真实A股。默认 `all` 不变，以兼容旧报告。Parquet年度footer若仅用元数据估计，仍无法依代码过滤，状态字段 `pq_footer_row_count_not_equity_filtered` 会显式提示。
 
-从原仓库根目录运行**不同的输出路径**（不要在旧JSON上`--resume`）：
+从仓库根目录运行**新的模块内报告路径**（不要在旧JSON上`--resume`）：
 
 ```powershell
 git pull --ff-only origin main
 
 .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_reconcile_local_a_share_h5_parquet.py" -v
 
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 2026 --periods day --universe a-share-candidate --read-only --scratch "D:\AStockAuditScratch" --out "D:\AStockAuditReports\h5-parquet-day-equity-2025-2026.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 2026 --periods day --universe a-share-candidate --read-only --out "reports\h5-parquet-day-equity-2025-2026-v2.json"
 ```
 
 检查完成后，扩大到2011—2026年整段；**无法直接将旧16年报告合并为新报告**，两种证券集分母不同、交易日及历史代码口径不同，且候选代码仍有风险。新模式仍只读、未处理跨批次重复键，不允许直接生成并集库。

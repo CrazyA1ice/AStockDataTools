@@ -25,6 +25,8 @@ ALIASES = {"SH": "SH", "SHSE": "SH", "SSE": "SH", "XSHG": "SH",
 UTC8 = timezone(timedelta(hours=8))
 MAX_EXAMPLES = 24
 YEAR_NAME = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
+MODULE_DIR = Path(__file__).resolve().parent.parent
+
 
 
 def symbol_id(value):
@@ -471,6 +473,45 @@ def render_markdown(report):
     return "\n".join(lines)
 
 
+def resolve_module_artifact_paths(out=None, scratch=None, module_dir=None):
+    """Keep CLI-created reports and temporary files inside H5ParquetReconciler.
+
+    Relative paths always resolve against the module, not the shell CWD.
+    Explicit absolute paths outside this module fail closed. Existing reports
+    moved to the module root remain resumable via --out filename.json.
+    """
+    module = Path(module_dir or MODULE_DIR).resolve()
+
+    def inside_module(user_path, purpose):
+        candidate = Path(user_path)
+        # Accept commands copied from an older repo-root README without
+        # nesting H5ParquetReconciler/H5ParquetReconciler twice.
+        if not candidate.is_absolute():
+            parts = candidate.parts
+            if parts and parts[0].lower() == module.name.lower():
+                parts = parts[1:]
+            candidate = module.joinpath(*parts)
+        candidate = candidate.resolve()
+        if candidate == module or not candidate.is_relative_to(module):
+            raise ValueError(
+                f"{purpose} must stay inside the H5ParquetReconciler module: "
+                f"{candidate}; module root: {module}"
+            )
+        return candidate
+
+    report = inside_module(
+        out if out is not None else Path("reports") / "h5-parquet-audit.json",
+        "Report (--out)"
+    )
+    temp = inside_module(
+        scratch if scratch is not None else Path("work") / "_union_scratch",
+        "Temporary workspace (--scratch)"
+    )
+    if report == temp or report.is_relative_to(temp) or temp.is_relative_to(report):
+        raise ValueError("Report and temporary workspace must not overlap")
+    return report, temp
+
+
 def resolve_safe_paths(root, out, scratch):
     """Make default scratch a sibling of the report, never source-relative.
 
@@ -566,9 +607,10 @@ def main(argv=None):
     ap.add_argument("root", type=Path)
     ap.add_argument("--years", nargs="+", type=int, default=list(range(2011, 2027)))
     ap.add_argument("--periods", nargs="+", choices=PERIODS, default=list(PERIODS))
-    ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="Report path within H5ParquetReconciler, default reports/h5-parquet-audit.json; relative to module, not CWD")
     ap.add_argument("--scratch", type=Path, default=None,
-                    help="Temporary SQLite directory; defaults to _union_scratch beside --out (never under source)")
+                    help="Temporary files inside H5ParquetReconciler, default work/_union_scratch")
     ap.add_argument("--batch-size", type=int, default=8192)
     ap.add_argument("--universe", choices=("all", "a-share-candidate"),
                     default="all",
@@ -581,13 +623,14 @@ def main(argv=None):
     if len(set(options.periods)) != len(options.periods) or not 512 <= options.batch_size <= 65536:
         ap.error("periods must be distinct, batch size in 512..65536")
     try:
+        output, workspace = resolve_module_artifact_paths(options.out, options.scratch)
         report = run(
-            options.root, options.out, options.scratch, sorted(options.years),
+            options.root, output, workspace, sorted(options.years),
             options.periods, options.batch_size, options.resume, options.universe
         )
     except (OSError, ValueError) as exc:
         ap.error(str(exc))
-    print("Saved", options.out, "Status:", report["status"], "(original source files unchanged)")
+    print("Saved", output, "Status:", report["status"], "(original source files unchanged)")
 
 
 if __name__ == "__main__":

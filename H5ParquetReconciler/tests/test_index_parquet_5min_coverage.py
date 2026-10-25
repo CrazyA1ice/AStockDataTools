@@ -125,6 +125,37 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_partial_group_index_not_certified_complete(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            report=M.index_summary(db,self.manifest,522)
+            self.assertEqual(report["row_groups_total"],522)
+            self.assertEqual(report["row_groups_complete"],1)
+            self.assertFalse(report["index_complete"])
+            self.assertEqual(report["unique_regular_session_keys"],1)
+        finally:
+            db.close()
+
+    def test_cross_file_same_key_is_duplicate(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            M.insert_group(db,1,0,data,counts)
+            report=M.index_summary(db,self.manifest,2)
+            self.assertEqual(report["duplicate_regular_session_keys"],1)
+            self.assertEqual(report["row_group_locator_entries"],2)
+            self.assertEqual(M.index_matches_and_groups(
+                db,("SH600000",),20250930),{0:[0],1:[0]})
+        finally:
+            db.close()
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

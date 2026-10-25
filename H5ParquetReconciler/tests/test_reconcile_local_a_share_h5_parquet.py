@@ -167,6 +167,31 @@ class ReconcileTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             M.run(self.root, self.out, self.root/"scratch", [2026], ["day"], 512, False)
 
+    def test_default_scratch_is_sibling_of_outside_report_not_inside_source(self):
+        expected = self.out.parent / "_union_scratch"
+        root, out, scratch = M.resolve_safe_paths(self.root, self.out, None)
+        self.assertEqual(root, self.root.resolve())
+        self.assertEqual(out, self.out.resolve())
+        self.assertEqual(scratch, expected.resolve())
+        self.assertFalse(scratch.is_relative_to(self.root.resolve()))
+        self.write_h5("day", "sh", "SH600000", [(202610250000, 10, 10)])
+        self.other_markets("day")
+        with self.fake_arrow():
+            result = M.run(self.root, self.out, None, [2026], ["day"], 512, False)
+        self.assertEqual(result["status"], "complete")
+        self.assertTrue(expected.is_dir())
+        self.assertEqual(result["results"]["day/2026"]["h5_only_rows"], 1)
+
+    def test_unsafe_report_or_explicit_scratch_shows_resolved_paths(self):
+        with self.assertRaisesRegex(ValueError, r"Report path is inside source data root"):
+            M.resolve_safe_paths(self.root, self.root/"reports"/"audit.json", None)
+        with self.assertRaisesRegex(ValueError, r"Scratch path is inside source data root"):
+            M.resolve_safe_paths(self.root, self.out, self.root/"scratch")
+        safe_root, safe_out, safe_scratch = M.resolve_safe_paths(
+            self.root, self.out, self.dir/"scratch_explicit")
+        self.assertEqual(safe_scratch, (self.dir/"scratch_explicit").resolve())
+        self.assertNotEqual(safe_root, safe_out)
+
     def test_5min_start_time_and_bj_aliases(self):
         self.assertEqual(M.pq_stamp(self.epoch_ms("202607161410"), "5min"), 202607161415)
         self.assertEqual(M.symbol_id("920000.XBSE"), "BJ920000")

@@ -187,7 +187,12 @@ def store_h5(db, root, period, year, stats, universe="all", from_date=None, to_d
             if not isinstance(group, h5py.Group):
                 stats["h5_schema_errors"] += 1
                 continue
-            for symbol in group.keys():
+            symbols=list(group.keys())
+            for idx,symbol in enumerate(symbols):
+                if progress and idx and idx % 400 == 0:
+                    print(f"  H5 {market.upper()} symbols {idx:,}/{len(symbols):,}, "
+                          f"indexed bars={total:,}, elapsed={time.monotonic()-started:.1f}s",
+                          flush=True)
                 if not re.fullmatch(market.upper() + r"\d{6}", symbol):
                     continue
                 ds = group.get(symbol)

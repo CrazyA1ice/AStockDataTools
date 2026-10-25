@@ -147,6 +147,24 @@ git pull --ff-only origin main
 
 新输出位于 `H5ParquetReconciler/reports/`，不会覆盖上次的 `5min-2025-09-30-alignment-diagnostics.json`。旧的6项诊断测试增加到10项，与核对程序的19项合计29项合成测试，本轮需要本地执行后才能确认全部通过。
 
+## 第三轮：用H5一分钟记录重建五分钟K线（边界验证）
+
+2025-09-30的V2报告发现4只股票的80处开盘价差异、86处收盘价差异与相邻K线边界价格之间存在高度关联，且量额总体接近，但尚不知道是数据商的成交归属、采样时标还是首末价补值规则。
+
+新增只读程序 `tools/validate-5min-against-h5-1min.py`，**从不同的H5一分钟周期文件按两种分钟时标候选规则重建五分钟K线**，再与H5五分钟和Parquet五分钟分别比较OHLC、成交量、成交额。分钟不齐时不出假差异结论。H5两种周期文件不一定源头独立，不能把相符看作真值认证。
+
+运行：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\validate-5min-against-h5-1min.py "D:\stock" --date 2025-09-30 --symbols SH600000 SZ000636 SH603181 SZ300747 BJ920680 --read-only --out "reports\5min-1min-independent-2025-09-30.json"
+```
+
+结果只保存到 `AStockDataTools/H5ParquetReconciler/reports/`，不修改原始行情且不覆盖其他报告。若该日一分钟H5不完整会直接标识 `not_verifiable_...`，无需反复扫描整年。
+
+[本轮设计和判读规则](docs/5MIN_V3_H5_1MIN_CROSSCHECK.md)。新加入8项合成测试，目前核对19项、既有对齐10项、新一分钟交叉验证8项，合计**37项**，需本机测试验证，不能据提交推定全部通过。
+
 ## 输出
 
 程序在输出目录产生：

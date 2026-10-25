@@ -194,6 +194,24 @@ git pull --ff-only origin main
 
 所有产物只位于 `H5ParquetReconciler` 内，报告保存在 `reports/`。本轮新增8项合成测试，目前全部合成测试共52项，仍需本机执行验证。[开发说明及验收边界](docs/5MIN_UNION_PREFLIGHT_20251025.md)。
 
+## 年度Parquet重复键和行组定位索引（2026-10-26）
+
+2025-09-30的真实五分钟只读并集预检已完成：H5 192条、Parquet 240条、交集192、并集键240；H5独有0、Parquet独有48（BJ920680）、容差内不同8、重叠冲突184。这个小范围结果**不能证明全年没有重复键**，也不具备自动合并资格。
+
+本轮新增 `tools/index-parquet-5min-coverage.py`：只读年度Parquet中的 `ts/symbol`，一次性生成证券—日期—48时段位图、跨批次/跨行组/跨文件重复键数量，以及证券/日期→Parquet行组定位表。SQLite保存在本模块 `work/indexes/`，不包含任何OHLCV价格/成交数值；报告在 `reports/`。可按RowGroup断点续跑，若源文件元数据发生变化将拒绝恢复。**第一次建全年索引仍需扫全年一次，不是瞬间完成。**
+
+先测试并建立2个行组的试运行索引，再决定是否继续完整年度：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --max-new-groups 2 --read-only --report "reports\pq-5min-2025-index-smoke.json"
+```
+
+随后使用 `--resume` 和不同报告文件名继续完整索引。完整索引才能用于 `plan-5min-readonly-union.py --coverage-index "work\indexes\pq-5min-2025-a-share-candidate.sqlite"`，后续同日少数证券预检便只读取该索引指向的行组，**不需要每次重新扫描522组**。需比较索引前后预检的全部分类计数完全一致才视为通过。
+
+[完整命令、索引适用范围、回滚和质量限制](docs/PARQUET_5MIN_KEY_INDEX_20261026.md)。新添加9项合成测试，当前总共61项，未经Windows本机完整验收前不得称已通过。
+
 ## 输出
 
 程序在输出目录产生：

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sqlite3
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -187,12 +188,52 @@ def build_plan(h5_rows: dict, parquet_rows: dict, symbols: tuple[str, ...],
     }
 
 
+
+
+def validated_parquet_locator(index_file, root, symbols, day, universe):
+    """Use only complete source-matched index; refuse unindexed abnormal source labels."""
+    index_file = Path(index_file).resolve()
+    if universe == "a-share-candidate" and any(
+            not core.is_a_share_candidate(symbol, day.year) for symbol in symbols):
+        raise ValueError("Selected symbols outside the candidate universe of this index")
+    spec = importlib.util.spec_from_file_location(
+        "parquet_5min_coverage_index", HERE / "index-parquet-5min-coverage.py")
+    indexer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(indexer)
+    manifest = indexer.validate_existing_index(index_file, root, day.year, universe)
+    db = sqlite3.connect(f"file:{index_file.as_posix()}?mode=ro", uri=True)
+    try:
+        state = dict(db.execute("SELECT key,value FROM meta"))
+        for key in ("bad_timestamp", "unexpected_session_stamp", "unrecognized_symbol"):
+            if int(state.get(key, "0")):
+                raise ValueError(f"Index contains {key} anomalies; unindexed audit required")
+        group_ids = indexer.index_matches_and_groups(
+            db, symbols, int(day.strftime("%Y%m%d")))
+    finally:
+        db.close()
+    paths = core.year_files(root, "5min", day.year)
+    if len(paths) != len(manifest["files"]):
+        raise ValueError("Parquet file list differs from validated locator")
+    allow = {str(path.resolve()): set(group_ids.get(file_id, ()))
+             for file_id, path in enumerate(paths)}
+    return allow, {
+        "used": True,
+        "source_fingerprint": indexer.manifest_signature(manifest),
+        "duplicate_regular_session_keys_in_index": int(
+            state.get("duplicate_regular_session_keys", "0")),
+        "coverage_index_complete": True
+    }
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path)
     ap.add_argument("--date", required=True, help="Local exchange date YYYY-MM-DD")
     ap.add_argument("--symbols", nargs="+", default=list(DEFAULT_SYMBOLS))
     ap.add_argument("--out", type=Path, default=Path("reports") / "5min-union-preflight.json")
+    ap.add_argument("--coverage-index", type=Path, default=None,
+                    help="Optional completed work/indexes SQLite index; accelerate day/symbol lookups")
+    ap.add_argument("--index-universe", choices=("a-share-candidate","all"),
+                    default="a-share-candidate")
     ap.add_argument("--read-only", required=True, action="store_true")
     options = ap.parse_args(argv)
     try:
@@ -207,10 +248,21 @@ def main(argv=None):
         h5_presence = h5_dataset_inventory(root, symbols)
         h5, h5_info = diagnose.load_h5(root, symbols, day)
         print(f"5min H5 keys loaded: {len(h5)}", flush=True)
-        pq, pq_info = diagnose.load_parquet(root, symbols, day, True)
+        index_info = {"used": False}
+        allow = None
+        if options.coverage_index is not None:
+            index_file, _ = core.resolve_module_artifact_paths(options.coverage_index, None)
+            allow, index_info = validated_parquet_locator(
+                index_file, root, symbols, day, options.index_universe)
+            print("Using validated Parquet row-group coverage index", flush=True)
+        pq, pq_info = diagnose.load_parquet(root, symbols, day, True,
+                                           allowed_groups=allow)
         print(f"5min Parquet keys loaded: {len(pq)}", flush=True)
         report = build_plan(h5, pq, symbols, h5_presence, h5_info, pq_info, day)
         report["parquet_scan"] = pq_info
+        report["parquet_coverage_index"] = index_info
+        if index_info.get("duplicate_regular_session_keys_in_index", 0):
+            report["quality_barriers"].append("PARQUET_INDEX_HAS_DUPLICATE_KEYS")
         out.parent.mkdir(parents=True, exist_ok=True)
         temp = out.with_name(out.name + ".tmp")
         temp.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

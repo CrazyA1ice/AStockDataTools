@@ -273,7 +273,8 @@ def load_h5(root: Path, symbols: tuple[str, ...], day: date):
     return records,details
 
 
-def load_parquet(root: Path, symbols: tuple[str, ...], day: date, progress: bool):
+def load_parquet(root: Path, symbols: tuple[str, ...], day: date, progress: bool,
+                 allowed_groups=None):
     import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
@@ -291,8 +292,18 @@ def load_parquet(root: Path, symbols: tuple[str, ...], day: date, progress: bool
             raise ValueError(f"Parquet missing OHLCV columns: {path.name}")
         details["files"]+=1
         for idx in range(parquet.metadata.num_row_groups):
-            rg=parquet.metadata.row_group(idx)
             details["row_groups_total"]+=1
+            if allowed_groups is not None:
+                # A completed and verified index lists exact row-groups that
+                # contain the requested (symbol, day). Never skip based on an
+                # unverified/incomplete index.
+                known = allowed_groups.get(str(path.resolve()))
+                if known is None:
+                    raise ValueError("Indexed Parquet source missing from validated locator")
+                if idx not in known:
+                    details["row_groups_skipped_by_index"]+=1
+                    continue
+            rg=parquet.metadata.row_group(idx)
             if not core.row_group_overlaps_timestamp(rg,lower_ms,upper_ms):
                 details["row_groups_skipped_by_time"]+=1
                 continue

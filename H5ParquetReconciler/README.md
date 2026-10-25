@@ -35,7 +35,7 @@ D:\stock\
    └─ 复权因子\
 ```
 
-真实数据永远不上传本仓库。输出报告、SQLite临时库请放到另外的目录，如新仓库下 `h5-private-candidates`。
+真实付费数据永远不上传本仓库。所有生成的报告及SQLite临时库必须保存在本模块内的 `reports/` 与 `work/` 目录，且均被Git忽略；源数据 `D:\stock` 不进行写入。
 
 ## Windows PowerShell 快速开始
 

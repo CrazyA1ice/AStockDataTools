@@ -115,6 +115,22 @@ git pull --ff-only origin main
 
 更多实现细节见 [五分钟核对性能调整](docs/5MIN_PERFORMANCE_20261025.md)。
 
+## 五分钟量价大面积差异：仅诊断少量证券（2026-10-25）
+
+2025-09-30单日真实核对在259,872条匹配键里有151,099条（58.14%）被判为价格/量额不同，Parquet一年522个行组无一跳过。不要先扩大到整月，更不要先自动合并两库。
+
+用新脚本进行**独立、只读、证券级诊断**，比较5分钟时间偏移和H5量额倍数假设。输出仍在本模块`reports/`，不含原始OHLCV值：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\diagnose-5min-alignment.py "D:\stock" --date 2025-09-30 --symbols SH600000 SZ000636 SH603181 SZ300747 BJ920680 --read-only --out "reports\5min-2025-09-30-alignment-diagnostics.json"
+```
+
+它将比较Parquet原始时标-5、0、+5、+10分钟四种候选，对每种记录四价全部相符次数、各价格字段异常次数，以及成交量/成交额的候选乘数相符次数。若Parquet行组存在有效`symbol`范围统计，将直接跳过不含所选股票的行组；统计缺失则保守读取。对少量证券的结果不可冒充全市场结论。
+
+单日原始汇总、性能分析及下一轮依据见 [2025-09-30五分钟实际核对](docs/5MIN_DAY_20250930_FINDINGS.md)。该诊断不会生成并集数据。
+
 ## 输出
 
 程序在输出目录产生：

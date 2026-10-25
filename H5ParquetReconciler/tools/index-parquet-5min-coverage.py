@@ -195,8 +195,9 @@ def open_index(index, manifest, resume):
         try:
             saved = dict(db.execute("SELECT key,value FROM meta"))
             if saved.get("fingerprint") != signature:
-                raise ValueError("Underlying Parquet size/mtime/file set, year or universe changed; "
-                                 "refuse unsafe --resume, use a new index path")
+                raise ValueError("Parquet source fingerprint mismatch: file size/mtime/file set, "
+                                 "year or universe changed; refuse unsafe --resume, "
+                                 "use a new index path")
             if saved.get("version") != VERSION:
                 raise ValueError("Incompatible saved key index format")
         except (sqlite3.DatabaseError, ValueError):

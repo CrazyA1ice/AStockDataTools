@@ -73,15 +73,47 @@ py -3.11 -m venv .venv
 
 `--out` 与 `--scratch` 的**相对路径以模块根目录为基准**，与当前PowerShell所在文件夹无关。指定模块外的绝对路径，或者使用 `..` 逃出模块，会被拒绝。
 
-执行2011—2026年全量三周期：
+历史整年三周期命令（**五分钟/一分钟必须加 --allow-full-year-minute 才允许运行，不建议先运行**）：
 
 ```powershell
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026 --periods day 5min 1min --universe a-share-candidate --read-only --out "reports\h5-parquet-union-audit.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2011 2012 2013 2014 2015 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026 --periods day 5min 1min --universe a-share-candidate --allow-full-year-minute --read-only --out "reports\h5-parquet-union-audit.json"
 ```
 
 中断后使用**相同的参数与报告路径**追加 `--resume`；原有已完成的年度/周期不会重跑。已有报告若已移动到模块**根目录**（例如 `H5ParquetReconciler\h5-parquet-day-equity-2025-2026.json`），可以用 `--out h5-parquet-day-equity-2025-2026.json --resume` 精确指定它；不要把不同证券集、年份或周期的报告混用resume。工具不会挪动或覆盖你已整理的旧报告。
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
+
+## 五分钟数据太慢：先按交易日核验（2026-10-25）
+
+原来的 `--years 2025 2026 --periods 5min` 会先把一整年的H5五分钟数据装入SQLite，**启动后可能数小时没有输出**。这不是一个适合你当前数据规模的默认操作。
+
+新版增加：
+- `--from-date` 与 `--to-date`（含首尾，`YYYY-MM-DD`），两者对应同一个年度。H5利用有序datetime二分查找，只读取指定日期的记录。
+- Parquet只读取该年度文件中与目标时段有交集的行组；有可靠的 `ts` min/max统计时可大量跳过；统计缺失时保守读对应行组，不会错误地宣称无数据。**这仍不保证特定性能**，由原Parquet分区和行组结构决定。
+- H5按市场及每400个证券打印进度，Parquet每约20秒或文件最后一组打印进度，包含行组读取/跳过、实际读取行数和窗口记录数。
+- **默认不允许直接进行整年1min/5min核对**。需要明确 `--allow-full-year-minute` 才能运行旧的昂贵全年路径，不建议未经单日试跑就使用。
+- 指定日期时，即便该日H5无任何记录，仍核对Parquet实际证券+时刻键（不再仅报告整个年度的Footer行数），这样可以判断某个交易日真正哪边独有。
+- 报告包含开始/结束日期，`--resume` 只允许完全相同的日期范围、周期、年份及证券模式。先前未完成的2025年全年尝试不会自动恢复为单日结果。
+
+先运行本机测试：
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_reconcile_local_a_share_h5_parquet.py" -v
+```
+
+**第一轮只核对2025年9月30日的5min**，输出与SQLite全部自动放在模块内：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 --periods 5min --from-date 2025-09-30 --to-date 2025-09-30 --universe a-share-candidate --read-only --out "reports\h5-parquet-5min-2025-09-30-pilot.json"
+```
+
+如想扩大为同一月份，将日期改为 `--from-date 2025-09-01 --to-date 2025-09-30`，**并指定不同报告文件名**（同文件名不可覆盖或混用resume）。
+
+对于新的短窗扫描，进度中的 `pq_row_groups_skipped_by_time` 为0，或者 `pq_source_rows_scanned` 非常大，说明原Parquet行组没有有效的时间聚类，后续需要换基于排序/分区索引的算法，不能单靠时间过滤解决全年性能。
+
+如果中断时临时SQLite没有出现在 `work/_union_scratch`，可能是 `TemporaryDirectory` 已经在退出时清理，不能仅凭找不到临时文件判断数据库没有写入；本机要以进程、磁盘活动和日志验证。
+
+更多实现细节见 [五分钟核对性能调整](docs/5MIN_PERFORMANCE_20261025.md)。
 
 ## 输出
 

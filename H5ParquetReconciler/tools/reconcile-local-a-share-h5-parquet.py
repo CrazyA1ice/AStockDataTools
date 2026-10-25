@@ -427,29 +427,35 @@ def h5_remaining(db, stats):
         example(stats, "h5_only", sym, t)
 
 
-def reconcile_section(root, scratch, period, year, batch_size, universe="all"):
+def reconcile_section(root, scratch, period, year, batch_size, universe="all",
+                      from_date=None, to_date=None, progress=False):
     if universe not in ("all", "a-share-candidate"):
         raise ValueError("Invalid universe mode")
     stats = Counter()
     stats.update({
         "period": period, "year": year, "universe_mode": universe,
+        "from_date": from_date, "to_date": to_date,
         "h5_rows": 0, "pq_rows": 0, "matched_keys": 0,
         "h5_only_rows": 0, "pq_only_rows": 0,
         "pq_0930_extra_candidate_rows": 0,
         "value_mismatch_rows": 0, "opening_candidate_mismatch_rows": 0,
         "price_mismatch_rows": 0, "quantity_mismatch_rows": 0
     })
+    parse_day_range(year,from_date,to_date)
     paths = year_files(root, period, year)
     stats["parquet_year_files"] = len(paths)
     with tempfile.TemporaryDirectory(prefix="h5pq_", dir=str(scratch)) as temporary:
         db = db_open(Path(temporary)/"join.sqlite")
         try:
-            count = store_h5(db, root, period, year, stats, universe)
-            if not count:
-                if paths:
-                    pq_metadata_only(paths, stats, universe)
+            count = store_h5(db, root, period, year, stats, universe,
+                             from_date,to_date,progress)
+            if not count and paths and from_date is None and to_date is None:
+                pq_metadata_only(paths, stats, universe)
             elif paths:
-                scan_parquet(db, paths, period, year, stats, batch_size, universe)
+                # With a bounded window, even an empty H5 slice needs exact
+                # Parquet key enumeration, not an annual footer estimate.
+                scan_parquet(db, paths, period, year, stats, batch_size, universe,
+                             from_date,to_date,progress)
             h5_remaining(db, stats)
         finally:
             db.close()
@@ -622,8 +628,13 @@ def resolve_safe_paths(root, out, scratch):
     return root, out, scratch
 
 
-def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
+def run(root, out, scratch, years, periods, batch_size, resume, universe="all",
+        from_date=None, to_date=None, progress=False):
     root, out, scratch = resolve_safe_paths(root, out, scratch)
+    if from_date is not None or to_date is not None:
+        if len(years)!=1:
+            raise ValueError("Bounded --from-date/--to-date audits require exactly one --years value")
+        parse_day_range(years[0],from_date,to_date)
     if not (root/"HikyuuData").is_dir() or not (root/"AllCycleAStockData").is_dir():
         raise ValueError("Both HikyuuData and AllCycleAStockData are required")
     if out.exists():
@@ -636,12 +647,16 @@ def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
             raise ValueError("Resume request years/periods must match the saved plan")
         if report.get("universe_mode", "all") != universe:
             raise ValueError("Resume universe mode must match the saved plan")
+        if (report.get("requested_from_date") != from_date
+                or report.get("requested_to_date") != to_date):
+            raise ValueError("Resume date window must match the saved plan")
     else:
         report = {
             "format": "AStockDataTools H5-Parquet local coverage/difference report v1",
             "status": "partial",
             "requested_years": years, "requested_periods": periods,
             "universe_mode": universe,
+            "requested_from_date": from_date, "requested_to_date": to_date,
             "security_master_certified": False,
             "unit_hypotheses": {
                 "H5_prices": "int/1000",
@@ -668,7 +683,8 @@ def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
                 print("SKIP completed", key, flush=True)
                 continue
             print("AUDIT", key, "(bounded memory, no raw OHLCV in report)", flush=True)
-            result = reconcile_section(root, scratch, period, year, batch_size, universe)
+            result = reconcile_section(root, scratch, period, year, batch_size,
+                                       universe,from_date,to_date,progress)
             report["results"][key] = result
             completed = sum(bool(r.get("scan_complete")) for r in report["results"].values())
             report["status"] = "complete" if completed == len(years)*len(periods) else "partial"
@@ -696,6 +712,10 @@ def main(argv=None):
     ap.add_argument("--scratch", type=Path, default=None,
                     help="Temporary files inside H5ParquetReconciler, default work/_union_scratch")
     ap.add_argument("--batch-size", type=int, default=8192)
+    ap.add_argument("--from-date", type=str, default=None, help="Inclusive YYYY-MM-DD, bounded scan")
+    ap.add_argument("--to-date", type=str, default=None, help="Inclusive YYYY-MM-DD, bounded scan")
+    ap.add_argument("--allow-full-year-minute", action="store_true",
+                    help="Opt-in to slow, large temp SQLite full-year 5min/1min scans")
     ap.add_argument("--universe", choices=("all", "a-share-candidate"),
                     default="all",
                     help="all preserves legacy counts; a-share-candidate excludes obvious indices/B shares and pre-2022 BJ retrospective records")
@@ -706,11 +726,17 @@ def main(argv=None):
         ap.error("years must be distinct and between 2000-2030")
     if len(set(options.periods)) != len(options.periods) or not 512 <= options.batch_size <= 65536:
         ap.error("periods must be distinct, batch size in 512..65536")
+    if any(p in options.periods for p in ("1min","5min")) and not (
+        options.from_date or options.to_date or options.allow_full_year_minute):
+        ap.error("Full-year minute scan is expensive. Specify --years YYYY "
+                 "--from-date YYYY-MM-DD --to-date YYYY-MM-DD, "
+                 "or explicitly --allow-full-year-minute")
     try:
         output, workspace = resolve_module_artifact_paths(options.out, options.scratch)
         report = run(
             options.root, output, workspace, sorted(options.years),
-            options.periods, options.batch_size, options.resume, options.universe
+            options.periods, options.batch_size, options.resume, options.universe,
+            options.from_date, options.to_date, True
         )
     except (OSError, ValueError) as exc:
         ap.error(str(exc))

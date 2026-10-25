@@ -131,6 +131,22 @@ git pull --ff-only origin main
 
 单日原始汇总、性能分析及下一轮依据见 [2025-09-30五分钟实际核对](docs/5MIN_DAY_20250930_FINDINGS.md)。该诊断不会生成并集数据。
 
+## 五分钟第二轮诊断：2025-09-30价差幅度、量额比值及分时归因
+
+首轮5只证券共240条Parquet、192条H5；可比的192条在Parquet起点+5分钟时完全匹配时刻，但只有63条OHLC全部一致。差异分别为开盘价80条、收盘价86条、最高价8条、最低价8条；固定量额倍数仍不足以解释冲突。具体见 [5MIN_ALIGNMENT_20250930_FINDINGS.md](docs/5MIN_ALIGNMENT_20250930_FINDINGS.md)。
+
+`diagnose-5min-alignment.py` 新增按证券归因输出：开收高低价格绝对/相对误差分位数、上午/下午差异、成交量/成交额Parquet÷H5比值分位数与零成交计数，以及相邻K线边界的开收价格相符次数。它只保存汇总统计、不保存原始付费量价，不会进行合并。
+
+从仓库根目录执行：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\diagnose-5min-alignment.py "D:\stock" --date 2025-09-30 --symbols SH600000 SZ000636 SH603181 SZ300747 BJ920680 --read-only --out "reports\5min-2025-09-30-attribution-v2.json"
+```
+
+新输出位于 `H5ParquetReconciler/reports/`，不会覆盖上次的 `5min-2025-09-30-alignment-diagnostics.json`。旧的6项诊断测试增加到10项，与核对程序的19项合计29项合成测试，本轮需要本地执行后才能确认全部通过。
+
 ## 输出
 
 程序在输出目录产生：

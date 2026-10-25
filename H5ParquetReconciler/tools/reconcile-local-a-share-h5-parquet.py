@@ -339,49 +339,84 @@ def check_batch(db, rows, stats, period):
     db.commit()
 
 
-def scan_parquet(db, paths, period, year, stats, batch_size, universe="all"):
+def scan_parquet(db, paths, period, year, stats, batch_size, universe="all",
+                 from_date=None, to_date=None, progress=False):
     import pyarrow.parquet as pq
 
+    lower, upper, low_ms, high_ms = parse_day_range(year,from_date,to_date)
+    bounded=from_date is not None or to_date is not None
+    started=time.monotonic()
+    last_progress=started
     for file in paths:
         try:
-            pf = pq.ParquetFile(str(file))
+            pf=pq.ParquetFile(str(file))
             if not set(NEEDED).issubset(pf.schema_arrow.names):
-                stats["schema_errors"] += 1
+                stats["schema_errors"]+=1
                 continue
-            for batch in pf.iter_batches(batch_size=batch_size, columns=list(NEEDED), use_threads=True):
-                times = batch.column(0).to_pylist()
-                symbols = batch.column(1).to_pylist()
-                cols = [batch.column(i).to_pylist() for i in range(2, 8)]
-                selected = []
-                for i, (time, raw) in enumerate(zip(times, symbols)):
-                    stats["pq_source_rows_scanned"] += 1
-                    sym = symbol_id(raw)
-                    if sym is None:
-                        stats["unknown_pq_symbols"] += 1
+            groups=pf.metadata.num_row_groups
+            stats["pq_row_groups_total"]+=groups
+            for group_i in range(groups):
+                row_group=pf.metadata.row_group(group_i)
+                if bounded and not row_group_overlaps_timestamp(row_group,low_ms,high_ms):
+                    stats["pq_row_groups_skipped_by_time"]+=1
+                    continue
+                stats["pq_row_groups_read"]+=1
+                for batch in pf.iter_batches(row_groups=[group_i],batch_size=batch_size,
+                                             columns=list(NEEDED),use_threads=True):
+                    timestamps=batch.column(0).to_pylist()
+                    symbols=batch.column(1).to_pylist()
+                    # Fast day filter before decoding six numeric arrays
+                    indices=[]
+                    if bounded:
+                        for i,ts in enumerate(timestamps):
+                            try:
+                                if low_ms<=int(ts)<high_ms:
+                                    indices.append(i)
+                            except (ValueError,TypeError,OverflowError):
+                                stats["timestamp_or_value_errors"]+=1
+                    else:
+                        indices=list(range(len(timestamps)))
+                    stats["pq_source_rows_scanned"]+=len(timestamps)
+                    if not indices:
                         continue
-                    if universe == "a-share-candidate" and not is_a_share_candidate(sym, year):
-                        stats["pq_excluded_non_equity_rows"] += 1
-                        continue
-                    stats["pq_rows"] += 1
-                    try:
-                        t = pq_stamp(time, period)
-                        if t // 100000000 != year:
-                            stats["pq_rows_outside_filename_year"] += 1
+                    cols=[batch.column(i).to_pylist() for i in range(2,8)]
+                    selected=[]
+                    for i in indices:
+                        sym=symbol_id(symbols[i])
+                        if sym is None:
+                            stats["unknown_pq_symbols"]+=1
                             continue
-                        vals = [float(col[i]) for col in cols]
-                        if not all(math.isfinite(v) for v in vals):
-                            stats["nonfinite_parquet_rows"] += 1
+                        if universe=="a-share-candidate" and not is_a_share_candidate(sym,year):
+                            stats["pq_excluded_non_equity_rows"]+=1
                             continue
-                    except (TypeError, ValueError, OverflowError, OSError):
-                        stats["timestamp_or_value_errors"] += 1
-                        continue
-                    selected.append((sym, t, *vals))
-                    update_bounds(stats, "pq", t, t)
-                check_batch(db, selected, stats, period)
-        except (OSError, ValueError, RuntimeError, TypeError) as exc:
-            stats["parquet_file_read_errors"] += 1
-            example(stats, "scan_error", file.name, 0, [type(exc).__name__])
-
+                        stats["pq_rows"]+=1
+                        try:
+                            t=pq_stamp(timestamps[i],period)
+                            if not lower<=t<upper:
+                                stats["pq_rows_outside_filename_year"]+=1
+                                continue
+                            vals=[float(col[i]) for col in cols]
+                            if not all(math.isfinite(v) for v in vals):
+                                stats["nonfinite_parquet_rows"]+=1
+                                continue
+                        except (ValueError,TypeError,OverflowError,OSError):
+                            stats["timestamp_or_value_errors"]+=1
+                            continue
+                        selected.append((sym,t,*vals))
+                        update_bounds(stats,"pq",t,t)
+                    check_batch(db,selected,stats,period)
+                now=time.monotonic()
+                if progress and (now-last_progress>=20 or group_i==groups-1):
+                    print(f"  Parquet {file.name} group {group_i+1}/{groups}, "
+                          f"read groups={stats['pq_row_groups_read']}, "
+                          f"skipped={stats['pq_row_groups_skipped_by_time']}, "
+                          f"source rows scanned={stats['pq_source_rows_scanned']:,}, "
+                          f"window rows={stats['pq_rows']:,}, "
+                          f"elapsed={now-started:.1f}s",flush=True)
+                    last_progress=now
+        except (OSError,ValueError,RuntimeError,TypeError) as exc:
+            stats["parquet_file_read_errors"]+=1
+            example(stats,"scan_error",file.name,0,[type(exc).__name__])
 
 def h5_remaining(db, stats):
     for sym, t in db.execute("SELECT s,t FROM h WHERE seen=0 ORDER BY t"):

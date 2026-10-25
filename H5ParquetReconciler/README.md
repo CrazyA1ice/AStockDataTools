@@ -50,6 +50,15 @@ py -3.11 -m venv .venv
 
 **建议先跑日线，检查结果后再跑分钟线**（年度Parquet可能超过1GB，且读取过程有临时磁盘需求）：
 
+**Windows路径注意事项：** `D:\stock` 是源数据目录，报告及SQLite临时文件必须在此目录**之外**。新版本默认把临时文件存放在 `--out` 的同级 `_union_scratch` 目录，不再依赖PowerShell的当前工作目录。如果你将仓库放在 `D:\stock` 之下，下面的相对 `--out` 也会被安全校验拒绝；建议直接使用以下与工作目录无关的绝对路径命令：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --periods day --read-only --scratch "D:\AStockAuditScratch" --out "D:\AStockAuditReports\h5-parquet-day-audit.json"
+```
+
+该错误发生在数据读取之前，**不代表H5或Parquet损坏**。路径报错会显示解析后的实际目录，便于查看PowerShell当前位置造成的相对路径差异。
+
+
 ```powershell
 .\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --periods day --read-only --out "h5-private-candidates\h5-parquet-day-audit.json"
 ```

@@ -173,6 +173,8 @@ class ReconcileTest(unittest.TestCase):
         with self.fake_arrow():
             r = M.reconcile_section(self.root, self.scratch, "day", 2011, 512)
         self.assertTrue(r["pq_year_metadata_only_no_h5_rows"])
+        self.assertFalse(r["pq_footer_contains_unfiltered_security_types"])
+        self.assertFalse(r["pq_footer_row_count_not_equity_filtered"])
         self.assertTrue(r["pq_only_candidate_rows_from_year_file_metadata_are_not_exact_keys"])
         self.assertEqual(r["pq_only_candidate_rows_from_year_file_metadata"], 1)
 
@@ -364,6 +366,8 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(r["h5_rows"],0)
         self.assertEqual(r["pq_only_rows"],1)
         self.assertFalse(r["pq_year_metadata_only_no_h5_rows"])
+        self.assertFalse(r["pq_footer_contains_unfiltered_security_types"])
+        self.assertFalse(r["pq_footer_row_count_not_equity_filtered"])
         self.assertEqual(r["pq_only_examples"][0]["bar_end"],"202501030935")
         self.assertEqual(r["pq_rows"],1)
 

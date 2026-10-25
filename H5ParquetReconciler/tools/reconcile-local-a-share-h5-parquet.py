@@ -418,12 +418,34 @@ def render_markdown(report):
     return "\n".join(lines)
 
 
-def run(root, out, scratch, years, periods, batch_size, resume):
-    root, out, scratch = root.resolve(), out.resolve(), scratch.resolve()
+def resolve_safe_paths(root, out, scratch):
+    """Make default scratch a sibling of the report, never source-relative.
+
+    A relative output is resolved against the current directory, as requested
+    by the caller. When that directory happens to be inside source_root,
+    fail closed with concrete paths instead of silently moving the report.
+    """
+    root, out = Path(root).resolve(), Path(out).resolve()
+    if out == root or out.is_relative_to(root):
+        raise ValueError(
+            f"Report path is inside source data root: {out}. "
+            f"Source root: {root}. Set --out to a location OUTSIDE the source "
+            r'directory, e.g. "D:\AStockAuditReports\audit.json".'
+        )
+    if scratch is None:
+        scratch = out.parent / "_union_scratch"
+    scratch = Path(scratch).resolve()
     if scratch == root or scratch.is_relative_to(root):
-        raise ValueError("Scratch must not be inside the source data root")
-    if out.is_relative_to(root):
-        raise ValueError("Report must not be inside the source data root")
+        raise ValueError(
+            f"Scratch path is inside source data root: {scratch}. "
+            f"Source root: {root}. Set --scratch to a directory OUTSIDE the "
+            r'source, e.g. "D:\AStockAuditScratch".'
+        )
+    return root, out, scratch
+
+
+def run(root, out, scratch, years, periods, batch_size, resume):
+    root, out, scratch = resolve_safe_paths(root, out, scratch)
     if not (root/"HikyuuData").is_dir() or not (root/"AllCycleAStockData").is_dir():
         raise ValueError("Both HikyuuData and AllCycleAStockData are required")
     if out.exists():
@@ -488,7 +510,8 @@ def main(argv=None):
     ap.add_argument("--years", nargs="+", type=int, default=list(range(2011, 2027)))
     ap.add_argument("--periods", nargs="+", choices=PERIODS, default=list(PERIODS))
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--scratch", type=Path, default=Path("h5-private-candidates")/"_union_scratch")
+    ap.add_argument("--scratch", type=Path, default=None,
+                    help="Temporary SQLite directory; defaults to _union_scratch beside --out (never under source)")
     ap.add_argument("--batch-size", type=int, default=8192)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--read-only", required=True, action="store_true")

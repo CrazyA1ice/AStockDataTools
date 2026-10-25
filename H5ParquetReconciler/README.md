@@ -165,6 +165,20 @@ git pull --ff-only origin main
 
 [本轮设计和判读规则](docs/5MIN_V3_H5_1MIN_CROSSCHECK.md)。新加入8项合成测试，目前核对19项、既有对齐10项、新一分钟交叉验证8项，合计**37项**，需本机测试验证，不能据提交推定全部通过。
 
+## H5一分钟缺失后的五分钟量额守恒验证（2026-10-25）
+
+V3实测已经确认，2025-09-30四只可比股票在H5一分钟文件中均为0条记录，BJ920680一分钟dataset不存在；无法用H5一分钟独立重建五分钟K线。不过4只可比证券的**全天Parquet/H5五分钟成交量和成交额合计比值均极其接近1**，提示逐根量额差异可能主要来自五分钟窗口边界划分。
+
+新脚本 `tools/analyze-5min-session-conservation.py` 只读取选择的五分钟数据，不需要一分钟源，按上午/下午交易时段分别统计量额**净差、逐根差异毛差、抵消比例、相邻异号差额和累计差额峰值**，并检查OHLC几何合法性、跨源和同源的相邻开收价关系。这些都是区分“总成交缺损”与“可能的窗口重分配”的诊断证据，不会自动纠正源数据。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\analyze-5min-session-conservation.py "D:\stock" --date 2025-09-30 --symbols SH600000 SZ000636 SH603181 SZ300747 BJ920680 --read-only --out "reports\5min-session-conservation-2025-09-30.json"
+```
+
+[本轮证据、指标定义及验收要求](docs/5MIN_SESSION_CONSERVATION_20251025.md)。报告仅生成在本模块的 `reports/` 目录中，付费行情源文件保持只读。本轮添加7项合成测试，当前总共44项，仍需在用户本机实际验收。
+
 ## 输出
 
 程序在输出目录产生：

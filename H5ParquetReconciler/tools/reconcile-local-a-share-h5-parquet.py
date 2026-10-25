@@ -40,6 +40,30 @@ def symbol_id(value):
     return None
 
 
+def is_a_share_candidate(symbol: str, year: int) -> bool:
+    """Conservative code-pattern filter for A-share equity candidates.
+
+    Not a certified security master. Historical BJ pre-opening/legacy
+    remappings are deliberately isolated, not relabeled as A shares.
+    """
+    if not isinstance(symbol, str) or len(symbol) != 8:
+        return False
+    venue, code = symbol[:2], symbol[2:]
+    if not code.isdigit():
+        return False
+    if venue == "SH":
+        return code.startswith(("600", "601", "603", "605")) or (
+            year >= 2019 and code.startswith(("688", "689")))
+    if venue == "SZ":
+        return code.startswith(("000", "001", "002", "003", "300", "301"))
+    if venue == "BJ":
+        # 2021-11-15 market launch; year-wide conservative exclusion of
+        # 2021 transitional listings because exact day+old-code remapping
+        # needs security master validation.
+        return year >= 2022 and code.startswith(("920", "430", "830", "870"))
+    return False
+
+
 def pq_stamp(epoch_ms, period):
     """购买的 Parquet: UTC epoch_ms；5min 时间戳按起点 +5m，都是候选规则。"""
     d = datetime.fromtimestamp(int(epoch_ms) / 1000, tz=UTC8)
@@ -100,7 +124,7 @@ def update_bounds(stats, origin, low, high):
         stats[hk] = high
 
 
-def store_h5(db, root, period, year, stats):
+def store_h5(db, root, period, year, stats, universe="all"):
     import h5py
 
     total = 0
@@ -118,6 +142,12 @@ def store_h5(db, root, period, year, stats):
                 if not re.fullmatch(market.upper() + r"\d{6}", symbol):
                     continue
                 ds = group.get(symbol)
+                if universe == "a-share-candidate" and not is_a_share_candidate(symbol, year):
+                    if isinstance(ds, h5py.Dataset) and "datetime" in (ds.dtype.names or ()):
+                        left_skip, right_skip = h5_year_slice(ds, year)
+                        stats["h5_excluded_non_equity_rows"] += right_skip - left_skip
+                    stats["h5_excluded_non_equity_symbol_datasets"] += 1
+                    continue
                 if not isinstance(ds, h5py.Dataset) or not set(H5_FIELDS).issubset(ds.dtype.names or ()):
                     stats["h5_schema_errors"] += 1
                     continue
@@ -164,7 +194,7 @@ def example(stats, category, symbol, stamp, fields=None):
         del last[0]
 
 
-def pq_metadata_only(paths, stats):
+def pq_metadata_only(paths, stats, universe="all"):
     """仅H5该周期该年没有K线时，用Parquet footer做候选覆盖估计；不是逐条验证。"""
     import pyarrow.parquet as pq
 
@@ -189,6 +219,9 @@ def pq_metadata_only(paths, stats):
                     except (ValueError, OverflowError, OSError):
                         stats["timestamp_errors"] += 1
     stats["pq_year_metadata_only_no_h5_rows"] = True
+    if universe == "a-share-candidate":
+        stats["pq_footer_contains_unfiltered_security_types"] = True
+        stats["pq_footer_row_count_not_equity_filtered"] = True
 
 
 def count_difference(stats, category, symbol, stamp):
@@ -255,7 +288,7 @@ def check_batch(db, rows, stats, period):
     db.commit()
 
 
-def scan_parquet(db, paths, period, year, stats, batch_size):
+def scan_parquet(db, paths, period, year, stats, batch_size, universe="all"):
     import pyarrow.parquet as pq
 
     for file in paths:
@@ -270,11 +303,15 @@ def scan_parquet(db, paths, period, year, stats, batch_size):
                 cols = [batch.column(i).to_pylist() for i in range(2, 8)]
                 selected = []
                 for i, (time, raw) in enumerate(zip(times, symbols)):
-                    stats["pq_rows"] += 1
+                    stats["pq_source_rows_scanned"] += 1
                     sym = symbol_id(raw)
                     if sym is None:
                         stats["unknown_pq_symbols"] += 1
                         continue
+                    if universe == "a-share-candidate" and not is_a_share_candidate(sym, year):
+                        stats["pq_excluded_non_equity_rows"] += 1
+                        continue
+                    stats["pq_rows"] += 1
                     try:
                         t = pq_stamp(time, period)
                         if t // 100000000 != year:
@@ -304,10 +341,12 @@ def h5_remaining(db, stats):
         example(stats, "h5_only", sym, t)
 
 
-def reconcile_section(root, scratch, period, year, batch_size):
+def reconcile_section(root, scratch, period, year, batch_size, universe="all"):
+    if universe not in ("all", "a-share-candidate"):
+        raise ValueError("Invalid universe mode")
     stats = Counter()
     stats.update({
-        "period": period, "year": year,
+        "period": period, "year": year, "universe_mode": universe,
         "h5_rows": 0, "pq_rows": 0, "matched_keys": 0,
         "h5_only_rows": 0, "pq_only_rows": 0,
         "pq_0930_extra_candidate_rows": 0,
@@ -319,12 +358,12 @@ def reconcile_section(root, scratch, period, year, batch_size):
     with tempfile.TemporaryDirectory(prefix="h5pq_", dir=str(scratch)) as temporary:
         db = db_open(Path(temporary)/"join.sqlite")
         try:
-            count = store_h5(db, root, period, year, stats)
+            count = store_h5(db, root, period, year, stats, universe)
             if not count:
                 if paths:
-                    pq_metadata_only(paths, stats)
+                    pq_metadata_only(paths, stats, universe)
             elif paths:
-                scan_parquet(db, paths, period, year, stats, batch_size)
+                scan_parquet(db, paths, period, year, stats, batch_size, universe)
             h5_remaining(db, stats)
         finally:
             db.close()
@@ -346,6 +385,8 @@ def reconcile_section(root, scratch, period, year, batch_size):
         sorted(affected.items(), key=lambda item: (-sum(item[1].values()), item[0]))[:100]
     )
     stats.pop("by_symbol", None)
+    stats["security_master_certified"] = False
+    stats["universe_filter_is_code_pattern_not_listing_verification"] = (universe == "a-share-candidate")
     stats["duplicate_keys_across_batches_not_exhaustively_checked"] = True
     stats["source_units_certified"] = False
     stats["safe_to_automatically_union"] = False
@@ -359,6 +400,7 @@ def render_markdown(report):
     lines = [
         "# H5 与 Parquet 全量覆盖、差集、重叠K线核对报告",
         "", f"状态：**{report['status']}**。原始文件未修改。未认证的单位/时间映射只用于定位，不自动合并。",
+        f"证券范围：**{report.get('universe_mode', 'all')}**；a-share-candidate仅是股票代码前缀过滤，尚非正式证券类型认证。",
         "", "| 周期 | 年份 | H5行 | Parquet行* | 交集键 | H5独有 | Parquet独有 | 量价差异 | 09:30候选 | 来源首末时间与状态 |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|"
     ]
@@ -380,6 +422,17 @@ def render_markdown(report):
             span+"; "+status
         ]
         lines.append("| "+" | ".join(cells)+" |")
+    if report.get("universe_mode") == "a-share-candidate":
+        lines.extend(["", "## 证券范围过滤统计", "",
+                      "| 年份/周期 | H5排除的非候选行数 | Parquet排除的非候选行数 | Parquet仅Footer未过滤 |",
+                      "|---|---:|---:|---|"])
+        for item in sections:
+            lines.append(
+                f"| {item['year']}/{item['period']} | "
+                f"{item.get('h5_excluded_non_equity_rows',0)} | "
+                f"{item.get('pq_excluded_non_equity_rows',0)} | "
+                f"{'是（无从按股票过滤）' if item.get('pq_footer_row_count_not_equity_filtered') else '否'} |"
+            )
     lines.extend([
         "", "*Parquet仅使用年度文件元数据统计的行数是候选覆盖量，不等于逐股票/分钟已核实的差集。",
         "", "## 时间重叠以外的数据与不一致K线（每类至多24个示例）"
@@ -444,7 +497,7 @@ def resolve_safe_paths(root, out, scratch):
     return root, out, scratch
 
 
-def run(root, out, scratch, years, periods, batch_size, resume):
+def run(root, out, scratch, years, periods, batch_size, resume, universe="all"):
     root, out, scratch = resolve_safe_paths(root, out, scratch)
     if not (root/"HikyuuData").is_dir() or not (root/"AllCycleAStockData").is_dir():
         raise ValueError("Both HikyuuData and AllCycleAStockData are required")
@@ -456,11 +509,15 @@ def run(root, out, scratch, years, periods, batch_size, resume):
             raise ValueError("Cannot resume a report from another tool/version")
         if report.get("requested_years") != years or report.get("requested_periods") != periods:
             raise ValueError("Resume request years/periods must match the saved plan")
+        if report.get("universe_mode", "all") != universe:
+            raise ValueError("Resume universe mode must match the saved plan")
     else:
         report = {
             "format": "AStockDataTools H5-Parquet local coverage/difference report v1",
             "status": "partial",
             "requested_years": years, "requested_periods": periods,
+            "universe_mode": universe,
+            "security_master_certified": False,
             "unit_hypotheses": {
                 "H5_prices": "int/1000",
                 "H5_amount": "int*1000",
@@ -486,7 +543,7 @@ def run(root, out, scratch, years, periods, batch_size, resume):
                 print("SKIP completed", key, flush=True)
                 continue
             print("AUDIT", key, "(bounded memory, no raw OHLCV in report)", flush=True)
-            result = reconcile_section(root, scratch, period, year, batch_size)
+            result = reconcile_section(root, scratch, period, year, batch_size, universe)
             report["results"][key] = result
             completed = sum(bool(r.get("scan_complete")) for r in report["results"].values())
             report["status"] = "complete" if completed == len(years)*len(periods) else "partial"
@@ -513,6 +570,9 @@ def main(argv=None):
     ap.add_argument("--scratch", type=Path, default=None,
                     help="Temporary SQLite directory; defaults to _union_scratch beside --out (never under source)")
     ap.add_argument("--batch-size", type=int, default=8192)
+    ap.add_argument("--universe", choices=("all", "a-share-candidate"),
+                    default="all",
+                    help="all preserves legacy counts; a-share-candidate excludes obvious indices/B shares and pre-2022 BJ retrospective records")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--read-only", required=True, action="store_true")
     options = ap.parse_args(argv)
@@ -523,7 +583,7 @@ def main(argv=None):
     try:
         report = run(
             options.root, options.out, options.scratch, sorted(options.years),
-            options.periods, options.batch_size, options.resume
+            options.periods, options.batch_size, options.resume, options.universe
         )
     except (OSError, ValueError) as exc:
         ap.error(str(exc))

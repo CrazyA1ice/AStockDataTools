@@ -192,6 +192,69 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(safe_scratch, (self.dir/"scratch_explicit").resolve())
         self.assertNotEqual(safe_root, safe_out)
 
+    def test_equity_candidate_mode_does_not_mix_indexes_and_b_shares(self):
+        self.write_h5("day", "sh", "SH600000", [(202609080000, 12, 20)])
+        file = self.root/"HikyuuData"/"sh_day.h5"
+        with h5py.File(file, "a") as group:
+            old=group["data"]["SH600000"][:]
+            group["data"].create_dataset("SH000001",data=old)
+        self.fake_parquet("day", 2026, [
+            (self.epoch_ms("202609080000"), "600000.XSHG", 10, 10, 10, 10, 1200, 20000),
+            (self.epoch_ms("202609080000"), "000001.XSHG", 10, 10, 10, 10, 100, 20000),
+            (self.epoch_ms("202609080000"), "200025.XSHE", 10, 10, 10, 10, 100, 20000)
+        ])
+        self.other_markets("day")
+        with self.fake_arrow():
+            all_result=M.reconcile_section(self.root,self.scratch,"day",2026,512)
+            equities=M.reconcile_section(self.root,self.scratch,"day",2026,512,
+                                         universe="a-share-candidate")
+        self.assertEqual(all_result["h5_rows"],2)
+        self.assertEqual(all_result["pq_rows"],3)
+        self.assertEqual(equities["h5_rows"],1)
+        self.assertEqual(equities["pq_rows"],1)
+        self.assertEqual(equities["matched_keys"],1)
+        self.assertEqual(equities["h5_only_rows"],0)
+        self.assertEqual(equities["pq_only_rows"],0)
+        self.assertEqual(equities["h5_excluded_non_equity_rows"],1)
+        self.assertEqual(equities["pq_excluded_non_equity_rows"],2)
+        self.assertFalse(equities["security_master_certified"])
+
+    def test_historical_bj_is_excluded_until_2022_but_not_erased_from_all_mode(self):
+        self.assertFalse(M.is_a_share_candidate("BJ920961",2015))
+        self.assertFalse(M.is_a_share_candidate("BJ920510",2021))
+        self.assertTrue(M.is_a_share_candidate("BJ920510",2022))
+        self.assertTrue(M.is_a_share_candidate("BJ830000",2026))
+        self.assertFalse(M.is_a_share_candidate("SH000001",2026))
+        self.assertFalse(M.is_a_share_candidate("SZ399001",2026))
+        self.assertFalse(M.is_a_share_candidate("SZ200025",2026))
+        self.assertTrue(M.is_a_share_candidate("SH688981",2026))
+        self.assertFalse(M.is_a_share_candidate("SH688981",2018))
+        self.assertTrue(M.is_a_share_candidate("SZ300750",2026))
+
+    def test_resume_rejects_mixed_universe_reports(self):
+        self.write_h5("day","sh","SH600000",[(202610250000,20,30)])
+        self.other_markets("day")
+        with self.fake_arrow():
+            report=M.run(self.root,self.out,self.scratch,[2026],["day"],512,False,
+                         universe="a-share-candidate")
+        self.assertEqual(report["universe_mode"],"a-share-candidate")
+        with self.assertRaisesRegex(ValueError,"Resume universe mode must match"):
+            M.run(self.root,self.out,self.scratch,[2026],["day"],512,True,
+                  universe="all")
+
+    def test_universe_metadata_only_cannot_claim_equity_filtered_keys(self):
+        self.fake_parquet("day",2015,[
+            (self.epoch_ms("201503170000"),"920961.XBSE",10,10,10,10,100,1000)
+        ])
+        with self.fake_arrow():
+            result=M.reconcile_section(self.root,self.scratch,"day",2015,512,
+                                       universe="a-share-candidate")
+        self.assertEqual(result["pq_rows"],1)
+        self.assertEqual(result["pq_only_rows"],0)
+        self.assertTrue(result["pq_year_metadata_only_no_h5_rows"])
+        self.assertTrue(result["pq_footer_row_count_not_equity_filtered"])
+        self.assertFalse(result["safe_to_automatically_union"])
+
     def test_5min_start_time_and_bj_aliases(self):
         self.assertEqual(M.pq_stamp(self.epoch_ms("202607161410"), "5min"), 202607161415)
         self.assertEqual(M.symbol_id("920000.XBSE"), "BJ920000")

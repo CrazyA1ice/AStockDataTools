@@ -11,7 +11,7 @@
 | 文件 | 用途 |
 |---|---|
 | tools/reconcile-local-a-share-h5-parquet.py | 全量年度/周期只读核对程序 |
-| tests/test_reconcile_local_a_share_h5_parquet.py | 六项生成数据的合成测试，无需购买行情 |
+| tests/test_reconcile_local_a_share_h5_parquet.py | 19项合成测试（含有界分钟模式），无需购买行情 |
 | docs/REQUIREMENTS.md | 需求、验收与优先级（当前开发任务的长期依据） |
 | docs/TECHNICAL_NOTES.md | 数据字段、单位假设、报告语义和局限 |
 | docs/ROADMAP.md | 后续开发与并集构建步骤 |

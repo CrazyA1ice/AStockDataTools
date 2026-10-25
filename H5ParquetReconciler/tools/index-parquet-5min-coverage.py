@@ -220,10 +220,6 @@ def open_index(index, manifest, resume):
 
 
 def index_summary(db, manifest, row_groups_total):
-    scanned = dict(db.execute(f"""
-        SELECT {','.join('COALESCE(SUM('+k+'),0)' for k in STATS)},
-               COUNT(*) FROM groups_done
-    """).fetchone().__iter__() if False else [])
     row = db.execute(
         "SELECT " + ",".join("COALESCE(SUM("+key+"),0)" for key in STATS)
         + ",COUNT(*) FROM groups_done").fetchone()
@@ -358,6 +354,13 @@ def main(argv=None):
         with db:
             db.execute("UPDATE meta SET value=? WHERE key='completed'",
                        ("true" if result["index_complete"] else "false",))
+            for key, value in (
+                ("duplicate_regular_session_keys", result["duplicate_regular_session_keys"]),
+                ("bad_timestamp", result["row_groups_stats"]["bad_timestamp"]),
+                ("unexpected_session_stamp", result["row_groups_stats"]["unexpected_session_stamp"]),
+                ("unrecognized_symbol", result["row_groups_stats"]["unrecognized_symbol"])):
+                db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                           (key, str(value)))
         result["saved_index"] = out.relative_to(core.MODULE_DIR).as_posix()
         result["source_fingerprint"] = manifest_signature(manifest)
         report.parent.mkdir(parents=True, exist_ok=True)

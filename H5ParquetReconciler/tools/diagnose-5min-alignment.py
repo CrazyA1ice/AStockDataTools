@@ -120,6 +120,129 @@ def evaluate(h5_rows: dict, parquet_rows: dict, shifts=TIME_SHIFTS):
     return output
 
 
+
+def percentile(values, probability):
+    """Nearest-rank-interpolated percentile on a small *aggregate* diagnostic sample."""
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    pos = (len(sorted_values)-1)*probability
+    left=int(pos)
+    right=min(left+1,len(sorted_values)-1)
+    return sorted_values[left] + (sorted_values[right]-sorted_values[left])*(pos-left)
+
+
+def summarize_values(values, *, digits=5):
+    """Do not persist per-row amounts/prices; quantiles only."""
+    return {
+        "count":len(values),
+        "p10":round(percentile(values,0.1),digits) if values else None,
+        "median":round(percentile(values,0.5),digits) if values else None,
+        "p90":round(percentile(values,0.9),digits) if values else None,
+        "max":round(max(values),digits) if values else None
+    }
+
+
+def attribute_differences(h5_rows: dict, parquet_rows: dict, shift=5):
+    """Attribute the *matched* normalized bars without exposing original OHLCV.
+
+    Time shift candidates were examined by evaluate(). This diagnostic uses
+    the +5-minute working convention; it does not certify that convention.
+    """
+    result={}
+    for sym in sorted({key[0] for key in h5_rows} | {key[0] for key in parquet_rows}):
+        hcount=sum(1 for key in h5_rows if key[0]==sym)
+        pcount=sum(1 for key in parquet_rows if key[0]==sym)
+        fields={key:[] for key in FIELDS[:4]}
+        relative_price_errors={key:[] for key in FIELDS[:4]}
+        volumes=[]
+        amounts=[]
+        high_low_equal=all_equal=open_close_diff_high_low_equal=0
+        segment_counts={"morning":{"matched":0,"ohlc_equal":0,"open_diff":0,"close_diff":0},
+                        "afternoon":{"matched":0,"ohlc_equal":0,"open_diff":0,"close_diff":0},
+                        "other":{"matched":0,"ohlc_equal":0,"open_diff":0,"close_diff":0}}
+        vol_zeros={"h5_zero":0,"parquet_zero":0,"both_zero":0}
+        amt_zeros={"h5_zero":0,"parquet_zero":0,"both_zero":0}
+        open_boundary={"comparisons":0,"matches_previous_h5_close":0,
+                       "matches_previous_parquet_close":0}
+        close_boundary={"comparisons":0,"matches_next_h5_open":0,
+                        "matches_next_parquet_open":0}
+        matched=0
+        for (symbol,t),p in parquet_rows.items():
+            if symbol!=sym:
+                continue
+            bar_end=shift_bar_stamp(t,shift)
+            h=h5_rows.get((sym,bar_end))
+            if h is None:
+                continue
+            matched+=1
+            clock=t%10000
+            segment="morning" if 900 <= clock < 1200 else ("afternoon" if 1300 <= clock <= 1500 else "other")
+            segment_counts[segment]["matched"]+=1
+            flags=[]
+            for i,key in enumerate(FIELDS[:4]):
+                bad=not close_enough(p[i],h[i],"price")
+                flags.append(bad)
+                if bad:
+                    err=abs(p[i]-h[i])
+                    fields[key].append(err)
+                    if max(abs(p[i]),abs(h[i]))>0:
+                        relative_price_errors[key].append(err/max(abs(p[i]),abs(h[i])))
+            if not any(flags):
+                all_equal+=1
+                segment_counts[segment]["ohlc_equal"]+=1
+            if not flags[1] and not flags[2]:
+                high_low_equal+=1
+                if flags[0] or flags[3]:
+                    open_close_diff_high_low_equal+=1
+            if flags[0]:
+                segment_counts[segment]["open_diff"]+=1
+                previous_h=h5_rows.get((sym,t))
+                previous_p=parquet_rows.get((sym,shift_bar_stamp(t,-5)))
+                if previous_h is not None and previous_p is not None:
+                    open_boundary["comparisons"]+=1
+                    if close_enough(p[0],previous_h[3],"price"):
+                        open_boundary["matches_previous_h5_close"]+=1
+                    if close_enough(h[0],previous_p[3],"price"):
+                        open_boundary["matches_previous_parquet_close"]+=1
+            if flags[3]:
+                segment_counts[segment]["close_diff"]+=1
+                next_h=h5_rows.get((sym,shift_bar_stamp(bar_end,5)))
+                next_p=parquet_rows.get((sym,shift_bar_stamp(t,5)))
+                if next_h is not None and next_p is not None:
+                    close_boundary["comparisons"]+=1
+                    if close_enough(p[3],next_h[0],"price"):
+                        close_boundary["matches_next_h5_open"]+=1
+                    if close_enough(h[3],next_p[0],"price"):
+                        close_boundary["matches_next_parquet_open"]+=1
+            for index,accumulator,zero_stats in (
+                (4,volumes,vol_zeros),(5,amounts,amt_zeros)):
+                if h[index]==0:
+                    zero_stats["h5_zero"]+=1
+                if p[index]==0:
+                    zero_stats["parquet_zero"]+=1
+                if h[index]==0 and p[index]==0:
+                    zero_stats["both_zero"]+=1
+                if h[index]!=0 and math.isfinite(p[index]/h[index]):
+                    accumulator.append(p[index]/h[index])
+        result[sym]={
+            "h5_bars":hcount,"parquet_bars":pcount,"matched_bars":matched,
+            "both_ohlc_equal_bars":all_equal,
+            "high_low_equal_bars":high_low_equal,
+            "high_low_equal_but_open_or_close_diff":open_close_diff_high_low_equal,
+            "price_abs_difference_quantiles":{field:summarize_values(vals, digits=4) for field,vals in fields.items()},
+            "price_relative_difference_quantiles":{field:summarize_values(vals, digits=5) for field,vals in relative_price_errors.items()},
+            "parquet_over_h5_volume_ratio":summarize_values(volumes,digits=5),
+            "parquet_over_h5_amount_ratio":summarize_values(amounts,digits=5),
+            "volume_zero_counts":vol_zeros,
+            "amount_zero_counts":amt_zeros,
+            "intraday_segments":segment_counts,
+            "open_cross_boundary_checks":open_boundary,
+            "close_cross_boundary_checks":close_boundary,
+        }
+    return result
+
+
 def load_h5(root: Path, symbols: tuple[str, ...], day: date):
     import h5py
 
@@ -252,12 +375,15 @@ def main(argv=None):
             "h5":h5_details,
             "parquet":pq_details,
             "lag_minutes_parquet_start_to_h5_end":evaluate(h5_rows,pq_rows),
+            "working_shift_plus5_per_symbol_attribution":attribute_differences(h5_rows,pq_rows),
             "notes":[
                 "Prices are compared with absolute tolerance 0.005 yuan; these are hypotheses, not certified data conventions.",
                 "Volume/amount scaling results count matching rows under each H5 multiplier. No raw OHLCV values are exported.",
                 "Parquet timestamps represent raw bar start in this report; lag=5 corresponds to existing audit start+5 rule.",
                 "Row-group symbol-statistics pruning is conservative; a missing symbol min/max forces group scan.",
-                "Only selected symbols and one day are analyzed. Never extrapolate percentages to all symbols."
+                "Only selected symbols and one day are analyzed. Never extrapolate percentages to all symbols.",
+                "Price difference sizes and quantity ratios are aggregate-only quantiles. Ratios exclude zero H5 denominator; the number of excluded zero-volume/amount bars is shown separately.",
+                "Cross-boundary open/close tests are exploratory; matching neighboring prices does not establish a canonical bar-construction rule."
             ]
         }
         out.parent.mkdir(parents=True,exist_ok=True)

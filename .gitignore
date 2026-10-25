@@ -1,0 +1,28 @@
+# Never commit paid or personally downloaded market data.
+stock/
+HikyuuData/
+AllCycleAStockData/
+*.h5
+*.hdf5
+*.parquet
+*.pq
+*.sqlite
+*.sqlite3
+*.db
+
+# Local-only scan outputs and ephemeral indexes.
+h5-private-candidates/
+*_union_scratch/
+*.audit.json
+*.audit.md
+*.log
+
+# Virtual environments, Python caches and local editors.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/

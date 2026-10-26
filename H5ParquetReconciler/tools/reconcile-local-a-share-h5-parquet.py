@@ -413,7 +413,9 @@ def finalize_candidate_residual_masks(candidate, stats):
             ("exact_field_mask_by_day", stats.get("by_day", {})),
             ("exact_field_mask_by_prefix", stats.get("by_code_prefix_group", {}))):
         grouped = candidate[section]
-        if set(grouped) != set(old_groups):
+        matched_groups = {
+            k: v for k, v in old_groups.items() if v.get("matched", 0) > 0}
+        if set(grouped) != set(matched_groups):
             raise ValueError("Candidate exact field-mask group identity mismatch")
         for name, counts in grouped.items():
             if set(counts) != expected or sum(counts.values()) != old_groups[name].get(

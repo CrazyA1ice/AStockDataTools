@@ -322,6 +322,23 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## 2025五分钟主V3索引62组：SQLite事务退出确认为主要耗时（2026-10-26）
+
+本机真实报告`pq-5min-2025-v3-transaction-exit-62.json`：2025主V3已由57推进至62/522个RowGroup（11.88%），新处理5组共614,400原始行，耗时57.297秒。SQLite写入41.265秒，其中**原sqlite3连接事务退出`__exit__`耗时25.938秒（62.9%）**，定位表UPSERT耗时12.685秒；这能确认耗时在COMMIT调用边界，**不能证明25.938秒全为OS fsync耗时**，也不能把不同组的运行时差异认定为SQLite逻辑回归。
+
+累计候选源行7,623,474；主库+WAL约138.69MiB（低于192MiB容量软预算），源指纹未变，90秒时间预算未触发，`stopped_for=max_new_groups`。本轮仍为`progress`，主库62组唯一键与重复键均未知，需要独立full审计；2025年未完成，仍禁自动H5/Parquet合并。
+
+新增完全只读`tools/compare-v3-performance-batches.py`，只分析模块内两份连续`reports` JSON的RowGroup范围、提交/locator等耗时增量与空间变化；拒绝源指纹、索引、进度、预算及计时守恒不符，不触碰付费`D:\stock`、SQLite主库或其持久性。新增6项纯合成测试，总数预计121项，须本机Windows验收。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\compare-v3-performance-batches.py --previous "reports\pq-5min-2025-v3-sqlite-breakdown-57.json" --current "reports\pq-5min-2025-v3-transaction-exit-62.json" --report "reports\pq-5min-2025-v3-performance-trend-57-62.json" --read-only
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --read-only --report "reports\pq-5min-2025-v3-readonly-full-audit-62.json"
+```
+
+完整数据与下一轮保护措施见[62组事务退出诊断及趋势核验说明](docs/PARQUET_5MIN_V3_62GROUP_COMMIT_TREND_20261026.md)。
+
 ## 2025五分钟主V3索引57组：定位事务退出的真实耗时（2026-10-26）
 
 主索引已经从52组真正续建至57/522组，累计候选源行7,009,197，本轮40.828秒新增5组。SQLite写入25.923秒中，事务退出及其他开销15.156秒（58.47%），定位表更新8.376秒（32.31%），覆盖表更新2.047秒（7.90%）；本轮无预算/源文件异常，主库+WAL约137.11MiB。`progress`不执行新的精确重复键审计，因此该主库的唯一/重复字段仍为null。先前57组A/B副本full审计不能代替主库的独立审计。

@@ -39,6 +39,7 @@
 - `phases_seconds.progress_output`：原终端进度打印耗时。
 - `phases_seconds.row_group_loop_other`：整段行组循环墙钟时间减去已计时的内部阶段；只是剩余墙钟时间，可能包含调度/IO停顿，**绝不代表额外的SQLite耗时**。
 - `slowest_row_group_wall_groups`：最多5个最大RowGroup整体墙钟跨度，连同原read和commit明细；用于下一轮查明是否存在长时间停顿/离群单组。
+- `process_cpu_seconds_this_run`：同一次计时窗口内当前进程的CPU耗时，与墙钟耗时并列查看；受多线程计数影响，可能大于墙钟秒数，因此不能将两者差额直接解释为休眠时间，也不能仅凭它定位磁盘阻塞。
 - `unattributed_seconds` 保留，现已扣除以上新增阶段；WAL checkpoint仍只计入 `budget_guard_and_checkpoint`，不可重复加总。
 
 没有变更SQLite索引表、源键分组规则、去重位图、断点逻辑、WAL模式默认值、主键写入顺序或报表的完成认证，旧的V3文件可以继续使用。

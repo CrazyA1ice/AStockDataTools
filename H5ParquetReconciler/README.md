@@ -322,6 +322,18 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## 2025年V3索引47/522：可选单轮运行时间软预算（2026-10-26）
+
+本机第46—47组只用了16.687秒，原45组报告里的1,145秒异常未归因空档在这次两组测试中没有复现；这不足以确定早前性能波动的根因。新增`--max-run-seconds`，与现有`--max-new-groups`、`--max-index-mib`同时使用；**仅在提交一个完整RowGroup之后及进入下一个组之前**检查运行时间，因此不是能中断长事务/系统休眠的硬超时。未指定该参数不改变已有CLI行为。
+
+下一次建议最多5组（47→52），90秒单轮软时间上限和192MiB SQLite软容量上限，仍保留`source`默认写法：
+
+```powershell
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\index-parquet-5min-coverage.py "D:\\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 5 --max-run-seconds 90 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\\pq-5min-2025-v3-soft-wall-52.json"
+```
+
+新字段`soft_wall_budget_reached`、`max_run_seconds_soft_budget`和`stopped_for`用于区分正常数量截止、时间预算与磁盘预算。只有另行full审计才能获得准确去重键数；详见[47组复测与软时间预算说明](docs/PARQUET_5MIN_V3_SOFT_TIME_BUDGET_20261026.md)。
+
 ## 2025年五分钟V3索引45/522：异常墙钟耗时诊断（2026-10-26）
 
 用户主V3索引从35→45组的 `--report-detail progress` 报告，新增10组处理1,232,892行，总耗时1,318.813秒；其中现有读取+写入+预算+摘要仅173.750秒，其他1,145.063秒（86.83%）**原因未查明**。SQLite第40号RowGroup一次提交耗时79.235秒，主库+WAL约132.70MiB，192MiB预算未触发；累计候选行5,534,876，**不是**经full复核的去重唯一键数。

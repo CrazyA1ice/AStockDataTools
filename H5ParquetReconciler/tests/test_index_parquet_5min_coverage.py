@@ -229,6 +229,83 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
                 self.assertEqual(err.exception.code,2)
         self.assertFalse(self.index.exists())
 
+    def test_wall_time_budget_boundary_and_disabled_default(self):
+        self.assertFalse(M.wall_budget_exceeded(100.0,None,now=10_000.0))
+        self.assertFalse(M.wall_budget_exceeded(100.0,90.0,now=189.999))
+        self.assertTrue(M.wall_budget_exceeded(100.0,90.0,now=190.0))
+        self.assertTrue(M.wall_budget_exceeded(100.0,90.0,now=191.0))
+        with self.assertRaisesRegex(ValueError,"max-run-seconds"):
+            M.wall_budget_exceeded(100.0,0.0,now=100.0)
+
+    def test_invalid_wall_time_budget_fails_before_index_open(self):
+        import contextlib
+        import io
+        for invalid in ("0","-1","nan","inf"):
+            with self.subTest(value=invalid):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as exc:
+                        M.main([".", "--year", "2025", "--max-run-seconds",
+                                invalid, "--read-only"])
+                self.assertEqual(exc.exception.code,2)
+        self.assertFalse(self.index.exists())
+
+    def test_wall_budget_stops_after_committed_group_and_resumes(self):
+        """Fake Parquet batches; no paid files and no pyarrow dependency."""
+        import json
+        import sys
+        import types
+        from unittest import mock
+
+        module_dir = Path(self.temp.name)
+        root = module_dir / "fake_source"
+        file = root / "AllCycleAStockData" / "5min" / "2025.parquet"
+        file.parent.mkdir(parents=True,exist_ok=True)
+        file.write_bytes(b"fake-schema-only")
+
+        class FakeParquetFile:
+            def __init__(self, path):
+                self.schema_arrow=types.SimpleNamespace(names=["ts","symbol"])
+                self.metadata=types.SimpleNamespace(num_row_groups=3)
+
+            def iter_batches(self, row_groups, columns, batch_size, use_threads):
+                self_row = row_groups[0]
+                yield FakeBatch([ms("202509300930")+self_row*300000],
+                                ["600000.XSHG"])
+
+        pq=types.ModuleType("pyarrow.parquet")
+        pq.ParquetFile=FakeParquetFile
+        pyarrow=types.ModuleType("pyarrow")
+        pyarrow.__path__=[]
+        pyarrow.parquet=pq
+        with (mock.patch.object(M.core,"MODULE_DIR",module_dir),
+              mock.patch.dict(sys.modules,{"pyarrow":pyarrow,"pyarrow.parquet":pq})):
+            with mock.patch.object(M,"wall_budget_exceeded",
+                                   side_effect=[False,True]) as elapsed_check:
+                M.main([str(root),"--year","2025","--max-new-groups","3",
+                        "--max-run-seconds","1","--report-detail","progress",
+                        "--read-only","--report","reports/soft-wall-1.json"])
+                self.assertEqual(elapsed_check.call_count,2)
+            first=json.loads((module_dir/"reports"/"soft-wall-1.json").read_text(
+                encoding="utf-8"))
+            self.assertEqual(first["row_groups_complete"],1)
+            self.assertEqual(first["new_row_groups_this_run"],1)
+            self.assertTrue(first["soft_wall_budget_reached"])
+            self.assertEqual(first["stopped_for"],"max_run_seconds_after_group")
+            self.assertTrue(first["run_limited_before_complete"])
+            self.assertEqual(first["max_run_seconds_soft_budget"],1.0)
+            self.assertIsNone(first["duplicate_regular_session_keys"])
+            M.main([str(root),"--year","2025","--resume","--max-new-groups","3",
+                    "--report-detail","progress","--read-only",
+                    "--report","reports/soft-wall-resume.json"])
+        second=json.loads((module_dir/"reports"/"soft-wall-resume.json").read_text(
+            encoding="utf-8"))
+        self.assertTrue(second["index_complete"])
+        self.assertTrue(second["full_key_audit_performed"])
+        self.assertEqual(second["row_groups_complete"],3)
+        self.assertEqual(second["new_row_groups_this_run"],2)
+        self.assertFalse(second["soft_wall_budget_reached"])
+        self.assertIsNone(second["max_run_seconds_soft_budget"])
+
     def test_budget_checkpoint_reclaims_unnecessary_wal_and_can_continue(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

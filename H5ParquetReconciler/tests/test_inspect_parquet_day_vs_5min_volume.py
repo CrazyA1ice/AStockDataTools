@@ -4,6 +4,8 @@ import sys
 import tempfile
 import types
 import unittest
+import h5py
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -158,6 +160,83 @@ class ParquetCycleAuditTests(unittest.TestCase):
             report=M.make_report(self.root,2026,"2026-09-29","2026-09-29",512)
         self.assertFalse(report["scan_complete"])
         self.assertEqual(report["day_source"]["duplicate_source_keys"],1)
+
+    def test_focus_four_cycle_and_parquet_missing_day_examples(self):
+        """Synthetic BJ shared exception plus Parquet-only minute stock-day."""
+        sym_a, sym_b = "920121.XBSE", "920069.XBSE"
+        day_records = [
+            self.srcrow(20260929,0,sym_a,4800),
+            self.srcrow(20260929,0,sym_b,4800)
+        ]
+        a = self.minute_rows(20260929,sym_a,100)
+        b = self.minute_rows(20260929,sym_b,100)
+        a[-1]["volume"] = 200
+        b[-1]["volume"] = 300
+        missing_daily = self.minute_rows(20260929,"920268.XBSE",100)
+        self.put(day_records,a+b+missing_daily)
+        dtype = np.dtype([("datetime","<u8"),("transCount","<u8")])
+        folder=self.root/"HikyuuData"
+        folder.mkdir()
+        with h5py.File(folder/"bj_day.h5","w") as h5:
+            group=h5.create_group("data")
+            for sym in ("BJ920121","BJ920069"):
+                data=np.zeros(1,dtype=dtype)
+                data["datetime"]=[202609290000]
+                data["transCount"]=[48]
+                group.create_dataset(sym,data=data)
+        with h5py.File(folder/"bj_5min.h5","w") as h5:
+            group=h5.create_group("data")
+            for sym in ("BJ920121","BJ920069"):
+                data=np.zeros(48,dtype=dtype)
+                data["datetime"]=[
+                    20260929*10000+t for t in sorted(M.EXPECTED_ENDS)]
+                data["transCount"]=[1]*47 + [2 if sym=="BJ920121" else 1]
+                group.create_dataset(sym,data=data)
+        with self.fake_arrow():
+            report=M.make_report(self.root,2026,"2026-09-29","2026-09-29",
+                                 512,["BJ920121","BJ920069"])
+        total=report["totals"]
+        self.assertEqual(total["stock_days_only_five_minute"],1)
+        self.assertEqual(total["raw_day_equals_sum_five_minute_0_1pct"],0)
+        self.assertEqual(total["complete_48_bar_stock_days_compared"],2)
+        self.assertEqual(report["missing_day_stock_day_examples"],[
+            {"symbol":"BJ920268","day":"20260929",
+             "five_minute_keys":48,"complete_48_candidate_labels":True}])
+        focus=report["focused_four_cycle_stock_days"]
+        self.assertEqual(set(focus),{"BJ920121@20260929","BJ920069@20260929"})
+        self.assertFalse(focus["BJ920121@20260929"][
+            "h5_day_vs_minute_raw_sum_agree_0_1pct"])
+        self.assertFalse(focus["BJ920121@20260929"][
+            "pq_day_vs_minute_sum_agree_0_1pct"])
+        self.assertTrue(focus["BJ920121@20260929"][
+            "h5_day_times_100_vs_pq_day_agree_0_1pct"])
+        self.assertTrue(focus["BJ920121@20260929"][
+            "h5_minute_times_100_vs_pq_minute_sum_agree_0_1pct"])
+        self.assertFalse(focus["BJ920069@20260929"][
+            "h5_minute_times_100_vs_pq_minute_sum_agree_0_1pct"])
+        self.assertEqual(focus["BJ920121@20260929"][
+            "five_minute_volume_x100_mismatch_original_tolerance"],0)
+        self.assertEqual(focus["BJ920069@20260929"][
+            "five_minute_volume_x100_mismatch_original_tolerance"],1)
+        self.assertTrue(report["scan_complete"])
+        self.assertFalse(report["unit_mapping_certified"])
+        self.assertNotIn("4900",str(report))
+        self.assertNotIn("5000",str(report))
+
+    def test_focus_rejects_invalid_security_or_missing_h5(self):
+        with self.assertRaisesRegex(ValueError,"Focus symbol"):
+            M.validated_focus_symbols(["SH000001"],2026)
+        with self.assertRaisesRegex(ValueError,"limited to 12"):
+            M.validated_focus_symbols(
+                [f"SH600{i:03d}" for i in range(13)],2026)
+        self.assertEqual(M.validated_focus_symbols(
+            ["920121.XBSE","BJ920121"],2026),["BJ920121"])
+        self.put([self.srcrow(20260929,0,"920121.XBSE",4800)],
+                 self.minute_rows(20260929,"920121.XBSE",100))
+        with self.fake_arrow():
+            with self.assertRaisesRegex(ValueError,"Missing or symlinked H5"):
+                M.make_report(self.root,2026,"2026-09-29","2026-09-29",
+                              512,["BJ920121"])
 
     def test_7day_limit_and_invalid_dates(self):
         with self.assertRaisesRegex(ValueError,"limited to 7"):

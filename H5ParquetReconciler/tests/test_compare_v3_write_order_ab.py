@@ -5,7 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 
@@ -78,14 +80,25 @@ class MatchedReadOnlyABTests(unittest.TestCase):
             self.reports.append(result)
 
     def compare(self):
-        with self.subTest("module path override"):
-            old = C.core.MODULE_DIR
-            C.core.MODULE_DIR = self.module
-            try:
-                return C.compare_matched_ab(self.source, self.sorted,
-                                            self.manifest, [3], *self.reports)
-            finally:
-                C.core.MODULE_DIR = old
+        # subTest() traps exceptions and records a subtest ERROR instead of
+        # propagating it to assertRaisesRegex() in the calling negative test.
+        # patch.object restores MODULE_DIR while preserving exception semantics.
+        with mock.patch.object(C.core, "MODULE_DIR", self.module):
+            return C.compare_matched_ab(self.source, self.sorted,
+                                        self.manifest, [3], *self.reports)
+
+    def test_comparison_helper_propagates_error_and_restores_module_dir(self):
+        # A regression test for Windows' observed 5 FAIL + 5 subtest ERROR:
+        # negative tests must receive their expected exception normally.
+        original_dir = C.core.MODULE_DIR
+        original_report = self.reports[1]
+        self.reports[1] = dict(original_report, source_fingerprint="mismatch")
+        try:
+            with self.assertRaisesRegex(ValueError, "fingerprint"):
+                self.compare()
+            self.assertEqual(C.core.MODULE_DIR, original_dir)
+        finally:
+            self.reports[1] = original_report
 
     def test_matched_indexes_equal_even_when_progress_did_not_count_duplicates(self):
         result = self.compare()
@@ -99,7 +112,9 @@ class MatchedReadOnlyABTests(unittest.TestCase):
         self.assertFalse(result["automatically_change_write_order"])
         self.assertTrue(result["incomplete_year_cannot_certify_union"])
         # Read-only comparator must not mark either incomplete index as complete.
-        with sqlite3.connect(self.source) as db:
+        # sqlite3.Connection.__exit__ commits/rolls back but DOES NOT close.
+        # On Windows the open handle prevents TemporaryDirectory cleanup.
+        with closing(sqlite3.connect(self.source)) as db:
             self.assertEqual(dict(db.execute("SELECT key,value FROM meta"))
                              ["completed"], "false")
 
@@ -136,8 +151,9 @@ class MatchedReadOnlyABTests(unittest.TestCase):
     def test_reject_logical_key_differences_even_when_aggregates_match(self):
         # Swap a time slot bit. The unique and source row totals still match;
         # therefore full summary alone is not sufficient for A/B correctness.
-        with sqlite3.connect(self.sorted) as db:
-            db.execute("UPDATE daily_coverage SET slot_mask=2")
+        with closing(sqlite3.connect(self.sorted)) as db:
+            with db:
+                db.execute("UPDATE daily_coverage SET slot_mask=2")
         with self.assertRaisesRegex(ValueError, "logical mismatch"):
             self.compare()
 

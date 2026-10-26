@@ -322,6 +322,18 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## 2025年五分钟V3索引45/522：异常墙钟耗时诊断（2026-10-26）
+
+用户主V3索引从35→45组的 `--report-detail progress` 报告，新增10组处理1,232,892行，总耗时1,318.813秒；其中现有读取+写入+预算+摘要仅173.750秒，其他1,145.063秒（86.83%）**原因未查明**。SQLite第40号RowGroup一次提交耗时79.235秒，主库+WAL约132.70MiB，192MiB预算未触发；累计候选行5,534,876，**不是**经full复核的去重唯一键数。
+
+索引器最新进度报告新增Parquet footer、checkpoint查询、进度输出、整段行组循环剩余墙钟耗时和最慢整组时长。不要将剩余墙钟时间武断解释成SQLite I/O，也不要直接扩展至剩余477组。先完整测试，再从45组主索引**最多新增2组**：
+
+```powershell
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\index-parquet-5min-coverage.py "D:\\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 2 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\\pq-5min-2025-v3-wall-gap-47.json"
+```
+
+实际断点、限额和stop原因均以本地JSON为准。详见[45组异常性能与复测说明](docs/PARQUET_5MIN_V3_WALL_GAP_PROFILE_20261026.md)。
+
 ## V3 索引的独立只读完整审计（2026-10-26）
 
 当使用 `--report-detail progress` 跳过大表扫描后，可用独立的 `tools/audit-parquet-5min-coverage.py` 对**现有已提交 RowGroup**重新执行全量键统计，不推进断点、不改 SQLite 认证元数据、不读取原 Parquet 的行情行：

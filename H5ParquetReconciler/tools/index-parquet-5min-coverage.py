@@ -577,7 +577,7 @@ def processing_profile(phase_times, group_timings, elapsed):
             "WAL checkpoint time is included in budget guard, not additive. "
             "row_group_loop_other is a residual including Python loop/scheduling gaps, "
             "not proof of CPU or disk work. Wall time can include OS suspension or "
-            "external I/O stalls. Clone setup and index opening precede this run timer.")
+            "external I/O stalls. Clone setup and index connection precede this run timer.")
     }
 
 

@@ -57,7 +57,9 @@
 - [x] 针对写入占大部分耗时、但排序优化不稳定的证据，新增SQLite准备/daily UPSERT/locator UPSERT/groups_done写入/事务提交与余量的子阶段计时；只在成功提交后发布，保留已有`sqlite_group_commit`总计时，不对嵌套分项双重累加。新增3项离线合成测试，预计113项待本机核验，详见[第二轮A/B证据与SQL分项计时](PARQUET_5MIN_V3_AB_ROUND2_SQLITE_BREAKDOWN_20261026.md)。
 - [x] 用户本机主V3索引已从52→57/522组，本轮新增5组614,400行、耗时40.828秒；SQLite写入25.923秒中`commit_and_other=15.156`秒（58.47%）、`row_group_locator_upsert=8.376`秒（32.31%）、`daily_coverage_upsert=2.047`秒（7.90%），计时子项守恒；主库+WAL约137.11MiB、无时间/容量预算触发。主库本轮progress未独立复核57组重复键，仍不得自动并集。
 - [x] 为区分事务提交和其他开销，新增原SQLite连接`__enter__/__exit__`精确计时，汇总在`sqlite_transaction_boundary_seconds`，作为`commit_and_other`子项不重复计时；未修改SQL、WAL、`synchronous=FULL`、schema或事务行为。新增2项合成测试、调整既有断言，预计115项待本机验证。详见[57组主库与事务退出诊断](PARQUET_5MIN_V3_57GROUP_TRANSACTION_PROFILE_20261026.md)。
-- [ ] Windows验证预计115项合成测试，从主库57组最多resume再增5组至62组（90秒/192MiB软预算、source/WAL/FULL），据真实`context_exit_seconds`占比决定后续严格隔离的持久化性能试验；不改变主库数据安全配置。
+- [x] 主V3索引已由57/522推进至62/522，新增5组614,400源行，耗时57.297秒。SQLite总写入41.265秒，其中`transaction_context_exit_seconds=25.938`秒（与此前`commit_and_other_seconds=25.938`一致，占SQLite写入62.9%）、`row_group_locator_upsert=12.685`秒，读取聚合16.016秒；较上一批57组观察到+16.469秒的墙钟变化但不能判定因果。主库+WAL 145,426,584字节（约138.69MiB），90秒/192MiB软预算未触发，数据源只读、时标异常计数仍0；此轮progress未做62组完整唯一键/重复键审计。
+- [x] 新增只读`compare-v3-performance-batches.py`及6项合成测试：严格检查两份连续主索引progress报告同源、同写入方式、行组连续、累计行数守恒、预算与双层计时守恒，再报告观察到的耗时与空间变化；完全不访问真实行情、SQLite和`PRAGMA`，不将提交耗时误称为fsync因果结论。详见[62组事务退出与只读性能趋势](PARQUET_5MIN_V3_62GROUP_COMMIT_TREND_20261026.md)，预计121项测试待本机验证。
+- [ ] Windows确认预计121项离线测试通过，再从当前主V3 62组执行独立只读full键/重复键审计（不新增RowGroup）；随后再考虑保持SQLite WAL+`synchronous=FULL`的下一阶段性能/存储诊断，主索引暂不扩大扫描规模。
 - [ ] 根据分段容量预算和吞吐率评估全年522个行组的落盘风险，确认磁盘空间可控后再完成年度索引与索引前后对账。
 - [ ] 索引完成后记录全年跨RowGroup重复键及异常时标数量，明确源格式可信程度，随后推广其他年份与周期。
 - [ ] 按真实年度索引运行结果检验跨Arrow批次及跨文件重复键（算法已开发、真实数据未验收），并验证其他周期的日期索引方案。

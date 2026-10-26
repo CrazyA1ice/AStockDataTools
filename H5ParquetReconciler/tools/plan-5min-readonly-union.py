@@ -204,7 +204,7 @@ def validated_parquet_locator(index_file, root, symbols, day, universe):
     db = sqlite3.connect(f"file:{index_file.as_posix()}?mode=ro", uri=True)
     try:
         state = dict(db.execute("SELECT key,value FROM meta"))
-        for key in ("bad_timestamp", "unexpected_session_stamp", "unrecognized_symbol"):
+        for key in ("bad_timestamp", "unexpected_session_stamp", "unrecognized_symbol", "outside_year"):
             if int(state.get(key, "0")):
                 raise ValueError(f"Index contains {key} anomalies; unindexed audit required")
         group_ids = indexer.index_matches_and_groups(

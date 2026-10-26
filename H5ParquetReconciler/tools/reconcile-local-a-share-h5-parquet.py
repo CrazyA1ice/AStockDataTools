@@ -296,6 +296,100 @@ def count_difference(stats, category, symbol, stamp):
         stats[hi] = stamp
 
 
+def symbol_prefix_group(symbol):
+    """Descriptive code-prefix groups; never certify the actual listed board."""
+    if symbol.startswith(("SH688", "SH689")):
+        return "SH_688_689_prefix"
+    if symbol.startswith(("SZ300", "SZ301")):
+        return "SZ_300_301_prefix"
+    if symbol.startswith("BJ"):
+        return "BJ_prefix"
+    if symbol.startswith("SH"):
+        return "SH_other_prefix"
+    if symbol.startswith("SZ"):
+        return "SZ_other_prefix"
+    return "unclassified_prefix"
+
+
+def increment_prefix(stats, symbol, field):
+    groups = stats.setdefault("by_code_prefix_group", {})
+    counts = groups.setdefault(symbol_prefix_group(symbol), {})
+    counts[field] = counts.get(field, 0) + 1
+
+
+def summarize_stock_day_gaps(db, stats):
+    """Classify full-vs-partial source absence using exact H5/PQ keys.
+
+    This is only about keys actually present in each input. It cannot certify
+    an instrument's listing status, data vendor quality or missing-trade truth.
+    """
+    h5_stock_days = {}
+    for symbol, day, total, common in db.execute(
+            "SELECT s,CAST(t / 10000 AS INTEGER),COUNT(*),"
+            "SUM(CASE WHEN seen=1 THEN 1 ELSE 0 END) "
+            "FROM h GROUP BY s,CAST(t / 10000 AS INTEGER)"):
+        h5_stock_days[(symbol, day)] = (int(total), int(common or 0))
+    pq_stock_days = {}
+    for symbol, day, count in db.execute(
+            "SELECT s,CAST(t / 10000 AS INTEGER),COUNT(*) "
+            "FROM pq_seen GROUP BY s,CAST(t / 10000 AS INTEGER)"):
+        pq_stock_days[(symbol, day)] = int(count)
+    keys = sorted(set(h5_stock_days) | set(pq_stock_days))
+    names = ("both_present_stock_days",
+             "pq_only_full_h5_absence_stock_days",
+             "pq_only_partial_h5_coverage_stock_days",
+             "pq_only_keys_on_full_h5_absence_days",
+             "pq_only_keys_on_partial_h5_coverage_days",
+             "h5_only_full_pq_absence_stock_days",
+             "h5_only_partial_pq_coverage_stock_days",
+             "h5_only_keys_on_full_pq_absence_days",
+             "h5_only_keys_on_partial_pq_coverage_days")
+    totals = {name: 0 for name in names}
+    full_pq_examples, partial_pq_examples = [], []
+    for symbol, day in keys:
+        h5_n, matched = h5_stock_days.get((symbol, day), (0, 0))
+        pq_n = pq_stock_days.get((symbol, day), 0)
+        if not 0 <= matched <= min(h5_n, pq_n):
+            raise ValueError("Stock-day matched key count outside source bounds")
+        pq_only = pq_n - matched
+        h5_only = h5_n - matched
+        day_bucket = stats.setdefault("by_day", {}).setdefault(str(day), {})
+        if h5_n and pq_n:
+            totals["both_present_stock_days"] += 1
+        if pq_only:
+            full = h5_n == 0
+            tag = "full_h5_absence" if full else "partial_h5_coverage"
+            totals[f"pq_only_{tag}_stock_days"] += 1
+            totals[f"pq_only_keys_on_{tag}_days"] += pq_only
+            day_key = f"pq_only_keys_on_{tag}_days"
+            day_bucket[day_key] = day_bucket.get(day_key, 0) + pq_only
+            examples = full_pq_examples if full else partial_pq_examples
+            if len(examples) < 12:
+                examples.append({"symbol": symbol, "day": str(day),
+                                 "h5_keys": h5_n, "parquet_keys": pq_n,
+                                 "parquet_only_keys": pq_only})
+        if h5_only:
+            full = pq_n == 0
+            tag = "full_pq_absence" if full else "partial_pq_coverage"
+            totals[f"h5_only_{tag}_stock_days"] += 1
+            totals[f"h5_only_keys_on_{tag}_days"] += h5_only
+            day_key = f"h5_only_keys_on_{tag}_days"
+            day_bucket[day_key] = day_bucket.get(day_key, 0) + h5_only
+    if (totals["pq_only_keys_on_full_h5_absence_days"]
+        + totals["pq_only_keys_on_partial_h5_coverage_days"]
+        != stats["pq_only_rows"]):
+        raise ValueError("Parquet-only stock-day key conservation failed")
+    if (totals["h5_only_keys_on_full_pq_absence_days"]
+        + totals["h5_only_keys_on_partial_pq_coverage_days"]
+        != stats["h5_only_rows"]):
+        raise ValueError("H5-only stock-day key conservation failed")
+    totals["candidate_stock_days_in_either_source"] = len(keys)
+    totals["examples_full_h5_absence"] = full_pq_examples
+    totals["examples_partial_h5_coverage"] = partial_pq_examples
+    totals["source_key_gap_does_not_certify_missing_trades"] = True
+    return totals
+
+
 def check_batch(db, rows, stats, period):
     if not rows:
         return
@@ -334,10 +428,12 @@ def check_batch(db, rows, stats, period):
                 count_difference(stats, "pq_0930", sym, t)
             else:
                 stats["pq_only_rows"] += 1
+                increment_prefix(stats, sym, "pq_only")
                 count_difference(stats, "pq_only", sym, t)
                 example(stats, "pq_only", sym, t)
             continue
         stats["matched_keys"] += 1
+        increment_prefix(stats, sym, "matched")
         bucket = stats.setdefault("by_day", {}).setdefault(str(t // 10000), {})
         bucket["matched"] = bucket.get("matched", 0) + 1
         p, h = z[2:8], z[9:]
@@ -356,12 +452,15 @@ def check_batch(db, rows, stats, period):
                 else "value_mismatch"
             )
             stats[category+"_rows"] += 1
+            increment_prefix(stats, sym, category)
             count_difference(stats, category, sym, t)
             if any(x in differing for x in ("open", "high", "low", "close")):
                 stats["price_mismatch_rows"] += 1
+                increment_prefix(stats, sym, "price_mismatch")
                 bucket["price_mismatch"] = bucket.get("price_mismatch", 0) + 1
             if any(x in differing for x in ("volume", "amount")):
                 stats["quantity_mismatch_rows"] += 1
+                increment_prefix(stats, sym, "quantity_mismatch")
                 bucket["quantity_mismatch"] = bucket.get("quantity_mismatch", 0) + 1
             example(stats, category, sym, t, differing)
     db.execute("UPDATE h SET seen=1 WHERE (s,t) IN (SELECT s,t FROM p)")
@@ -452,6 +551,7 @@ def h5_remaining(db, stats):
         if t % 10000 == 1300 and stats["period"] in ("1min", "5min"):
             stats["h5_1300_noon_label_suspect_rows"] += 1
         stats["h5_only_rows"] += 1
+        increment_prefix(stats, sym, "h5_only")
         count_difference(stats, "h5_only", sym, t)
         example(stats, "h5_only", sym, t)
 
@@ -508,6 +608,8 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
                 bucket["parquet_unique"] = int(count)
             # For each day distinguish total overlapping time keys from
             # mismatches, and keep missing-series statuses explicit.
+            if period == "5min" and paths and (from_date or to_date):
+                stats["stock_day_gap_summary"] = summarize_stock_day_gaps(db, stats)
             for bucket in by_day.values():
                 h5_n = bucket.get("h5_unique", 0)
                 pq_n = bucket.get("parquet_unique", 0)
@@ -539,6 +641,14 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
     stats["scan_complete"] = not issues
     stats["issues"] = issues
     stats["by_day"] = dict(sorted(stats.get("by_day", {}).items()))
+    prefix_groups = stats.get("by_code_prefix_group", {})
+    for entry in prefix_groups.values():
+        n = entry.get("matched", 0)
+        entry["overlap_value_mismatch_pct"] = (
+            round(100 * entry.get("value_mismatch", 0) / n, 3)
+            if n else None)
+    stats["by_code_prefix_group"] = dict(sorted(prefix_groups.items()))
+    stats["board_membership_certified"] = False
     affected = stats.get("by_symbol", {})
     stats["affected_symbols"] = len(affected)
     stats["by_symbol_top100"] = dict(
@@ -586,6 +696,56 @@ def render_markdown(report):
             span+"; "+status
         ]
         lines.append("| "+" | ".join(cells)+" |")
+    for item in sections:
+        days = item.get("by_day", {})
+        if days:
+            lines.extend([
+                "", f"## 逐日双源交集与量价冲突（{item['year']}/{item['period']}）", "",
+                "| 交易日 | H5唯一键 | Parquet唯一键 | 重叠键 | H5独有 | Parquet独有 | 量价差异 | 重叠差异率 |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|"
+            ])
+            for day, bucket in sorted(days.items()):
+                lines.append(
+                    f"| {day} | {bucket.get('h5_unique','未知')} | "
+                    f"{bucket.get('parquet_unique','未知')} | "
+                    f"{bucket.get('intersection_unique','未知')} | "
+                    f"{bucket.get('h5_only',0)} | {bucket.get('pq_only',0)} | "
+                    f"{bucket.get('value_mismatch',0)} | "
+                    f"{bucket.get('overlap_value_mismatch_pct') if bucket.get('overlap_value_mismatch_pct') is not None else '未知'}% |"
+                )
+        gaps = item.get("stock_day_gap_summary")
+        if gaps:
+            lines.extend([
+                "", f"## 证券—交易日缺口归因（{item['year']}/{item['period']}）", "",
+                "| 缺口类型 | 证券—交易日数量 | 独有K线键数 |",
+                "|---|---:|---:|",
+                f"| H5整只证券该日无键、Parquet有键（候选） | {gaps['pq_only_full_h5_absence_stock_days']} | {gaps['pq_only_keys_on_full_h5_absence_days']} |",
+                f"| 两源该日都有键、H5仅部分缺失 | {gaps['pq_only_partial_h5_coverage_stock_days']} | {gaps['pq_only_keys_on_partial_h5_coverage_days']} |",
+                f"| Parquet该日无键、H5有键（候选） | {gaps['h5_only_full_pq_absence_stock_days']} | {gaps['h5_only_keys_on_full_pq_absence_days']} |",
+                f"| 两源该日都有键、Parquet仅部分缺失 | {gaps['h5_only_partial_pq_coverage_stock_days']} | {gaps['h5_only_keys_on_partial_pq_coverage_days']} |",
+                "", "上述类别表示源文件记录缺口，不是经证券上市状态、停牌或供应商规则认证的真实漏数。"
+            ])
+            examples = gaps.get("examples_full_h5_absence", [])
+            if examples:
+                lines.append("H5当日整证券无键的示例（最多12组）："
+                             + "、".join(
+                                 f"{x['symbol']}@{x['day']}({x['parquet_only_keys']}根)"
+                                 for x in examples))
+        prefixes = item.get("by_code_prefix_group", {})
+        if prefixes:
+            lines.extend([
+                "", f"## 代码前缀分组量价差异（{item['year']}/{item['period']}）", "",
+                "| 代码前缀组 | 重叠键 | 量价不同 | 价格不同 | 量额不同 | Parquet独有 | H5独有 |",
+                "|---|---:|---:|---:|---:|---:|---:|"
+            ])
+            for group, p in sorted(prefixes.items()):
+                lines.append(
+                    f"| {group} | {p.get('matched',0)} | "
+                    f"{p.get('value_mismatch',0)} | {p.get('price_mismatch',0)} | "
+                    f"{p.get('quantity_mismatch',0)} | {p.get('pq_only',0)} | "
+                    f"{p.get('h5_only',0)} |"
+                )
+            lines.append("代码前缀组仅用于诊断，不等于已认证的上市板块/证券类型。")
     if report.get("universe_mode") == "a-share-candidate":
         lines.extend(["", "## 证券范围过滤统计", "",
                       "| 年份/周期 | H5排除的非候选行数 | Parquet排除的非候选行数 | Parquet仅Footer未过滤 |",

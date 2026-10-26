@@ -426,6 +426,99 @@ class ReconcileTest(unittest.TestCase):
         self.assertTrue(report["parquet_key_coverage_exact_when_scan_complete"])
         self.assertFalse(report["duplicate_keys_across_batches_not_exhaustively_checked"])
 
+    def test_stock_day_source_gaps_separate_full_absence_and_partial_bars(self):
+        """A missing H5 stock-day is not the same as a missing intraday bar."""
+        self.write_h5("5min","sh","SH600000",[
+            (202509300935,100,100),
+            (202509300940,100,100)])
+        self.other_markets("5min")
+        self.fake_parquet("5min",2025,[
+            (self.epoch_ms("202509300930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202509300940"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202509300930"),"300747.XSHE",10,10,10,10,100,100000),
+            (self.epoch_ms("202509300935"),"300747.XSHE",10,10,10,10,100,100000)])
+        with self.fake_arrow():
+            report=M.reconcile_section(self.root,self.scratch,"5min",2025,512,
+                                       "a-share-candidate","2025-09-30","2025-09-30")
+        self.assertTrue(report["scan_complete"])
+        self.assertEqual(report["matched_keys"],1)
+        self.assertEqual(report["pq_only_rows"],3)
+        self.assertEqual(report["h5_only_rows"],1)
+        summary=report["stock_day_gap_summary"]
+        self.assertEqual(summary["candidate_stock_days_in_either_source"],2)
+        self.assertEqual(summary["pq_only_full_h5_absence_stock_days"],1)
+        self.assertEqual(summary["pq_only_partial_h5_coverage_stock_days"],1)
+        self.assertEqual(summary["pq_only_keys_on_full_h5_absence_days"],2)
+        self.assertEqual(summary["pq_only_keys_on_partial_h5_coverage_days"],1)
+        self.assertEqual(summary["h5_only_partial_pq_coverage_stock_days"],1)
+        self.assertEqual(summary["h5_only_keys_on_partial_pq_coverage_days"],1)
+        self.assertEqual(summary["examples_full_h5_absence"][0]["symbol"],"SZ300747")
+        day=report["by_day"]["20250930"]
+        self.assertEqual(day["pq_only_keys_on_full_h5_absence_days"],2)
+        self.assertEqual(day["pq_only_keys_on_partial_h5_coverage_days"],1)
+        self.assertEqual(report["by_code_prefix_group"]
+                         ["SZ_300_301_prefix"]["pq_only"],2)
+        self.assertEqual(report["by_code_prefix_group"]
+                         ["SH_other_prefix"]["matched"],1)
+        self.assertFalse(report["board_membership_certified"])
+        self.assertTrue(summary["source_key_gap_does_not_certify_missing_trades"])
+
+    def test_prefix_mismatch_rate_does_not_count_unique_as_matched(self):
+        """Group percentages use ONLY source-overlap time keys."""
+        db=M.db_open(self.dir/"prefix-aggregate.sqlite")
+        try:
+            db.executemany(
+                "INSERT INTO h(s,t,o,hi,lo,c,v,a) VALUES(?,?,?,?,?,?,?,?)",
+                [("SH688001",202509300935,10,10,10,10,100,1000),
+                 ("SH688001",202509300940,10,10,10,10,100,1000)])
+            counts=M.Counter({"period":"5min"})
+            M.check_batch(db,[
+                ("SH688001",202509300935,10.05,10,10,10,100,1000),
+                ("SH688001",202509300945,10,10,10,10,100,1000)],
+                counts,"5min")
+            self.assertEqual(counts["matched_keys"],1)
+            self.assertEqual(counts["value_mismatch_rows"],1)
+            grp=counts["by_code_prefix_group"]["SH_688_689_prefix"]
+            self.assertEqual(grp["matched"],1)
+            self.assertEqual(grp["value_mismatch"],1)
+            self.assertEqual(grp["pq_only"],1)
+            self.assertEqual(grp["price_mismatch"],1)
+            self.assertEqual(M.symbol_prefix_group("BJ920680"),"BJ_prefix")
+        finally:
+            db.close()
+
+    def test_markdown_includes_daily_gaps_and_code_prefix_sections(self):
+        section={
+            "period":"5min","year":2025,"scan_complete":True,"issues":[],
+            "h5_rows":1,"pq_rows":2,"matched_keys":1,
+            "h5_only_rows":0,"pq_only_rows":1,"value_mismatch_rows":0,
+            "by_day":{"20250930":{
+                "h5_unique":1,"parquet_unique":2,"intersection_unique":1,
+                "pq_only":1,"overlap_value_mismatch_pct":0.0}},
+            "stock_day_gap_summary":{
+                "pq_only_full_h5_absence_stock_days":1,
+                "pq_only_keys_on_full_h5_absence_days":1,
+                "pq_only_partial_h5_coverage_stock_days":0,
+                "pq_only_keys_on_partial_h5_coverage_days":0,
+                "h5_only_full_pq_absence_stock_days":0,
+                "h5_only_keys_on_full_pq_absence_days":0,
+                "h5_only_partial_pq_coverage_stock_days":0,
+                "h5_only_keys_on_partial_pq_coverage_days":0,
+                "examples_full_h5_absence":[
+                    {"symbol":"SH603056","day":"20250930","parquet_only_keys":1}]},
+            "by_code_prefix_group":{
+                "SH_other_prefix":{"matched":1,"value_mismatch":0,
+                                   "pq_only":1}}
+        }
+        markdown=M.render_markdown({
+            "status":"complete","universe_mode":"a-share-candidate",
+            "requested_periods":["5min"],"results":{"5min/2025":section}})
+        self.assertIn("逐日双源交集与量价冲突",markdown)
+        self.assertIn("证券—交易日缺口归因",markdown)
+        self.assertIn("代码前缀分组量价差异",markdown)
+        self.assertIn("SH603056@20250930(1根)",markdown)
+        self.assertIn("H5整只证券该日无键",markdown)
+
     def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
         self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
         self.other_markets("day")

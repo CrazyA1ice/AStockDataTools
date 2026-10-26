@@ -156,7 +156,7 @@ def decode_group_ids(encoded):
             number, shift = 0, 0
     if shift:
         raise ValueError("Truncated row group varint")
-    if values != sorted(set(values)):
+    if values != sorted(set(values)) or encode_group_ids(values) != bytes(encoded):
         raise ValueError("Noncanonical or duplicate row group IDs")
     return values
 

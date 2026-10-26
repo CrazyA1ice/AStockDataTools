@@ -32,6 +32,16 @@ def volume_match(left, right, rel=0.001):
     return abs(left-right) <= max(1.0, rel * max(abs(left), abs(right)))
 
 
+def h5_volume_normalized_match(day_raw, minute_raw_sum):
+    """Same comparison and share-unit absolute floor as the standalone H5 audit.
+
+    Comparing raw lots with volume_match() applies a one-LOT floor rather than
+    the one-SHARE floor of the normalized day/minute candidate, and can falsely
+    accept a small but genuine normalized-volume discrepancy.
+    """
+    return h5probe.matching_volume(day_raw, minute_raw_sum * 100)
+
+
 def load_cycle(root, year, period, from_date, to_date, batch_size):
     import pyarrow.parquet as pq
 
@@ -286,6 +296,7 @@ def summarize_focus_day(root, year, from_date, to_date, focus_symbols,
                     len(pmin) == 48
                     and {t % 10000 for t in pmin} == EXPECTED_ENDS),
                 "h5_day_vs_minute_raw_sum_agree_0_1pct": None,
+                "h5_day_vs_minute_normalized_sum_agree_0_1pct": None,
                 "pq_day_vs_minute_sum_agree_0_1pct": None,
                 "h5_day_times_100_vs_pq_day_agree_0_1pct": None,
                 "h5_minute_times_100_vs_pq_minute_sum_agree_0_1pct": None,
@@ -302,6 +313,8 @@ def summarize_focus_day(root, year, from_date, to_date, focus_symbols,
             if len(hday) == 1 and day_code * 10000 in hday and hmin:
                 item["h5_day_vs_minute_raw_sum_agree_0_1pct"] = volume_match(
                     hday[day_code*10000], hv)
+                item["h5_day_vs_minute_normalized_sum_agree_0_1pct"] = (
+                    h5_volume_normalized_match(hday[day_code*10000], hv))
             if len(pday) == 1 and day_code * 10000 in pday and pmin:
                 item["pq_day_vs_minute_sum_agree_0_1pct"] = volume_match(
                     pday[day_code*10000], pv)
@@ -355,6 +368,9 @@ def make_report(root, year, from_date, to_date, batch_size=8192,
         "focused_four_cycle_stock_days": focus,
         "focused_identifiers": focus_symbols,
         "focus_uses_only_h5_datetime_and_transCount_fields": True,
+        "h5_normalized_check_matches_standalone_volume_rule": True,
+        "h5_raw_sum_check_uses_one_raw_lot_absolute_floor": True,
+        "h5_raw_sum_check_not_authoritative_for_small_deviations": True,
         "time_mapping": "day local date, 5min ts starts +5 minutes (unverified)",
         "candidate_regular_session_ends": 48,
         "regular_session_labels_certified": False,

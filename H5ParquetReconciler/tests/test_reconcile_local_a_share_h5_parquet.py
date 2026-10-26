@@ -519,6 +519,132 @@ class ReconcileTest(unittest.TestCase):
         self.assertIn("SH603056@20250930(1根)",markdown)
         self.assertIn("H5整只证券该日无键",markdown)
 
+    def test_5min_quantity_ratio_is_separate_for_volume_and_amount(self):
+        """Synthetic 100x volume, 1000x amount and one-sided zeros."""
+        stats = M.Counter({
+            "period": "5min",
+            "from_date": "2026-09-29",
+            "to_date": "2026-09-29"
+        })
+        day = {}
+        symbol = "SH600000"
+        same = (10, 10, 10, 10, 100, 1000)
+        cases = (
+            # p, h, actual old-tolerance field names
+            (same, same, []),
+            ((10,10,10,10,10000,1000), same, ["volume"]),
+            ((10,10,10,10,100,1000000), same, ["amount"]),
+            ((10,10,10,10,0,0), same, ["volume","amount"]),
+            ((10,10,10,10,10050,1000),
+             (10,10,10,10,10000,1000), ["volume"]),
+        )
+        for i, (p,h,different) in enumerate(cases):
+            M.record_bounded_5min_quantity_evidence(
+                stats,symbol,202609290935+i*5,p,h,different,day)
+        summary=stats["quantity_scale_diagnostics"]
+        categories=summary["quantity_pair_categories"]
+        self.assertEqual(categories, {
+            "neither":1,"volume_only":2,"amount_only":1,"both":1})
+        self.assertEqual(summary["fields"]["volume"]["compared"],5)
+        self.assertEqual(summary["fields"]["volume"]["different_by_existing_tolerance"],3)
+        self.assertEqual(summary["fields"]["volume"]["one_zero"],1)
+        vratio=summary["fields"]["volume"][
+            "parquet_divided_by_h5_near_factor_within_1pct"]
+        self.assertEqual(vratio["100"],1)
+        self.assertEqual(vratio["1"],3)
+        aratio=summary["fields"]["amount"][
+            "parquet_divided_by_h5_near_factor_within_1pct"]
+        self.assertEqual(aratio["1000"],1)
+        self.assertEqual(summary["fields"]["amount"]["one_zero"],1)
+        self.assertEqual(day["volume_mismatch"],3)
+        self.assertEqual(day["amount_mismatch"],2)
+        self.assertFalse(summary["inferred_unit_conversion_certified"])
+
+    def test_quantity_diagnostic_matched_keys_only_and_nonmatching_report(self):
+        """Parquet-only keys must not dilute the overlap scaling denominator."""
+        db=M.db_open(self.dir/"quantity-test.sqlite")
+        try:
+            db.execute(
+                "INSERT INTO h(s,t,o,hi,lo,c,v,a) VALUES(?,?,?,?,?,?,?,?)",
+                ("SH600000",202609290935,10,10,10,10,100,1000))
+            stats=M.Counter({
+                "period":"5min","year":2026,
+                "from_date":"2026-09-29","to_date":"2026-09-29"})
+            M.check_batch(db,[
+                ("SH600000",202609290935,10,10,10,10,10000,1000000),
+                ("SZ000001",202609290935,10,10,10,10,10,10),
+            ],stats,"5min")
+            q=stats["quantity_scale_diagnostics"]
+            self.assertEqual(stats["matched_keys"],1)
+            self.assertEqual(stats["pq_only_rows"],1)
+            self.assertEqual(stats["quantity_mismatch_rows"],1)
+            self.assertEqual(q["fields"]["volume"]["compared"],1)
+            self.assertEqual(q["fields"]["amount"]["compared"],1)
+            self.assertEqual(q["quantity_pair_categories"]["both"],1)
+            self.assertEqual(q["fields"]["volume"][
+                "parquet_divided_by_h5_near_factor_within_1pct"]["100"],1)
+            self.assertEqual(q["fields"]["amount"][
+                "parquet_divided_by_h5_near_factor_within_1pct"]["1000"],1)
+            self.assertEqual(stats["by_day"]["20260929"]["volume_mismatch"],1)
+            self.assertEqual(stats["by_day"]["20260929"]["amount_mismatch"],1)
+            self.assertEqual(stats["by_code_prefix_group"]
+                             ["SH_other_prefix"]["volume_mismatch"],1)
+        finally:
+            db.close()
+
+    def test_old_day_reconciliation_does_not_emit_five_minute_unit_theory(self):
+        """Daily historical tests preserve previous output and flags."""
+        db=M.db_open(self.dir/"quantity-day.sqlite")
+        try:
+            db.execute(
+                "INSERT INTO h(s,t,o,hi,lo,c,v,a) VALUES(?,?,?,?,?,?,?,?)",
+                ("SH600000",202609290000,10,10,10,10,100,1000))
+            stats=M.Counter({"period":"day"})
+            M.check_batch(db,[
+                ("SH600000",202609290000,10,10,10,10,10000,1000000)
+            ],stats,"day")
+            self.assertEqual(stats["quantity_mismatch_rows"],1)
+            self.assertNotIn("quantity_scale_diagnostics",stats)
+        finally:
+            db.close()
+
+    def test_quantity_diagnostic_markdown_is_aggregate_only(self):
+        section={
+            "period":"5min","year":2026,"scan_complete":True,"issues":[],
+            "h5_rows":1,"pq_rows":1,"matched_keys":1,
+            "h5_only_rows":0,"pq_only_rows":0,"value_mismatch_rows":1,
+            "quantity_scale_diagnostics":{
+                "quantity_pair_categories":{
+                    "neither":0,"volume_only":0,"amount_only":0,"both":1},
+                "fields":{
+                    "volume":{
+                        "different_by_existing_tolerance":1,
+                        "both_zero":0,"one_zero":0,"both_nonzero":1,
+                        "parquet_divided_by_h5_near_factor_within_1pct":{
+                            "1":0,"100":1,"other":0},
+                        "relative_difference_bands_on_nonzero":{
+                            "above_5pct":1}
+                    },
+                    "amount":{
+                        "different_by_existing_tolerance":1,
+                        "both_zero":0,"one_zero":0,"both_nonzero":1,
+                        "parquet_divided_by_h5_near_factor_within_1pct":{
+                            "1":0,"1000":1,"other":0},
+                        "relative_difference_bands_on_nonzero":{
+                            "above_5pct":1}
+                    }
+                }
+            }
+        }
+        text=M.render_markdown({
+            "status":"complete","universe_mode":"a-share-candidate",
+            "requested_periods":["5min"],"results":{"5min/2026":section}})
+        self.assertIn("成交量/成交额口径诊断",text)
+        self.assertIn("Parquet/H5候选倍率",text)
+        self.assertIn("100倍=1",text)
+        self.assertIn("1000倍=1",text)
+        self.assertNotIn("OHLCV原始值",text)
+
     def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
         self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
         self.other_markets("day")

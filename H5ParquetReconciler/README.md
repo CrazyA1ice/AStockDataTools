@@ -212,6 +212,22 @@ git pull --ff-only origin main
 
 [完整命令、索引适用范围、回滚和质量限制](docs/PARQUET_5MIN_KEY_INDEX_20261026.md)。新添加9项合成测试，当前总共61项，未经Windows本机完整验收前不得称已通过。
 
+## Parquet五分钟索引V2：压缩行组位置（2026-10-26）
+
+用户2025年五分钟索引的2个RowGroup试跑已经成功：247,776个有效候选时间键、重复键0、源时间异常0；但产出122,277条行组定位关系，说明旧版全年构建存在潜在的SQLite膨胀风险。
+
+新版本将同股票、同日、同源文件的多个RowGroup编号打包成**一条压缩BLOB位图**；严格保留原来的48时段覆盖统计、跨组/跨文件重复键检测和恢复能力。**V2另用** `work/indexes/pq-5min-2025-a-share-candidate-v2.sqlite`，不触碰已生成的V1两组索引。
+
+只先进行V2的2个行组试运行，**不要直接执行全年--resume**：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --max-new-groups 2 --read-only --report "reports\pq-5min-2025-index-v2-smoke.json"
+```
+
+预计新增2项单测，总数63项，需本机执行核验。对比V1/V2的源键数、重复数、逻辑行组关系数和`row_group_locator_compact_rows`，确认正确后再评估全年构建的磁盘开销。[V2索引设计与对照验收说明](docs/PARQUET_5MIN_INDEX_V2_STORAGE_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

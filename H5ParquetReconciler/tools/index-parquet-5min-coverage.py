@@ -24,7 +24,7 @@ SPEC = importlib.util.spec_from_file_location(
 core = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(core)
 
-VERSION = "parquet-5min-coverage-index-v1"
+VERSION = "parquet-5min-coverage-index-v2"
 DAY_ZERO = date(1970, 1, 1)
 STATS = ("source_rows", "candidate_rows", "outside_year", "bad_timestamp",
          "unexpected_session_stamp", "unrecognized_symbol", "excluded_security_type")
@@ -121,6 +121,33 @@ def manifest_signature(manifest):
     ).hexdigest()
 
 
+def mask_or(a: bytes, b: bytes) -> bytes:
+    """OR two little-endian row-group bitsets."""
+    a, b = bytes(a), bytes(b)
+    size = max(len(a), len(b))
+    a = a.ljust(size, b"\x00")
+    b = b.ljust(size, b"\x00")
+    return bytes(x | y for x, y in zip(a, b))
+
+
+def mask_group_ids(value: bytes):
+    """Decode row-group positions for a single source file, sorted ascending."""
+    groups = []
+    for octet, byte in enumerate(bytes(value)):
+        while byte:
+            bit = byte & -byte
+            groups.append(octet * 8 + bit.bit_length() - 1)
+            byte ^= bit
+    return groups
+
+
+def connect_udfs(db):
+    db.create_function("bitcount", 1, lambda n: int(n).bit_count(), deterministic=True)
+    db.create_function("blob_or", 2, mask_or, deterministic=True)
+    db.create_function("blob_bitcount", 1,
+                       lambda v: sum(b.bit_count() for b in v), deterministic=True)
+
+
 def create_tables(db):
     db.executescript("""
         CREATE TABLE meta (
@@ -150,8 +177,8 @@ def create_tables(db):
           symbol TEXT NOT NULL,
           trade_day INTEGER NOT NULL,
           file_id INTEGER NOT NULL,
-          row_group INTEGER NOT NULL,
-          PRIMARY KEY(symbol, trade_day, file_id, row_group)
+          group_mask BLOB NOT NULL,
+          PRIMARY KEY(symbol, trade_day, file_id)
         ) WITHOUT ROWID;
     """)
 
@@ -160,7 +187,8 @@ def insert_group(db, file_id, row_group, packed, counts):
     """One SQLite transaction per Parquet row group; rollback is automatic on error."""
     daily = [(sym, day, values[0], values[1])
              for (sym, day), values in packed.items()]
-    groups = [(sym, day, file_id, row_group) for sym, day in packed]
+    bitmask = (1 << row_group).to_bytes(row_group // 8 + 1, "little")
+    groups = [(sym, day, file_id, bitmask) for sym, day in packed]
     with db:
         db.executemany("""
             INSERT INTO daily_coverage(symbol,trade_day,slot_mask,source_rows)
@@ -170,8 +198,10 @@ def insert_group(db, file_id, row_group, packed, counts):
               source_rows=(daily_coverage.source_rows + excluded.source_rows)
         """, daily)
         db.executemany("""
-            INSERT OR IGNORE INTO row_group_locator(symbol,trade_day,file_id,row_group)
+            INSERT INTO row_group_locator(symbol,trade_day,file_id,group_mask)
             VALUES(?,?,?,?)
+            ON CONFLICT(symbol,trade_day,file_id) DO UPDATE SET
+              group_mask=blob_or(row_group_locator.group_mask,excluded.group_mask)
         """, groups)
         db.execute("""
             INSERT INTO groups_done VALUES(?,?,?,?,?,?,?,?,?)
@@ -189,7 +219,8 @@ def open_index(index, manifest, resume):
     db.execute("PRAGMA journal_mode=WAL")
     db.execute("PRAGMA synchronous=FULL")
     db.execute("PRAGMA busy_timeout=60000")
-    db.create_function("bitcount", 1, lambda n: int(n).bit_count(), deterministic=True)
+    db.execute("PRAGMA cache_size=-65536")  # 64 MiB SQLite page cache
+    connect_udfs(db)
     signature = manifest_signature(manifest)
     if existing:
         try:
@@ -231,7 +262,11 @@ def index_summary(db, manifest, row_groups_total):
                COALESCE(SUM(source_rows - bitcount(slot_mask)),0), COUNT(*)
         FROM daily_coverage
     """).fetchone()
-    locator_count = db.execute("SELECT COUNT(*) FROM row_group_locator").fetchone()[0]
+    locator_rows, locator_memberships, mask_bytes = db.execute("""
+        SELECT COUNT(*),COALESCE(SUM(blob_bitcount(group_mask)),0),
+               COALESCE(SUM(length(group_mask)),0)
+        FROM row_group_locator
+    """).fetchone()
     assert int(raw_key_rows) == totals["candidate_rows"], (
         "Daily-key counts disagree with committed row-group statistics")
     return {
@@ -248,7 +283,17 @@ def index_summary(db, manifest, row_groups_total):
         "candidate_source_rows": int(raw_key_rows),
         "duplicate_regular_session_keys": int(duplicate_count),
         "stock_day_partitions": int(stock_days),
-        "row_group_locator_entries": int(locator_count),
+        "row_group_locator_entries": int(locator_memberships),
+        "row_group_locator_compact_rows": int(locator_rows),
+        "row_group_locator_payload_bytes": int(mask_bytes),
+        "locator_storage": "one compressed BLOB bitmap per (symbol,day,file)",
+        "row_group_locator_compression_ratio": round(
+            locator_memberships / locator_rows, 4) if locator_rows else None,
+        "sqlite_main_estimated_allocated_bytes": (
+            db.execute("PRAGMA page_size").fetchone()[0]
+            * db.execute("PRAGMA page_count").fetchone()[0]
+        ),
+        "sqlite_wal_not_included_in_estimate": True,
         "row_groups_stats": totals,
         "security_master_certified": False,
         "timestamp_5min_convention_certified": False,
@@ -262,10 +307,10 @@ def index_matches_and_groups(db, symbols, trade_day):
     """Trusted caller must first verify saved source metadata and completion."""
     groups = {}
     for sym in symbols:
-        for file_id, rg in db.execute(
-                "SELECT file_id,row_group FROM row_group_locator "
+        for file_id, bitmask in db.execute(
+                "SELECT file_id,group_mask FROM row_group_locator "
                 "WHERE symbol=? AND trade_day=?", (sym, trade_day)):
-            groups.setdefault(file_id, set()).add(rg)
+            groups.setdefault(file_id, set()).update(mask_group_ids(bitmask))
     return {key: sorted(value) for key, value in groups.items()}
 
 
@@ -317,7 +362,7 @@ def main(argv=None):
     try:
         if not 2000 <= args.year <= 2100:
             raise ValueError("Year outside supported range")
-        suffix = f"{args.year}-{args.universe}"
+        suffix = f"{args.year}-{args.universe}-v2"
         out, scratch = core.resolve_module_artifact_paths(
             args.out or Path("work") / "indexes" / f"pq-5min-{suffix}.sqlite", None)
         report, _ = core.resolve_module_artifact_paths(

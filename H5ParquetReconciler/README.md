@@ -83,6 +83,22 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 双源三日实测与证券日缺口归因（2026-10-26）
+
+2025-09-26、29、30三日全候选A股真实双源报告：H5 779,568、Parquet 782,352、交集779,568、H5独有0、Parquet独有2,784；同键量价差461,937（59.26%），价格差227,715、量额差454,682（分类有交叠）。两源重复键0、issues=[]，但+5分钟时标、单位及证券真值尚未认证，不能自动合并。
+
+为尽快定位2,784根Parquet独有K线的原因，新版报告按`证券+交易日`精确区分“整只证券当天H5无记录”和“该证券已有H5记录但仅部分五分钟键缺失”，并按代码前缀（非认证板块）分组统计量价冲突；JSON、Markdown同步输出，缺口统计须严格与全体记录守恒。
+
+先运行全部测试，再优先检测2026-10-19至23日新H5数据是否超出购买Parquet的覆盖：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2026 --periods 5min --from-date 2026-10-19 --to-date 2026-10-23 --universe a-share-candidate --batch-size 8192 --read-only --out "reports\h5-parquet-5min-2026-10-19-23-latest-gap.json"
+```
+
+之后可用全新`--out reports\h5-parquet-5min-2025-09-26-30-gap-attribution-v2.json`以及原2025三日命令复核缺口归因。详见[三日双源实测与证券日缺口分类](docs/DUAL_SOURCE_2025_3DAY_GAP_CLASSIFICATION_20261026.md)。
+
 ## 双源主线优先：2025年三个交易日全市场五分钟对账（2026-10-26）
 
 主线改回`Hikyuu H5 ↔ 购买的Parquet`真实数据对比，不等待2025年522个RowGroup单源索引完全完成。此前2025-09-30全市场单日（A股候选）已经得到H5 259,872根、Parquet 260,832根、同时间键重叠259,872、Parquet独有960、量价差异151,099根（58.14%）；但+5分钟时标、复权及数量单位仍是候选规则，不直接并集。

@@ -322,6 +322,16 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## V3 索引的独立只读完整审计（2026-10-26）
+
+当使用 `--report-detail progress` 跳过大表扫描后，可用独立的 `tools/audit-parquet-5min-coverage.py` 对**现有已提交 RowGroup**重新执行全量键统计，不推进断点、不改 SQLite 认证元数据、不读取原 Parquet 的行情行：
+
+```powershell
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\audit-parquet-5min-coverage.py "D:\\stock" --year 2025 --universe a-share-candidate --read-only --report "reports\\pq-5min-2025-v3-readonly-full-audit-01.json"
+```
+
+此报告的重复键/唯一键是**当前已建立索引部分**的全表重审，不是完整年度认证；即使发现0个重复也绝不能据此执行自动并集。详情和合成测试见 [V3 只读定期审计文档](docs/PARQUET_5MIN_V3_READONLY_AUDIT_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

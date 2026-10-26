@@ -533,8 +533,10 @@ def processing_profile(phase_times, group_timings, elapsed):
     decompression, Arrow conversion and Python key normalization together.
     WAL checkpoint time is a SUBSET of the budget stage (do not add twice).
     """
-    stages = ("parquet_read_and_key_aggregation", "sqlite_group_commit",
-              "budget_guard_and_checkpoint", "final_index_summary")
+    stages = ("parquet_metadata_open", "checkpoint_lookup",
+              "parquet_read_and_key_aggregation", "sqlite_group_commit",
+              "budget_guard_and_checkpoint", "progress_output",
+              "row_group_loop_other", "final_index_summary")
     group_count = len(group_timings)
     known = sum(phase_times.get(name, 0.0) for name in stages)
     slow_read = sorted(group_timings,
@@ -543,6 +545,10 @@ def processing_profile(phase_times, group_timings, elapsed):
     slow_commit = sorted(group_timings,
                          key=lambda x: (-x["commit_seconds"],
                                         x["file_id"], x["row_group"]))[:5]
+    slow_wall = sorted(
+        (row for row in group_timings if "row_group_wall_seconds" in row),
+        key=lambda x: (-x["row_group_wall_seconds"],
+                       x["file_id"], x["row_group"]))[:5]
     return {
         "profiled_new_groups": group_count,
         "phases_seconds": {name: round(phase_times.get(name, 0.0), 3)
@@ -552,11 +558,13 @@ def processing_profile(phase_times, group_timings, elapsed):
         "unattributed_seconds": round(max(0.0, elapsed-known), 3),
         "slowest_parquet_read_and_aggregate_groups": slow_read,
         "slowest_sqlite_commit_groups": slow_commit,
+        "slowest_row_group_wall_groups": slow_wall,
         "interpretation": (
             "Wall-clock stage estimates; Parquet decoding+key normalization are combined; "
             "WAL checkpoint time is included in budget guard, not additive. "
-            "Metadata load, stdout and Python control overhead may be unattributed. "
-            "The index snapshot clone time occurs before this run timer.")
+            "row_group_loop_other is a residual including Python loop/scheduling gaps, "
+            "not proof of CPU or disk work. Wall time can include OS suspension or "
+            "external I/O stalls. Clone setup and index opening precede this run timer.")
     }
 
 
@@ -649,8 +657,10 @@ def main(argv=None):
         if args.max_new_groups is not None and args.max_new_groups < 1:
             raise ValueError("--max-new-groups must be >=1")
         started = time.monotonic()
+        metadata_started = time.monotonic()
         open_files = [(filename, pq.ParquetFile(str(filename))) for filename in paths]
         total_groups = sum(pf.metadata.num_row_groups for _, pf in open_files)
+        metadata_seconds = time.monotonic() - metadata_started
         newly_processed = 0
         source_rows_this_run = 0
         limit_reached = False
@@ -660,6 +670,10 @@ def main(argv=None):
         wal_checkpoint_busy = 0
         wal_disk_bytes_reclaimed = 0
         phase_times = {
+            "parquet_metadata_open": metadata_seconds,
+            "checkpoint_lookup": 0.0,
+            "progress_output": 0.0,
+            "row_group_loop_other": 0.0,
             "parquet_read_and_key_aggregation": 0.0,
             "sqlite_group_commit": 0.0,
             "budget_guard_and_checkpoint": 0.0,
@@ -667,17 +681,23 @@ def main(argv=None):
             "final_index_summary": 0.0
         }
         group_timings = []
+        loop_started = time.monotonic()
         for file_id, (filename, pf) in enumerate(open_files):
             if not {"ts","symbol"}.issubset(pf.schema_arrow.names):
                 raise ValueError(f"Parquet key columns absent in {filename.name}")
             for rg in range(pf.metadata.num_row_groups):
-                if db.execute("SELECT 1 FROM groups_done WHERE file_id=? AND row_group=?",
-                              (file_id, rg)).fetchone():
+                lookup_started = time.monotonic()
+                already_done = db.execute(
+                    "SELECT 1 FROM groups_done WHERE file_id=? AND row_group=?",
+                    (file_id, rg)).fetchone()
+                phase_times["checkpoint_lookup"] += time.monotonic() - lookup_started
+                if already_done:
                     continue
                 if args.max_new_groups is not None and newly_processed >= args.max_new_groups:
                     limit_reached = True
                     stopped_for = "max_new_groups"
                     break
+                group_wall_started = time.monotonic()
                 if args.max_index_mib is not None:
                     budget_started = time.monotonic()
                     too_large, usage, checkpoint = budget_check_after_wal_recovery(
@@ -717,11 +737,13 @@ def main(argv=None):
                 newly_processed += 1
                 source_rows_this_run += counts["source_rows"]
                 if newly_processed % 5 == 0 or rg == pf.metadata.num_row_groups-1:
+                    output_started = time.monotonic()
                     print(f"Index {filename.name} group {rg+1}/{pf.metadata.num_row_groups}, "
                           f"source rows in group={counts['source_rows']:,}, "
                           f"distinct stock-days in group={len(packed):,}, "
                           f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
+                    phase_times["progress_output"] += time.monotonic() - output_started
                 if args.max_index_mib is not None:
                     budget_started = time.monotonic()
                     too_large, usage, checkpoint = budget_check_after_wal_recovery(
@@ -745,9 +767,19 @@ def main(argv=None):
                         print(f"SOFT BUDGET reached after committed row-group "
                               f"(limit={args.max_index_mib:g} MiB); stopping with resumable index",
                               flush=True)
+                        group_timings[-1]["row_group_wall_seconds"] = round(
+                            time.monotonic() - group_wall_started, 3)
                         break
+                group_timings[-1]["row_group_wall_seconds"] = round(
+                    time.monotonic() - group_wall_started, 3)
             if limit_reached or budget_reached:
                 break
+        loop_elapsed = time.monotonic() - loop_started
+        nested_stages = ("checkpoint_lookup", "parquet_read_and_key_aggregation",
+                         "sqlite_group_commit", "budget_guard_and_checkpoint",
+                         "progress_output")
+        phase_times["row_group_loop_other"] = max(
+            0.0, loop_elapsed - sum(phase_times[name] for name in nested_stages))
         summary_started = time.monotonic()
         result = index_summary(db, manifest, total_groups,
                                detail=args.report_detail)

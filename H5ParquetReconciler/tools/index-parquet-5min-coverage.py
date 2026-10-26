@@ -560,6 +560,28 @@ def processing_profile(phase_times, group_timings, elapsed):
     }
 
 
+def persist_report_certification(db, result):
+    """Persist only verified stats; never publish stale duplicate=0 in progress mode."""
+    with db:
+        db.execute("UPDATE meta SET value=? WHERE key='completed'",
+                   ("true" if result["index_complete"] and result["full_key_audit_performed"]
+                    else "false",))
+        db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                   ("full_key_audit_performed",
+                    "true" if result["full_key_audit_performed"] else "false"))
+        if result["full_key_audit_performed"]:
+            db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                       ("duplicate_regular_session_keys",
+                        str(result["duplicate_regular_session_keys"])))
+        else:
+            # Previous verified count is stale after an incomplete checkpoint.
+            db.execute("DELETE FROM meta WHERE key='duplicate_regular_session_keys'")
+        for key in ("bad_timestamp", "unexpected_session_stamp",
+                    "unrecognized_symbol"):
+            db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                       (key, str(result["row_groups_stats"][key])))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path)
@@ -753,26 +775,7 @@ def main(argv=None):
         result["wal_checkpoint_busy_this_run"] = wal_checkpoint_busy
         result["wal_reclaimed_bytes_this_run"] = wal_disk_bytes_reclaimed
         result.update(index_storage_usage(db, out))
-        with db:
-            db.execute("UPDATE meta SET value=? WHERE key='completed'",
-                       ("true" if result["index_complete"] and result["full_key_audit_performed"]
-                        else "false",))
-            db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
-                       ("full_key_audit_performed",
-                        "true" if result["full_key_audit_performed"] else "false"))
-            if result["full_key_audit_performed"]:
-                db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
-                           ("duplicate_regular_session_keys",
-                            str(result["duplicate_regular_session_keys"])))
-            else:
-                # A previous exact count becomes stale as more groups commit.
-                db.execute("DELETE FROM meta WHERE key='duplicate_regular_session_keys'")
-            for key, value in (
-                ("bad_timestamp", result["row_groups_stats"]["bad_timestamp"]),
-                ("unexpected_session_stamp", result["row_groups_stats"]["unexpected_session_stamp"]),
-                ("unrecognized_symbol", result["row_groups_stats"]["unrecognized_symbol"])):
-                db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
-                           (key, str(value)))
+        persist_report_certification(db, result)
         result["saved_index"] = out.relative_to(core.MODULE_DIR).as_posix()
         result["source_fingerprint"] = manifest_signature(manifest)
         report.parent.mkdir(parents=True, exist_ok=True)

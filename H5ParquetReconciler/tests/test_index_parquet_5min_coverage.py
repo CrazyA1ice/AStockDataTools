@@ -509,6 +509,19 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_processing_profile_separates_full_summary_from_unattributed(self):
+        timings = {
+            "parquet_read_and_key_aggregation": 3.0,
+            "sqlite_group_commit": 5.0,
+            "budget_guard_and_checkpoint": 1.0,
+            "wal_checkpoint_inside_budget": 0.5,
+            "final_index_summary": 7.0
+        }
+        profile = M.processing_profile(timings, [], 16.5)
+        self.assertEqual(profile["phases_seconds"]["final_index_summary"], 7.0)
+        self.assertEqual(profile["unattributed_seconds"], 0.5)
+        self.assertEqual(profile["wal_checkpoint_inside_budget_seconds"], 0.5)
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

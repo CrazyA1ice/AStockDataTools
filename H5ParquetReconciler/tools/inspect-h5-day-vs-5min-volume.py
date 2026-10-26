@@ -62,10 +62,10 @@ def read_candidate_market_file(root, market, period, year, lower, upper):
             left, right = core.h5_key_slice(ds, lower, upper)
             if left == right:
                 continue
-            # Only two integer scalar fields of this bounded date slice
-            # are materialized, never any OHLC/amount columns.
-            stamps = ds[left:right]["datetime"]
-            volume = ds[left:right]["transCount"]
+            # Use h5py field selection: only timestamps and volumes are
+            # fetched. Do not materialize OHLC or transAmount source values.
+            stamps = ds.fields("datetime")[left:right]
+            volume = ds.fields("transCount")[left:right]
             for stamp, amount in zip(stamps, volume):
                 stamp, amount = int(stamp), int(amount)
                 key = (symbol, stamp // 10000)

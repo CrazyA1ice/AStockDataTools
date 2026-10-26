@@ -277,13 +277,13 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         pyarrow=types.ModuleType("pyarrow")
         pyarrow.__path__=[]
         pyarrow.parquet=pq
-        with mock.patch.object(M.core,"MODULE_DIR",module_dir), \\
-             mock.patch.dict(sys.modules,{"pyarrow":pyarrow,"pyarrow.parquet":pq}):
+        with (mock.patch.object(M.core,"MODULE_DIR",module_dir),
+              mock.patch.dict(sys.modules,{"pyarrow":pyarrow,"pyarrow.parquet":pq})):
             with mock.patch.object(M,"wall_budget_exceeded",
                                    side_effect=[False,True]) as elapsed_check:
                 M.main([str(root),"--year","2025","--max-new-groups","3",
                         "--max-run-seconds","1","--report-detail","progress",
-                        "--read-only","--report","reports\\soft-wall-1.json"])
+                        "--read-only","--report","reports/soft-wall-1.json"])
                 self.assertEqual(elapsed_check.call_count,2)
             first=json.loads((module_dir/"reports"/"soft-wall-1.json").read_text(
                 encoding="utf-8"))
@@ -296,7 +296,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             self.assertIsNone(first["duplicate_regular_session_keys"])
             M.main([str(root),"--year","2025","--resume","--max-new-groups","3",
                     "--report-detail","progress","--read-only",
-                    "--report","reports\\soft-wall-resume.json"])
+                    "--report","reports/soft-wall-resume.json"])
         second=json.loads((module_dir/"reports"/"soft-wall-resume.json").read_text(
             encoding="utf-8"))
         self.assertTrue(second["index_complete"])

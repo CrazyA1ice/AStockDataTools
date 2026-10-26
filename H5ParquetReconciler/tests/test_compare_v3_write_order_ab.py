@@ -155,5 +155,26 @@ class MatchedReadOnlyABTests(unittest.TestCase):
             self.reports[1] = original
 
 
+    def test_cli_refuses_to_write_report_as_existing_sqlite_wal_sidecar(self):
+        import contextlib
+        import io
+        from unittest import mock
+        options = [
+            str(self.module / "fake_source"), "--year", "2025",
+            "--source-index", "work/indexes/source.sqlite",
+            "--sorted-index", "work/indexes/sorted.sqlite",
+            "--source-report", "reports/source.json",
+            "--sorted-report", "reports/sorted.json",
+            "--out", "work/indexes/source.sqlite-wal", "--read-only"
+        ]
+        with mock.patch.object(C.core, "MODULE_DIR", self.module):
+            with contextlib.redirect_stderr(io.StringIO()) as errors:
+                with self.assertRaises(SystemExit) as exc:
+                    C.main(options)
+        self.assertEqual(exc.exception.code, 2)
+        self.assertIn("journal path", errors.getvalue())
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -205,6 +205,13 @@ def main(argv=None):
         root, _, _ = core.resolve_safe_paths(args.root, resolved["out"], resolved["source_index"])
         if len(set(resolved.values())) != len(resolved):
             raise ValueError("A/B input and output paths must be distinct")
+        protected_sidecars = {
+            Path(str(resolved[key]) + suffix)
+            for key in ("source_index", "sorted_index")
+            for suffix in ("-wal", "-shm", "-journal")
+        }
+        if resolved["out"] in protected_sidecars:
+            raise ValueError("Comparison report cannot use an SQLite journal path")
         if resolved["out"].exists():
             raise ValueError("Comparison report already exists: refuse overwrite")
         for key in ("source_report", "sorted_report"):

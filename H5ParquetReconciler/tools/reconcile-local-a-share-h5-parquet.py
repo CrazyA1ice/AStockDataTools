@@ -370,6 +370,83 @@ def record_quantity_field_diagnostic(out, parquet, h5, different):
         out["parquet_divided_by_h5_near_factor_within_1pct"]["other"] += 1
 
 
+# Mutually exclusive, exactly one mask for every matched 5min key.
+# The mask encodes residuals AFTER the tentative H5 volume ×100 conversion.
+CANDIDATE_RESIDUAL_MASKS = (
+    "none", "volume", "amount", "price",
+    "volume_amount", "volume_price", "amount_price",
+    "volume_amount_price"
+)
+
+
+def candidate_residual_mask(volume_diff, amount_diff, price_diff):
+    label = "_".join(
+        name for name, bad in (("volume", volume_diff),
+                               ("amount", amount_diff),
+                               ("price", price_diff)) if bad)
+    return label or "none"
+
+
+def finalize_candidate_residual_masks(candidate, stats):
+    """Fail closed if exact candidate partitions violate legacy marginals."""
+    masks = candidate.get("exact_residual_field_mask_counts")
+    if masks is None:
+        return  # Older/hand-constructed reports still accepted by renderer.
+    expected = set(CANDIDATE_RESIDUAL_MASKS)
+    if set(masks) != expected or any(
+            type(v) is not int or v < 0 for v in masks.values()):
+        raise ValueError("Candidate exact field-mask schema invalid")
+    count = candidate["compared_overlap_keys"]
+    nonzero = sum(v for k, v in masks.items() if k != "none")
+    if (sum(masks.values()) != count
+        or nonzero != candidate[
+            "candidate_value_mismatch_with_original_price_and_amount_rules"]
+        or sum(v for k, v in masks.items() if "volume" in k)
+           != candidate["candidate_volume_mismatch"]
+        or sum(v for k, v in masks.items() if "amount" in k)
+           != stats["quantity_scale_diagnostics"]["fields"]["amount"][
+               "different_by_existing_tolerance"]
+        or sum(v for k, v in masks.items() if "price" in k)
+           != stats["price_mismatch_rows"]):
+        raise ValueError("Candidate exact field-mask marginal conservation failed")
+    for section, old_groups in (
+            ("exact_field_mask_by_day", stats.get("by_day", {})),
+            ("exact_field_mask_by_prefix", stats.get("by_code_prefix_group", {}))):
+        grouped = candidate[section]
+        if set(grouped) != set(old_groups):
+            raise ValueError("Candidate exact field-mask group identity mismatch")
+        for name, counts in grouped.items():
+            if set(counts) != expected or sum(counts.values()) != old_groups[name].get(
+                    "matched", 0):
+                raise ValueError("Candidate exact field-mask group match mismatch")
+            for field, flag in (
+                    ("volume", "candidate_h5_volume_x100_mismatch"),
+                    ("amount", "amount_mismatch"),
+                    ("price", "price_mismatch")):
+                if sum(v for mask, v in counts.items() if field in mask
+                       ) != old_groups[name].get(flag, 0):
+                    raise ValueError(
+                        "Candidate exact field-mask group marginal mismatch")
+    for mask in CANDIDATE_RESIDUAL_MASKS:
+        if sum(group[mask] for group in candidate["exact_field_mask_by_day"].values()
+               ) != masks[mask] or sum(
+                   group[mask] for group in candidate["exact_field_mask_by_prefix"].values()
+               ) != masks[mask]:
+            raise ValueError("Candidate exact field-mask partition totals mismatch")
+    stock_days = candidate.pop("_internal_residual_stock_days", {})
+    candidate["exact_residual_top_stock_days"] = [
+        {"symbol": symbol, "day": str(day), "candidate_conflicting_bars": total,
+         "field_mask_counts": dict(sorted(mask_counts.items()))}
+        for (symbol, day), mask_counts in sorted(
+            stock_days.items(),
+            key=lambda item: (-sum(item[1].values()), item[0]))[:16]
+        for total in (sum(mask_counts.values()),)
+    ]
+    candidate["exact_residual_top_stock_days_truncated"] = len(stock_days) > 16
+    candidate["exact_masks_are_mutually_exclusive"] = True
+    candidate["candidate_unit_mapping_certified"] = False
+
+
 def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
                                           day_bucket):
     """Diagnose quantity conflict independently from existing matching rules."""
@@ -397,6 +474,11 @@ def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
             "legacy_match_broken_by_candidate": 0,
             "candidate_value_mismatch_with_original_price_and_amount_rules": 0,
             "candidate_volume_mismatch_by_day": {},
+            "exact_residual_field_mask_counts": {
+                key: 0 for key in CANDIDATE_RESIDUAL_MASKS},
+            "exact_field_mask_by_day": {},
+            "exact_field_mask_by_prefix": {},
+            "_internal_residual_stock_days": {},
             "source_values_modified": False,
             "factor_certified": False,
             "needs_independent_day_volume_and_vendor_unit_validation": True
@@ -428,6 +510,19 @@ def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
     candidate_any_diff = corrected_diff or amount_diff or price_diff
     candidate["candidate_value_mismatch_with_original_price_and_amount_rules"
               ] += int(candidate_any_diff)
+    mask = candidate_residual_mask(corrected_diff, amount_diff, price_diff)
+    candidate["exact_residual_field_mask_counts"][mask] += 1
+    day_key = str(stamp // 10000)
+    for groups, group in (
+            (candidate["exact_field_mask_by_day"], day_key),
+            (candidate["exact_field_mask_by_prefix"], symbol_prefix_group(symbol))):
+        counts = groups.setdefault(
+            group, {k: 0 for k in CANDIDATE_RESIDUAL_MASKS})
+        counts[mask] += 1
+    if candidate_any_diff:
+        stock_day = candidate["_internal_residual_stock_days"].setdefault(
+            (symbol, stamp // 10000), {})
+        stock_day[mask] = stock_day.get(mask, 0) + 1
     if corrected_diff:
         d = str(stamp // 10000)
         by_day = candidate["candidate_volume_mismatch_by_day"]
@@ -805,6 +900,7 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
             or sum(candidate["candidate_volume_mismatch_by_day"].values())
                != candidate["candidate_volume_mismatch"]):
             raise ValueError("H5 5min volume x100 candidate conservation failed")
+        finalize_candidate_residual_masks(candidate, stats)
     prefix_groups = stats.get("by_code_prefix_group", {})
     for entry in prefix_groups.values():
         n = entry.get("matched", 0)

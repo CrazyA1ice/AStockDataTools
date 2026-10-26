@@ -670,6 +670,7 @@ def main(argv=None):
         if args.max_new_groups is not None and args.max_new_groups < 1:
             raise ValueError("--max-new-groups must be >=1")
         started = time.monotonic()
+        cpu_started = time.process_time()
         metadata_started = time.monotonic()
         open_files = [(filename, pq.ParquetFile(str(filename))) for filename in paths]
         total_groups = sum(pf.metadata.num_row_groups for _, pf in open_files)
@@ -795,6 +796,7 @@ def main(argv=None):
                                detail=args.report_detail)
         phase_times["final_index_summary"] = time.monotonic() - summary_started
         elapsed = time.monotonic()-started
+        process_cpu_elapsed = time.process_time() - cpu_started
         result["sqlite_journal_mode"] = db.execute("PRAGMA journal_mode").fetchone()[0].lower()
         result["sqlite_write_order"] = args.write_order
         result["report_detail_requested"] = args.report_detail
@@ -804,6 +806,7 @@ def main(argv=None):
         result["new_row_groups_this_run"] = newly_processed
         result["source_rows_this_run"] = source_rows_this_run
         result["elapsed_seconds_this_run"] = round(elapsed, 3)
+        result["process_cpu_seconds_this_run"] = round(process_cpu_elapsed, 3)
         result["stage_profile_this_run"] = processing_profile(
             phase_times, group_timings, elapsed)
         result["new_groups_per_second"] = (

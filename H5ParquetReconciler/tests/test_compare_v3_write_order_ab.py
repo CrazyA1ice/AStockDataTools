@@ -67,9 +67,13 @@ class MatchedReadOnlyABTests(unittest.TestCase):
                 "new_row_groups_this_run": 1,
                 "stopped_for": "max_new_groups", "soft_budget_reached": False,
                 "soft_wall_budget_reached": False, "elapsed_seconds_this_run": elapsed,
-                "stage_profile_this_run": {"phases_seconds": {
-                    "sqlite_group_commit": commit,
-                    "parquet_read_and_key_aggregation": 4.0}}
+                "stage_profile_this_run": {
+                    "phases_seconds": {
+                        "sqlite_group_commit": commit,
+                        "parquet_read_and_key_aggregation": 4.0},
+                    "slowest_row_group_wall_groups": [
+                        {"file_id": 0, "row_group": 1,
+                         "row_group_wall_seconds": elapsed / 2}]}
             })
             self.reports.append(result)
 
@@ -137,6 +141,20 @@ class MatchedReadOnlyABTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "logical mismatch"):
             self.compare()
 
+    def test_equal_final_index_but_different_claimed_input_groups_rejected(self):
+        original = self.reports[1]
+        changed = dict(original)
+        changed["stage_profile_this_run"] = dict(
+            original["stage_profile_this_run"],
+            slowest_row_group_wall_groups=[
+                {"file_id": 0, "row_group": 2, "row_group_wall_seconds": 1.0}])
+        self.reports[1] = changed
+        try:
+            with self.assertRaisesRegex(ValueError, "different RowGroups"):
+                self.compare()
+        finally:
+            self.reports[1] = original
+
     def test_stream_table_comparison_rejects_different_db_paths(self):
         with self.assertRaisesRegex(ValueError, "distinct"):
             C.compare_logical_tables(self.source, self.source)
@@ -146,7 +164,9 @@ class MatchedReadOnlyABTests(unittest.TestCase):
         invalid = dict(original)
         invalid["stage_profile_this_run"] = {
             "phases_seconds": {"sqlite_group_commit": float("nan"),
-                               "parquet_read_and_key_aggregation": 4.0}}
+                               "parquet_read_and_key_aggregation": 4.0},
+            "slowest_row_group_wall_groups": [
+                {"file_id": 0, "row_group": 1, "row_group_wall_seconds": 1.0}]}
         self.reports[1] = invalid
         try:
             with self.assertRaisesRegex(ValueError, "Invalid A/B timing"):

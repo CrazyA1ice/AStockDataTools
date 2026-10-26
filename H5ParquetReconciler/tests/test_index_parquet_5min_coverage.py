@@ -229,6 +229,74 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
                 self.assertEqual(err.exception.code,2)
         self.assertFalse(self.index.exists())
 
+    def test_budget_checkpoint_reclaims_unnecessary_wal_and_can_continue(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            # Build a real transaction log without changing source-data records.
+            # Keep below SQLite's default automatic 1000-page checkpoint.
+            for n in range(40):
+                with db:
+                    db.execute(
+                        "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                        ("synthetic_wal_pressure", "A"*4096 + str(n)))
+            before=M.index_storage_usage(db,self.index)
+            self.assertGreater(
+                before["sqlite_main_and_wal_on_disk_bytes"],
+                before["sqlite_logical_allocated_bytes"])
+            cap=(before["sqlite_main_and_wal_on_disk_bytes"] +
+                 before["sqlite_logical_allocated_bytes"])/2/1048576
+            blocked,after,event=M.budget_check_after_wal_recovery(
+                db,self.index,cap)
+            self.assertFalse(blocked)
+            self.assertIsNotNone(event)
+            self.assertFalse(event["checkpoint_busy"])
+            self.assertGreater(event["reclaimed_disk_bytes"],0)
+            self.assertLess(after["sqlite_budget_measure_bytes"],
+                            before["sqlite_budget_measure_bytes"])
+            self.assertFalse(db.in_transaction)
+            self.assertEqual(db.execute(
+                "SELECT value FROM meta WHERE key='synthetic_wal_pressure'"
+                ).fetchone()[0][-2:],"39")
+        finally:
+            db.close()
+
+    def test_budget_checkpoint_keeps_real_over_budget_state(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            with db:
+                db.execute("INSERT INTO meta(key,value) VALUES(?,?)",
+                           ("extra", "B"*4096))
+            blocked,after,event=M.budget_check_after_wal_recovery(
+                db,self.index,0.001)
+            self.assertTrue(blocked)
+            self.assertIsNotNone(event)
+            self.assertFalse(event["checkpoint_busy"])
+            self.assertGreater(after["sqlite_logical_allocated_bytes"],1024)
+        finally:
+            db.close()
+
+    def test_budget_checkpoint_skips_wal_work_under_limit(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            blocked,usage,event=M.budget_check_after_wal_recovery(
+                db,self.index,1024)
+            self.assertFalse(blocked)
+            self.assertIsNone(event)
+            self.assertGreater(usage["sqlite_budget_measure_bytes"],0)
+        finally:
+            db.close()
+
+    def test_budget_checkpoint_refuses_uncommitted_transactions(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            db.execute("INSERT INTO meta(key,value) VALUES(?,?)",
+                       ("uncommitted","test"))
+            with self.assertRaisesRegex(ValueError,"inside a transaction"):
+                M.budget_check_after_wal_recovery(db,self.index,0.001)
+            db.rollback()
+        finally:
+            db.close()
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

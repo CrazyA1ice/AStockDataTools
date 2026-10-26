@@ -219,6 +219,63 @@ def proposed_window(h5, parquet, year, max_calendar_days=7):
     }
 
 
+def proposed_h5_newer_window(h5, parquet, year, max_calendar_days=7):
+    """Find a small H5-after-Parquet metadata frontier, not an audited gap.
+
+    A footer maximum is not a security-specific last bar; H5 latest is only
+    a dataset boundary. No actual records are counted until reconcile runs.
+    """
+    if not 1 <= max_calendar_days <= 31:
+        raise ValueError("Window limit must be 1..31 calendar days")
+    h_start = h5.get("earliest_candidate_year_bar_end")
+    h_end = h5.get("latest_candidate_year_bar_end")
+    p_end = parquet.get("latest_footer_candidate_bar_end")
+    if (None in (h_start, h_end, p_end) or h5.get("missing_market_files")
+        or h5.get("invalid_candidate_datasets")
+        or parquet.get("files", 0) == 0
+        or parquet.get("groups_without_usable_ts_footer")):
+        return {
+            "available": False,
+            "reason": "incomplete_source_or_footer_metadata",
+            "proves_h5_only_keys": False
+        }
+    try:
+        h_start_day = date.fromisoformat(
+            str(h_start)[:4] + "-" + str(h_start)[4:6] + "-" + str(h_start)[6:8])
+        h_last_day = date.fromisoformat(
+            str(h_end)[:4] + "-" + str(h_end)[4:6] + "-" + str(h_end)[6:8])
+        p_last_day = date.fromisoformat(
+            str(p_end)[:4] + "-" + str(p_end)[4:6] + "-" + str(p_end)[6:8])
+    except ValueError:
+        return {
+            "available": False, "reason": "invalid_source_date_metadata",
+            "proves_h5_only_keys": False
+        }
+    if h_last_day <= p_last_day or h_last_day.year != year:
+        return {
+            "available": False, "reason": "no_later_h5_date_envelope",
+            "proves_h5_only_keys": False
+        }
+    first_tail_day = max(
+        h_start_day, p_last_day + timedelta(days=1),
+        h_last_day - timedelta(days=max_calendar_days - 1))
+    if first_tail_day > h_last_day:
+        return {
+            "available": False, "reason": "no_later_h5_date_envelope",
+            "proves_h5_only_keys": False
+        }
+    return {
+        "available": True,
+        "from_date": first_tail_day.isoformat(),
+        "to_date": h_last_day.isoformat(),
+        "parquet_last_footer_candidate_date": p_last_day.isoformat(),
+        "reason": "h5_latest_date_envelope_extends_past_parquet_footer",
+        "proves_h5_only_keys": False,
+        "warning": ("Metadata only: individual H5 bars, valid market listings, "
+                    "and actual source-only keys require bounded reconciliation.")
+    }
+
+
 def make_report(root, year):
     h = inspect_h5(root, year)
     p = inspect_parquet(root, year)
@@ -229,6 +286,7 @@ def make_report(root, year):
         "h5": h,
         "parquet": p,
         "suggested_bounded_window": proposed_window(h, p, year),
+        "suggested_h5_newer_window": proposed_h5_newer_window(h, p, year),
         "original_sources_modified": False,
         "no_raw_ohlcv_exported": True,
         "scope": "H5 per-dataset datetime boundaries; Parquet rowgroup ts footers",

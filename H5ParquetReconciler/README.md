@@ -83,6 +83,22 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 2026年9月29日四周期北交所异常聚焦（2026-10-26）
+
+最新两份本机只读报告同时核实了单位假设及少量异常：**H5**当日5,548组完整证券日中5,547组日线—5min量能守恒（99.982%），唯一超0.1%的是**BJ920121**；**Parquet**当日5,558组完整证券日中5,556组原口径量能守恒（99.964%），异常为**BJ920121、BJ920069**，而且还有**12个Parquet分钟有键、day无键的证券日**。Parquet day/5min分别×100的替代映射通过数均为0，H5五分钟×100及Parquet原值更值得继续验证，但尚非官方认证。
+
+新版`inspect-parquet-day-vs-5min-volume.py`新增了不含OHLCV的**12个缺日线股票日期示例**，并接受`--focus-symbols`同时核查指定证券的**H5 day/H5 5min/Parquet day/Parquet 5min**记录数量、48根标签完整性、各自内部量能守恒和跨供应商分钟量候选×100差异。新增2项纯合成测试；源文件始终只读，`safe_to_automatically_union=false`。详情：[2026年北交所两证券异常及12组缺日线](docs/DUAL_SOURCE_2026_BJ_4CYCLE_EXCEPTION_AUDIT_20261026.md)。
+
+Windows仓库根目录执行（先通过全部测试）：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inspect-parquet-day-vs-5min-volume.py "D:\stock" --year 2026 --from-date 2026-09-29 --to-date 2026-09-29 --batch-size 8192 --focus-symbols BJ920121 BJ920069 --read-only --out "reports\pq-h5-bj-focused-2026-09-29.json"
+```
+
+上传唯一的新`pq-h5-bj-focused-2026-09-29.json`，无需再单独跑H5身份扫描或整个年度Parquet。严格保留已有统计，不修改购买数据，不上传行情条目。
+
 ## 最新H5跨周期实测22,191/22,192通过，进一步核对购买Parquet（2026-10-26）
 
 `h5-day-vs-5min-volume-2026-09-24-30.json`真实核验：H5四个有数据日共有**22,192个完整48根、日线与5min同证券同日都存在的候选股票日**；将5min `transCount×100`和日线`transCount×100`比较，**22,191组（99.9955%）**满足0.1%守恒阈值，22,021组原始计数求和严格相等，另170组仅有容差内差异；只有**9月29日1个证券日超差**。未换算的五分钟成交量对比候选日线成交量：**0组通过**。新工具路径与报告见[H5真实守恒结论与Parquet跨周期下一步](docs/DUAL_SOURCE_2026_H5_CONSERVATION_CONFIRMED_PQ_NEXT_20261026.md)。

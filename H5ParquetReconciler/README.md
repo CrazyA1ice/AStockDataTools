@@ -83,6 +83,23 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 最新H5跨周期实测22,191/22,192通过，进一步核对购买Parquet（2026-10-26）
+
+`h5-day-vs-5min-volume-2026-09-24-30.json`真实核验：H5四个有数据日共有**22,192个完整48根、日线与5min同证券同日都存在的候选股票日**；将5min `transCount×100`和日线`transCount×100`比较，**22,191组（99.9955%）**满足0.1%守恒阈值，22,021组原始计数求和严格相等，另170组仅有容差内差异；只有**9月29日1个证券日超差**。未换算的五分钟成交量对比候选日线成交量：**0组通过**。新工具路径与报告见[H5真实守恒结论与Parquet跨周期下一步](docs/DUAL_SOURCE_2026_H5_CONSERVATION_CONFIRMED_PQ_NEXT_20261026.md)。
+
+本轮两个精准诊断：现有`inspect-h5-day-vs-5min-volume.py`增加**最多12个异常证券+日期示例（不公开量价）**；新增`inspect-parquet-day-vs-5min-volume.py`，只扫描限定日期的Parquet `day`和`5min`的ts/symbol/volume列，按ts footer跳过其他行组，统计48根完整证券日的成交量守恒及三种候选倍率。没有官方证券主数据、交易时标和单位定义前仍不认证单位、不自动并集。新增合成测试，待Windows本机通过。
+
+更新main后依次执行全部测试及9月29日两个有界工具：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inspect-h5-day-vs-5min-volume.py "D:\stock" --year 2026 --from-date 2026-09-29 --to-date 2026-09-29 --read-only --out "reports\h5-day-vs-5min-volume-2026-09-29-anomaly-id.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inspect-parquet-day-vs-5min-volume.py "D:\stock" --year 2026 --from-date 2026-09-29 --to-date 2026-09-29 --batch-size 8192 --read-only --out "reports\pq-day-vs-5min-volume-2026-09-29.json"
+```
+
+**只需上传2份新JSON。** 不重复2026年9月前四天双源全量审计、10月H5尾段或2025年度V3索引，不写源`D:\stock`。
+
 ## H5五分钟成交量×100实测通过，进入跨周期守恒检查（2026-10-26）
 
 最新本地`h5-parquet-5min-2026-09-24-30-volume-x100-candidate.json`显示：2026年9月24、28、29、30日1,065,216个同键五分钟样本，原成交量冲突1,060,937，H5`transCount×100`后仅**3,097**根；**1,057,840个旧成交量冲突消除（99.708%），新引入冲突0**。价格/成交额沿用原规则时完整量价冲突从1,060,937下降至**3,440（0.323%）**，完整量价一致1,061,776根。这个结果强烈支持100倍单位假设，但还不是数据商的正式单位认证。

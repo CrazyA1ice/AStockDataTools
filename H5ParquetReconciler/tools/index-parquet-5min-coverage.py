@@ -299,44 +299,70 @@ def open_index(index, manifest, resume, journal_mode="wal"):
     return db
 
 
-def index_summary(db, manifest, row_groups_total):
+def index_summary(db, manifest, row_groups_total, detail="full"):
+    """Exact full audit or a visibly incomplete O(row_groups) progress report.
+
+    On a partial year, scanning millions of stock-days and locator blobs on
+    every small run takes measurable time. Progress mode skips those two
+    full-table scans and never reports unknown unique/duplicate counts as zero.
+    Finishing the final source row group ALWAYS performs a full audit.
+    """
+    if detail not in ("full", "progress"):
+        raise ValueError("Unsupported report detail; use full or progress")
     row = db.execute(
         "SELECT " + ",".join("COALESCE(SUM("+key+"),0)" for key in STATS)
         + ",COUNT(*) FROM groups_done").fetchone()
     totals = dict(zip((*STATS, "row_groups_complete"), map(int, row)))
-    unique_key_count, raw_key_rows, duplicate_count, stock_days = db.execute("""
-        SELECT COALESCE(SUM(bitcount(slot_mask)),0),
-               COALESCE(SUM(source_rows),0),
-               COALESCE(SUM(source_rows - bitcount(slot_mask)),0), COUNT(*)
-        FROM daily_coverage
-    """).fetchone()
-    locator_rows, locator_memberships, mask_bytes = db.execute("""
-        SELECT COUNT(*),COALESCE(SUM(group_id_count(group_ids)),0),
-               COALESCE(SUM(length(group_ids)),0)
-        FROM row_group_locator
-    """).fetchone()
-    assert int(raw_key_rows) == totals["candidate_rows"], (
-        "Daily-key counts disagree with committed row-group statistics")
+    groups_done = totals.pop("row_groups_complete")
+    complete = groups_done == row_groups_total
+    effective = "full" if complete else detail
+    unique_key_count = duplicate_count = stock_days = None
+    locator_rows = locator_memberships = mask_bytes = None
+    if effective == "full":
+        unique_key_count, raw_key_rows, duplicate_count, stock_days = db.execute("""
+            SELECT COALESCE(SUM(bitcount(slot_mask)),0),
+                   COALESCE(SUM(source_rows),0),
+                   COALESCE(SUM(source_rows - bitcount(slot_mask)),0), COUNT(*)
+            FROM daily_coverage
+        """).fetchone()
+        locator_rows, locator_memberships, mask_bytes = db.execute("""
+            SELECT COUNT(*),COALESCE(SUM(group_id_count(group_ids)),0),
+                   COALESCE(SUM(length(group_ids)),0)
+            FROM row_group_locator
+        """).fetchone()
+        if int(raw_key_rows) != totals["candidate_rows"]:
+            raise ValueError("Daily-key counts disagree with committed row-group statistics")
+    else:
+        # Exact groups_done totals; uniqueness/duplicate/locator metrics unknown.
+        raw_key_rows = totals["candidate_rows"]
     return {
         "format": VERSION,
         "year": manifest["year"],
         "universe": manifest["universe"],
         "files": len(manifest["files"]),
         "row_groups_total": row_groups_total,
-        "row_groups_complete": totals.pop("row_groups_complete"),
-        "index_complete": (row_groups_total == db.execute(
-            "SELECT COUNT(*) FROM groups_done").fetchone()[0]),
+        "row_groups_complete": groups_done,
+        "index_complete": complete,
+        "report_detail_effective": effective,
+        "full_key_audit_performed": effective == "full",
+        "progress_metrics_require_full_audit": effective == "progress",
         "source_fingerprint_uses_only_file_size_mtime": True,
-        "unique_regular_session_keys": int(unique_key_count),
+        "unique_regular_session_keys": (int(unique_key_count)
+                                        if unique_key_count is not None else None),
         "candidate_source_rows": int(raw_key_rows),
-        "duplicate_regular_session_keys": int(duplicate_count),
-        "stock_day_partitions": int(stock_days),
-        "row_group_locator_entries": int(locator_memberships),
-        "row_group_locator_compact_rows": int(locator_rows),
-        "row_group_locator_payload_bytes": int(mask_bytes),
+        "duplicate_regular_session_keys": (int(duplicate_count)
+                                           if duplicate_count is not None else None),
+        "stock_day_partitions": (int(stock_days) if stock_days is not None else None),
+        "row_group_locator_entries": (int(locator_memberships)
+                                      if locator_memberships is not None else None),
+        "row_group_locator_compact_rows": (int(locator_rows)
+                                          if locator_rows is not None else None),
+        "row_group_locator_payload_bytes": (int(mask_bytes)
+                                            if mask_bytes is not None else None),
         "locator_storage": "one sorted unsigned LEB128 ID list per (symbol,day,file)",
-        "row_group_locator_compression_ratio": round(
-            locator_memberships / locator_rows, 4) if locator_rows else None,
+        "row_group_locator_compression_ratio": (
+            round(locator_memberships / locator_rows, 4)
+            if locator_rows else None),
         "sqlite_main_estimated_allocated_bytes": (
             db.execute("PRAGMA page_size").fetchone()[0]
             * db.execute("PRAGMA page_count").fetchone()[0]
@@ -546,6 +572,9 @@ def main(argv=None):
                     help="JSON summary under module, default reports/...")
     ap.add_argument("--max-new-groups", type=int, default=None,
                     help="Optional smoke run limit; index stays incomplete and can resume later")
+    ap.add_argument("--report-detail", choices=("full","progress"), default="full",
+                    help="On incomplete indexes, progress skips exact key/duplicate scans; "
+                         "last group always forces full audit")
     ap.add_argument("--max-index-mib", type=float, default=None,
                     help="Soft SQLite main+WAL space guard (MiB), checked after every completed row group")
     ap.add_argument("--resume", action="store_true")
@@ -698,11 +727,13 @@ def main(argv=None):
             if limit_reached or budget_reached:
                 break
         summary_started = time.monotonic()
-        result = index_summary(db, manifest, total_groups)
+        result = index_summary(db, manifest, total_groups,
+                               detail=args.report_detail)
         phase_times["final_index_summary"] = time.monotonic() - summary_started
         elapsed = time.monotonic()-started
         result["sqlite_journal_mode"] = db.execute("PRAGMA journal_mode").fetchone()[0].lower()
         result["sqlite_write_order"] = args.write_order
+        result["report_detail_requested"] = args.report_detail
         result["clone_source_index"] = (
             clone_origin.relative_to(core.MODULE_DIR).as_posix()
             if clone_origin is not None else None)
@@ -724,9 +755,19 @@ def main(argv=None):
         result.update(index_storage_usage(db, out))
         with db:
             db.execute("UPDATE meta SET value=? WHERE key='completed'",
-                       ("true" if result["index_complete"] else "false",))
+                       ("true" if result["index_complete"] and result["full_key_audit_performed"]
+                        else "false",))
+            db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                       ("full_key_audit_performed",
+                        "true" if result["full_key_audit_performed"] else "false"))
+            if result["full_key_audit_performed"]:
+                db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+                           ("duplicate_regular_session_keys",
+                            str(result["duplicate_regular_session_keys"])))
+            else:
+                # A previous exact count becomes stale as more groups commit.
+                db.execute("DELETE FROM meta WHERE key='duplicate_regular_session_keys'")
             for key, value in (
-                ("duplicate_regular_session_keys", result["duplicate_regular_session_keys"]),
                 ("bad_timestamp", result["row_groups_stats"]["bad_timestamp"]),
                 ("unexpected_session_stamp", result["row_groups_stats"]["unexpected_session_stamp"]),
                 ("unrecognized_symbol", result["row_groups_stats"]["unrecognized_symbol"])):

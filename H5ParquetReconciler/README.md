@@ -244,6 +244,22 @@ git pull --ff-only origin main
 
 V3验证正确后，再`--resume --max-new-groups 8`处理另外8组，观察累计10组的SQLite体积和速度。**不得直接从2组跳到522组**；V3是稀疏场景优化，不承诺所有布局都比V2快或小。[V1/V2的真实数据审查与V3使用说明](docs/PARQUET_5MIN_INDEX_V3_SPARSE_20261026.md)。本轮新增1项索引测试，模块总数64项，需用户Windows本机验收。
 
+## V3索引：10个RowGroup已验证，增加磁盘预算续建
+
+2025年度V3五分钟索引已经真实累计完成10/522个RowGroup：扫描1,230,846条ts/symbol，候选唯一键1,230,687，重复0，分区565,023，SQLite逻辑占用约27.64MiB；只有10组，并非全年度数据。**不要直接将剩余512组全部跑完。**
+
+本轮新增 `--max-index-mib` 软磁盘保护，按每个RowGroup事务完成时，使用SQLite已分配空间及主库+WAL实际字节中的较大值判断；超过阈值会停止下一个RowGroup，保留`--resume`断点。它不是严格容量上限：单组事务可能使文件超额。报告新增本轮索引处理行数、耗时、组/秒和磁盘使用字段。
+
+在 `D:\ChatGPT\AStockDataTools` 根目录，先通过合成测试（预计67项），再用已有10组V3索引续建**最多20个新行组，96MiB软预算**：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 20 --max-index-mib 96 --read-only --report "reports\pq-5min-2025-index-v3-budgeted-next.json"
+```
+
+需检查`soft_budget_reached`、`stopped_for`、`sqlite_budget_measure_bytes`、`elapsed_seconds_this_run`及新重复键。所有索引/报告写在本模块 `work/`和 `reports/`，付费源行情保持只读。[10组实测记录与分段续建指导](docs/PARQUET_5MIN_V3_10GROUP_BUDGET_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

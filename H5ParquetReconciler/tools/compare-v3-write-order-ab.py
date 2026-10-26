@@ -12,6 +12,7 @@ import itertools
 import json
 import math
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,10 +54,10 @@ def compare_logical_tables(source_index: Path, sorted_index: Path) -> dict:
     if source_index.resolve() == sorted_index.resolve():
         raise ValueError("A/B SQLite indexes must be two distinct snapshots")
     counts = {}
-    with sqlite3.connect(source_index.resolve().as_uri() + "?mode=ro",
-                         uri=True, timeout=60) as source_db, \
-         sqlite3.connect(sorted_index.resolve().as_uri() + "?mode=ro",
-                         uri=True, timeout=60) as sorted_db:
+    with (closing(sqlite3.connect(source_index.resolve().as_uri() + "?mode=ro",
+                                  uri=True, timeout=60)) as source_db,
+          closing(sqlite3.connect(sorted_index.resolve().as_uri() + "?mode=ro",
+                                  uri=True, timeout=60)) as sorted_db):
         source_db.execute("BEGIN")
         sorted_db.execute("BEGIN")
         sentinel = object()
@@ -111,14 +112,15 @@ def compare_matched_ab(source_index: Path, sorted_index: Path,
         if (report.get("soft_budget_reached") is not False
                 or report.get("soft_wall_budget_reached") not in (False, None)):
             raise ValueError(f"{label} hit a soft budget; comparison invalid")
-        if report.get("new_row_groups_this_run", 0) <= 0:
+        new_groups = report.get("new_row_groups_this_run")
+        if type(new_groups) is not int or new_groups <= 0:
             raise ValueError(f"{label} did not process any new row groups")
-    if (source_report["clone_source_index"] != sorted_report["clone_source_index"]
-            or source_report["sqlite_journal_mode"] != sorted_report["sqlite_journal_mode"]
-            or source_report["new_row_groups_this_run"] != sorted_report["new_row_groups_this_run"]
-            or source_report["row_groups_complete"] != sorted_report["row_groups_complete"]):
+    if (source_report.get("clone_source_index") != sorted_report.get("clone_source_index")
+            or source_report.get("sqlite_journal_mode") != sorted_report.get("sqlite_journal_mode")
+            or source_report.get("new_row_groups_this_run") != sorted_report.get("new_row_groups_this_run")
+            or source_report.get("row_groups_complete") != sorted_report.get("row_groups_complete")):
         raise ValueError("A/B different starting snapshots, journal modes or row-group extents")
-    if source_report["sqlite_journal_mode"] != "wal":
+    if source_report.get("sqlite_journal_mode") != "wal":
         raise ValueError("Matched write-order A/B must use the same WAL journal mode")
     counts = compare_logical_tables(source_index, sorted_index)
     if counts["groups_done"] != audits[0]["row_groups_complete"]:

@@ -526,6 +526,19 @@ def clone_partial_index(source_path: Path, target_path: Path, manifest: dict):
         source.close()
 
 
+def row_group_loop_residual(loop_elapsed, phase_times):
+    """Measured loop wall time outside individually timed nested stages.
+
+    This can include Python overhead, blocked logging, OS scheduling gaps or
+    machine suspension; never classify this residual as SQLite/Parquet CPU.
+    WAL checkpoint seconds already live inside budget_guard_and_checkpoint.
+    """
+    nested = ("checkpoint_lookup", "parquet_read_and_key_aggregation",
+              "sqlite_group_commit", "budget_guard_and_checkpoint",
+              "progress_output")
+    return max(0.0, loop_elapsed - sum(phase_times.get(k, 0.0) for k in nested))
+
+
 def processing_profile(phase_times, group_timings, elapsed):
     """Aggregate group-stage wall time; avoid misleading CPU/I/O attributions.
 
@@ -775,11 +788,8 @@ def main(argv=None):
             if limit_reached or budget_reached:
                 break
         loop_elapsed = time.monotonic() - loop_started
-        nested_stages = ("checkpoint_lookup", "parquet_read_and_key_aggregation",
-                         "sqlite_group_commit", "budget_guard_and_checkpoint",
-                         "progress_output")
-        phase_times["row_group_loop_other"] = max(
-            0.0, loop_elapsed - sum(phase_times[name] for name in nested_stages))
+        phase_times["row_group_loop_other"] = row_group_loop_residual(
+            loop_elapsed, phase_times)
         summary_started = time.monotonic()
         result = index_summary(db, manifest, total_groups,
                                detail=args.report_detail)

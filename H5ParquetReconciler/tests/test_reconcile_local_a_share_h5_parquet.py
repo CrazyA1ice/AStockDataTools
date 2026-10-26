@@ -645,6 +645,121 @@ class ReconcileTest(unittest.TestCase):
         self.assertIn("1000倍=1",text)
         self.assertNotIn("OHLCV原始值",text)
 
+    def test_volume_x100_candidate_reconciles_and_can_make_legacy_match_worse(self):
+        """Candidate remains separate; it must not erase remaining conflicts."""
+        db=M.db_open(self.dir/"volume100-parallel.sqlite")
+        try:
+            hvals=[
+                ("SH600000",202609290935,10,10,10,10,100,1000),
+                ("SH600000",202609290940,10,10,10,10,100,1000),
+                ("SH600000",202609290945,10,10,10,10,100,1000),
+                ("SH600000",202609290950,10,10,10,10,0,0),
+                ("SH600000",202609290955,10,10,10,10,100,1000),
+                ("SH600000",202609291000,10,10,10,10,100,1000),
+            ]
+            db.executemany(
+                "INSERT INTO h(s,t,o,hi,lo,c,v,a) VALUES(?,?,?,?,?,?,?,?)",
+                hvals)
+            pvals=[
+                ("SH600000",202609290935,10,10,10,10,10000,1000),
+                ("SH600000",202609290940,10,10,10,10,12000,1000),
+                ("SH600000",202609290945,10,10,10,10,100,1000),
+                ("SH600000",202609290950,10,10,10,10,0,0),
+                ("SH600000",202609290955,10,10,10,10,10000,2000000),
+                ("SH600000",202609291000,10.02,10,10,10,10000,1000),
+                ("SZ000001",202609290935,10,10,10,10,10000,1000),
+            ]
+            stats=M.Counter({
+                "period":"5min","from_date":"2026-09-29",
+                "to_date":"2026-09-29"})
+            M.check_batch(db,pvals,stats,"5min")
+            c=stats["quantity_scale_diagnostics"]["h5_volume_times_100_candidate"]
+            self.assertEqual(stats["matched_keys"],6)
+            self.assertEqual(stats["pq_only_rows"],1)
+            self.assertEqual(stats["quantity_mismatch_rows"],4)
+            self.assertEqual(stats["price_mismatch_rows"],1)
+            self.assertEqual(stats["value_mismatch_rows"],4)
+            self.assertEqual(c["compared_overlap_keys"],6)
+            self.assertEqual(c["legacy_volume_mismatch"],4)
+            self.assertEqual(c["candidate_volume_mismatch"],2)
+            self.assertEqual(c["legacy_mismatch_resolved_by_candidate"],3)
+            self.assertEqual(c["legacy_match_broken_by_candidate"],1)
+            self.assertEqual(
+                c["candidate_value_mismatch_with_original_price_and_amount_rules"],4)
+            self.assertEqual(c["candidate_volume_mismatch_by_day"],{"20260929":2})
+            self.assertFalse(c["factor_certified"])
+            self.assertFalse(c["source_values_modified"])
+            # Exact source rows in scratch remain unchanged, candidate never
+            # touches persisted source or temporary matching tables.
+            self.assertEqual(
+                db.execute("SELECT v FROM h WHERE t=202609290935").fetchone()[0],100)
+            self.assertEqual(
+                db.execute("SELECT v FROM p WHERE t=202609290935").fetchone()[0],10000)
+        finally:
+            db.close()
+
+    def test_volume_x100_candidate_only_on_matched_bounded_5min(self):
+        stats=M.Counter({
+            "period":"5min", "from_date":"2026-09-29",
+            "to_date":"2026-09-29"})
+        db=M.db_open(self.dir/"volume100-only-pq.sqlite")
+        try:
+            M.check_batch(db,[
+                ("SH600000",202609290935,10,10,10,10,10000,1000)
+            ],stats,"5min")
+            self.assertEqual(stats["pq_only_rows"],1)
+            self.assertNotIn("quantity_scale_diagnostics",stats)
+            day=M.Counter({"period":"day","from_date":"2026-09-29"})
+            M.record_bounded_5min_quantity_evidence(
+                day,"SH600000",202609290935,
+                (10,10,10,10,10000,1000),(10,10,10,10,100,1000),
+                ["volume"],{})
+            self.assertNotIn("quantity_scale_diagnostics",day)
+        finally:
+            db.close()
+
+    def test_volume_x100_candidate_markdown_preserves_original_counts(self):
+        section={
+            "period":"5min","year":2026,"scan_complete":True,"issues":[],
+            "h5_rows":1,"pq_rows":1,"matched_keys":1,
+            "h5_only_rows":0,"pq_only_rows":0,"value_mismatch_rows":1,
+            "quantity_scale_diagnostics":{
+                "quantity_pair_categories":{
+                    "neither":0,"volume_only":1,"amount_only":0,"both":0},
+                "fields":{
+                    "volume":{
+                        "different_by_existing_tolerance":1,
+                        "both_zero":0,"one_zero":0,"both_nonzero":1,
+                        "parquet_divided_by_h5_near_factor_within_1pct":{"100":1},
+                        "relative_difference_bands_on_nonzero":{"above_5pct":1}
+                    },
+                    "amount":{
+                        "different_by_existing_tolerance":0,
+                        "both_zero":0,"one_zero":0,"both_nonzero":1,
+                        "parquet_divided_by_h5_near_factor_within_1pct":{"1":1},
+                        "relative_difference_bands_on_nonzero":{"<=0.01pct":1}
+                    }
+                },
+                "h5_volume_times_100_candidate":{
+                    "compared_overlap_keys":1,
+                    "legacy_volume_mismatch":1,
+                    "candidate_volume_mismatch":0,
+                    "legacy_mismatch_resolved_by_candidate":1,
+                    "legacy_match_broken_by_candidate":0,
+                    "candidate_value_mismatch_with_original_price_and_amount_rules":0,
+                    "factor_certified":False
+                }
+            }
+        }
+        out=M.render_markdown({
+            "status":"complete","universe_mode":"a-share-candidate",
+            "requested_periods":["5min"],"results":{"5min/2026":section}})
+        self.assertIn("H5五分钟成交量×100候选映射",out)
+        self.assertIn("原口径成交量冲突 | 1",out)
+        self.assertIn("H5成交量×100后冲突 | 0",out)
+        self.assertIn("量价差异",out)
+        self.assertIn("不能",out)
+
     def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
         self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
         self.other_markets("day")

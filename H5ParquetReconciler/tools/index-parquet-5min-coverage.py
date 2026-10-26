@@ -425,11 +425,14 @@ def budget_check_after_wal_recovery(db, path: Path, max_mib: float):
     before = index_storage_usage(db, path)
     if not budget_exceeded(before, max_mib):
         return False, before, None
+    checkpoint_started = time.monotonic()
     busy, log_frames, checkpointed_frames = db.execute(
         "PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    checkpoint_seconds = time.monotonic() - checkpoint_started
     after = index_storage_usage(db, path)
     event = {
         "checkpoint_busy": bool(busy),
+        "checkpoint_elapsed_seconds": checkpoint_seconds,
         "wal_frames_before": int(log_frames),
         "wal_frames_checkpointed": int(checkpointed_frames),
         "physical_bytes_before": before["sqlite_main_and_wal_on_disk_bytes"],
@@ -487,6 +490,40 @@ def clone_partial_index(source_path: Path, target_path: Path, manifest: dict):
         raise
     finally:
         source.close()
+
+
+def processing_profile(phase_times, group_timings, elapsed):
+    """Aggregate group-stage wall time; avoid misleading CPU/I/O attributions.
+
+    Arrow iter_batches is lazy, so the read/aggregation stage includes Parquet
+    decompression, Arrow conversion and Python key normalization together.
+    WAL checkpoint time is a SUBSET of the budget stage (do not add twice).
+    """
+    stages = ("parquet_read_and_key_aggregation", "sqlite_group_commit",
+              "budget_guard_and_checkpoint")
+    group_count = len(group_timings)
+    known = sum(phase_times.get(name, 0.0) for name in stages)
+    slow_read = sorted(group_timings,
+                       key=lambda x: (-x["read_and_aggregate_seconds"],
+                                      x["file_id"], x["row_group"]))[:5]
+    slow_commit = sorted(group_timings,
+                         key=lambda x: (-x["commit_seconds"],
+                                        x["file_id"], x["row_group"]))[:5]
+    return {
+        "profiled_new_groups": group_count,
+        "phases_seconds": {name: round(phase_times.get(name, 0.0), 3)
+                           for name in stages},
+        "wal_checkpoint_inside_budget_seconds": round(
+            phase_times.get("wal_checkpoint_inside_budget", 0.0), 3),
+        "unattributed_seconds": round(max(0.0, elapsed-known), 3),
+        "slowest_parquet_read_and_aggregate_groups": slow_read,
+        "slowest_sqlite_commit_groups": slow_commit,
+        "interpretation": (
+            "Wall-clock stage estimates; Parquet decoding+key normalization are combined; "
+            "WAL checkpoint time is included in budget guard, not additive. "
+            "Metadata load, stdout and final summary may be unattributed. "
+            "The index snapshot clone time occurs before this run timer.")
+    }
 
 
 def main(argv=None):
@@ -561,6 +598,13 @@ def main(argv=None):
         wal_checkpoint_attempts = 0
         wal_checkpoint_busy = 0
         wal_disk_bytes_reclaimed = 0
+        phase_times = {
+            "parquet_read_and_key_aggregation": 0.0,
+            "sqlite_group_commit": 0.0,
+            "budget_guard_and_checkpoint": 0.0,
+            "wal_checkpoint_inside_budget": 0.0
+        }
+        group_timings = []
         for file_id, (filename, pf) in enumerate(open_files):
             if not {"ts","symbol"}.issubset(pf.schema_arrow.names):
                 raise ValueError(f"Parquet key columns absent in {filename.name}")
@@ -573,9 +617,13 @@ def main(argv=None):
                     stopped_for = "max_new_groups"
                     break
                 if args.max_index_mib is not None:
+                    budget_started = time.monotonic()
                     too_large, usage, checkpoint = budget_check_after_wal_recovery(
                         db, out, args.max_index_mib)
+                    phase_times["budget_guard_and_checkpoint"] += time.monotonic() - budget_started
                     if checkpoint:
+                        phase_times["wal_checkpoint_inside_budget"] += checkpoint[
+                            "checkpoint_elapsed_seconds"]
                         wal_checkpoint_attempts += 1
                         wal_checkpoint_busy += int(checkpoint["checkpoint_busy"])
                         wal_disk_bytes_reclaimed += checkpoint["reclaimed_disk_bytes"]
@@ -586,10 +634,23 @@ def main(argv=None):
                             if checkpoint and checkpoint["checkpoint_busy"]
                             else "max_index_mib_before_group")
                         break
+                read_started = time.monotonic()
                 batches = pf.iter_batches(row_groups=[rg], columns=["ts", "symbol"],
                                           batch_size=65536, use_threads=True)
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
+                read_seconds = time.monotonic() - read_started
+                write_started = time.monotonic()
                 insert_group(db, file_id, rg, packed, counts)
+                write_seconds = time.monotonic() - write_started
+                phase_times["parquet_read_and_key_aggregation"] += read_seconds
+                phase_times["sqlite_group_commit"] += write_seconds
+                group_timings.append({
+                    "file_id": file_id, "row_group": rg,
+                    "source_rows": counts["source_rows"],
+                    "stock_day_partitions_in_group": len(packed),
+                    "read_and_aggregate_seconds": round(read_seconds, 3),
+                    "commit_seconds": round(write_seconds, 3)
+                })
                 newly_processed += 1
                 source_rows_this_run += counts["source_rows"]
                 if newly_processed % 5 == 0 or rg == pf.metadata.num_row_groups-1:
@@ -599,9 +660,13 @@ def main(argv=None):
                           f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
                 if args.max_index_mib is not None:
+                    budget_started = time.monotonic()
                     too_large, usage, checkpoint = budget_check_after_wal_recovery(
                         db, out, args.max_index_mib)
+                    phase_times["budget_guard_and_checkpoint"] += time.monotonic() - budget_started
                     if checkpoint:
+                        phase_times["wal_checkpoint_inside_budget"] += checkpoint[
+                            "checkpoint_elapsed_seconds"]
                         wal_checkpoint_attempts += 1
                         wal_checkpoint_busy += int(checkpoint["checkpoint_busy"])
                         wal_disk_bytes_reclaimed += checkpoint["reclaimed_disk_bytes"]
@@ -629,6 +694,8 @@ def main(argv=None):
         result["new_row_groups_this_run"] = newly_processed
         result["source_rows_this_run"] = source_rows_this_run
         result["elapsed_seconds_this_run"] = round(elapsed, 3)
+        result["stage_profile_this_run"] = processing_profile(
+            phase_times, group_timings, elapsed)
         result["new_groups_per_second"] = (
             round(newly_processed / elapsed, 5) if elapsed > 0 else None)
         result["run_limited_before_complete"] = bool(

@@ -398,6 +398,45 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         if self.index.exists():
             self.assertEqual(self.index.stat().st_size,0)
 
+    def test_processing_profile_accounts_for_each_stage_without_double_wal_count(self):
+        rows=[
+            {"file_id":0,"row_group":34,"read_and_aggregate_seconds":4.5,
+             "commit_seconds":2.0},
+            {"file_id":0,"row_group":35,"read_and_aggregate_seconds":2.0,
+             "commit_seconds":8.0}
+        ]
+        times={
+            "parquet_read_and_key_aggregation":6.5,
+            "sqlite_group_commit":10.0,
+            "budget_guard_and_checkpoint":3.0,
+            "wal_checkpoint_inside_budget":2.75
+        }
+        profile=M.processing_profile(times,rows,20.0)
+        self.assertEqual(profile["profiled_new_groups"],2)
+        self.assertEqual(profile["unattributed_seconds"],0.5)
+        self.assertEqual(profile["wal_checkpoint_inside_budget_seconds"],2.75)
+        self.assertEqual(profile["slowest_parquet_read_and_aggregate_groups"][0]["row_group"],34)
+        self.assertEqual(profile["slowest_sqlite_commit_groups"][0]["row_group"],35)
+        self.assertEqual(profile["phases_seconds"]["budget_guard_and_checkpoint"],3.0)
+
+    def test_processing_profile_empty_stage_set_reports_no_fake_ohlcv(self):
+        result=M.processing_profile({},[],2.0)
+        self.assertEqual(result["profiled_new_groups"],0)
+        self.assertEqual(result["unattributed_seconds"],2.0)
+        self.assertEqual(result["slowest_sqlite_commit_groups"],[])
+        self.assertEqual(result["wal_checkpoint_inside_budget_seconds"],0)
+        self.assertNotIn("open",str(result))
+        self.assertNotIn("close",str(result))
+
+    def test_processing_profile_slowest_group_examples_are_bounded(self):
+        rows=[{"file_id":0, "row_group":i, "read_and_aggregate_seconds":float(i),
+               "commit_seconds":float(100-i)} for i in range(10)]
+        result=M.processing_profile({},rows,0.0)
+        self.assertEqual(len(result["slowest_sqlite_commit_groups"]),5)
+        self.assertEqual(len(result["slowest_parquet_read_and_aggregate_groups"]),5)
+        self.assertEqual(result["slowest_parquet_read_and_aggregate_groups"][0]["row_group"],9)
+        self.assertEqual(result["slowest_sqlite_commit_groups"][0]["row_group"],0)
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

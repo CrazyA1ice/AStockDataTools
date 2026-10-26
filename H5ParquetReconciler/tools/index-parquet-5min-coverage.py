@@ -213,6 +213,34 @@ def create_tables(db):
     """)
 
 
+class _ObservedSQLiteTransaction:
+    """Delegate SQLite's exact transaction context, timing only its boundaries.
+
+    No SQL, PRAGMA or transaction behavior is changed: __enter__/__exit__ on
+    the original sqlite3.Connection still own commit and rollback. On a
+    statement/commit error the original exception propagates unchanged.
+    """
+
+    def __init__(self, db):
+        self.db = db
+        self.enter_seconds = 0.0
+        self.exit_seconds = 0.0
+
+    def __enter__(self):
+        started = time.monotonic()
+        try:
+            return self.db.__enter__()
+        finally:
+            self.enter_seconds = time.monotonic() - started
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        started = time.monotonic()
+        try:
+            return self.db.__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.exit_seconds = time.monotonic() - started
+
+
 def insert_group(db, file_id, row_group, packed, counts, write_order="source",
                  timing_out=None):
     """Atomic V3 UPSERT; optionally profile nested stages without changing SQL.
@@ -232,7 +260,8 @@ def insert_group(db, file_id, row_group, packed, counts, write_order="source",
     if profile:
         prepare_seconds = time.monotonic() - prepare_started
         transaction_started = time.monotonic()
-    with db:
+    transaction = _ObservedSQLiteTransaction(db) if profile else db
+    with transaction:
         if profile:
             stage_started = time.monotonic()
         db.executemany("""
@@ -269,7 +298,11 @@ def insert_group(db, file_id, row_group, packed, counts, write_order="source",
             "daily_coverage_upsert_seconds": daily_seconds,
             "row_group_locator_upsert_seconds": locator_seconds,
             "groups_done_insert_seconds": checkpoint_seconds,
-            "commit_and_other_seconds": remaining
+            "commit_and_other_seconds": remaining,
+            # Exact timing of sqlite3.Connection.__exit__ (successful COMMIT);
+            # nested inside commit_and_other_seconds, never additive.
+            "transaction_context_enter_seconds": transaction.enter_seconds,
+            "transaction_context_exit_seconds": transaction.exit_seconds
         })
 
 def open_index(index, manifest, resume, journal_mode="wal"):
@@ -620,10 +653,28 @@ def processing_profile(phase_times, group_timings, elapsed):
         max(0.0, sum(row["commit_seconds"] for row in profiled_writes)
             - sum(sum(row["sqlite_write_breakdown_seconds"].get(key, 0.0)
                       for key in breakdown_keys) for row in profiled_writes)), 3)
+    # These are nested INSIDE commit_and_other_seconds, not additional stages.
+    context_enter = sum(
+        row["sqlite_write_breakdown_seconds"].get(
+            "transaction_context_enter_seconds", 0.0)
+        for row in profiled_writes)
+    context_exit = sum(
+        row["sqlite_write_breakdown_seconds"].get(
+            "transaction_context_exit_seconds", 0.0)
+        for row in profiled_writes)
+    transaction_boundary = {
+        "context_enter_seconds": round(context_enter, 3),
+        "context_exit_seconds": round(context_exit, 3),
+        "other_within_commit_and_other_seconds": round(
+            max(0.0, sum(row["sqlite_write_breakdown_seconds"].get(
+                "commit_and_other_seconds", 0.0) for row in profiled_writes)
+                - context_enter - context_exit), 3)
+    }
     return {
         "profiled_new_groups": group_count,
         "sqlite_write_breakdown_profiled_groups": len(profiled_writes),
         "sqlite_write_breakdown_seconds": write_breakdown,
+        "sqlite_transaction_boundary_seconds": transaction_boundary,
         "phases_seconds": {name: round(phase_times.get(name, 0.0), 3)
                            for name in stages},
         "wal_checkpoint_inside_budget_seconds": round(

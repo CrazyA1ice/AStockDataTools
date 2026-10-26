@@ -164,8 +164,12 @@ class ParquetCycleAuditTests(unittest.TestCase):
     def test_focus_four_cycle_and_parquet_missing_day_examples(self):
         """Synthetic BJ shared exception plus Parquet-only minute stock-day."""
         sym_a, sym_b = "920121.XBSE", "920069.XBSE"
+        # BJ920121: H5 day=47 and minute sum=49. The difference 2 must
+        # exceed the matcher minimum absolute tolerance of 1. Previously
+        # day=48 and minute sum=49 differed by only 1, so the comparison
+        # correctly passed while the assertion incorrectly expected False.
         day_records = [
-            self.srcrow(20260929,0,sym_a,4800),
+            self.srcrow(20260929,0,sym_a,4700),
             self.srcrow(20260929,0,sym_b,4800)
         ]
         a = self.minute_rows(20260929,sym_a,100)
@@ -182,7 +186,7 @@ class ParquetCycleAuditTests(unittest.TestCase):
             for sym in ("BJ920121","BJ920069"):
                 data=np.zeros(1,dtype=dtype)
                 data["datetime"]=[202609290000]
-                data["transCount"]=[48]
+                data["transCount"]=[47 if sym == "BJ920121" else 48]
                 group.create_dataset(sym,data=data)
         with h5py.File(folder/"bj_5min.h5","w") as h5:
             group=h5.create_group("data")
@@ -222,6 +226,16 @@ class ParquetCycleAuditTests(unittest.TestCase):
         self.assertFalse(report["unit_mapping_certified"])
         self.assertNotIn("4900",str(report))
         self.assertNotIn("5000",str(report))
+
+    def test_relative_volume_tolerance_has_one_unit_absolute_floor(self):
+        """Small synthetic sums: a difference of 1 is acceptable, 2 is not."""
+        self.assertTrue(M.volume_match(48, 49))
+        self.assertTrue(M.volume_match(49, 48))
+        self.assertFalse(M.volume_match(47, 49))
+        self.assertFalse(M.volume_match(49, 47))
+        # Large numbers must still obey the 0.1% relative rule.
+        self.assertTrue(M.volume_match(1000000, 1001000))
+        self.assertFalse(M.volume_match(1000000, 1002000))
 
     def test_focus_rejects_invalid_security_or_missing_h5(self):
         with self.assertRaisesRegex(ValueError,"Focus symbol"):

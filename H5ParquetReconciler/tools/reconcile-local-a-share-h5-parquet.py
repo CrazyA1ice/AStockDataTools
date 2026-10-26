@@ -160,6 +160,9 @@ def db_open(path):
     )
     db.execute("CREATE TEMP TABLE p (s TEXT,t INTEGER,o REAL,hi REAL,lo REAL,c REAL,v REAL,a REAL)")
     db.execute("CREATE INDEX p_key ON p(s,t)")
+    # Scratch-only key table: catch duplicate Parquet keys across all Arrow
+    # batches and RowGroups, not just within the current batch.
+    db.execute("CREATE TABLE pq_seen (s TEXT,t INTEGER,PRIMARY KEY(s,t)) WITHOUT ROWID")
     return db
 
 
@@ -302,6 +305,23 @@ def check_batch(db, rows, stats, period):
         "SELECT sum(n-1) FROM (SELECT count(*) AS n FROM p GROUP BY s,t HAVING n>1)"
     ).fetchone()[0]
     stats["pq_duplicate_keys_within_batch"] += int(ndup or 0)
+    # Retain only the first row per key in this batch. Duplicates are flagged
+    # (never treated as trustworthy candidate additions), not counted twice.
+    if ndup:
+        db.execute("DELETE FROM p WHERE rowid NOT IN "
+                   "(SELECT MIN(rowid) FROM p GROUP BY s,t)")
+    # Any key already observed in an earlier batch/RowGroup is a duplicate.
+    # Never classify it again as matched/only/conflicting.
+    previous_duplicates = db.execute(
+        "SELECT COUNT(*) FROM p JOIN pq_seen AS seen "
+        "ON seen.s=p.s AND seen.t=p.t").fetchone()[0]
+    stats["pq_duplicate_keys_across_batches"] += int(previous_duplicates)
+    if previous_duplicates:
+        db.execute("DELETE FROM p WHERE EXISTS ("
+                   "SELECT 1 FROM pq_seen AS seen "
+                   "WHERE seen.s=p.s AND seen.t=p.t)")
+    db.execute("INSERT INTO pq_seen SELECT s,t FROM p")
+    stats["pq_unique_keys"] += db.execute("SELECT COUNT(*) FROM p").fetchone()[0]
     cursor = db.execute(
         "SELECT p.s,p.t,p.o,p.hi,p.lo,p.c,p.v,p.a,h.s,h.o,h.hi,h.lo,h.c,h.v,h.a "
         "FROM p LEFT JOIN h ON p.s=h.s AND p.t=h.t"
@@ -318,6 +338,8 @@ def check_batch(db, rows, stats, period):
                 example(stats, "pq_only", sym, t)
             continue
         stats["matched_keys"] += 1
+        bucket = stats.setdefault("by_day", {}).setdefault(str(t // 10000), {})
+        bucket["matched"] = bucket.get("matched", 0) + 1
         p, h = z[2:8], z[9:]
         differing = []
         for i, name in enumerate(("open", "high", "low", "close")):
@@ -337,8 +359,10 @@ def check_batch(db, rows, stats, period):
             count_difference(stats, category, sym, t)
             if any(x in differing for x in ("open", "high", "low", "close")):
                 stats["price_mismatch_rows"] += 1
+                bucket["price_mismatch"] = bucket.get("price_mismatch", 0) + 1
             if any(x in differing for x in ("volume", "amount")):
                 stats["quantity_mismatch_rows"] += 1
+                bucket["quantity_mismatch"] = bucket.get("quantity_mismatch", 0) + 1
             example(stats, category, sym, t, differing)
     db.execute("UPDATE h SET seen=1 WHERE (s,t) IN (SELECT s,t FROM p)")
     db.commit()
@@ -468,6 +492,38 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
                 scan_parquet(db, paths, period, year, stats, batch_size, universe,
                              from_date,to_date,progress)
             h5_remaining(db, stats)
+            # Build exact date-level coverage from the two key stores while
+            # scratch SQLite is open. One multi-day Parquet pass, not a new
+            # annual scan per trading day.
+            by_day = stats.setdefault("by_day", {})
+            for day_key, count in db.execute(
+                    "SELECT CAST(t / 10000 AS INTEGER),COUNT(*) FROM h "
+                    "GROUP BY CAST(t / 10000 AS INTEGER)"):
+                bucket = by_day.setdefault(str(day_key), {})
+                bucket["h5_unique"] = int(count)
+            for day_key, count in db.execute(
+                    "SELECT CAST(t / 10000 AS INTEGER),COUNT(*) FROM pq_seen "
+                    "GROUP BY CAST(t / 10000 AS INTEGER)"):
+                bucket = by_day.setdefault(str(day_key), {})
+                bucket["parquet_unique"] = int(count)
+            # For each day distinguish total overlapping time keys from
+            # mismatches, and keep missing-series statuses explicit.
+            for bucket in by_day.values():
+                h5_n = bucket.get("h5_unique", 0)
+                pq_n = bucket.get("parquet_unique", 0)
+                common = bucket.get("matched", 0)
+                only_h5 = bucket.get("h5_only", 0)
+                only_pq = bucket.get("pq_only", 0)
+                if stats["period"] == "1min":
+                    only_pq += bucket.get("pq_0930", 0)
+                if h5_n != common + only_h5 or pq_n != common + only_pq:
+                    raise ValueError("Daily two-source unique-key conservation failed")
+                bucket["intersection_unique"] = common
+                bucket["union_candidate_unique"] = h5_n + pq_n - common
+                bucket["overlap_value_mismatch_pct"] = (
+                    round(100 * (bucket.get("value_mismatch", 0) +
+                                 bucket.get("opening_candidate_mismatch", 0)) / common, 3)
+                    if common else None)
         finally:
             db.close()
     issues = [
@@ -476,7 +532,8 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
             "timestamp_or_value_errors", "nonfinite_parquet_rows",
             "unknown_pq_symbols", "pq_rows_outside_filename_year",
             "h5_duplicate_keys", "timestamp_errors",
-            "pq_duplicate_keys_within_batch", "missing_h5_market_files"
+            "pq_duplicate_keys_within_batch", "pq_duplicate_keys_across_batches",
+            "missing_h5_market_files"
         ) if stats[k]
     ]
     stats["scan_complete"] = not issues
@@ -490,7 +547,11 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
     stats.pop("by_symbol", None)
     stats["security_master_certified"] = False
     stats["universe_filter_is_code_pattern_not_listing_verification"] = (universe == "a-share-candidate")
-    stats["duplicate_keys_across_batches_not_exhaustively_checked"] = True
+    stats["duplicate_keys_across_batches_not_exhaustively_checked"] = False
+    stats["parquet_cross_batch_key_dedup_applied"] = True
+    stats["parquet_key_coverage_exact_when_scan_complete"] = bool(
+        paths and not stats["pq_year_metadata_only_no_h5_rows"]
+        and stats["scan_complete"])
     stats["source_units_certified"] = False
     stats["safe_to_automatically_union"] = False
     stats["pq_only_candidate_rows_from_year_file_metadata_are_not_exact_keys"] = bool(

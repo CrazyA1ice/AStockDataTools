@@ -284,6 +284,20 @@ git pull --ff-only origin main
 
 先运行全模块测试（本轮新增5项、预计76项），后用[完整两条对照试验命令](docs/PARQUET_5MIN_V3_WAL_DELETE_AB_20261026.md)。须保证足够的本机磁盘余量，96MiB仍是行组事务边界的**软预算**，DELETE日志也可能产生临时峰值。未经对照，不修改主V3索引模式，更不开始自动合并H5/Parquet。
 
+## 2025 V3索引35组：WAL/DELETE性能持平，新增耗时阶段分析
+
+用户已从同一30组索引快照分别用WAL与DELETE处理第31—35个RowGroup，结果唯一键均4,302,144、重复0、索引大小均64MiB左右，处理5组耗时**51.796秒 vs 51.219秒**，差距仅约1.1%。WAL执行5次检查点，但**不能由此证明SQLite日志模式是主要瓶颈**，暂不切换原主索引的默认WAL。
+
+下一步只增加`stage_profile_this_run`分段耗时字段，测量`parquet_read_and_key_aggregation`（Arrow惰性读取与Python键聚合）、`sqlite_group_commit`、`budget_guard_and_checkpoint`与最多5个最慢RowGroup，分别确认实际慢在何处。报告不包含原始OHLCV。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 5 --max-index-mib 128 --journal-mode wal --read-only --report "reports\pq-5min-2025-v3-stage-profile-35.json"
+```
+
+此命令继续**原主V3**索引，不再建性能对照副本；如原V3已被手动推进到其他组数，要根据实际组数验收，不要固定认为停在35组。现有76项合成测试预计新增3项，累计79项，需用户本机验收。[A/B真实结果与性能分段诊断说明](docs/PARQUET_5MIN_V3_STAGE_PROFILE_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

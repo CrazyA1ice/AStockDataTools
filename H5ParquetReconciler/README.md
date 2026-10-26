@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 三只证券×100分时报告验收后：只读取H5一分钟复核，不重扫Parquet（2026-10-26）
+
+2026-09-28真实报告`h5-parquet-5min-x100-2026-09-28-top3-sessions.json`显示：SH688629、SH688017、SH688172各48根两源5min完整配对，候选成交量×100后**三只均上午与下午分别完全守恒（净差0）**，但逐K线毛差存在。三只股票的全天成交量毛差比例分别为0.928496%、0.561701%、0.717788%，相邻成交量差相关系数依次为-0.482、-0.455、-0.446。成交额全天净差仅0.000017%～0.000189%，支持但未证明“分时窗内数据分配差异”假说。**上次仅选144根K线仍解码Parquet 5,685,792行**，下一步应避免再次读Parquet。
+
+新增`tools/inspect-h5-1min-top3-no-parquet.py`：自动从该真实分时报告提取已验收三证券，仅读本地H5 1min/5min文件2026-09-28对应证券一日数据；试验1min时间戳为结束/开始两种假设，严格5根聚合OHLC、金额，并检验H5 5min成交量×100与1min原成交量乘1或×100两种候选。一分钟不完整则明确计入缺窗、无H5一分钟数据则标为不可验证；零成交量窗口不能虚增有效单位证据。**绝不读取Parquet，不写源OHLCV、不认证正式行情单位、不自动并集**。新增6项合成测试待Windows验收；详见[前三证券H5 1min零Parquet读取核验](docs/2026_09_28_H5_1MIN_TOP3_NO_PQ_20261026.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inspect-h5-1min-top3-no-parquet.py "D:\stock" --date 2026-09-28 --baseline-report "H5ParquetReconciler\reports\h5-parquet-5min-x100-2026-09-28-top3-sessions.json" --read-only --out "reports\h5-1min-2026-09-28-top3-no-parquet.json"
+```
+
+上传新`h5-1min-2026-09-28-top3-no-parquet.json`即可，无需重复全市场K线扫描。
+
 ## 本机单日精确分类已确认：下一步针对前三证券做H5×100分时守恒（2026-10-26）
 
 用户新上传的`h5-parquet-5min-2026-09-28-exact-residual-masks.json`已完成且守恒：9月28日匹配266,256根，×100后候选冲突**1,029根**，8种互斥类别为`volume=47、amount=2、price=117、volume_amount=392、volume_price=37、amount_price=0、volume_amount_price=434`（其余265,227根none）。候选volume=**910**、amount=**828**、OHLC price=**588**，与旧日级聚合精确一致。SH其他候选冲突535、BJ336、SH688/689 158、SZ两组0。BJ有**113根纯价格差**，不能与沪市量额三字段联差混成同一原因。

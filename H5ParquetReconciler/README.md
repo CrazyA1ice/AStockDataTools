@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 双源主线优先：2025年三个交易日全市场五分钟对账（2026-10-26）
+
+主线改回`Hikyuu H5 ↔ 购买的Parquet`真实数据对比，不等待2025年522个RowGroup单源索引完全完成。此前2025-09-30全市场单日（A股候选）已经得到H5 259,872根、Parquet 260,832根、同时间键重叠259,872、Parquet独有960、量价差异151,099根（58.14%）；但+5分钟时标、复权及数量单位仍是候选规则，不直接并集。
+
+本轮让既有`reconcile-local-a-share-h5-parquet.py`在**一次有界窗口扫描**中按日分别输出两源唯一键、交集、双向差集与量价冲突，并在模块内scratch SQLite以`(symbol,time)`去重，检测所有Arrow批次/RowGroup之间的Parquet重复键，不再重复累计同一键。新增2项完全合成的测试，不会上传行情数据。
+
+先`git pull --ff-only origin main`，运行本模块全部`unittest`（原main预计115项+本轮2项，实际以本机结果为准），再运行下列**一次Parquet年度文件扫描，涵盖9/26、9/29、9/30**的全候选证券对账：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2025 --periods 5min --from-date 2025-09-26 --to-date 2025-09-30 --universe a-share-candidate --batch-size 8192 --read-only --out "reports\h5-parquet-5min-2025-09-26-30-mainline.json"
+```
+
+重点复核报告`results["5min/2025"].by_day`的`h5_unique/parquet_unique/matched/h5_only/pq_only/value_mismatch`和`pq_duplicate_keys_across_batches`。双方重叠量价不一致不能未经核实就选择某一源覆盖另一源。全流程只读`D:\stock`，报告写`reports/`，临时SQLite写`work/`且自动清理；已有文件名不能覆盖。详见[2025年双源主线与多日单次对账说明](docs/DUAL_SOURCE_2025_5MIN_MAINLINE_20261026.md)。
+
 ## 五分钟数据太慢：先按交易日核验（2026-10-25）
 
 原来的 `--years 2025 2026 --periods 5min` 会先把一整年的H5五分钟数据装入SQLite，**启动后可能数小时没有输出**。这不是一个适合你当前数据规模的默认操作。

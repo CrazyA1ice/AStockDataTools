@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 新增无需重扫行情的3440条残余量价冲突离线分析（2026-10-26）
+
+基于此前已生成的`h5-parquet-5min-2026-09-24-30-volume-x100-candidate.json`，候选换算后总量价冲突**3,440**，其中成交量3,097、成交额2,812、OHLC价格1,893。这3个是交叉边际统计，**不可直接相加或宣称互斥**。集合容斥至少能严格推出：**343条不涉及成交量而涉及价格或成交额**；**至少922条同时涉及成交量、成交额和OHLC价格**；至少2,469条同时涉及成交量和成交额。
+
+新增纯报告处理工具`tools/triage-5min-x100-residual-offline.py`，只读取现有汇总JSON，检查旧/新冲突及按日期、代码前缀的边际计数是否守恒，计算严格可证的双字段/三字段交集下界、各代码组和每日量价残余总数的上下界；**不读取D盘H5/Parquet、不创建SQLite索引、不复制原始OHLCV、不认证单位或自动合并**。已新增合成测试，Windows执行待验收。详见[3440条残余冲突的数学约束和离线核验](docs/2026_5MIN_X100_OFFLINE_RESIDUAL_TRIAGE_20261026.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\triage-5min-x100-residual-offline.py --report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-24-30-volume-x100-candidate.json" --out "reports\h5-parquet-5min-2026-09-24-30-residual-triage.json"
+```
+
+上传唯一新`h5-parquet-5min-2026-09-24-30-residual-triage.json`即可；若源报告在别的位置，仅按实际路径修改`--report`。**不要为了做离线分析重新运行前四日百万根K线核对。**
+
 ## 9月29日四周期聚焦实测：修正H5跨周期容差口径（2026-10-26）
 
 用户提供的`pq-h5-bj-focused-2026-09-29.json`和`-v2.json`**完全相同**，无需重复Parquet扫描。两只证券`BJ920069`、`BJ920121`在9月29日的H5/PQ五分钟均有48根，**每根H5成交量×100与Parquet成交量均通过原严格容差**；两者的Parquet day总量都不满足5min总和的0.1%守恒。对于day跨源，BJ920069 H5 day×100与PQ day也不一致；BJ920121 H5 day×100与PQ day一致。

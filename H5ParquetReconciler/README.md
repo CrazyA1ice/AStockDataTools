@@ -322,6 +322,20 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## 62组独立完整审计已通过，主V3可以继续安全分批（2026-10-26）
+
+用户本机刚提交 `pq-5min-2025-v3-readonly-full-audit-62.json`：2025年主V3索引**62/522组**完成独立只读full审计，候选源行**7,623,474**、精确唯一五分钟键**7,623,474**、重复键**0**，证券日分区**1,313,404**、RowGroup定位成员**3,845,191**。源指纹相同，13.235秒完成，没有扫描Parquet原始行情行、没有新增行组或修改SQLite。**仅能证明当前62组内部一致，不能认证全年、数据源时间约定或H5/Parquet自动合并。**
+
+下一步不要再重复52/62组旧审计；先确认离线合成测试通过，再让主索引使用原`source`、WAL及`synchronous=FULL`、90秒/192MiB双软预算，最多新增5个行组到67组：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 5 --max-run-seconds 90 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\pq-5min-2025-v3-commit-67.json"
+```
+
+新增的只读连续批次趋势分析工具位于**尚未合并的PR #29**，不能仅`git pull main`就假定可用；其6项新增测试也仍待本地运行。先由用户核验合并/测试状态，再决定是否使用该趋势分析工具。见[62组审计确认及下一步67组计划](docs/PARQUET_5MIN_V3_62GROUP_COMMIT_TREND_20261026.md)。
+
 ## 2025五分钟主V3索引62组：SQLite事务退出确认为主要耗时（2026-10-26）
 
 本机真实报告`pq-5min-2025-v3-transaction-exit-62.json`：2025主V3已由57推进至62/522个RowGroup（11.88%），新处理5组共614,400原始行，耗时57.297秒。SQLite写入41.265秒，其中**原sqlite3连接事务退出`__exit__`耗时25.938秒（62.9%）**，定位表UPSERT耗时12.685秒；这能确认耗时在COMMIT调用边界，**不能证明25.938秒全为OS fsync耗时**，也不能把不同组的运行时差异认定为SQLite逻辑回归。

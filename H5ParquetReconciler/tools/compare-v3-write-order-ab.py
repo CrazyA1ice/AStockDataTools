@@ -122,6 +122,31 @@ def compare_matched_ab(source_index: Path, sorted_index: Path,
         raise ValueError("A/B different starting snapshots, journal modes or row-group extents")
     if source_report.get("sqlite_journal_mode") != "wal":
         raise ValueError("Matched write-order A/B must use the same WAL journal mode")
+
+    def processed_group_ids(report):
+        # The index profile exposes at most the slowest 5 groups. Require
+        # all new group IDs to be present so equal totals cannot conceal
+        # benchmarking DIFFERENT source RowGroups.
+        n = report["new_row_groups_this_run"]
+        profile = report.get("stage_profile_this_run")
+        items = profile.get("slowest_row_group_wall_groups") if isinstance(profile, dict) else None
+        if n > 5 or not isinstance(items, list) or len(items) != n:
+            raise ValueError("A/B reports must expose every processed RowGroup (max 5)")
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError("Invalid processed RowGroup evidence")
+            file_id, row_group = item.get("file_id"), item.get("row_group")
+            if type(file_id) is not int or type(row_group) is not int:
+                raise ValueError("Invalid processed RowGroup identifier")
+            result.append((file_id, row_group))
+        if len(set(result)) != n:
+            raise ValueError("Duplicate or missing processed RowGroup identifiers")
+        return sorted(result)
+
+    matched_processed_groups = processed_group_ids(source_report)
+    if matched_processed_groups != processed_group_ids(sorted_report):
+        raise ValueError("A/B runs processed different RowGroups; cannot compare speed")
     counts = compare_logical_tables(source_index, sorted_index)
     if counts["groups_done"] != audits[0]["row_groups_complete"]:
         raise ValueError("A/B checkpoint table size differs from full audit")
@@ -162,6 +187,9 @@ def compare_matched_ab(source_index: Path, sorted_index: Path,
         "universe": manifest["universe"],
         "row_groups_complete": audits[0]["row_groups_complete"],
         "new_groups_each_run": source_report["new_row_groups_this_run"],
+        "matched_processed_rowgroups": [
+            {"file_id": f, "row_group": rg} for f, rg in matched_processed_groups
+        ],
         "candidate_source_rows": audits[0]["candidate_source_rows"],
         "unique_regular_session_keys": audits[0]["unique_regular_session_keys"],
         "duplicate_regular_session_keys": audits[0]["duplicate_regular_session_keys"],

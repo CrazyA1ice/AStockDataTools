@@ -508,7 +508,7 @@ def processing_profile(phase_times, group_timings, elapsed):
     WAL checkpoint time is a SUBSET of the budget stage (do not add twice).
     """
     stages = ("parquet_read_and_key_aggregation", "sqlite_group_commit",
-              "budget_guard_and_checkpoint")
+              "budget_guard_and_checkpoint", "final_index_summary")
     group_count = len(group_timings)
     known = sum(phase_times.get(name, 0.0) for name in stages)
     slow_read = sorted(group_timings,
@@ -529,7 +529,7 @@ def processing_profile(phase_times, group_timings, elapsed):
         "interpretation": (
             "Wall-clock stage estimates; Parquet decoding+key normalization are combined; "
             "WAL checkpoint time is included in budget guard, not additive. "
-            "Metadata load, stdout and final summary may be unattributed. "
+            "Metadata load, stdout and Python control overhead may be unattributed. "
             "The index snapshot clone time occurs before this run timer.")
     }
 
@@ -612,7 +612,8 @@ def main(argv=None):
             "parquet_read_and_key_aggregation": 0.0,
             "sqlite_group_commit": 0.0,
             "budget_guard_and_checkpoint": 0.0,
-            "wal_checkpoint_inside_budget": 0.0
+            "wal_checkpoint_inside_budget": 0.0,
+            "final_index_summary": 0.0
         }
         group_timings = []
         for file_id, (filename, pf) in enumerate(open_files):
@@ -696,7 +697,9 @@ def main(argv=None):
                         break
             if limit_reached or budget_reached:
                 break
+        summary_started = time.monotonic()
         result = index_summary(db, manifest, total_groups)
+        phase_times["final_index_summary"] = time.monotonic() - summary_started
         elapsed = time.monotonic()-started
         result["sqlite_journal_mode"] = db.execute("PRAGMA journal_mode").fetchone()[0].lower()
         result["sqlite_write_order"] = args.write_order

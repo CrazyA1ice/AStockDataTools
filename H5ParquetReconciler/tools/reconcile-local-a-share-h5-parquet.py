@@ -317,6 +317,95 @@ def increment_prefix(stats, symbol, field):
     counts[field] = counts.get(field, 0) + 1
 
 
+QUANTITY_SCALE_CANDIDATES = (
+    ("0.01", 0.01), ("0.1", 0.1), ("1", 1.0),
+    ("10", 10.0), ("100", 100.0), ("1000", 1000.0)
+)
+QUANTITY_RELATIVE_DIFF_BANDS = (
+    ("<=0.01pct", 0.0001), ("0.01_to_0.1pct", 0.001),
+    ("0.1_to_1pct", 0.01), ("1_to_5pct", 0.05)
+)
+
+
+def new_quantity_field_diagnostic():
+    return {
+        "compared": 0, "different_by_existing_tolerance": 0,
+        "both_zero": 0, "one_zero": 0, "both_nonzero": 0,
+        "relative_difference_bands_on_nonzero": {
+            **{label: 0 for label, _ in QUANTITY_RELATIVE_DIFF_BANDS},
+            "above_5pct": 0
+        },
+        "parquet_divided_by_h5_near_factor_within_1pct": {
+            **{label: 0 for label, _ in QUANTITY_SCALE_CANDIDATES},
+            "other": 0
+        }
+    }
+
+
+def record_quantity_field_diagnostic(out, parquet, h5, different):
+    """Aggregate quantization/scale evidence; never record individual OHLCV."""
+    out["compared"] += 1
+    if different:
+        out["different_by_existing_tolerance"] += 1
+    if not parquet and not h5:
+        out["both_zero"] += 1
+        return
+    if not parquet or not h5:
+        out["one_zero"] += 1
+        return
+    out["both_nonzero"] += 1
+    difference = abs(parquet-h5) / max(abs(parquet), abs(h5))
+    for label, upper in QUANTITY_RELATIVE_DIFF_BANDS:
+        if difference <= upper:
+            out["relative_difference_bands_on_nonzero"][label] += 1
+            break
+    else:
+        out["relative_difference_bands_on_nonzero"]["above_5pct"] += 1
+    ratio = parquet / h5
+    for label, factor in QUANTITY_SCALE_CANDIDATES:
+        if abs(ratio / factor - 1.0) <= 0.01:
+            out["parquet_divided_by_h5_near_factor_within_1pct"][label] += 1
+            break
+    else:
+        out["parquet_divided_by_h5_near_factor_within_1pct"]["other"] += 1
+
+
+def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
+                                          day_bucket):
+    """Diagnose quantity conflict independently from existing matching rules."""
+    if stats["period"] != "5min" or not (
+            stats.get("from_date") or stats.get("to_date")):
+        return
+    diagnosis = stats.setdefault("quantity_scale_diagnostics", {
+        "scope": "matched_bounded_5min_keys_only",
+        "quantity_pair_categories": {
+            "neither": 0, "volume_only": 0,
+            "amount_only": 0, "both": 0
+        },
+        "fields": {
+            "volume": new_quantity_field_diagnostic(),
+            "amount": new_quantity_field_diagnostic()
+        },
+        "inferred_unit_conversion_certified": False,
+        "scaling_factor_matches_are_hypotheses_only": True
+    })
+    volume_diff, amount_diff = "volume" in differing, "amount" in differing
+    category = ("both" if volume_diff and amount_diff
+                else "volume_only" if volume_diff
+                else "amount_only" if amount_diff else "neither")
+    diagnosis["quantity_pair_categories"][category] += 1
+    record_quantity_field_diagnostic(
+        diagnosis["fields"]["volume"], p[4], h[4], volume_diff)
+    record_quantity_field_diagnostic(
+        diagnosis["fields"]["amount"], p[5], h[5], amount_diff)
+    if volume_diff:
+        day_bucket["volume_mismatch"] = day_bucket.get("volume_mismatch", 0) + 1
+        increment_prefix(stats, symbol, "volume_mismatch")
+    if amount_diff:
+        day_bucket["amount_mismatch"] = day_bucket.get("amount_mismatch", 0) + 1
+        increment_prefix(stats, symbol, "amount_mismatch")
+
+
 def summarize_stock_day_gaps(db, stats):
     """Classify full-vs-partial source absence using exact H5/PQ keys.
 
@@ -445,6 +534,7 @@ def check_batch(db, rows, stats, period):
             differing.append("volume")
         if abs(p[5]-h[5]) > max(1000.0, 0.001*max(abs(p[5]), abs(h[5]))):
             differing.append("amount")
+        record_bounded_5min_quantity_evidence(stats, sym, t, p, h, differing, bucket)
         if differing:
             category = (
                 "opening_candidate_mismatch"
@@ -641,6 +731,27 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
     stats["scan_complete"] = not issues
     stats["issues"] = issues
     stats["by_day"] = dict(sorted(stats.get("by_day", {}).items()))
+    quantity_diag = stats.get("quantity_scale_diagnostics")
+    if quantity_diag is not None:
+        categories = quantity_diag["quantity_pair_categories"]
+        if sum(categories.values()) != stats["matched_keys"]:
+            raise ValueError("Quantity diagnostic compared-key conservation failed")
+        if (categories["both"] + categories["volume_only"]
+            + categories["amount_only"] != stats["quantity_mismatch_rows"]):
+            raise ValueError("Quantity mismatch diagnostic conservation failed")
+        for field in ("volume", "amount"):
+            entry = quantity_diag["fields"][field]
+            if entry["compared"] != stats["matched_keys"]:
+                raise ValueError("Quantity per-field denominator mismatch")
+            if (entry["both_zero"] + entry["one_zero"]
+                + entry["both_nonzero"] != entry["compared"]):
+                raise ValueError("Quantity zero/nonzero conservation failed")
+            if sum(entry["relative_difference_bands_on_nonzero"].values()
+                   ) != entry["both_nonzero"]:
+                raise ValueError("Quantity relative-error histogram inconsistent")
+            if sum(entry["parquet_divided_by_h5_near_factor_within_1pct"].values()
+                   ) != entry["both_nonzero"]:
+                raise ValueError("Quantity ratio-factor histogram inconsistent")
     prefix_groups = stats.get("by_code_prefix_group", {})
     for entry in prefix_groups.values():
         n = entry.get("matched", 0)
@@ -731,6 +842,39 @@ def render_markdown(report):
                              + "、".join(
                                  f"{x['symbol']}@{x['day']}({x['parquet_only_keys']}根)"
                                  for x in examples))
+        quantity = item.get("quantity_scale_diagnostics")
+        if quantity:
+            categories = quantity["quantity_pair_categories"]
+            lines.extend([
+                "", f"## 成交量/成交额口径诊断（{item['year']}/{item['period']}）", "",
+                "仅分析两源同一证券同一候选五分钟时间键，统计原对账容差、非零值相对误差和Parquet/H5数值倍率；不能直接证明真实计量单位。",
+                "", "| 分类 | 记录数 |",
+                "|---|---:|",
+                f"| 成交量及成交额均在既有容差内 | {categories['neither']} |",
+                f"| 只有成交量超出容差 | {categories['volume_only']} |",
+                f"| 只有成交额超出容差 | {categories['amount_only']} |",
+                f"| 成交量及成交额均超出容差 | {categories['both']} |",
+                "", "| 数值列 | 原容差下不一致 | 两侧同时为0 | 只有一侧为0 | 两侧均非0 |",
+                "|---|---:|---:|---:|---:|"
+            ])
+            for name, label in (("volume", "成交量"), ("amount", "成交额")):
+                field = quantity["fields"][name]
+                lines.append(
+                    f"| {label} | {field['different_by_existing_tolerance']} | "
+                    f"{field['both_zero']} | {field['one_zero']} | "
+                    f"{field['both_nonzero']} |"
+                )
+                histogram = field[
+                    "parquet_divided_by_h5_near_factor_within_1pct"]
+                lines.append(
+                    f"{label}：Parquet/H5候选倍率相差1%以内的匹配计数（仅非零对）："
+                    + "；".join(f"{key}倍={count}"
+                               for key, count in histogram.items()))
+                bands = field["relative_difference_bands_on_nonzero"]
+                lines.append(
+                    f"{label}：两侧均非零时的相对差异分布："
+                    + "；".join(f"{key}={count}"
+                               for key, count in bands.items()))
         prefixes = item.get("by_code_prefix_group", {})
         if prefixes:
             lines.extend([

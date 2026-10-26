@@ -402,6 +402,35 @@ def budget_exceeded(usage: dict, max_mib: float | None) -> bool:
             and usage["sqlite_budget_measure_bytes"] >= max_mib * 1024 * 1024)
 
 
+def budget_check_after_wal_recovery(db, path: Path, max_mib: float):
+    """Recover avoidable WAL space at a committed row-group boundary.
+
+    A large WAL can temporarily duplicate the entire SQLite page file and
+    falsely make the soft budget look exhausted. Only checkpoint *after*
+    insert_group's transaction committed. A busy checkpoint cannot be treated
+    as success; stop conservatively and preserve the existing index.
+    """
+    if db.in_transaction:
+        raise ValueError("Cannot checkpoint SQLite WAL inside a transaction")
+    before = index_storage_usage(db, path)
+    if not budget_exceeded(before, max_mib):
+        return False, before, None
+    busy, log_frames, checkpointed_frames = db.execute(
+        "PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    after = index_storage_usage(db, path)
+    event = {
+        "checkpoint_busy": bool(busy),
+        "wal_frames_before": int(log_frames),
+        "wal_frames_checkpointed": int(checkpointed_frames),
+        "physical_bytes_before": before["sqlite_main_and_wal_on_disk_bytes"],
+        "physical_bytes_after": after["sqlite_main_and_wal_on_disk_bytes"],
+        "reclaimed_disk_bytes": max(
+            0, before["sqlite_main_and_wal_on_disk_bytes"]
+            - after["sqlite_main_and_wal_on_disk_bytes"])
+    }
+    return bool(busy) or budget_exceeded(after, max_mib), after, event
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path)
@@ -453,6 +482,9 @@ def main(argv=None):
         limit_reached = False
         budget_reached = False
         stopped_for = None
+        wal_checkpoint_attempts = 0
+        wal_checkpoint_busy = 0
+        wal_disk_bytes_reclaimed = 0
         for file_id, (filename, pf) in enumerate(open_files):
             if not {"ts","symbol"}.issubset(pf.schema_arrow.names):
                 raise ValueError(f"Parquet key columns absent in {filename.name}")
@@ -464,11 +496,20 @@ def main(argv=None):
                     limit_reached = True
                     stopped_for = "max_new_groups"
                     break
-                if args.max_index_mib is not None and budget_exceeded(
-                        index_storage_usage(db, out), args.max_index_mib):
-                    budget_reached = True
-                    stopped_for = "max_index_mib_before_group"
-                    break
+                if args.max_index_mib is not None:
+                    too_large, usage, checkpoint = budget_check_after_wal_recovery(
+                        db, out, args.max_index_mib)
+                    if checkpoint:
+                        wal_checkpoint_attempts += 1
+                        wal_checkpoint_busy += int(checkpoint["checkpoint_busy"])
+                        wal_disk_bytes_reclaimed += checkpoint["reclaimed_disk_bytes"]
+                    if too_large:
+                        budget_reached = True
+                        stopped_for = (
+                            "wal_checkpoint_busy_before_group"
+                            if checkpoint and checkpoint["checkpoint_busy"]
+                            else "max_index_mib_before_group")
+                        break
                 batches = pf.iter_batches(row_groups=[rg], columns=["ts", "symbol"],
                                           batch_size=65536, use_threads=True)
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
@@ -481,14 +522,26 @@ def main(argv=None):
                           f"distinct stock-days in group={len(packed):,}, "
                           f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
-                if args.max_index_mib is not None and budget_exceeded(
-                        index_storage_usage(db, out), args.max_index_mib):
-                    budget_reached = True
-                    stopped_for = "max_index_mib_after_group"
-                    print(f"SOFT BUDGET reached after committed row-group "
-                          f"(limit={args.max_index_mib:g} MiB); stopping with resumable index",
-                          flush=True)
-                    break
+                if args.max_index_mib is not None:
+                    too_large, usage, checkpoint = budget_check_after_wal_recovery(
+                        db, out, args.max_index_mib)
+                    if checkpoint:
+                        wal_checkpoint_attempts += 1
+                        wal_checkpoint_busy += int(checkpoint["checkpoint_busy"])
+                        wal_disk_bytes_reclaimed += checkpoint["reclaimed_disk_bytes"]
+                        if not too_large:
+                            print("WAL checkpoint recovered temporary disk usage; "
+                                  "continuing with durable row-group index", flush=True)
+                    if too_large:
+                        budget_reached = True
+                        stopped_for = (
+                            "wal_checkpoint_busy_after_group"
+                            if checkpoint and checkpoint["checkpoint_busy"]
+                            else "max_index_mib_after_group")
+                        print(f"SOFT BUDGET reached after committed row-group "
+                              f"(limit={args.max_index_mib:g} MiB); stopping with resumable index",
+                              flush=True)
+                        break
             if limit_reached or budget_reached:
                 break
         result = index_summary(db, manifest, total_groups)
@@ -503,6 +556,9 @@ def main(argv=None):
         result["max_index_mib_soft_budget"] = args.max_index_mib
         result["soft_budget_reached"] = budget_reached
         result["stopped_for"] = stopped_for
+        result["wal_checkpoint_attempts_this_run"] = wal_checkpoint_attempts
+        result["wal_checkpoint_busy_this_run"] = wal_checkpoint_busy
+        result["wal_reclaimed_bytes_this_run"] = wal_disk_bytes_reclaimed
         result.update(index_storage_usage(db, out))
         with db:
             db.execute("UPDATE meta SET value=? WHERE key='completed'",

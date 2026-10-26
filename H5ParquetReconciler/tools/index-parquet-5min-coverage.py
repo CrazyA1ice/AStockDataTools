@@ -546,7 +546,7 @@ def processing_profile(phase_times, group_timings, elapsed):
     decompression, Arrow conversion and Python key normalization together.
     WAL checkpoint time is a SUBSET of the budget stage (do not add twice).
     """
-    stages = ("parquet_metadata_open", "checkpoint_lookup",
+    stages = ("parquet_footer_metadata", "checkpoint_lookup",
               "parquet_read_and_key_aggregation", "sqlite_group_commit",
               "budget_guard_and_checkpoint", "progress_output",
               "row_group_loop_other", "final_index_summary")
@@ -683,7 +683,7 @@ def main(argv=None):
         wal_checkpoint_busy = 0
         wal_disk_bytes_reclaimed = 0
         phase_times = {
-            "parquet_metadata_open": metadata_seconds,
+            "parquet_footer_metadata": metadata_seconds,
             "checkpoint_lookup": 0.0,
             "progress_output": 0.0,
             "row_group_loop_other": 0.0,

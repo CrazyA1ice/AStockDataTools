@@ -487,6 +487,38 @@ class ReconcileTest(unittest.TestCase):
         finally:
             db.close()
 
+    def test_markdown_includes_daily_gaps_and_code_prefix_sections(self):
+        section={
+            "period":"5min","year":2025,"scan_complete":True,"issues":[],
+            "h5_rows":1,"pq_rows":2,"matched_keys":1,
+            "h5_only_rows":0,"pq_only_rows":1,"value_mismatch_rows":0,
+            "by_day":{"20250930":{
+                "h5_unique":1,"parquet_unique":2,"intersection_unique":1,
+                "pq_only":1,"overlap_value_mismatch_pct":0.0}},
+            "stock_day_gap_summary":{
+                "pq_only_full_h5_absence_stock_days":1,
+                "pq_only_keys_on_full_h5_absence_days":1,
+                "pq_only_partial_h5_coverage_stock_days":0,
+                "pq_only_keys_on_partial_h5_coverage_days":0,
+                "h5_only_full_pq_absence_stock_days":0,
+                "h5_only_keys_on_full_pq_absence_days":0,
+                "h5_only_partial_pq_coverage_stock_days":0,
+                "h5_only_keys_on_partial_pq_coverage_days":0,
+                "examples_full_h5_absence":[
+                    {"symbol":"SH603056","day":"20250930","parquet_only_keys":1}]},
+            "by_code_prefix_group":{
+                "SH_other_prefix":{"matched":1,"value_mismatch":0,
+                                   "pq_only":1}}
+        }
+        markdown=M.render_markdown({
+            "status":"complete","universe_mode":"a-share-candidate",
+            "requested_periods":["5min"],"results":{"5min/2025":section}})
+        self.assertIn("逐日双源交集与量价冲突",markdown)
+        self.assertIn("证券—交易日缺口归因",markdown)
+        self.assertIn("代码前缀分组量价差异",markdown)
+        self.assertIn("SH603056@20250930(1根)",markdown)
+        self.assertIn("H5整只证券该日无键",markdown)
+
     def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
         self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
         self.other_markets("day")

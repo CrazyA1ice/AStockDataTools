@@ -38,6 +38,8 @@ def audit_existing_index(index_path: Path, manifest: dict, group_counts: list[in
     db = sqlite3.connect(index_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=60)
     try:
         indexer.connect_udfs(db)
+        # Keep meta, checkpoints and large-table sums on one consistent snapshot.
+        db.execute("BEGIN")
         saved = dict(db.execute("SELECT key,value FROM meta"))
         if saved.get("version") != indexer.VERSION:
             raise ValueError("Existing SQLite index version is not V3")

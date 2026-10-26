@@ -526,6 +526,101 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         self.assertEqual(profile["unattributed_seconds"], 0.5)
         self.assertEqual(profile["wal_checkpoint_inside_budget_seconds"], 0.5)
 
+    def test_progress_report_marks_unknown_duplicates_null_not_zero(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            progress=M.index_summary(db,self.manifest,522,detail="progress")
+            self.assertEqual(progress["row_groups_complete"],1)
+            self.assertEqual(progress["candidate_source_rows"],1)
+            self.assertIsNone(progress["unique_regular_session_keys"])
+            self.assertIsNone(progress["duplicate_regular_session_keys"])
+            self.assertIsNone(progress["stock_day_partitions"])
+            self.assertIsNone(progress["row_group_locator_entries"])
+            self.assertFalse(progress["full_key_audit_performed"])
+            self.assertFalse(progress["index_complete"])
+            self.assertFalse(progress["safe_to_automatically_union"])
+        finally:
+            db.close()
+
+    def test_quick_progress_skips_expensive_daily_and_locator_table_scans(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            selects=[]
+            db.set_trace_callback(selects.append)
+            try:
+                M.index_summary(db,self.manifest,522,detail="progress")
+            finally:
+                db.set_trace_callback(None)
+            query=" ".join(selects).lower()
+            self.assertIn("groups_done",query)
+            self.assertNotIn("from daily_coverage",query)
+            self.assertNotIn("from row_group_locator",query)
+        finally:
+            db.close()
+
+    def test_final_row_group_forces_full_audit_even_if_progress_requested(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930"),ms("202509300935")],
+                           ["600000.XSHG","600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            report=M.index_summary(db,self.manifest,1,detail="progress")
+            self.assertEqual(report["report_detail_effective"],"full")
+            self.assertTrue(report["index_complete"])
+            self.assertTrue(report["full_key_audit_performed"])
+            self.assertEqual(report["unique_regular_session_keys"],2)
+            self.assertEqual(report["duplicate_regular_session_keys"],0)
+            M.persist_report_certification(db,report)
+            stored=dict(db.execute("SELECT key,value FROM meta"))
+            self.assertEqual(stored["completed"],"true")
+            self.assertEqual(stored["duplicate_regular_session_keys"],"0")
+        finally:
+            db.close()
+
+    def test_resumed_progress_invalidates_previous_exact_duplicate_cache(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            full=M.index_summary(db,self.manifest,522,detail="full")
+            M.persist_report_certification(db,full)
+            self.assertEqual(dict(db.execute("SELECT key,value FROM meta"))
+                             ["duplicate_regular_session_keys"],"0")
+            duplicate,stats=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,1,duplicate,stats)
+            quick=M.index_summary(db,self.manifest,522,detail="progress")
+            M.persist_report_certification(db,quick)
+            stored=dict(db.execute("SELECT key,value FROM meta"))
+            self.assertNotIn("duplicate_regular_session_keys",stored)
+            self.assertEqual(stored["full_key_audit_performed"],"false")
+            self.assertEqual(stored["completed"],"false")
+            verified=M.index_summary(db,self.manifest,522,detail="full")
+            self.assertEqual(verified["duplicate_regular_session_keys"],1)
+        finally:
+            db.close()
+
+    def test_unknown_report_detail_refused(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            with self.assertRaisesRegex(ValueError,"Unsupported report detail"):
+                M.index_summary(db,self.manifest,522,detail="fast-but-certified")
+        finally:
+            db.close()
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

@@ -306,6 +306,22 @@ git pull --ff-only origin main
 
 **下一次要先跑83项合成测试，再从已完成35组的主V3索引创建两份独立SQLite快照，各以相同WAL/128MiB软预算处理第36—40组。** 具体完整命令、报告文件名和正确性/性能比较标准见 [本轮35组性能分析和主键排序A/B说明](docs/PARQUET_5MIN_V3_SQLITE_WRITE_AB_20261026.md)。只有两份报告所有键数、异常和索引摘要一致，才比较写入耗时。主V3本身不更改，购买的源行情始终只读。
 
+## 第40组排序写入A/B与可选轻量进度报告（2026-10-26）
+
+用户提交两份从35组V3索引快照开始、同样处理第36—40组的报告：`source`原顺序耗时55.484秒（SQLite提交30.969秒），`pk-sorted`排序耗时50.922秒（SQLite提交26.452秒），分别总耗时降8.2%、SQLite写入降14.6%。最终唯一键4,918,521、正常时段重复0、股票日分区1,276,936等统计完全一致；仅一轮A/B，不据此自动改变默认写入顺序。
+
+两模式报告显示末尾 `final_index_summary` 分别耗时10.156秒及9.687秒。新版增加 **`--report-detail progress`**，用于未完成全年索引的分批续建：省去每批末尾数百万键的完整唯一性/定位扫描，但**这些未经核验的指标会显式显示`null`，绝不会伪造成0，也不会把索引标记为年度完成**。默认`full`不变；全部522组完成时无条件执行`full`完整审计才能获得完成标记。必须定期做完整审计；报告细节模式不改变源Parquet读取或SQL写入。
+
+先做本机88项合成测试；通过后，可在仍为35组的V3**主索引**上尝试一次最多10组的保守续建（两份第40组A/B索引是另外的副本）：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 10 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\pq-5min-2025-v3-quick-progress-45.json"
+```
+
+V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

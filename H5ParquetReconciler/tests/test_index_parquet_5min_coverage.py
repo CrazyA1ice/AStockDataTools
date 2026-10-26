@@ -514,6 +514,78 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         self.assertEqual(result["slowest_parquet_read_and_aggregate_groups"][0]["row_group"],9)
         self.assertEqual(result["slowest_sqlite_commit_groups"][0]["row_group"],0)
 
+    def test_sqlite_nested_timing_breakdown_preserves_index_state(self):
+        """Instrumenting each UPSERT must not change committed V3 coverage."""
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            parts={
+                ("SH600000",20250930):[1,1],
+                ("SZ000636",20250930):[2,1]
+            }
+            counts=M.Counter({"source_rows":2,"candidate_rows":2})
+            timings={}
+            M.insert_group(db,0,0,parts,counts,timing_out=timings)
+            expected={
+                "prepare_seconds", "daily_coverage_upsert_seconds",
+                "row_group_locator_upsert_seconds", "groups_done_insert_seconds",
+                "commit_and_other_seconds"
+            }
+            self.assertEqual(set(timings),expected)
+            self.assertTrue(all(isinstance(value,float) and value>=0
+                                for value in timings.values()))
+            self.assertEqual(
+                M.index_summary(db,self.manifest,1)["unique_regular_session_keys"],2)
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM groups_done").fetchone()[0],1)
+        finally:
+            db.close()
+
+    def test_nested_sqlite_timing_is_published_only_after_commit(self):
+        """A failed duplicate-group transaction must never publish partial timing."""
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data={("SH600000",20250930):[1,1]}
+            counts=M.Counter({"source_rows":1,"candidate_rows":1})
+            M.insert_group(db,0,0,data,counts)
+            output={"keep_existing":1}
+            with self.assertRaises(sqlite3.IntegrityError):
+                M.insert_group(db,0,0,data,counts,timing_out=output)
+            self.assertEqual(output,{"keep_existing":1})
+            self.assertEqual(
+                db.execute("SELECT SUM(source_rows) FROM daily_coverage").fetchone()[0],1)
+        finally:
+            db.close()
+
+    def test_nested_sqlite_profile_is_non_additive_and_old_input_compatible(self):
+        """Nested phases subdivide commit, not inflate profiled wall time."""
+        nested={
+            "prepare_seconds":0.2,
+            "daily_coverage_upsert_seconds":0.8,
+            "row_group_locator_upsert_seconds":1.2,
+            "groups_done_insert_seconds":0.1,
+            "commit_and_other_seconds":0.2
+        }
+        measured={
+            "file_id":0,"row_group":57,
+            "read_and_aggregate_seconds":1.0,
+            "commit_seconds":2.7,
+            "sqlite_write_breakdown_seconds":nested
+        }
+        report=M.processing_profile({
+            "parquet_read_and_key_aggregation":1.0,
+            "sqlite_group_commit":2.7},[measured],3.7)
+        self.assertEqual(report["sqlite_write_breakdown_profiled_groups"],1)
+        self.assertEqual(report["sqlite_write_breakdown_seconds"]
+                         ["daily_coverage_upsert_seconds"],0.8)
+        self.assertAlmostEqual(
+            sum(report["sqlite_write_breakdown_seconds"].values()),2.7,places=4)
+        self.assertEqual(report["unattributed_seconds"],0.0)
+        self.assertEqual(report["phases_seconds"]["sqlite_group_commit"],2.7)
+        old=M.processing_profile({},[],1.0)
+        self.assertEqual(old["sqlite_write_breakdown_profiled_groups"],0)
+        self.assertTrue(all(v==0.0 for v in
+                            old["sqlite_write_breakdown_seconds"].values()))
+
     def test_pk_sorted_write_yields_identical_daily_and_locator_state(self):
         """Reordered input and overlapping groups must yield identical V3 state."""
         rows1 = [

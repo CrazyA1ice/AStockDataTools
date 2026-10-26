@@ -24,7 +24,7 @@ SPEC = importlib.util.spec_from_file_location(
 core = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(core)
 
-VERSION = "parquet-5min-coverage-index-v2"
+VERSION = "parquet-5min-coverage-index-v3"
 DAY_ZERO = date(1970, 1, 1)
 STATS = ("source_rows", "candidate_rows", "outside_year", "bad_timestamp",
          "unexpected_session_stamp", "unrecognized_symbol", "excluded_security_type")
@@ -121,31 +121,60 @@ def manifest_signature(manifest):
     ).hexdigest()
 
 
-def mask_or(a: bytes, b: bytes) -> bytes:
-    """OR two little-endian row-group bitsets."""
-    a, b = bytes(a), bytes(b)
-    size = max(len(a), len(b))
-    a = a.ljust(size, b"\x00")
-    b = b.ljust(size, b"\x00")
-    return bytes(x | y for x, y in zip(a, b))
+def encode_group_ids(groups):
+    """Canonical sorted unique unsigned LEB128 list of (row_group+1).
+
+    Encodes a sparse row group at offset 521 in just two bytes, not a
+    zero-padded 66-byte absolute position mask. No arbitrary upper bound.
+    """
+    result = bytearray()
+    for group in sorted(set(groups)):
+        if not isinstance(group, int) or group < 0 or group >= (1 << 63) - 1:
+            raise ValueError("Invalid row group ID")
+        number = group + 1
+        while number >= 128:
+            result.append((number & 127) | 128)
+            number >>= 7
+        result.append(number)
+    return bytes(result)
 
 
-def mask_group_ids(value: bytes):
-    """Decode row-group positions for a single source file, sorted ascending."""
-    groups = []
-    for octet, byte in enumerate(bytes(value)):
-        while byte:
-            bit = byte & -byte
-            groups.append(octet * 8 + bit.bit_length() - 1)
-            byte ^= bit
-    return groups
+def decode_group_ids(encoded):
+    """Fail closed on invalid/truncated/malformed varints."""
+    values = []
+    number, shift = 0, 0
+    for octet in bytes(encoded):
+        number |= (octet & 127) << shift
+        if octet & 128:
+            shift += 7
+            if shift >= 70:
+                raise ValueError("Row group varint is too long")
+        else:
+            if number == 0:
+                raise ValueError("Invalid zero row group token")
+            values.append(number - 1)
+            number, shift = 0, 0
+    if shift:
+        raise ValueError("Truncated row group varint")
+    if values != sorted(set(values)) or encode_group_ids(values) != bytes(encoded):
+        raise ValueError("Noncanonical or duplicate row group IDs")
+    return values
+
+
+def merge_group_ids(existing, added):
+    """OR-set union of compact group-ID lists, including unordered resumes."""
+    if not existing:
+        return bytes(added)
+    if not added:
+        return bytes(existing)
+    return encode_group_ids(decode_group_ids(existing) + decode_group_ids(added))
 
 
 def connect_udfs(db):
     db.create_function("bitcount", 1, lambda n: int(n).bit_count(), deterministic=True)
-    db.create_function("blob_or", 2, mask_or, deterministic=True)
-    db.create_function("blob_bitcount", 1,
-                       lambda v: sum(b.bit_count() for b in v), deterministic=True)
+    db.create_function("group_id_union", 2, merge_group_ids, deterministic=True)
+    db.create_function("group_id_count", 1,
+                       lambda v: len(decode_group_ids(v)), deterministic=True)
 
 
 def create_tables(db):
@@ -177,7 +206,7 @@ def create_tables(db):
           symbol TEXT NOT NULL,
           trade_day INTEGER NOT NULL,
           file_id INTEGER NOT NULL,
-          group_mask BLOB NOT NULL,
+          group_ids BLOB NOT NULL,
           PRIMARY KEY(symbol, trade_day, file_id)
         ) WITHOUT ROWID;
     """)
@@ -187,8 +216,8 @@ def insert_group(db, file_id, row_group, packed, counts):
     """One SQLite transaction per Parquet row group; rollback is automatic on error."""
     daily = [(sym, day, values[0], values[1])
              for (sym, day), values in packed.items()]
-    bitmask = (1 << row_group).to_bytes(row_group // 8 + 1, "little")
-    groups = [(sym, day, file_id, bitmask) for sym, day in packed]
+    encoded_group = encode_group_ids([row_group])
+    groups = [(sym, day, file_id, encoded_group) for sym, day in packed]
     with db:
         db.executemany("""
             INSERT INTO daily_coverage(symbol,trade_day,slot_mask,source_rows)
@@ -198,10 +227,10 @@ def insert_group(db, file_id, row_group, packed, counts):
               source_rows=(daily_coverage.source_rows + excluded.source_rows)
         """, daily)
         db.executemany("""
-            INSERT INTO row_group_locator(symbol,trade_day,file_id,group_mask)
+            INSERT INTO row_group_locator(symbol,trade_day,file_id,group_ids)
             VALUES(?,?,?,?)
             ON CONFLICT(symbol,trade_day,file_id) DO UPDATE SET
-              group_mask=blob_or(row_group_locator.group_mask,excluded.group_mask)
+              group_ids=group_id_union(row_group_locator.group_ids,excluded.group_ids)
         """, groups)
         db.execute("""
             INSERT INTO groups_done VALUES(?,?,?,?,?,?,?,?,?)
@@ -263,8 +292,8 @@ def index_summary(db, manifest, row_groups_total):
         FROM daily_coverage
     """).fetchone()
     locator_rows, locator_memberships, mask_bytes = db.execute("""
-        SELECT COUNT(*),COALESCE(SUM(blob_bitcount(group_mask)),0),
-               COALESCE(SUM(length(group_mask)),0)
+        SELECT COUNT(*),COALESCE(SUM(group_id_count(group_ids)),0),
+               COALESCE(SUM(length(group_ids)),0)
         FROM row_group_locator
     """).fetchone()
     assert int(raw_key_rows) == totals["candidate_rows"], (
@@ -286,7 +315,7 @@ def index_summary(db, manifest, row_groups_total):
         "row_group_locator_entries": int(locator_memberships),
         "row_group_locator_compact_rows": int(locator_rows),
         "row_group_locator_payload_bytes": int(mask_bytes),
-        "locator_storage": "one compressed BLOB bitmap per (symbol,day,file)",
+        "locator_storage": "one sorted unsigned LEB128 ID list per (symbol,day,file)",
         "row_group_locator_compression_ratio": round(
             locator_memberships / locator_rows, 4) if locator_rows else None,
         "sqlite_main_estimated_allocated_bytes": (
@@ -307,10 +336,10 @@ def index_matches_and_groups(db, symbols, trade_day):
     """Trusted caller must first verify saved source metadata and completion."""
     groups = {}
     for sym in symbols:
-        for file_id, bitmask in db.execute(
-                "SELECT file_id,group_mask FROM row_group_locator "
+        for file_id, encoded in db.execute(
+                "SELECT file_id,group_ids FROM row_group_locator "
                 "WHERE symbol=? AND trade_day=?", (sym, trade_day)):
-            groups.setdefault(file_id, set()).update(mask_group_ids(bitmask))
+            groups.setdefault(file_id, set()).update(decode_group_ids(encoded))
     return {key: sorted(value) for key, value in groups.items()}
 
 
@@ -362,7 +391,7 @@ def main(argv=None):
     try:
         if not 2000 <= args.year <= 2100:
             raise ValueError("Year outside supported range")
-        suffix = f"{args.year}-{args.universe}-v2"
+        suffix = f"{args.year}-{args.universe}-v3"
         out, scratch = core.resolve_module_artifact_paths(
             args.out or Path("work") / "indexes" / f"pq-5min-{suffix}.sqlite", None)
         report, _ = core.resolve_module_artifact_paths(

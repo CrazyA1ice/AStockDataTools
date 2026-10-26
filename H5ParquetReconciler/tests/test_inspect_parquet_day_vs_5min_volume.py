@@ -211,6 +211,8 @@ class ParquetCycleAuditTests(unittest.TestCase):
         self.assertFalse(focus["BJ920121@20260929"][
             "h5_day_vs_minute_raw_sum_agree_0_1pct"])
         self.assertFalse(focus["BJ920121@20260929"][
+            "h5_day_vs_minute_normalized_sum_agree_0_1pct"])
+        self.assertFalse(focus["BJ920121@20260929"][
             "pq_day_vs_minute_sum_agree_0_1pct"])
         self.assertTrue(focus["BJ920121@20260929"][
             "h5_day_times_100_vs_pq_day_agree_0_1pct"])
@@ -236,6 +238,36 @@ class ParquetCycleAuditTests(unittest.TestCase):
         # Large numbers must still obey the 0.1% relative rule.
         self.assertTrue(M.volume_match(1000000, 1001000))
         self.assertFalse(M.volume_match(1000000, 1002000))
+
+    def test_h5_focus_raw_lot_floor_can_hide_standalone_normalized_mismatch(self):
+        """Raw day=48/minute sum=49 passes one-lot floor but fails share floor."""
+        sym, day = "BJ920121", 20260929
+        ends = sorted(M.EXPECTED_ENDS)
+        h5 = {("day",sym,day*10000):48}
+        pq_day = {(sym,day*10000):4800.0}
+        pq_minute = {}
+        for i, label in enumerate(ends):
+            raw = 2 if i == 47 else 1
+            stamp = day*10000 + label
+            h5[("5min",sym,stamp)] = raw
+            pq_minute[(sym,stamp)] = raw*100.0
+        self.assertTrue(M.volume_match(48,49))
+        self.assertFalse(M.h5_volume_normalized_match(48,49))
+        self.assertFalse(M.h5probe.matching_volume(48,4900))
+        with mock.patch.object(M,"read_h5_focused",return_value=h5):
+            result=M.summarize_focus_day(
+                self.root,2026,"2026-09-29","2026-09-29",
+                [sym],pq_day,pq_minute)
+        focus=result["BJ920121@20260929"]
+        self.assertTrue(focus["h5_day_vs_minute_raw_sum_agree_0_1pct"])
+        self.assertFalse(
+            focus["h5_day_vs_minute_normalized_sum_agree_0_1pct"])
+        self.assertTrue(focus["h5_day_times_100_vs_pq_day_agree_0_1pct"])
+        self.assertTrue(
+            focus["h5_minute_times_100_vs_pq_minute_sum_agree_0_1pct"])
+        self.assertFalse(focus["pq_day_vs_minute_sum_agree_0_1pct"])
+        self.assertEqual(
+            focus["five_minute_volume_x100_mismatch_original_tolerance"],0)
 
     def test_focus_rejects_invalid_security_or_missing_h5(self):
         with self.assertRaisesRegex(ValueError,"Focus symbol"):

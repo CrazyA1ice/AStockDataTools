@@ -83,6 +83,22 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 2026年9月末/10月真实双源互补与量额口径诊断（2026-10-26）
+
+2026-09-24、28、29、30四天全候选A股五分钟真实核对：H5 **1,065,216**键、Parquet **1,069,296**键，重叠1,065,216、H5独有0、Parquet独有**4,080**（**85个整证券日×48根**，没有日内部分缺键）；**量价差异1,060,937（99.598%）**，但只有**1,893（0.178%）**重叠键OHLC价格不同，其余差异集中在成交量/额。2026-10-08、09、12、13四日Parquet无记录，H5实际独有**1,066,368**键，共22,216个完整48根证券日。两次均`scan_complete=true`、`issues=[]`，只读源。
+
+当前最重要的研究转为**解释量额冲突**，而不是再扩大扫盘或修改单源索引。新版`reconcile-local-a-share-h5-parquet.py`针对有界5min重叠键新增`quantity_scale_diagnostics`：分别量化volume/amount超容差数量、同时/单项差异、非零相对误差分布和Parquet/H5接近0.01、0.1、1、10、100、1000倍的计数，按日和代码前缀也保留独立计数。全部是聚合数据，不导出原始OHLCV；不能仅凭倍率匹配就认证单位/改写源数据。新增4项纯合成测试，需Windows本机验收。
+
+测试通过后仅需针对**已有真实重叠窗口**用新文件名复测一次：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2026 --periods 5min --from-date 2026-09-24 --to-date 2026-09-30 --universe a-share-candidate --batch-size 8192 --read-only --out "reports\h5-parquet-5min-2026-09-24-30-quantity-diagnostic.json"
+```
+
+请上传`h5-parquet-5min-2026-09-24-30-quantity-diagnostic.json`，用于决定是否需要数据商字段定义及同证券日线的单位校验。10月已确认1,066,368根H5独有，不需再重复扫描。详情见[2026年双源实测及量额口径诊断](docs/DUAL_SOURCE_2026_SEP_OCT_PRICE_QUANTITY_DIAGNOSTICS_20261026.md)。
+
 ## 2026五分钟数据源实际截止边界已确认（2026-10-26）
 
 用户上传`dual-source-5min-2026-date-envelopes.json`：候选证券H5 5,579个dataset在2026年有数据，**5,562个dataset最近一条落在2026年10月**；H5全局最新记录时间**2026-10-13 15:00**。Parquet年度2026五分钟9个月度文件，共407行组，全部有可用ts页脚，页脚最新候选时刻**2026-09-30 15:00**。因此最新可能双源重叠窗口为**2026-09-24—30**，H5晚于Parquet的最新尾段候选为**2026-10-07—13**。均只是时间元数据边界，不构成逐条覆盖审计或自动并集资格。

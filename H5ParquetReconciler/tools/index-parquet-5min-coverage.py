@@ -213,12 +213,20 @@ def create_tables(db):
     """)
 
 
-def insert_group(db, file_id, row_group, packed, counts):
-    """One SQLite transaction per Parquet row group; rollback is automatic on error."""
+def insert_group(db, file_id, row_group, packed, counts, write_order="source"):
+    """Atomic UPSERTs in original or sorted primary-key order.
+
+    Sorting affects only the order of commutative bitmask/row-count unions and
+    group-id set unions. It must not alter any final indexes or safety gates.
+    """
+    if write_order not in ("source", "pk-sorted"):
+        raise ValueError("Unsupported SQLite write ordering")
+    # Keep the original iteration order as default for comparable benchmarks.
+    items = packed.items() if write_order == "source" else sorted(packed.items())
     daily = [(sym, day, values[0], values[1])
-             for (sym, day), values in packed.items()]
+             for (sym, day), values in items]
     encoded_group = encode_group_ids([row_group])
-    groups = [(sym, day, file_id, encoded_group) for sym, day in packed]
+    groups = [(sym, day, file_id, encoded_group) for sym, day, _, _ in daily]
     with db:
         db.executemany("""
             INSERT INTO daily_coverage(symbol,trade_day,slot_mask,source_rows)
@@ -541,6 +549,8 @@ def main(argv=None):
     ap.add_argument("--max-index-mib", type=float, default=None,
                     help="Soft SQLite main+WAL space guard (MiB), checked after every completed row group")
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--write-order", choices=("source","pk-sorted"), default="source",
+                    help="SQLite UPSERT iteration ordering; source is existing default, pk-sorted is A/B pilot")
     ap.add_argument("--journal-mode", choices=("wal","delete"), default="wal",
                     help="Offline SQLite mode; default WAL. Use an index clone for comparable WAL/DELETE pilots")
     ap.add_argument("--clone-from-index", type=Path, default=None,
@@ -640,7 +650,8 @@ def main(argv=None):
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
                 read_seconds = time.monotonic() - read_started
                 write_started = time.monotonic()
-                insert_group(db, file_id, rg, packed, counts)
+                insert_group(db, file_id, rg, packed, counts,
+                             write_order=args.write_order)
                 write_seconds = time.monotonic() - write_started
                 phase_times["parquet_read_and_key_aggregation"] += read_seconds
                 phase_times["sqlite_group_commit"] += write_seconds
@@ -688,6 +699,7 @@ def main(argv=None):
         result = index_summary(db, manifest, total_groups)
         elapsed = time.monotonic()-started
         result["sqlite_journal_mode"] = db.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        result["sqlite_write_order"] = args.write_order
         result["clone_source_index"] = (
             clone_origin.relative_to(core.MODULE_DIR).as_posix()
             if clone_origin is not None else None)

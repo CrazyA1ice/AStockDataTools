@@ -528,9 +528,15 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             expected={
                 "prepare_seconds", "daily_coverage_upsert_seconds",
                 "row_group_locator_upsert_seconds", "groups_done_insert_seconds",
-                "commit_and_other_seconds"
+                "commit_and_other_seconds",
+                "transaction_context_enter_seconds",
+                "transaction_context_exit_seconds"
             }
             self.assertEqual(set(timings),expected)
+            self.assertLessEqual(
+                timings["transaction_context_enter_seconds"] +
+                timings["transaction_context_exit_seconds"],
+                timings["commit_and_other_seconds"] + 0.02)
             self.assertTrue(all(isinstance(value,float) and value>=0
                                 for value in timings.values()))
             self.assertEqual(
@@ -581,10 +587,61 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             sum(report["sqlite_write_breakdown_seconds"].values()),2.7,places=4)
         self.assertEqual(report["unattributed_seconds"],0.0)
         self.assertEqual(report["phases_seconds"]["sqlite_group_commit"],2.7)
+        self.assertEqual(report["sqlite_transaction_boundary_seconds"]
+                         ["context_exit_seconds"],0.0)
         old=M.processing_profile({},[],1.0)
         self.assertEqual(old["sqlite_write_breakdown_profiled_groups"],0)
         self.assertTrue(all(v==0.0 for v in
                             old["sqlite_write_breakdown_seconds"].values()))
+
+    def test_observed_sqlite_transaction_exit_is_nested_not_additive(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            output={}
+            M.insert_group(db,0,0,{("SH600000",20250930):[1,1]},
+                           M.Counter({"source_rows":1,"candidate_rows":1}),
+                           timing_out=output)
+            enter=output["transaction_context_enter_seconds"]
+            exit=output["transaction_context_exit_seconds"]
+            self.assertGreaterEqual(enter,0.0)
+            self.assertGreaterEqual(exit,0.0)
+            self.assertLessEqual(enter+exit,output["commit_and_other_seconds"]+0.02)
+            total=sum(output[k] for k in (
+                "prepare_seconds","daily_coverage_upsert_seconds",
+                "row_group_locator_upsert_seconds","groups_done_insert_seconds",
+                "commit_and_other_seconds"))
+            result=M.processing_profile(
+                {"sqlite_group_commit":total},
+                [{"file_id":0,"row_group":0,"read_and_aggregate_seconds":0.0,
+                  "commit_seconds":total,"sqlite_write_breakdown_seconds":output}],
+                elapsed=total)
+            nested=result["sqlite_transaction_boundary_seconds"]
+            self.assertAlmostEqual(nested["context_exit_seconds"],exit,places=2)
+            self.assertAlmostEqual(
+                nested["context_enter_seconds"]+nested["context_exit_seconds"]+
+                nested["other_within_commit_and_other_seconds"],
+                output["commit_and_other_seconds"],places=2)
+            self.assertEqual(result["unattributed_seconds"],0.0)
+        finally:
+            db.close()
+
+    def test_observed_sqlite_transaction_preserves_rollback_on_error(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            transaction=M._ObservedSQLiteTransaction(db)
+            with self.assertRaises(sqlite3.IntegrityError):
+                with transaction:
+                    db.execute(
+                        "INSERT INTO daily_coverage VALUES(?,?,?,?)",
+                        ("SH600000",20250930,1,1))
+                    db.execute(
+                        "INSERT INTO daily_coverage VALUES(?,?,?,?)",
+                        ("SH600000",20250930,1,1))
+            self.assertGreaterEqual(transaction.exit_seconds,0.0)
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM daily_coverage").fetchone()[0],0)
+        finally:
+            db.close()
 
     def test_pk_sorted_write_yields_identical_daily_and_locator_state(self):
         """Reordered input and overlapping groups must yield identical V3 state."""

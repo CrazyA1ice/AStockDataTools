@@ -696,6 +696,56 @@ def render_markdown(report):
             span+"; "+status
         ]
         lines.append("| "+" | ".join(cells)+" |")
+    for item in sections:
+        days = item.get("by_day", {})
+        if days:
+            lines.extend([
+                "", f"## 逐日双源交集与量价冲突（{item['year']}/{item['period']}）", "",
+                "| 交易日 | H5唯一键 | Parquet唯一键 | 重叠键 | H5独有 | Parquet独有 | 量价差异 | 重叠差异率 |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|"
+            ])
+            for day, bucket in sorted(days.items()):
+                lines.append(
+                    f"| {day} | {bucket.get('h5_unique','未知')} | "
+                    f"{bucket.get('parquet_unique','未知')} | "
+                    f"{bucket.get('intersection_unique','未知')} | "
+                    f"{bucket.get('h5_only',0)} | {bucket.get('pq_only',0)} | "
+                    f"{bucket.get('value_mismatch',0)} | "
+                    f"{bucket.get('overlap_value_mismatch_pct') if bucket.get('overlap_value_mismatch_pct') is not None else '未知'}% |"
+                )
+        gaps = item.get("stock_day_gap_summary")
+        if gaps:
+            lines.extend([
+                "", f"## 证券—交易日缺口归因（{item['year']}/{item['period']}）", "",
+                "| 缺口类型 | 证券—交易日数量 | 独有K线键数 |",
+                "|---|---:|---:|",
+                f"| H5整只证券该日无键、Parquet有键（候选） | {gaps['pq_only_full_h5_absence_stock_days']} | {gaps['pq_only_keys_on_full_h5_absence_days']} |",
+                f"| 两源该日都有键、H5仅部分缺失 | {gaps['pq_only_partial_h5_coverage_stock_days']} | {gaps['pq_only_keys_on_partial_h5_coverage_days']} |",
+                f"| Parquet该日无键、H5有键（候选） | {gaps['h5_only_full_pq_absence_stock_days']} | {gaps['h5_only_keys_on_full_pq_absence_days']} |",
+                f"| 两源该日都有键、Parquet仅部分缺失 | {gaps['h5_only_partial_pq_coverage_stock_days']} | {gaps['h5_only_keys_on_partial_pq_coverage_days']} |",
+                "", "上述类别表示源文件记录缺口，不是经证券上市状态、停牌或供应商规则认证的真实漏数。"
+            ])
+            examples = gaps.get("examples_full_h5_absence", [])
+            if examples:
+                lines.append("H5当日整证券无键的示例（最多12组）："
+                             + "、".join(
+                                 f"{x['symbol']}@{x['day']}({x['parquet_only_keys']}根)"
+                                 for x in examples))
+        prefixes = item.get("by_code_prefix_group", {})
+        if prefixes:
+            lines.extend([
+                "", f"## 代码前缀分组量价差异（{item['year']}/{item['period']}）", "",
+                "| 代码前缀组 | 重叠键 | 量价不同 | 价格不同 | 量额不同 | Parquet独有 | H5独有 |",
+                "|---|---:|---:|---:|---:|---:|---:|"
+            ])
+            for group, p in sorted(prefixes.items()):
+                lines.append(
+                    f"| {group} | {p.get('matched',0)} | "
+                    f"{p.get('value_mismatch',0)} | {p.get('price_mismatch',0)} | "
+                    f"{p.get('quantity_mismatch',0)} | {p.get('pq_only',0)} | "
+                    f"{p.get('h5_only',0)} |"
+                )
+            lines.append("代码前缀组仅用于诊断，不等于已认证的上市板块/证券类型。")
     if report.get("universe_mode") == "a-share-candidate":
         lines.extend(["", "## 证券范围过滤统计", "",
                       "| 年份/周期 | H5排除的非候选行数 | Parquet排除的非候选行数 | Parquet仅Footer未过滤 |",

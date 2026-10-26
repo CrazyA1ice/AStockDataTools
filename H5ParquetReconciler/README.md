@@ -83,6 +83,24 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 2026年10月双源0行：先发现真实数据截止日期，再选窗口比较（2026-10-26）
+
+最新上传的`h5-parquet-5min-2026-10-19-23-latest-gap.json`已验证本地2026-10-19至23日五分钟候选股票：**H5=0、Parquet=0、交集=0、两向独有=0**；2026 Parquet 9个文件的407个RowGroup全部被日期过滤、`issues=[]`。这不是两源行情一致或全年完整的证明，也不能据此判断H5最后一次下载日期。
+
+新增纯只读工具`tools/inspect-h5-parquet-coverage-bounds.py`：H5仅读取候选股票dataset首末datetime（跨年二分定位）；Parquet仅读取row group footer ts最早/最晚，报告两源实际日期包络及保守的**不超过7天最新候选重叠窗口**。它不会读取真实OHLCV/Parquet行数据，也不会更新2025单源SQLite索引。缺失市场文件、时标footer不可用或两源时间包络不重合则不推荐日期；**元数据窗口不是实测时间键交集**。
+
+更新main后在仓库根目录：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inspect-h5-parquet-coverage-bounds.py "D:\stock" --year 2026 --read-only --out "reports\dual-source-5min-2026-date-envelopes.json"
+```
+
+把`dual-source-5min-2026-date-envelopes.json`上传后，基于`suggested_bounded_window`真实候选日期开展2026同键差集核验，不再盲目扫描空日期。此前2025-09-26至30真实核对有Parquet独有2,784根，也可使用已合并的`stock_day_gap_summary`功能做精确整证券日/局部K线缺口归因。
+
+详见[2026年10月空窗口与时间边界探针说明](docs/DUAL_SOURCE_2026_OCT_EMPTY_AND_COVERAGE_BOUNDS_20261026.md)。
+
 ## 双源三日实测与证券日缺口归因（2026-10-26）
 
 2025-09-26、29、30三日全候选A股真实双源报告：H5 779,568、Parquet 782,352、交集779,568、H5独有0、Parquet独有2,784；同键量价差461,937（59.26%），价格差227,715、量额差454,682（分类有交叠）。两源重复键0、issues=[]，但+5分钟时标、单位及证券真值尚未认证，不能自动合并。

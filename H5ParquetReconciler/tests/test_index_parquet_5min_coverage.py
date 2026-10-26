@@ -441,12 +441,12 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         """Reordered input and overlapping groups must yield identical V3 state."""
         rows1 = [
             (("SZ000636",20250930),[3,2]),
-            (("SH600000",20250930),[5,4]),
+            (("SH600000",20250930),[5,2]),
             (("SH600000",20250929),[1,1])
         ]
         rows2 = [
-            (("SH600000",20250930),[8,6]),
-            (("SZ000636",20250930),[16,3]),
+            (("SH600000",20250930),[8,1]),
+            (("SZ000636",20250930),[16,1]),
             (("SH600000",20250929),[2,1])
         ]
         created=[]

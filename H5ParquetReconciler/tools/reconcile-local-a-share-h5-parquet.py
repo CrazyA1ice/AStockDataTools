@@ -387,7 +387,20 @@ def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
             "amount": new_quantity_field_diagnostic()
         },
         "inferred_unit_conversion_certified": False,
-        "scaling_factor_matches_are_hypotheses_only": True
+        "scaling_factor_matches_are_hypotheses_only": True,
+        "h5_volume_times_100_candidate": {
+            "mapping": "Parquet.volume versus H5.transCount * 100 (5min only)",
+            "compared_overlap_keys": 0,
+            "legacy_volume_mismatch": 0,
+            "candidate_volume_mismatch": 0,
+            "legacy_mismatch_resolved_by_candidate": 0,
+            "legacy_match_broken_by_candidate": 0,
+            "candidate_value_mismatch_with_original_price_and_amount_rules": 0,
+            "candidate_volume_mismatch_by_day": {},
+            "source_values_modified": False,
+            "factor_certified": False,
+            "needs_independent_day_volume_and_vendor_unit_validation": True
+        }
     })
     volume_diff, amount_diff = "volume" in differing, "amount" in differing
     category = ("both" if volume_diff and amount_diff
@@ -398,6 +411,30 @@ def record_bounded_5min_quantity_evidence(stats, symbol, stamp, p, h, differing,
         diagnosis["fields"]["volume"], p[4], h[4], volume_diff)
     record_quantity_field_diagnostic(
         diagnosis["fields"]["amount"], p[5], h[5], amount_diff)
+    # Test the 100x unit hypothesis in parallel. Never change p/h, the source
+    # read path, or legacy mismatch counts. Use EXACTLY the old volume tolerance.
+    candidate = diagnosis["h5_volume_times_100_candidate"]
+    candidate_volume = h[4] * 100.0
+    corrected_diff = (abs(p[4] - candidate_volume) >
+                      max(1.0, 0.00001 * max(abs(p[4]), abs(candidate_volume))))
+    candidate["compared_overlap_keys"] += 1
+    candidate["legacy_volume_mismatch"] += int(volume_diff)
+    candidate["candidate_volume_mismatch"] += int(corrected_diff)
+    candidate["legacy_mismatch_resolved_by_candidate"] += int(
+        volume_diff and not corrected_diff)
+    candidate["legacy_match_broken_by_candidate"] += int(
+        not volume_diff and corrected_diff)
+    price_diff = any(name in differing for name in ("open", "high", "low", "close"))
+    candidate_any_diff = corrected_diff or amount_diff or price_diff
+    candidate["candidate_value_mismatch_with_original_price_and_amount_rules"
+              ] += int(candidate_any_diff)
+    if corrected_diff:
+        d = str(stamp // 10000)
+        by_day = candidate["candidate_volume_mismatch_by_day"]
+        by_day[d] = by_day.get(d, 0) + 1
+        day_bucket["candidate_h5_volume_x100_mismatch"] = (
+            day_bucket.get("candidate_h5_volume_x100_mismatch", 0) + 1)
+        increment_prefix(stats, symbol, "candidate_h5_volume_x100_mismatch")
     if volume_diff:
         day_bucket["volume_mismatch"] = day_bucket.get("volume_mismatch", 0) + 1
         increment_prefix(stats, symbol, "volume_mismatch")
@@ -752,6 +789,22 @@ def reconcile_section(root, scratch, period, year, batch_size, universe="all",
             if sum(entry["parquet_divided_by_h5_near_factor_within_1pct"].values()
                    ) != entry["both_nonzero"]:
                 raise ValueError("Quantity ratio-factor histogram inconsistent")
+        candidate = quantity_diag["h5_volume_times_100_candidate"]
+        count = stats["matched_keys"]
+        if (candidate["compared_overlap_keys"] != count
+            or candidate["legacy_volume_mismatch"]
+               != quantity_diag["fields"]["volume"]["different_by_existing_tolerance"]
+            or candidate["candidate_volume_mismatch"] > count
+            or candidate["candidate_value_mismatch_with_original_price_and_amount_rules"] > count
+            or candidate["legacy_mismatch_resolved_by_candidate"]
+               + candidate["legacy_match_broken_by_candidate"] > count
+            or candidate["candidate_volume_mismatch"]
+               != (candidate["legacy_volume_mismatch"]
+                   - candidate["legacy_mismatch_resolved_by_candidate"]
+                   + candidate["legacy_match_broken_by_candidate"])
+            or sum(candidate["candidate_volume_mismatch_by_day"].values())
+               != candidate["candidate_volume_mismatch"]):
+            raise ValueError("H5 5min volume x100 candidate conservation failed")
     prefix_groups = stats.get("by_code_prefix_group", {})
     for entry in prefix_groups.values():
         n = entry.get("matched", 0)
@@ -875,6 +928,20 @@ def render_markdown(report):
                     f"{label}：两侧均非零时的相对差异分布："
                     + "；".join(f"{key}={count}"
                                for key, count in bands.items()))
+        candidate = (quantity or {}).get("h5_volume_times_100_candidate")
+        if candidate:
+            lines.extend([
+                "", "## H5五分钟成交量×100候选映射（并行假设，不改原始基线）", "",
+                "仅针对同证券同候选时间键，使用原成交量容差测试Parquet成交量与H5原成交量乘100；价格、成交额及原基线统计完全保留。",
+                "", "| 核验项目 | 计数 |", "|---|---:|",
+                f"| 重叠键数 | {candidate['compared_overlap_keys']} |",
+                f"| 原口径成交量冲突 | {candidate['legacy_volume_mismatch']} |",
+                f"| H5成交量×100后冲突 | {candidate['candidate_volume_mismatch']} |",
+                f"| 原冲突被候选消除 | {candidate['legacy_mismatch_resolved_by_candidate']} |",
+                f"| 原一致被候选破坏 | {candidate['legacy_match_broken_by_candidate']} |",
+                f"| 候选总量价冲突（价格/金额规则不变） | {candidate['candidate_value_mismatch_with_original_price_and_amount_rules']} |",
+                "", "这个倍率尚未获得数据提供方或独立日线量额守恒认证；不可用于自动改写源数据或正式并集。"
+            ])
         prefixes = item.get("by_code_prefix_group", {})
         if prefixes:
             lines.extend([

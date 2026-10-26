@@ -83,6 +83,22 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 下一阶段：09-28单日精准划分8种量价残余组合（2026-10-26）
+
+最新用户离线报告`h5-parquet-5min-2026-09-24-30-residual-triage.json`验证了1,065,216条重叠K线、3,440条候选量价残余，并严格指出：**343条确定没有成交量差异、至少922条同时涉及成交量/成交额/价格**。原聚合只能提供下界，不能直接计算互斥精确分类。5min候选量差按组SH其他1,742、BJ806、SH688/689 549、SZ两组0；交易日中09-28的候选量差910条最多。
+
+在原有有界`reconcile-local-a-share-h5-parquet.py`里新增**8种互斥逐K线量价冲突mask**（none/仅volume/仅amount/仅price/三种两两组合/三者同时），保留原H5 5min×100候选和原严格价格/量额容差；按日、前缀分组强制守恒，输出最多16个冲突最集中的股票日（仅代码、日期及掩码计数，无原始行情）。旧汇总字段不变；新增4项合成测试，Windows待验收。详见[2026候选×100量价残余精准分类](docs/2026_5MIN_EXACT_RESIDUAL_FIELD_MASKS_20261026.md)。
+
+只读核验先跑9月28日**一次单日扫描**（需要读该日H5/PQ源数据，但不会再扫描完整4天），与旧离线报告09-28的候选量差910、成交额差828、价格差588作守恒对照：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\reconcile-local-a-share-h5-parquet.py "D:\stock" --years 2026 --periods 5min --universe a-share-candidate --from-date 2026-09-28 --to-date 2026-09-28 --batch-size 8192 --read-only --out "reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json"
+```
+
+上传这份新的单日JSON即可，**不上传源K线，不改源，不自动并集**。
+
 ## 新增无需重扫行情的3440条残余量价冲突离线分析（2026-10-26）
 
 基于此前已生成的`h5-parquet-5min-2026-09-24-30-volume-x100-candidate.json`，候选换算后总量价冲突**3,440**，其中成交量3,097、成交额2,812、OHLC价格1,893。这3个是交叉边际统计，**不可直接相加或宣称互斥**。集合容斥至少能严格推出：**343条不涉及成交量而涉及价格或成交额**；**至少922条同时涉及成交量、成交额和OHLC价格**；至少2,469条同时涉及成交量和成交额。

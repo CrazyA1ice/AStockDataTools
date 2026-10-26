@@ -103,6 +103,11 @@ class H5CrossCycleVolumeTests(unittest.TestCase):
         self.assertEqual(t["candidate_day_minute_volume_agree_0_1pct"],0)
         self.assertEqual(t["day_minute_raw_mismatch_above_0_1pct"],1)
         self.assertEqual(t["h5_raw_daily_equals_sum_minute_raw_exact"],0)
+        self.assertEqual(r["anomaly_stock_day_examples"], [{
+            "symbol": "SH600000", "day": "20260924",
+            "issue": "H5_day_vs_5min_volume_sum_over_0.1pct"
+        }])
+        self.assertTrue(r["anomaly_examples_contain_no_source_volume_values"])
 
     def test_only_code_prefix_candidate_datasets_counted(self):
         self.write("SH000001", "day", [(202609240000, 100)])

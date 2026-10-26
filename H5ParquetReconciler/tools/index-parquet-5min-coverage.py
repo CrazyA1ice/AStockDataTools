@@ -464,7 +464,8 @@ def main(argv=None):
                     limit_reached = True
                     stopped_for = "max_new_groups"
                     break
-                if budget_exceeded(index_storage_usage(db, out), args.max_index_mib):
+                if args.max_index_mib is not None and budget_exceeded(
+                        index_storage_usage(db, out), args.max_index_mib):
                     budget_reached = True
                     stopped_for = "max_index_mib_before_group"
                     break
@@ -480,7 +481,8 @@ def main(argv=None):
                           f"distinct stock-days in group={len(packed):,}, "
                           f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
-                if budget_exceeded(index_storage_usage(db, out), args.max_index_mib):
+                if args.max_index_mib is not None and budget_exceeded(
+                        index_storage_usage(db, out), args.max_index_mib):
                     budget_reached = True
                     stopped_for = "max_index_mib_after_group"
                     print(f"SOFT BUDGET reached after committed row-group "

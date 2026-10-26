@@ -441,6 +441,21 @@ def index_storage_usage(db, path: Path):
     }
 
 
+def wall_budget_exceeded(started: float, max_run_seconds: float | None,
+                         now: float | None = None) -> bool:
+    """Soft monotonic wall-time guard, evaluated at row-group boundaries only.
+
+    This cannot interrupt an in-flight Parquet read or SQLite transaction;
+    it simply prevents beginning another group after the allotted time.
+    """
+    if max_run_seconds is None:
+        return False
+    if not math.isfinite(max_run_seconds) or max_run_seconds <= 0:
+        raise ValueError("--max-run-seconds must be finite and >0")
+    current = time.monotonic() if now is None else now
+    return current - started >= max_run_seconds
+
+
 def budget_exceeded(usage: dict, max_mib: float | None) -> bool:
     return (max_mib is not None
             and usage["sqlite_budget_measure_bytes"] >= max_mib * 1024 * 1024)
@@ -620,6 +635,9 @@ def main(argv=None):
                          "last group always forces full audit")
     ap.add_argument("--max-index-mib", type=float, default=None,
                     help="Soft SQLite main+WAL space guard (MiB), checked after every completed row group")
+    ap.add_argument("--max-run-seconds", type=float, default=None,
+                    help="Optional soft elapsed-time budget from Parquet footer open; "
+                         "checked before and after each whole row-group transaction")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--write-order", choices=("source","pk-sorted"), default="source",
                     help="SQLite UPSERT iteration ordering; source is existing default, pk-sorted is A/B pilot")
@@ -637,6 +655,9 @@ def main(argv=None):
         if args.max_index_mib is not None and (
                 not math.isfinite(args.max_index_mib) or args.max_index_mib <= 0):
             raise ValueError("--max-index-mib must be finite and >0")
+        if args.max_run_seconds is not None and (
+                not math.isfinite(args.max_run_seconds) or args.max_run_seconds <= 0):
+            raise ValueError("--max-run-seconds must be finite and >0")
         suffix = f"{args.year}-{args.universe}-v3"
         out, scratch = core.resolve_module_artifact_paths(
             args.out or Path("work") / "indexes" / f"pq-5min-{suffix}.sqlite", None)
@@ -679,6 +700,7 @@ def main(argv=None):
         source_rows_this_run = 0
         limit_reached = False
         budget_reached = False
+        wall_budget_reached = False
         stopped_for = None
         wal_checkpoint_attempts = 0
         wal_checkpoint_busy = 0
@@ -710,6 +732,10 @@ def main(argv=None):
                 if args.max_new_groups is not None and newly_processed >= args.max_new_groups:
                     limit_reached = True
                     stopped_for = "max_new_groups"
+                    break
+                if wall_budget_exceeded(started, args.max_run_seconds):
+                    wall_budget_reached = True
+                    stopped_for = "max_run_seconds_before_group"
                     break
                 group_wall_started = time.monotonic()
                 if args.max_index_mib is not None:
@@ -786,7 +812,13 @@ def main(argv=None):
                         break
                 group_timings[-1]["row_group_wall_seconds"] = round(
                     time.monotonic() - group_wall_started, 3)
-            if limit_reached or budget_reached:
+                if wall_budget_exceeded(started, args.max_run_seconds):
+                    wall_budget_reached = True
+                    stopped_for = "max_run_seconds_after_group"
+                    print("Soft wall-time budget reached after committed row-group; "
+                          "stopping with resumable V3 index", flush=True)
+                    break
+            if limit_reached or budget_reached or wall_budget_reached:
                 break
         loop_elapsed = time.monotonic() - loop_started
         phase_times["row_group_loop_other"] = row_group_loop_residual(
@@ -812,9 +844,12 @@ def main(argv=None):
         result["new_groups_per_second"] = (
             round(newly_processed / elapsed, 5) if elapsed > 0 else None)
         result["run_limited_before_complete"] = bool(
-            (limit_reached or budget_reached) and not result["index_complete"])
+            (limit_reached or budget_reached or wall_budget_reached)
+            and not result["index_complete"])
         result["max_index_mib_soft_budget"] = args.max_index_mib
+        result["max_run_seconds_soft_budget"] = args.max_run_seconds
         result["soft_budget_reached"] = budget_reached
+        result["soft_wall_budget_reached"] = wall_budget_reached
         result["stopped_for"] = stopped_for
         result["wal_checkpoint_attempts_this_run"] = wal_checkpoint_attempts
         result["wal_checkpoint_busy_this_run"] = wal_checkpoint_busy

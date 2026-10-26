@@ -213,21 +213,28 @@ def create_tables(db):
     """)
 
 
-def insert_group(db, file_id, row_group, packed, counts, write_order="source"):
-    """Atomic UPSERTs in original or sorted primary-key order.
+def insert_group(db, file_id, row_group, packed, counts, write_order="source",
+                 timing_out=None):
+    """Atomic V3 UPSERT; optionally profile nested stages without changing SQL.
 
-    Sorting affects only the order of commutative bitmask/row-count unions and
-    group-id set unions. It must not alter any final indexes or safety gates.
+    timing_out is an opt-in mutable dict populated ONLY after commit success.
+    Nested timings are subsets of sqlite_group_commit, NOT extra run phases.
     """
     if write_order not in ("source", "pk-sorted"):
         raise ValueError("Unsupported SQLite write ordering")
-    # Keep the original iteration order as default for comparable benchmarks.
+    profile = timing_out is not None
+    prepare_started = time.monotonic() if profile else 0.0
     items = packed.items() if write_order == "source" else sorted(packed.items())
     daily = [(sym, day, values[0], values[1])
              for (sym, day), values in items]
     encoded_group = encode_group_ids([row_group])
     groups = [(sym, day, file_id, encoded_group) for sym, day, _, _ in daily]
+    if profile:
+        prepare_seconds = time.monotonic() - prepare_started
+        transaction_started = time.monotonic()
     with db:
+        if profile:
+            stage_started = time.monotonic()
         db.executemany("""
             INSERT INTO daily_coverage(symbol,trade_day,slot_mask,source_rows)
             VALUES(?,?,?,?)
@@ -235,16 +242,35 @@ def insert_group(db, file_id, row_group, packed, counts, write_order="source"):
               slot_mask=(daily_coverage.slot_mask | excluded.slot_mask),
               source_rows=(daily_coverage.source_rows + excluded.source_rows)
         """, daily)
+        if profile:
+            daily_seconds = time.monotonic() - stage_started
+            stage_started = time.monotonic()
         db.executemany("""
             INSERT INTO row_group_locator(symbol,trade_day,file_id,group_ids)
             VALUES(?,?,?,?)
             ON CONFLICT(symbol,trade_day,file_id) DO UPDATE SET
               group_ids=group_id_union(row_group_locator.group_ids,excluded.group_ids)
         """, groups)
+        if profile:
+            locator_seconds = time.monotonic() - stage_started
+            stage_started = time.monotonic()
         db.execute("""
             INSERT INTO groups_done VALUES(?,?,?,?,?,?,?,?,?)
         """, (file_id, row_group, *(counts[k] for k in STATS)))
-
+        if profile:
+            checkpoint_seconds = time.monotonic() - stage_started
+    if profile:
+        db_elapsed = time.monotonic() - transaction_started
+        # Includes commit latency, context enter/exit and Python dispatch.
+        remaining = max(0.0, db_elapsed - daily_seconds - locator_seconds
+                        - checkpoint_seconds)
+        timing_out.update({
+            "prepare_seconds": prepare_seconds,
+            "daily_coverage_upsert_seconds": daily_seconds,
+            "row_group_locator_upsert_seconds": locator_seconds,
+            "groups_done_insert_seconds": checkpoint_seconds,
+            "commit_and_other_seconds": remaining
+        })
 
 def open_index(index, manifest, resume, journal_mode="wal"):
     index.parent.mkdir(parents=True, exist_ok=True)
@@ -577,8 +603,27 @@ def processing_profile(phase_times, group_timings, elapsed):
         (row for row in group_timings if "row_group_wall_seconds" in row),
         key=lambda x: (-x["row_group_wall_seconds"],
                        x["file_id"], x["row_group"]))[:5]
+    breakdown_keys = (
+        "prepare_seconds", "daily_coverage_upsert_seconds",
+        "row_group_locator_upsert_seconds", "groups_done_insert_seconds",
+        "commit_and_other_seconds"
+    )
+    profiled_writes = [
+        row for row in group_timings if "sqlite_write_breakdown_seconds" in row
+    ]
+    write_breakdown = {
+        key: round(sum(row["sqlite_write_breakdown_seconds"].get(key, 0.0)
+                       for row in profiled_writes), 3)
+        for key in breakdown_keys
+    }
+    write_breakdown["outside_insert_group_seconds"] = round(
+        max(0.0, sum(row["commit_seconds"] for row in profiled_writes)
+            - sum(sum(row["sqlite_write_breakdown_seconds"].get(key, 0.0)
+                      for key in breakdown_keys) for row in profiled_writes)), 3)
     return {
         "profiled_new_groups": group_count,
+        "sqlite_write_breakdown_profiled_groups": len(profiled_writes),
+        "sqlite_write_breakdown_seconds": write_breakdown,
         "phases_seconds": {name: round(phase_times.get(name, 0.0), 3)
                            for name in stages},
         "wal_checkpoint_inside_budget_seconds": round(
@@ -762,8 +807,10 @@ def main(argv=None):
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
                 read_seconds = time.monotonic() - read_started
                 write_started = time.monotonic()
+                write_breakdown = {}
                 insert_group(db, file_id, rg, packed, counts,
-                             write_order=args.write_order)
+                             write_order=args.write_order,
+                             timing_out=write_breakdown)
                 write_seconds = time.monotonic() - write_started
                 phase_times["parquet_read_and_key_aggregation"] += read_seconds
                 phase_times["sqlite_group_commit"] += write_seconds
@@ -772,7 +819,8 @@ def main(argv=None):
                     "source_rows": counts["source_rows"],
                     "stock_day_partitions_in_group": len(packed),
                     "read_and_aggregate_seconds": round(read_seconds, 3),
-                    "commit_seconds": round(write_seconds, 3)
+                    "commit_seconds": round(write_seconds, 3),
+                    "sqlite_write_breakdown_seconds": write_breakdown
                 })
                 newly_processed += 1
                 source_rows_this_run += counts["source_rows"]

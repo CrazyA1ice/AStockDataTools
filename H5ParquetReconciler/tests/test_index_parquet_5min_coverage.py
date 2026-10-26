@@ -437,6 +437,95 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         self.assertEqual(result["slowest_parquet_read_and_aggregate_groups"][0]["row_group"],9)
         self.assertEqual(result["slowest_sqlite_commit_groups"][0]["row_group"],0)
 
+    def test_pk_sorted_write_yields_identical_daily_and_locator_state(self):
+        """Reordered input and overlapping groups must yield identical V3 state."""
+        rows1 = [
+            (("SZ000636",20250930),[3,2]),
+            (("SH600000",20250930),[5,2]),
+            (("SH600000",20250929),[1,1])
+        ]
+        rows2 = [
+            (("SH600000",20250930),[8,1]),
+            (("SZ000636",20250930),[16,1]),
+            (("SH600000",20250929),[2,1])
+        ]
+        created=[]
+        try:
+            for order in ("source","pk-sorted"):
+                path=Path(self.temp.name)/("compare-"+order+".sqlite")
+                db=M.open_index(path,self.manifest,False)
+                created.append(db)
+                first=dict(rows1)
+                second=dict(rows2)
+                # Match source row counts to the compressed group counters.
+                c1=sum(value[1] for value in first.values())
+                c2=sum(value[1] for value in second.values())
+                M.insert_group(db,0,31,first,
+                               M.Counter({"source_rows":c1,"candidate_rows":c1}),
+                               write_order=order)
+                M.insert_group(db,0,32,second,
+                               M.Counter({"source_rows":c2,"candidate_rows":c2}),
+                               write_order=order)
+            results=[]
+            for db in created:
+                summary=M.index_summary(db,self.manifest,2)
+                # Different write orders can legitimately allocate different
+                # SQLite page counts; compare logical coverage, not B-tree
+                # physical byte layout.
+                summary.pop("sqlite_main_estimated_allocated_bytes")
+                daily=list(db.execute("SELECT * FROM daily_coverage ORDER BY symbol,trade_day"))
+                loc=[(row[0],row[1],row[2],M.decode_group_ids(row[3]))
+                     for row in db.execute(
+                         "SELECT * FROM row_group_locator ORDER BY symbol,trade_day,file_id")]
+                results.append((summary,daily,loc))
+            self.assertEqual(results[0],results[1])
+            self.assertEqual(results[0][0]["row_groups_complete"],2)
+            self.assertEqual(results[0][0]["row_group_locator_entries"],6)
+            self.assertEqual(results[0][0]["duplicate_regular_session_keys"],0)
+        finally:
+            for db in created:
+                db.close()
+
+    def test_sorted_write_preserves_atomic_rollback(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            packed={("SH600000",20250930):[1,1],
+                    ("SZ000636",20250930):[2,1]}
+            counts=M.Counter({"source_rows":2,"candidate_rows":2})
+            M.insert_group(db,0,0,packed,counts,write_order="pk-sorted")
+            with self.assertRaises(sqlite3.IntegrityError):
+                M.insert_group(db,0,0,packed,counts,write_order="pk-sorted")
+            self.assertEqual(db.execute("SELECT SUM(source_rows) FROM daily_coverage")
+                             .fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups_done").fetchone()[0],1)
+        finally:
+            db.close()
+
+    def test_unsupported_write_order_fails_before_sqlite_mutation(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            with self.assertRaisesRegex(ValueError,"Unsupported SQLite write ordering"):
+                M.insert_group(db,0,0,{("SH600000",20250930):[1,1]},
+                               M.Counter({"source_rows":1,"candidate_rows":1}),
+                               write_order="random")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM daily_coverage")
+                             .fetchone()[0],0)
+        finally:
+            db.close()
+
+    def test_processing_profile_separates_full_summary_from_unattributed(self):
+        timings = {
+            "parquet_read_and_key_aggregation": 3.0,
+            "sqlite_group_commit": 5.0,
+            "budget_guard_and_checkpoint": 1.0,
+            "wal_checkpoint_inside_budget": 0.5,
+            "final_index_summary": 7.0
+        }
+        profile = M.processing_profile(timings, [], 16.5)
+        self.assertEqual(profile["phases_seconds"]["final_index_summary"], 7.0)
+        self.assertEqual(profile["unattributed_seconds"], 0.5)
+        self.assertEqual(profile["wal_checkpoint_inside_budget_seconds"], 0.5)
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

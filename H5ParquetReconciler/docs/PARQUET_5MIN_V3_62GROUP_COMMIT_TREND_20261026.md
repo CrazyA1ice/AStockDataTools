@@ -48,14 +48,41 @@ git pull --ff-only origin main
 
 新增6项完全合成的测试：正常两轮形状、源指纹/主库身份不一致、RowGroup区间不连续、预算/修改状态异常、时间嵌套守恒或NaN错误、路径逃逸/覆盖保护。此前期望115项，加6项**预计121项**；需Windows Python3.11真实运行确认，不得声称开发端已经本机通过。
 
-## 4. 下一步先做62组独立完整审计，别急着改同步持久化
+## 4. 已完成：62组主索引独立full审计（后续上传结果）
+
+用户随后提交 `pq-5min-2025-v3-readonly-full-audit-62.json`，实际验收为：
+
+- `row_groups_complete=62`、`row_groups_total=522`、`full_key_audit_performed=true`、`audit_mode=existing_index_read_only_full`。
+- `unique_regular_session_keys=7,623,474`，`candidate_source_rows=7,623,474`，`duplicate_regular_session_keys=0`；原始总行7,624,698，排除非候选证券1,224，完整守恒。
+- 证券日分区1,313,404，RowGroup定位关系3,845,191，压缩记录数1,313,404、压缩比2.9277。
+- 年度越界、无效时间戳、非预期时段、不识别证券均为0。
+- 审计耗时13.235秒，`new_row_groups_this_run=0`，`no_parquet_data_rows_read_this_run=true`，`sqlite_index_modified=false`，`source_files_modified=false`，源文件元数据指纹与本次62组构建相同。
+
+**已完成审计，不需要重跑已经存在的审计报告或重建SQLite。** 上述正确性仍只针对当前62组，不能认证供应商原始行情真值、上市证券主数据或五分钟时间标记，自动H5/Parquet并集继续禁止。
+
+## 5. 下一步：PR #29合并验收，主索引62→最多67组
+
+此开发分支新增的`compare-v3-performance-batches.py`是纯JSON只读工具；只有**合并PR #29之后**，才能通过`main`的`git pull`得到它。新加6项合成测试，总量预计121项，必须用Windows本机的实际`OK`结果确认。
+
+建议仓库根目录执行：
 
 ```powershell
-.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --read-only --report "reports\pq-5min-2025-v3-readonly-full-audit-62.json"
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
 ```
 
-这只读取既有V3索引和Parquet footer，不推进RowGroup，不更改原始`D:\stock`，但得到当前62组真正独立的`unique_regular_session_keys`、`duplicate_regular_session_keys`和定位关系数。若出现重复键/校验不一致或源指纹变更，应先调查数据。若报告名已存在，应指定全新路径，不能覆盖。
+如果PR #29仍处于Open状态，主分支预计仍只有此前约115项测试，**不要声称新趋势工具已经可用或已验收**；可在PR合并后重新执行测试。测试全部通过、当前主V3确实为62组、无其他进程同时写主库且确认磁盘剩余空间后，从主库继续最多5组：
 
-后续性能试验优先关注**Windows设备写入延迟、SQLite WAL提交时的同步调用与缓存状态**，再考虑是否有其他“保持FULL持久性不变”的手段；不要直接在主索引上测试降低`PRAGMA synchronous`，也不能把一次顺序运行的速度变化推断为特定SQL或文件系统的因果效应。
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 5 --max-run-seconds 90 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\pq-5min-2025-v3-commit-67.json"
+```
 
-目前2025年度主索引进度**62/522（11.88%）**，剩余460组。证券分类主数据、五分钟时标供应商真值与全年完整性均未认证，继续保持`safe_to_automatically_union=false`。
+这仍使用原本`synchronous=FULL`；不得直接在主索引上使用更低持久化设置，也不许把A/B副本替代主库。若出现`max_index_mib`软容量触发，严格保留断点并先分析WAL空间回收情况，不盲目提高阈值。目标结果为处理到67/522且`stopped_for=max_new_groups`，实际可能因预算更早停止。
+
+当PR #29已经合并且测试通过，还可以只分析已有两个JSON（不访问SQLite及D盘）：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\compare-v3-performance-batches.py --previous "reports\pq-5min-2025-v3-sqlite-breakdown-57.json" --current "reports\pq-5min-2025-v3-transaction-exit-62.json" --report "reports\pq-5min-2025-v3-performance-trend-57-62.json" --read-only
+```
+
+输入和目标必须保存在本模块`reports/`，目标文件不能已存在。该趋势仅展示不同RowGroup批次的**观测差异**，不能证明`fsync`、SQLite版本或Windows缓存是因果根源。主索引仍未完成年度522组认证；`safe_to_automatically_union=false`保持不变。

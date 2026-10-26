@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 本机单日精确分类已确认：下一步针对前三证券做H5×100分时守恒（2026-10-26）
+
+用户新上传的`h5-parquet-5min-2026-09-28-exact-residual-masks.json`已完成且守恒：9月28日匹配266,256根，×100后候选冲突**1,029根**，8种互斥类别为`volume=47、amount=2、price=117、volume_amount=392、volume_price=37、amount_price=0、volume_amount_price=434`（其余265,227根none）。候选volume=**910**、amount=**828**、OHLC price=**588**，与旧日级聚合精确一致。SH其他候选冲突535、BJ336、SH688/689 158、SZ两组0。BJ有**113根纯价格差**，不能与沪市量额三字段联差混成同一原因。
+
+新工具`tools/analyze-5min-x100-focused-sessions.py`直接用已有的9月28日精确mask报告**自动选择真实最多冲突的三只股票SH688629、SH688017、SH688172**（总共95根冲突，其中72根三字段同差），仅加载这三个证券的H5/PQ 5min候选数据，先把H5 5min成交量**只在内存中×100**，对逐证券精确8mask计数和旧基线逐项核实后，再区分上午/下午比较成交量及成交额净差、相互抵消比例、相邻根差分相关和价格边界连续性。报告不含原始OHLCV，保留未认证映射、自动并集禁止。新增5项合成测试待Windows验收。详见[前三只股票×100分时归因](docs/2026_09_28_TOP3_X100_SESSION_DIAGNOSTIC_20261026.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\analyze-5min-x100-focused-sessions.py "D:\stock" --date 2026-09-28 --baseline-report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json" --top-symbols 3 --read-only --out "reports\h5-parquet-5min-x100-2026-09-28-top3-sessions.json"
+```
+
+上传新的`h5-parquet-5min-x100-2026-09-28-top3-sessions.json`，**不要再次做9月28日全市场267,264根Parquet重对账**。本次只读选中股票（受Parquet行组统计粒度影响，实际可能解码更多来源行），不会修改源。
+
 ## 下一阶段：09-28单日精准划分8种量价残余组合（2026-10-26）
 
 最新用户离线报告`h5-parquet-5min-2026-09-24-30-residual-triage.json`验证了1,065,216条重叠K线、3,440条候选量价残余，并严格指出：**343条确定没有成交量差异、至少922条同时涉及成交量/成交额/价格**。原聚合只能提供下界，不能直接计算互斥精确分类。5min候选量差按组SH其他1,742、BJ806、SH688/689 549、SZ两组0；交易日中09-28的候选量差910条最多。

@@ -228,6 +228,22 @@ git pull --ff-only origin main
 
 预计新增2项单测，总数63项，需本机执行核验。对比V1/V2的源键数、重复数、逻辑行组关系数和`row_group_locator_compact_rows`，确认正确后再评估全年构建的磁盘开销。[V2索引设计与对照验收说明](docs/PARQUET_5MIN_INDEX_V2_STORAGE_20261026.md)。
 
+## Parquet五分钟索引V3：稀疏行组列表（2026-10-26）
+
+已在用户上传的两份真实SQLite中核实：V1索引2组大小5.79 MiB、V2大小5.89 MiB；两者247,776个有效唯一键、122,277条逻辑行组定位均一致。V2虽然把定位表从122,277行压缩到120,646行，但SQLite总大小**没有下降**，因为绝大多数股票/日期只出现在一个行组，位图未能充分压缩；对第522组这种稀疏高编号，旧V2位置位图还会产生大量零填充。
+
+新V3将行组编号写成**升序的LEB128变长整数列表**，避免高编号位置位图的空字节。v1/v2两个SQLite文件完全保留；v3默认新建 `work/indexes/pq-5min-2025-a-share-candidate-v3.sqlite`。合并源行情仍被禁止。
+
+先跑本机测试和**仅2个行组的V3试运行**，与V1/V2核对计数：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --max-new-groups 2 --read-only --report "reports\pq-5min-2025-index-v3-smoke-2groups.json"
+```
+
+V3验证正确后，再`--resume --max-new-groups 8`处理另外8组，观察累计10组的SQLite体积和速度。**不得直接从2组跳到522组**；V3是稀疏场景优化，不承诺所有布局都比V2快或小。[V1/V2的真实数据审查与V3使用说明](docs/PARQUET_5MIN_INDEX_V3_SPARSE_20261026.md)。本轮新增1项索引测试，模块总数64项，需用户Windows本机验收。
+
 ## 输出
 
 程序在输出目录产生：

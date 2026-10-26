@@ -287,6 +287,13 @@ def index_summary(db, manifest, row_groups_total):
         "row_group_locator_compact_rows": int(locator_rows),
         "row_group_locator_payload_bytes": int(mask_bytes),
         "locator_storage": "one compressed BLOB bitmap per (symbol,day,file)",
+        "row_group_locator_compression_ratio": round(
+            locator_memberships / locator_rows, 4) if locator_rows else None,
+        "sqlite_main_estimated_allocated_bytes": (
+            db.execute("PRAGMA page_size").fetchone()[0]
+            * db.execute("PRAGMA page_count").fetchone()[0]
+        ),
+        "sqlite_wal_not_included_in_estimate": True,
         "row_groups_stats": totals,
         "security_master_certified": False,
         "timestamp_5min_convention_certified": False,

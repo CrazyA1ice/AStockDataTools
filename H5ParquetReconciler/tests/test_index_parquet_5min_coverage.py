@@ -83,6 +83,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             self.assertEqual(result["unique_regular_session_keys"],3)
             self.assertEqual(result["duplicate_regular_session_keys"],1)
             self.assertEqual(result["row_group_locator_entries"],2)
+            self.assertEqual(result["row_group_locator_compact_rows"],1)
             self.assertEqual(M.index_matches_and_groups(
                 db,("SH600000",),20250930),{0:[0,1]})
         finally:
@@ -151,10 +152,34 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             report=M.index_summary(db,self.manifest,2)
             self.assertEqual(report["duplicate_regular_session_keys"],1)
             self.assertEqual(report["row_group_locator_entries"],2)
+            self.assertEqual(report["row_group_locator_compact_rows"],2)
             self.assertEqual(M.index_matches_and_groups(
                 db,("SH600000",),20250930),{0:[0],1:[0]})
         finally:
             db.close()
+
+    def test_compressed_bitmap_handles_large_and_cross_byte_group_ids(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            for rg in (0,7,8,255,521):
+                M.insert_group(db,0,rg,data,counts)
+            summary=M.index_summary(db,self.manifest,5)
+            self.assertEqual(summary["row_group_locator_compact_rows"],1)
+            self.assertEqual(summary["row_group_locator_entries"],5)
+            self.assertEqual(summary["row_group_locator_payload_bytes"],66)
+            self.assertEqual(summary["duplicate_regular_session_keys"],4)
+            self.assertEqual(M.index_matches_and_groups(
+                db,("SH600000",),20250930),{0:[0,7,8,255,521]})
+        finally:
+            db.close()
+
+    def test_mask_or_preserves_existing_bits_and_empty_bytes(self):
+        self.assertEqual(M.mask_or(b"\x01",b"\x00\x02"),b"\x01\x02")
+        self.assertEqual(M.mask_or(b"",b"\x80"),b"\x80")
+        self.assertEqual(M.mask_group_ids(b"\x00\x81"),[8,15])
 
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
@@ -162,7 +187,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             cols=[row[1] for row in db.execute("PRAGMA table_info(daily_coverage)")]
             self.assertEqual(cols,["symbol","trade_day","slot_mask","source_rows"])
             cols=[row[1] for row in db.execute("PRAGMA table_info(row_group_locator)")]
-            self.assertEqual(cols,["symbol","trade_day","file_id","row_group"])
+            self.assertEqual(cols,["symbol","trade_day","file_id","group_mask"])
             self.assertFalse(any(field in cols for field in (
                 "open","high","low","close","volume","amount")))
         finally:

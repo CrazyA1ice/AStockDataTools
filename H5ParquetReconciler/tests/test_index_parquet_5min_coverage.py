@@ -469,6 +469,10 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             results=[]
             for db in created:
                 summary=M.index_summary(db,self.manifest,2)
+                # Different write orders can legitimately allocate different
+                # SQLite page counts; compare logical coverage, not B-tree
+                # physical byte layout.
+                summary.pop("sqlite_main_estimated_allocated_bytes")
                 daily=list(db.execute("SELECT * FROM daily_coverage ORDER BY symbol,trade_day"))
                 loc=[(row[0],row[1],row[2],M.decode_group_ids(row[3]))
                      for row in db.execute(

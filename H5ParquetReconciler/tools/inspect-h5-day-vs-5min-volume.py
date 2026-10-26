@@ -80,7 +80,7 @@ def matching_volume(day_raw, five_minute_raw, relative_tolerance=0.001):
             max(1, relative_tolerance * max(abs(five_minute_raw), abs(target))))
 
 
-def tally_one_stock_day(day_records, minute_records, counters):
+def tally_one_stock_day(day_records, minute_records, counters, *, identity=None, anomalies=None):
     """Keep only complete/unique trading day pairs in volume comparisons."""
     counters["stock_days_with_both_cycles"] += 1
     days = [x for x in day_records if x[0] == 0]
@@ -106,9 +106,15 @@ def tally_one_stock_day(day_records, minute_records, counters):
         daily_raw == minute_raw_sum)
     counters["daily_and_minute_both_zero"] += int(
         daily_normalized == 0 and candidate_minute == 0)
-    counters["day_minute_raw_mismatch_above_0_1pct"] += int(
-        not matching_volume(daily_raw, candidate_minute))
-    # No numbers from this stock-day are written to report.
+    mismatch = not matching_volume(daily_raw, candidate_minute)
+    counters["day_minute_raw_mismatch_above_0_1pct"] += int(mismatch)
+    if mismatch and identity is not None and anomalies is not None and len(anomalies) < 12:
+        symbol, day = identity
+        anomalies.append({
+            "symbol": symbol, "day": str(day),
+            "issue": "H5_day_vs_5min_volume_sum_over_0.1pct"
+        })
+    # No volume values or raw OHLCV from this stock-day enter the report.
 
 
 def make_report(root, year, from_date, to_date):
@@ -135,6 +141,7 @@ def make_report(root, year, from_date, to_date):
     }
     totals = Counter()
     by_day = {}
+    anomaly_examples = []
     for market in ("sh", "sz", "bj"):
         day, day_invalid = read_candidate_market_file(
             root, market, "day", year, low, high)
@@ -156,7 +163,8 @@ def make_report(root, year, from_date, to_date):
                 totals["stock_days_only_day"] += 1
                 bucket["stock_days_only_day"] += 1
             else:
-                tally_one_stock_day(d, m, totals)
+                tally_one_stock_day(
+                    d, m, totals, identity=key, anomalies=anomaly_examples)
                 tally_one_stock_day(d, m, bucket)
     if (totals["candidate_stock_days_either_cycle"]
         != totals["stock_days_only_minute"] + totals["stock_days_only_day"]
@@ -178,6 +186,8 @@ def make_report(root, year, from_date, to_date):
         + totals["day_minute_raw_mismatch_above_0_1pct"]
         != totals["complete_48_bar_stock_days_compared"]):
         raise ValueError("Cross-cycle candidate matches do not conserve")
+    result["anomaly_stock_day_examples"] = anomaly_examples
+    result["anomaly_examples_contain_no_source_volume_values"] = True
     result["totals"] = dict(sorted(totals.items()))
     result["by_day"] = {
         d: dict(sorted(c.items())) for d, c in sorted(by_day.items())

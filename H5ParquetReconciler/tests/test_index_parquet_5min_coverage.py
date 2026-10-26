@@ -297,6 +297,107 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_clone_from_incomplete_v3_index_keeps_original_intact(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+        finally:
+            db.close()
+        clone=Path(self.temp.name)/"other"/"pilot.sqlite"
+        M.clone_partial_index(self.index,clone,self.manifest)
+        self.assertTrue(clone.exists())
+        copy=M.open_index(clone,self.manifest,True,journal_mode="delete")
+        try:
+            self.assertEqual(copy.execute("PRAGMA journal_mode").fetchone()[0],"delete")
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300935")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(copy,0,1,data,counts)
+            self.assertEqual(M.index_summary(copy,self.manifest,2)
+                             ["unique_regular_session_keys"],2)
+        finally:
+            copy.close()
+        original=M.open_index(self.index,self.manifest,True)
+        try:
+            self.assertEqual(M.index_summary(original,self.manifest,2)
+                             ["row_groups_complete"],1)
+            self.assertEqual(M.index_summary(original,self.manifest,2)
+                             ["unique_regular_session_keys"],1)
+            self.assertEqual(original.execute("PRAGMA journal_mode").fetchone()[0],"wal")
+        finally:
+            original.close()
+
+    def test_snapshot_clone_in_wal_mode_has_same_checkpoint_count(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,stats=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,stats)
+        finally:
+            db.close()
+        cloned=Path(self.temp.name)/"pilot-wal.sqlite"
+        M.clone_partial_index(self.index,cloned,self.manifest)
+        copied=M.open_index(cloned,self.manifest,True,journal_mode="wal")
+        try:
+            self.assertEqual(copied.execute("PRAGMA journal_mode").fetchone()[0],"wal")
+            self.assertEqual(copied.execute("SELECT COUNT(*) FROM groups_done")
+                             .fetchone()[0],1)
+        finally:
+            copied.close()
+
+    def test_clone_rejects_fingerprint_mismatch_and_existing_destination(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,stats=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,stats)
+        finally:
+            db.close()
+        target=Path(self.temp.name)/"pilots"/"trial.sqlite"
+        changed=dict(self.manifest)
+        changed["year"]=2024
+        with self.assertRaisesRegex(ValueError,"fingerprint"):
+            M.clone_partial_index(self.index,target,changed)
+        self.assertFalse(target.exists())
+        M.clone_partial_index(self.index,target,self.manifest)
+        with self.assertRaisesRegex(ValueError,"Refusing to overwrite"):
+            M.clone_partial_index(self.index,target,self.manifest)
+        self.assertTrue(target.exists())
+
+    def test_clone_rejects_empty_or_completed_sources(self):
+        db=M.open_index(self.index,self.manifest,False)
+        db.close()
+        target=Path(self.temp.name)/"empty-pilot.sqlite"
+        with self.assertRaisesRegex(ValueError,"no completed"):
+            M.clone_partial_index(self.index,target,self.manifest)
+        self.assertFalse(target.exists())
+        db=M.open_index(self.index,self.manifest,True)
+        try:
+            data,stats=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,stats)
+            with db:
+                db.execute("UPDATE meta SET value='true' WHERE key='completed'")
+        finally:
+            db.close()
+        with self.assertRaisesRegex(ValueError,"incomplete checkpoint"):
+            M.clone_partial_index(self.index,target,self.manifest)
+        self.assertFalse(target.exists())
+
+    def test_unsupported_journal_mode_does_not_create_silent_database(self):
+        with self.assertRaisesRegex(ValueError,"Unsupported SQLite journal mode"):
+            M.open_index(self.index,self.manifest,False,journal_mode="memory")
+        # SQLite may have created an empty file before mode validation; no
+        # source data or checkpoint should have been written to that file.
+        if self.index.exists():
+            self.assertEqual(self.index.stat().st_size,0)
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

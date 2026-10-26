@@ -238,7 +238,7 @@ def insert_group(db, file_id, row_group, packed, counts):
         """, (file_id, row_group, *(counts[k] for k in STATS)))
 
 
-def open_index(index, manifest, resume):
+def open_index(index, manifest, resume, journal_mode="wal"):
     index.parent.mkdir(parents=True, exist_ok=True)
     existing = index.exists()
     if existing and not resume:
@@ -246,7 +246,17 @@ def open_index(index, manifest, resume):
     if not existing and resume:
         raise ValueError(f"--resume requested but index does not exist: {index}")
     db = sqlite3.connect(str(index), timeout=60)
-    db.execute("PRAGMA journal_mode=WAL")
+    if journal_mode not in ("wal", "delete"):
+        db.close()
+        raise ValueError("Unsupported SQLite journal mode")
+    try:
+        actual = db.execute("PRAGMA journal_mode=" + journal_mode.upper()).fetchone()[0].lower()
+    except Exception:
+        db.close()
+        raise
+    if actual != journal_mode:
+        db.close()
+        raise ValueError("Unable to enable SQLite journal mode " + journal_mode)
     db.execute("PRAGMA synchronous=FULL")
     db.execute("PRAGMA busy_timeout=60000")
     db.execute("PRAGMA cache_size=-65536")  # 64 MiB SQLite page cache
@@ -431,6 +441,54 @@ def budget_check_after_wal_recovery(db, path: Path, max_mib: float):
     return bool(busy) or budget_exceeded(after, max_mib), after, event
 
 
+def clone_partial_index(source_path: Path, target_path: Path, manifest: dict):
+    """Make a transactionally consistent SQLite snapshot for a journal A/B pilot.
+
+    Source is read-only. Destination MUST be a fresh file inside module work/.
+    Snapshot is version/fingerprint checked; no H5/Parquet licensed bars copied.
+    """
+    if source_path.resolve() == target_path.resolve():
+        raise ValueError("Index clone target must differ from source")
+    if target_path.exists():
+        raise ValueError("Refusing to overwrite an existing index clone")
+    if not source_path.is_file():
+        raise ValueError("Source V3 index missing: " + str(source_path))
+    source = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+    try:
+        meta = dict(source.execute("SELECT key,value FROM meta"))
+        if meta.get("version") != VERSION:
+            raise ValueError("Source index version is not V3")
+        if meta.get("fingerprint") != manifest_signature(manifest):
+            raise ValueError("Source index fingerprint differs from yearly Parquet inputs")
+        if meta.get("completed") != "false":
+            raise ValueError("Journal A/B pilot requires an incomplete checkpoint index")
+        if source.execute("SELECT COUNT(*) FROM groups_done").fetchone()[0] == 0:
+            raise ValueError("Source index has no completed row-group checkpoints")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target = sqlite3.connect(str(target_path))
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+        # Reopen copied target and verify backup before future mutation.
+        cloned = sqlite3.connect(str(target_path))
+        try:
+            copy_meta = dict(cloned.execute("SELECT key,value FROM meta"))
+            if copy_meta != meta:
+                raise ValueError("SQLite index clone meta differs after backup")
+            if source.execute("SELECT COUNT(*) FROM groups_done").fetchone()[0] != cloned.execute(
+                    "SELECT COUNT(*) FROM groups_done").fetchone()[0]:
+                raise ValueError("SQLite index clone checkpoints differ after backup")
+        finally:
+            cloned.close()
+    except Exception:
+        # Only a newly-created destination can be removed; never touch source.
+        target_path.unlink(missing_ok=True)
+        raise
+    finally:
+        source.close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path)
@@ -446,6 +504,10 @@ def main(argv=None):
     ap.add_argument("--max-index-mib", type=float, default=None,
                     help="Soft SQLite main+WAL space guard (MiB), checked after every completed row group")
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--journal-mode", choices=("wal","delete"), default="wal",
+                    help="Offline SQLite mode; default WAL. Use an index clone for comparable WAL/DELETE pilots")
+    ap.add_argument("--clone-from-index", type=Path, default=None,
+                    help="Copy an existing incomplete V3 index into new --out path before a bounded benchmark")
     ap.add_argument("--read-only", action="store_true", required=True,
                     help="Protect original data; local index and report are created inside module")
     args = ap.parse_args(argv)
@@ -466,11 +528,25 @@ def main(argv=None):
             raise ValueError(f"Report exists, choose a new --report path: {report}")
         if out == report:
             raise ValueError("SQLite index and report must not be the same file")
+        if args.clone_from_index is not None:
+            if args.resume or args.out is None:
+                raise ValueError("--clone-from-index needs a new explicit --out and must not use --resume")
+            if args.max_new_groups is None:
+                raise ValueError("Clone A/B benchmarks must specify --max-new-groups")
+            if args.max_index_mib is None:
+                raise ValueError("Clone A/B benchmarks must specify --max-index-mib")
         paths = core.year_files(root, "5min", args.year)
         if not paths:
             raise ValueError("Parquet year files not found")
         manifest = file_manifest(root, paths, args.year, args.universe)
-        db = open_index(out, manifest, args.resume)
+        clone_origin = None
+        if args.clone_from_index is not None:
+            clone_origin, _ = core.resolve_module_artifact_paths(args.clone_from_index, None)
+            if out.exists():
+                raise ValueError("Index target exists; choose a fresh pilot --out path")
+            clone_partial_index(clone_origin, out, manifest)
+        db = open_index(out, manifest, args.resume or args.clone_from_index is not None,
+                        journal_mode=args.journal_mode)
         import pyarrow.parquet as pq
         if args.max_new_groups is not None and args.max_new_groups < 1:
             raise ValueError("--max-new-groups must be >=1")
@@ -546,6 +622,10 @@ def main(argv=None):
                 break
         result = index_summary(db, manifest, total_groups)
         elapsed = time.monotonic()-started
+        result["sqlite_journal_mode"] = db.execute("PRAGMA journal_mode").fetchone()[0].lower()
+        result["clone_source_index"] = (
+            clone_origin.relative_to(core.MODULE_DIR).as_posix()
+            if clone_origin is not None else None)
         result["new_row_groups_this_run"] = newly_processed
         result["source_rows_this_run"] = source_rows_this_run
         result["elapsed_seconds_this_run"] = round(elapsed, 3)

@@ -457,11 +457,15 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
                 created.append(db)
                 first=dict(rows1)
                 second=dict(rows2)
-                # Synthetic group counters include exactly one raw candidate
-                # per key to match the compressed input source_rows.
-                c=M.Counter({"source_rows":3,"candidate_rows":3})
-                M.insert_group(db,0,31,first,c,write_order=order)
-                M.insert_group(db,0,32,second,c,write_order=order)
+                # Match source row counts to the compressed group counters.
+                c1=sum(value[1] for value in first.values())
+                c2=sum(value[1] for value in second.values())
+                M.insert_group(db,0,31,first,
+                               M.Counter({"source_rows":c1,"candidate_rows":c1}),
+                               write_order=order)
+                M.insert_group(db,0,32,second,
+                               M.Counter({"source_rows":c2,"candidate_rows":c2}),
+                               write_order=order)
             results=[]
             for db in created:
                 summary=M.index_summary(db,self.manifest,2)

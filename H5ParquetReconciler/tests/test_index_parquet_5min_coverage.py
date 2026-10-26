@@ -187,7 +187,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
                          M.encode_group_ids([521]))
 
     def test_corrupted_varint_fails_closed(self):
-        for encoded in (b"\x00",b"\x80",b"\x01\x01"):
+        for encoded in (b"\x00",b"\x80",b"\x01\x01",b"\x81\x00"):
             with self.assertRaises(ValueError):
                 M.decode_group_ids(encoded)
         with self.assertRaises(ValueError):

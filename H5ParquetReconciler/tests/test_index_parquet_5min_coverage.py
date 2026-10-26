@@ -158,7 +158,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_compressed_bitmap_handles_large_and_cross_byte_group_ids(self):
+    def test_sparse_groupids_handles_large_and_cross_byte_group_ids(self):
         db=M.open_index(self.index,self.manifest,False)
         try:
             data,counts=M.aggregate_batches(
@@ -169,17 +169,33 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             summary=M.index_summary(db,self.manifest,5)
             self.assertEqual(summary["row_group_locator_compact_rows"],1)
             self.assertEqual(summary["row_group_locator_entries"],5)
-            self.assertEqual(summary["row_group_locator_payload_bytes"],66)
+            self.assertEqual(summary["row_group_locator_payload_bytes"],7)
             self.assertEqual(summary["duplicate_regular_session_keys"],4)
             self.assertEqual(M.index_matches_and_groups(
                 db,("SH600000",),20250930),{0:[0,7,8,255,521]})
         finally:
             db.close()
 
-    def test_mask_or_preserves_existing_bits_and_empty_bytes(self):
-        self.assertEqual(M.mask_or(b"\x01",b"\x00\x02"),b"\x01\x02")
-        self.assertEqual(M.mask_or(b"",b"\x80"),b"\x80")
-        self.assertEqual(M.mask_group_ids(b"\x00\x81"),[8,15])
+    def test_sparse_varint_union_does_not_pad_high_row_group(self):
+        self.assertEqual(len(M.encode_group_ids([521])),2)
+        self.assertEqual(M.decode_group_ids(M.encode_group_ids([0,8,521])),
+                         [0,8,521])
+        self.assertEqual(M.decode_group_ids(M.merge_group_ids(
+            M.encode_group_ids([521,8]), M.encode_group_ids([0,8]))),
+            [0,8,521])
+        self.assertEqual(M.merge_group_ids(b"",M.encode_group_ids([521])),
+                         M.encode_group_ids([521]))
+
+    def test_corrupted_varint_fails_closed(self):
+        for encoded in (b"\x00",b"\x80",b"\x01\x01"):
+            with self.assertRaises(ValueError):
+                M.decode_group_ids(encoded) if encoded != b"\x01\x01" else (
+                    M.decode_group_ids(encoded) if len(set(M.decode_group_ids(encoded))) == 2
+                    else (_ for _ in ()).throw(ValueError("duplicate"))
+                )
+        with self.assertRaises(ValueError):
+            M.encode_group_ids([-1])
+
 
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
@@ -187,7 +203,7 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             cols=[row[1] for row in db.execute("PRAGMA table_info(daily_coverage)")]
             self.assertEqual(cols,["symbol","trade_day","slot_mask","source_rows"])
             cols=[row[1] for row in db.execute("PRAGMA table_info(row_group_locator)")]
-            self.assertEqual(cols,["symbol","trade_day","file_id","group_mask"])
+            self.assertEqual(cols,["symbol","trade_day","file_id","group_ids"])
             self.assertFalse(any(field in cols for field in (
                 "open","high","low","close","volume","amount")))
         finally:

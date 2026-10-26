@@ -437,6 +437,74 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         self.assertEqual(result["slowest_parquet_read_and_aggregate_groups"][0]["row_group"],9)
         self.assertEqual(result["slowest_sqlite_commit_groups"][0]["row_group"],0)
 
+    def test_pk_sorted_write_yields_identical_daily_and_locator_state(self):
+        """Reordered input and overlapping groups must yield identical V3 state."""
+        rows1 = [
+            (("SZ000636",20250930),[3,2]),
+            (("SH600000",20250930),[5,4]),
+            (("SH600000",20250929),[1,1])
+        ]
+        rows2 = [
+            (("SH600000",20250930),[8,6]),
+            (("SZ000636",20250930),[16,3]),
+            (("SH600000",20250929),[2,1])
+        ]
+        created=[]
+        try:
+            for order in ("source","pk-sorted"):
+                path=Path(self.temp.name)/("compare-"+order+".sqlite")
+                db=M.open_index(path,self.manifest,False)
+                created.append(db)
+                first=dict(rows1)
+                second=dict(rows2)
+                # Synthetic group counters include exactly one raw candidate
+                # per key to match the compressed input source_rows.
+                c=M.Counter({"source_rows":3,"candidate_rows":3})
+                M.insert_group(db,0,31,first,c,write_order=order)
+                M.insert_group(db,0,32,second,c,write_order=order)
+            results=[]
+            for db in created:
+                summary=M.index_summary(db,self.manifest,2)
+                daily=list(db.execute("SELECT * FROM daily_coverage ORDER BY symbol,trade_day"))
+                loc=[(row[0],row[1],row[2],M.decode_group_ids(row[3]))
+                     for row in db.execute(
+                         "SELECT * FROM row_group_locator ORDER BY symbol,trade_day,file_id")]
+                results.append((summary,daily,loc))
+            self.assertEqual(results[0],results[1])
+            self.assertEqual(results[0][0]["row_groups_complete"],2)
+            self.assertEqual(results[0][0]["row_group_locator_entries"],6)
+            self.assertEqual(results[0][0]["duplicate_regular_session_keys"],0)
+        finally:
+            for db in created:
+                db.close()
+
+    def test_sorted_write_preserves_atomic_rollback(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            packed={("SH600000",20250930):[1,1],
+                    ("SZ000636",20250930):[2,1]}
+            counts=M.Counter({"source_rows":2,"candidate_rows":2})
+            M.insert_group(db,0,0,packed,counts,write_order="pk-sorted")
+            with self.assertRaises(sqlite3.IntegrityError):
+                M.insert_group(db,0,0,packed,counts,write_order="pk-sorted")
+            self.assertEqual(db.execute("SELECT SUM(source_rows) FROM daily_coverage")
+                             .fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups_done").fetchone()[0],1)
+        finally:
+            db.close()
+
+    def test_unsupported_write_order_fails_before_sqlite_mutation(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            with self.assertRaisesRegex(ValueError,"Unsupported SQLite write ordering"):
+                M.insert_group(db,0,0,{("SH600000",20250930):[1,1]},
+                               M.Counter({"source_rows":1,"candidate_rows":1}),
+                               write_order="random")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM daily_coverage")
+                             .fetchone()[0],0)
+        finally:
+            db.close()
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

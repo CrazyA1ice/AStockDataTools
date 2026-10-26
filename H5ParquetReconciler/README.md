@@ -322,6 +322,22 @@ git pull --ff-only origin main
 
 V3索引仍在本模块`work/indexes`；本轮报告写入`reports`，原始`D:\stock`仍只读。若要完整唯一键/重复键审计，使用默认`--report-detail full`并以不同`--report`文件名运行，不能把快报的空指标视为源数据没有重复。[真实40组A/B分析及快报安全设计](docs/PARQUET_5MIN_V3_FAST_PROGRESS_20261026.md)。
 
+## V3索引第57组严格A/B：source保留默认，定位SQLite写入瓶颈（2026-10-26）
+
+主V3索引在52组的独立完整键审计已确认6,394,912个有效唯一键、重复0；两份从52组快照克隆的source和pk-sorted实验副本均处理到57/522组，并经严格只读比较器确认完全相同：7,009,197个唯一五分钟键、重复0，三张逻辑表逐行相同。**主索引仍为52组，不要混淆实验副本和真实续建进度。**
+
+本轮source总耗时40.687秒、SQLite写入25.156秒；pk-sorted总耗时40.859秒、写入26.233秒。对比早前36—40组排序写入快约8.2%的单轮结果，**pk-sorted加速没有复现，保留source默认配置**。新的分项计时把SQLite写入再拆成Python准备、daily覆盖UPSERT、locator定位UPSERT、checkpoint插入和事务提交/其他，嵌套计时**不是新增加的总耗时**。本轮新增3项合成测试，预计合计113项，尚需Windows本机测试。
+
+下一步在保持原始`D:\stock`完全只读的前提下，从主库52组resume最多新增5组至57组，90秒时间软预算与192MiB空间软预算不变：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 5 --max-run-seconds 90 --max-index-mib 192 --journal-mode wal --write-order source --report-detail progress --read-only --report "reports\pq-5min-2025-v3-sqlite-breakdown-57.json"
+```
+
+核对`stage_profile_this_run.sqlite_write_breakdown_seconds`、`stopped_for`和`soft_budget_reached`等字段后，再决定是否做新的SQL优化。详见[真实第二轮A/B结果及写入阶段细分](docs/PARQUET_5MIN_V3_AB_ROUND2_SQLITE_BREAKDOWN_20261026.md)。
+
 ## 2025 V3索引52组：先full审计，再做同快照严格A/B（2026-10-26）
 
 主V3索引已顺利推进至52/522组：新处理5组共614,400行、耗时44.703秒（SQLite写入28.484秒，读取聚合16.203秒），90秒软时间预算和192MiB磁盘软预算未触发。累计6,394,912条**A股候选源行**，由于使用progress报告，准确的去重键/重复键数量仍为`null`。必须先使用`audit-parquet-5min-coverage.py`对目前52组做单独full只读审计。

@@ -194,6 +194,41 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
             M.encode_group_ids([-1])
 
 
+    def test_storage_budget_includes_sqlite_main_or_wal_allocation(self):
+        db=M.open_index(self.index,self.manifest,False)
+        try:
+            data,counts=M.aggregate_batches(
+                [FakeBatch([ms("202509300930")],["600000.XSHG"])],
+                2025,"a-share-candidate")
+            M.insert_group(db,0,0,data,counts)
+            usage=M.index_storage_usage(db,self.index)
+            self.assertGreater(usage["sqlite_logical_allocated_bytes"],0)
+            self.assertEqual(usage["sqlite_budget_measure_bytes"],max(
+                usage["sqlite_logical_allocated_bytes"],
+                usage["sqlite_main_and_wal_on_disk_bytes"]))
+            self.assertTrue(usage["sqlite_wal_file_included_if_present"])
+        finally:
+            db.close()
+
+    def test_soft_budget_boundary_and_no_budget(self):
+        usage={"sqlite_budget_measure_bytes":2*1024*1024}
+        self.assertFalse(M.budget_exceeded(usage,None))
+        self.assertFalse(M.budget_exceeded(usage,2.01))
+        self.assertTrue(M.budget_exceeded(usage,2))
+        self.assertTrue(M.budget_exceeded(usage,1.99))
+
+    def test_invalid_budget_fails_before_index_open(self):
+        import contextlib
+        import io
+        for invalid in ("0","-1","nan","inf"):
+            with self.subTest(value=invalid):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as err:
+                        M.main([".", "--year", "2025", "--max-index-mib",
+                                invalid, "--read-only"])
+                self.assertEqual(err.exception.code,2)
+        self.assertFalse(self.index.exists())
+
     def test_index_has_no_ohlcv_columns(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

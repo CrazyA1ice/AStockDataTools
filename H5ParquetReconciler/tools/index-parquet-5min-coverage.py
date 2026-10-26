@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import sqlite3
 import time
 from collections import Counter
@@ -371,6 +372,36 @@ def validate_existing_index(index, root, year, universe):
     return manifest
 
 
+def index_storage_usage(db, path: Path):
+    """Budget for logical DB and on-disk main+WAL.
+
+    A SQLite WAL contains not-yet-checkpointed pages.  Use the *larger* of
+    logical page allocation and actual main+WAL bytes; do not mistake a tiny
+    main-file stat for the full allocation while WAL is active.  The limit is
+    checked at whole-row-group transaction boundaries and is not a hard quota.
+    """
+    page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
+    page_count = int(db.execute("PRAGMA page_count").fetchone()[0])
+    allocated = page_size * page_count
+    physical = 0
+    for candidate in (path, Path(str(path) + "-wal")):
+        try:
+            physical += candidate.stat().st_size
+        except FileNotFoundError:
+            pass
+    return {
+        "sqlite_logical_allocated_bytes": allocated,
+        "sqlite_main_and_wal_on_disk_bytes": physical,
+        "sqlite_budget_measure_bytes": max(allocated, physical),
+        "sqlite_wal_file_included_if_present": True
+    }
+
+
+def budget_exceeded(usage: dict, max_mib: float | None) -> bool:
+    return (max_mib is not None
+            and usage["sqlite_budget_measure_bytes"] >= max_mib * 1024 * 1024)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path)
@@ -383,6 +414,8 @@ def main(argv=None):
                     help="JSON summary under module, default reports/...")
     ap.add_argument("--max-new-groups", type=int, default=None,
                     help="Optional smoke run limit; index stays incomplete and can resume later")
+    ap.add_argument("--max-index-mib", type=float, default=None,
+                    help="Soft SQLite main+WAL space guard (MiB), checked after every completed row group")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--read-only", action="store_true", required=True,
                     help="Protect original data; local index and report are created inside module")
@@ -391,6 +424,9 @@ def main(argv=None):
     try:
         if not 2000 <= args.year <= 2100:
             raise ValueError("Year outside supported range")
+        if args.max_index_mib is not None and (
+                not math.isfinite(args.max_index_mib) or args.max_index_mib <= 0):
+            raise ValueError("--max-index-mib must be finite and >0")
         suffix = f"{args.year}-{args.universe}-v3"
         out, scratch = core.resolve_module_artifact_paths(
             args.out or Path("work") / "indexes" / f"pq-5min-{suffix}.sqlite", None)
@@ -413,7 +449,10 @@ def main(argv=None):
         open_files = [(filename, pq.ParquetFile(str(filename))) for filename in paths]
         total_groups = sum(pf.metadata.num_row_groups for _, pf in open_files)
         newly_processed = 0
+        source_rows_this_run = 0
         limit_reached = False
+        budget_reached = False
+        stopped_for = None
         for file_id, (filename, pf) in enumerate(open_files):
             if not {"ts","symbol"}.issubset(pf.schema_arrow.names):
                 raise ValueError(f"Parquet key columns absent in {filename.name}")
@@ -423,23 +462,48 @@ def main(argv=None):
                     continue
                 if args.max_new_groups is not None and newly_processed >= args.max_new_groups:
                     limit_reached = True
+                    stopped_for = "max_new_groups"
+                    break
+                if args.max_index_mib is not None and budget_exceeded(
+                        index_storage_usage(db, out), args.max_index_mib):
+                    budget_reached = True
+                    stopped_for = "max_index_mib_before_group"
                     break
                 batches = pf.iter_batches(row_groups=[rg], columns=["ts", "symbol"],
                                           batch_size=65536, use_threads=True)
                 packed, counts = aggregate_batches(batches, args.year, args.universe)
                 insert_group(db, file_id, rg, packed, counts)
                 newly_processed += 1
+                source_rows_this_run += counts["source_rows"]
                 if newly_processed % 5 == 0 or rg == pf.metadata.num_row_groups-1:
                     print(f"Index {filename.name} group {rg+1}/{pf.metadata.num_row_groups}, "
                           f"source rows in group={counts['source_rows']:,}, "
                           f"distinct stock-days in group={len(packed):,}, "
                           f"new groups={newly_processed}, "
                           f"elapsed={time.monotonic()-started:.1f}s", flush=True)
-            if limit_reached:
+                if args.max_index_mib is not None and budget_exceeded(
+                        index_storage_usage(db, out), args.max_index_mib):
+                    budget_reached = True
+                    stopped_for = "max_index_mib_after_group"
+                    print(f"SOFT BUDGET reached after committed row-group "
+                          f"(limit={args.max_index_mib:g} MiB); stopping with resumable index",
+                          flush=True)
+                    break
+            if limit_reached or budget_reached:
                 break
         result = index_summary(db, manifest, total_groups)
+        elapsed = time.monotonic()-started
         result["new_row_groups_this_run"] = newly_processed
-        result["run_limited_before_complete"] = limit_reached
+        result["source_rows_this_run"] = source_rows_this_run
+        result["elapsed_seconds_this_run"] = round(elapsed, 3)
+        result["new_groups_per_second"] = (
+            round(newly_processed / elapsed, 5) if elapsed > 0 else None)
+        result["run_limited_before_complete"] = bool(
+            (limit_reached or budget_reached) and not result["index_complete"])
+        result["max_index_mib_soft_budget"] = args.max_index_mib
+        result["soft_budget_reached"] = budget_reached
+        result["stopped_for"] = stopped_for
+        result.update(index_storage_usage(db, out))
         with db:
             db.execute("UPDATE meta SET value=? WHERE key='completed'",
                        ("true" if result["index_complete"] else "false",))

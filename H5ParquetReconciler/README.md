@@ -260,6 +260,22 @@ git pull --ff-only origin main
 
 需检查`soft_budget_reached`、`stopped_for`、`sqlite_budget_measure_bytes`、`elapsed_seconds_this_run`及新重复键。所有索引/报告写在本模块 `work/`和 `reports/`，付费源行情保持只读。[10组实测记录与分段续建指导](docs/PARQUET_5MIN_V3_10GROUP_BUDGET_20261026.md)。
 
+## V3索引20组实测：WAL检查点回收避免容量预算过早停止
+
+用户上传的2025年V3 20/522组报告显示，**已扫描2,459,646条源行、候选唯一键2,459,297、重复键0**；本轮新增10组耗时76.125秒。SQLite逻辑主库仅约47.93MiB，主库+WAL却达到96.14MiB，导致96MiB预算在第20组触发。
+
+本轮保留V3原格式和已有索引文件，改进 `--max-index-mib`：触发软预算时先在行组事务提交后尝试 `PRAGMA wal_checkpoint(TRUNCATE)`，重新测量主库+WAL空间。如果回收后低于阈值可继续；若主库本体仍太大或检查点繁忙，继续保守停止。**不无条件放宽预算、不删除有效WAL，不对源数据写入。**
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\index-parquet-5min-coverage.py "D:\stock" --year 2025 --universe a-share-candidate --resume --max-new-groups 10 --max-index-mib 96 --read-only --report "reports\pq-5min-2025-index-v3-wal-recovery-next.json"
+```
+
+新报告包含`wal_checkpoint_attempts_this_run`、`wal_checkpoint_busy_this_run`、`wal_reclaimed_bytes_this_run`，用于检验预算是否主要被可回收的临时WAL占用触发。**仍仅小批续建，不直接扫完剩余502个行组**。现有合成测试预计71项，新增4项需用户本机验收。
+
+[20组真实结果、修复原理与本机步骤](docs/PARQUET_5MIN_V3_WAL_CHECKPOINT_20261026.md)。
+
 ## 输出
 
 程序在输出目录产生：

@@ -50,7 +50,7 @@ git pull --ff-only origin main
 - **流式逐行精确比较**`groups_done`、`daily_coverage`、`row_group_locator`三张逻辑表；不导出任何证券/日期/48-slot具体键，也不依赖 SQLite 物理文件大小、页顺序或哈希替代精确比较；
 - 只有以上条件全部成立才输出两种写入策略的总耗时和SQLite写入阶段差异百分比；不改变默认写入模式，不标记自动并集可用。一次配对A/B仍可能有缓存偏差，需要后续换先后顺序复验。
 
-离线报告只写在模块内`reports/`，索引和源行情全程只读：
+由于报告最多仅保存5个最慢RowGroup的完整时长，严格A/B核验限制为**每次最多新增5组**，这样才能确切恢复两轮所有被处理的行组编号。超出5组会拒绝对比，避免同计数却非同数据范围的错误比较。\n\n离线报告只写在模块内`reports/`，索引和源行情全程只读：
 
 ```powershell
 .\.venv\Scripts\python.exe H5ParquetReconciler\tools\compare-v3-write-order-ab.py "D:\stock" --year 2025 --universe a-share-candidate --source-index "work\indexes\pq-5min-2025-ab-source-57.sqlite" --sorted-index "work\indexes\pq-5min-2025-ab-pk-sorted-57.sqlite" --source-report "reports\pq-5min-2025-ab-source-57.json" --sorted-report "reports\pq-5min-2025-ab-pk-sorted-57.json" --out "reports\pq-5min-2025-ab-compare-57.json" --read-only
@@ -61,5 +61,5 @@ git pull --ff-only origin main
 ## 五、验收限制
 
 - 本轮**没有**在用户机器处理第53—57组，没有52组full唯一键/重复键实测，也未实际得到新的A/B速度。
-- 添加7项合成测试，覆盖仅凭progress报告不能证明重复键、完整full审计、流式不同内容检测、来源/行组/预算停止条件拒绝、时间数值拒绝及SQLite路径保护。原预计101项，本轮**预计108项**，最终以Windows本地实际测试为准。
+- 添加8项合成测试，覆盖仅凭progress报告不能证明重复键、完整full审计、流式不同内容检测、来源/行组/预算停止条件拒绝、时间数值拒绝及SQLite路径保护。原预计101项，本轮**预计109项**，最终以Windows本地实际测试为准。
 - 新比较工具是独立只读证据核验，不是合并器；未认证的时间标签、证券主数据、量价单位、供应商真值、异常冲突和完整年份全部保持阻断。不会生成可覆盖原H5/Parquet的文件。

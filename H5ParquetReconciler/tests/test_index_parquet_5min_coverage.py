@@ -526,6 +526,56 @@ class ParquetKeyCoverageIndexTests(unittest.TestCase):
         self.assertEqual(profile["unattributed_seconds"], 0.5)
         self.assertEqual(profile["wal_checkpoint_inside_budget_seconds"], 0.5)
 
+    def test_loop_residual_excludes_nested_stages_and_wal_substage(self):
+        phase = {
+            "checkpoint_lookup": 1.0,
+            "parquet_read_and_key_aggregation": 4.0,
+            "sqlite_group_commit": 5.0,
+            "budget_guard_and_checkpoint": 3.0,
+            "wal_checkpoint_inside_budget": 2.0,
+            "progress_output": 0.5
+        }
+        self.assertEqual(M.row_group_loop_residual(20.0,phase),6.5)
+        self.assertEqual(M.row_group_loop_residual(10.0,phase),0.0)
+
+    def test_extended_phase_profile_explains_long_wall_gap_without_false_speedup(self):
+        # Mimics the 45/522 report: most wall time was not covered by the
+        # old phase counters. Residual is NOT assigned to SQLite write time.
+        phases = {
+            "parquet_footer_metadata": 0.10,
+            "checkpoint_lookup": 0.05,
+            "parquet_read_and_key_aggregation": 33.077,
+            "sqlite_group_commit": 140.517,
+            "budget_guard_and_checkpoint": 0.109,
+            "wal_checkpoint_inside_budget": 0.0,
+            "progress_output": 0.01,
+            "final_index_summary": 0.047
+        }
+        loop_wall = 1318.813 - phases["parquet_footer_metadata"] - phases["final_index_summary"]
+        phases["row_group_loop_other"] = M.row_group_loop_residual(loop_wall,phases)
+        report = M.processing_profile(phases,[],1318.813)
+        self.assertAlmostEqual(report["unattributed_seconds"],0.0,places=2)
+        self.assertGreater(report["phases_seconds"]["row_group_loop_other"],1100)
+        self.assertEqual(report["phases_seconds"]["sqlite_group_commit"],140.517)
+        self.assertEqual(report["wal_checkpoint_inside_budget_seconds"],0.0)
+
+    def test_longest_whole_group_spans_are_bounded_and_keep_original_fields(self):
+        groups = [
+            {"file_id":0, "row_group":i,
+             "read_and_aggregate_seconds":2.0, "commit_seconds":5.0,
+             "row_group_wall_seconds":float(i * 10)}
+            for i in range(10)
+        ]
+        groups.append({"file_id":0, "row_group":999,
+                       "read_and_aggregate_seconds":0.1, "commit_seconds":0.2})
+        report = M.processing_profile({},groups,0.0)
+        slow = report["slowest_row_group_wall_groups"]
+        self.assertEqual(len(slow),5)
+        self.assertEqual([v["row_group"] for v in slow],[9,8,7,6,5])
+        self.assertEqual(slow[0]["row_group_wall_seconds"],90.0)
+        self.assertNotIn("open",str(report))
+        self.assertNotIn("close",str(report))
+
     def test_progress_report_marks_unknown_duplicates_null_not_zero(self):
         db=M.open_index(self.index,self.manifest,False)
         try:

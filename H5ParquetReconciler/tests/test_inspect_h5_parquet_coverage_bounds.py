@@ -91,6 +91,61 @@ class CoverageBoundsTests(unittest.TestCase):
         self.assertEqual(candidate["from_date"], "2026-09-24")
         self.assertFalse(candidate["proves_real_overlap"])
 
+    def test_real_report_shape_suggests_h5_newer_2026_oct_frontier(self):
+        h = {"earliest_candidate_year_bar_end": 202601050935,
+             "latest_candidate_year_bar_end": 202610131500,
+             "missing_market_files": [], "invalid_candidate_datasets": 0}
+        p = {"files": 9,
+             "earliest_footer_candidate_bar_end": 202601050935,
+             "latest_footer_candidate_bar_end": 202609301500,
+             "groups_without_usable_ts_footer": 0}
+        window = M.proposed_h5_newer_window(h, p, 2026)
+        self.assertTrue(window["available"])
+        self.assertEqual(window["from_date"], "2026-10-07")
+        self.assertEqual(window["to_date"], "2026-10-13")
+        self.assertEqual(window["parquet_last_footer_candidate_date"],
+                         "2026-09-30")
+        self.assertFalse(window["proves_h5_only_keys"])
+        self.assertEqual(M.proposed_window(h,p,2026)["to_date"],"2026-09-30")
+
+    def test_newer_tail_is_false_when_h5_does_not_extend_after_parquet(self):
+        h = {"earliest_candidate_year_bar_end": 202609010935,
+             "latest_candidate_year_bar_end": 202609301500,
+             "missing_market_files": [], "invalid_candidate_datasets": 0}
+        p = {"files": 1, "latest_footer_candidate_bar_end": 202609301500,
+             "groups_without_usable_ts_footer": 0}
+        result = M.proposed_h5_newer_window(h,p,2026)
+        self.assertFalse(result["available"])
+        self.assertEqual(result["reason"],"no_later_h5_date_envelope")
+        h["latest_candidate_year_bar_end"] = 202609291500
+        self.assertFalse(M.proposed_h5_newer_window(h,p,2026)["available"])
+
+    def test_newer_frontier_guard_missing_h5_or_footer(self):
+        h = {"earliest_candidate_year_bar_end": 202601050935,
+             "latest_candidate_year_bar_end": 202610131500,
+             "missing_market_files": [], "invalid_candidate_datasets": 0}
+        p = {"files": 9,"latest_footer_candidate_bar_end": 202609301500,
+             "groups_without_usable_ts_footer": 0}
+        for changed in (
+            {"missing_market_files": ["sz_5min.h5"]},
+            {"invalid_candidate_datasets": 1},
+        ):
+            with self.subTest(changed=changed):
+                self.assertFalse(M.proposed_h5_newer_window(
+                    dict(h, **changed),p,2026)["available"])
+        for changed in (
+            {"groups_without_usable_ts_footer": 1},
+            {"files": 0},
+            {"latest_footer_candidate_bar_end": None},
+        ):
+            with self.subTest(changed=changed):
+                self.assertFalse(M.proposed_h5_newer_window(
+                    h,dict(p,**changed),2026)["available"])
+        with self.assertRaisesRegex(ValueError,"Window limit"):
+            M.proposed_h5_newer_window(h,p,2026,max_calendar_days=0)
+        with self.assertRaisesRegex(ValueError,"Window limit"):
+            M.proposed_h5_newer_window(h,p,2026,max_calendar_days=32)
+
     def test_unknown_footer_or_missing_market_fails_closed(self):
         h = {"earliest_candidate_year_bar_end": 202609010935,
              "latest_candidate_year_bar_end": 202609301500,

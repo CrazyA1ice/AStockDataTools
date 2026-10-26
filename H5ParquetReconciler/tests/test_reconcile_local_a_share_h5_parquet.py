@@ -371,6 +371,61 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(r["pq_only_examples"][0]["bar_end"],"202501030935")
         self.assertEqual(r["pq_rows"],1)
 
+    def test_cross_arrow_batch_and_within_batch_parquet_duplicates_flagged(self):
+        """One vendor time key can recur in later batches/RowGroups."""
+        db=M.db_open(self.dir/"cross-batch-join.sqlite")
+        try:
+            db.execute(
+                "INSERT INTO h(s,t,o,hi,lo,c,v,a) VALUES(?,?,?,?,?,?,?,?)",
+                ("SH600000",202509300935,10,10,10,10,100,1000))
+            stats=M.Counter({"period":"5min"})
+            same=("SH600000",202509300935,10,10,10,10,100,1000)
+            extra=("SZ000636",202509300940,10,10,10,10,100,1000)
+            M.check_batch(db,[same,extra],stats,"5min")
+            # One duplicate inside the next batch, another across batches;
+            # neither increases matched/only counts.
+            M.check_batch(db,[same,same,extra],stats,"5min")
+            self.assertEqual(stats["pq_unique_keys"],2)
+            self.assertEqual(stats["matched_keys"],1)
+            self.assertEqual(stats["pq_only_rows"],1)
+            self.assertEqual(stats["pq_duplicate_keys_within_batch"],1)
+            self.assertEqual(stats["pq_duplicate_keys_across_batches"],2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM pq_seen").fetchone()[0],2)
+        finally:
+            db.close()
+
+    def test_bounded_multi_day_report_has_exact_daily_overlap_and_two_way_gaps(self):
+        """One bounded scan returns per-day counts, not only mismatch days."""
+        self.write_h5("5min","sh","SH600000",[
+            (202509260935,100,100),
+            (202509290935,100,100),
+            (202509300935,100,100),
+            (202509300940,100,100)])
+        self.other_markets("5min")
+        self.fake_parquet("5min",2025,[
+            (self.epoch_ms("202509260930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202509290930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202509300930"),"600000.XSHG",10,10,10,10,100,100000),
+            (self.epoch_ms("202509300945"),"600000.XSHG",10,10,10,10,100,100000)])
+        with self.fake_arrow():
+            report=M.reconcile_section(self.root,self.scratch,"5min",2025,512,
+                                       "a-share-candidate","2025-09-26","2025-09-30")
+        self.assertTrue(report["scan_complete"])
+        self.assertEqual(report["pq_unique_keys"],4)
+        self.assertEqual(report["h5_rows"],4)
+        self.assertEqual(report["matched_keys"],3)
+        self.assertEqual(report["h5_only_rows"],1)
+        self.assertEqual(report["pq_only_rows"],1)
+        self.assertEqual(report["by_day"]["20250926"]["matched"],1)
+        self.assertEqual(report["by_day"]["20250929"]["h5_unique"],1)
+        self.assertEqual(report["by_day"]["20250930"]["intersection_unique"],1)
+        self.assertEqual(report["by_day"]["20250930"]["h5_only"],1)
+        self.assertEqual(report["by_day"]["20250930"]["pq_only"],1)
+        self.assertEqual(report["by_day"]["20250930"]["union_candidate_unique"],3)
+        self.assertEqual(report["by_day"]["20250930"]["overlap_value_mismatch_pct"],0)
+        self.assertTrue(report["parquet_key_coverage_exact_when_scan_complete"])
+        self.assertFalse(report["duplicate_keys_across_batches_not_exhaustively_checked"])
+
     def test_date_bounded_resume_fingerprint_and_invalid_ranges(self):
         self.write_h5("day","sh","SH600000",[(202501020000,100,100)])
         self.other_markets("day")

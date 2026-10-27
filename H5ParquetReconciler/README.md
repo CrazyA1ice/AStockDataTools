@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## Parquet day↔1min/5min实测：价格四字段严格一致、数量额仅≤7.157ppm微差；离线报告审计（2026-10-27）
+
+收到用户本机`pq-day-vs-minute-2026-08-24.json`：2026-08-24 SH600000、SZ000001、SZ300750三个证券交易日的Parquet日线均有数据，1分钟各241根、5分钟各48根，**1min→5min各48/48六字段严格合成，Parquet日线开高低收与两种分钟的日内聚合四价严格一致**。日线量：SH600000与SZ000001严格一致，SZ300750与两周期有约**7.157 ppm**的微差；日线额：三股均略有偏差（0.025/0.033/0.018 ppm）。所有六字段均**满足先前已有比较容差**、且候选量额倍率×1，源无重复、非有限或异常交易时刻。**但三股`raw_all_three_periods_strict_agree=false`是准确结果，绝不能声称六字段严格全部通过或源量纲已正式认证。** 更多信息见[本机真实日线报告及量额微差](docs/2026_08_24_PARQUET_DAILY_TINY_QUANTITY_DIFFERENCES_REAL_REPORT.md)。
+
+新增无需任何行情扫描的`tools/audit-parquet-day-minute-report-offline.py`，只读取已有三周期报告，核对其证据自洽性，分开列出严格一致/既有容差一致/价格严格一致、量额比率导出的ppm误差，并用**默认10ppm仅供复核的门槛**标示小偏差候选；它不是交易所/单位认证，**不会自动合并或覆盖原始数据**。新增8项合成测试待Windows验收。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-parquet-day-minute-report-offline.py --report "H5ParquetReconciler\reports\pq-day-vs-minute-2026-08-24.json" --out "H5ParquetReconciler\reports\pq-day-vs-minute-2026-08-24-offline-assessment.json"
+```
+
+需要扩样时再运行9月30日day↔分钟真实对账；**不要为了重新评估已生成JSON重复读取几百万行Parquet**。
+
 ## ✅ Parquet跨日期跨沪深市场384/384六字段严格重建；新增日线↔分钟只读审计（2026-10-27）
 
 新增真实报告：2026-08-24的SH600000、SZ000001、SZ300750均48/48严格一致；2026-09-30的SH600000、SZ000001均48/48严格一致，**本轮240/240**。连同9/28科创板三只144/144，已在2026年8、9月三交易日覆盖沪市主板、科创板、深市主板、创业板，**8组股票交易日384/384根Parquet 5min由同源1min严格重建**，首根09:30额外一分钟只算一次。所有样本同源成交量额分位数及最大值比率均1.0；仅证明该样本内部一致性，不能认证早期历史年份、北交所或交易所逐笔正确性。

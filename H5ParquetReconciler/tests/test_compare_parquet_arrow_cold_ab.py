@@ -157,6 +157,12 @@ class ReversedOrderAuditTests(unittest.TestCase):
             M.compare(report(), other)
         other = report("arrow-first")
         other["candidate_source_rows_upper_bound"] = 2
+        # The first guard catches inconsistent bounds between the two engines.
+        with self.assertRaisesRegex(ValueError, "Candidate RowGroup bound differs"):
+            M.compare(report(), other)
+        # With engine bounds internally consistent, the next guard catches
+        # any scan that exceeds the reported preflight upper bound.
+        other["experimental_arrow_filtered"]["row_group_upper_bound_still"] = 2
         with self.assertRaisesRegex(ValueError, "preflight bound"):
             M.compare(report(), other)
 

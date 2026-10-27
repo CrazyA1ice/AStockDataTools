@@ -16,6 +16,14 @@
 
 报告只写聚合时长、源行预算、匹配数量和保守分类，不输出K线的开高低收、成交量或成交额；不会把Arrow过滤后输出48根错写为物理解码48行或只读48行。
 
+## 2026-10-27 Windows实机回归修复
+
+本机合成测试记录为`Ran 297 tests in 17.426s / FAILED (failures=5, errors=2)`。其中6项均由Arrow Fragment创建处遗漏显式文件系统触发（`cannot construct a FileSource from a path without a FileSystem`），并非证明真实数据不一致；另1项是测试断言期望了第二层预检上限错误，实际先命中第一层RowGroup上限一致性校验。
+
+修复为`pyarrow.fs.LocalFileSystem()`，显式传入`ParquetFileFormat.make_fragment(str(path), filesystem=..., row_groups=[group])`，保留原有目标RowGroup、过滤条件、价量额对比、安全预算及只读行为。同时分别测试两层上限检查，并新增加带空格绝对路径的Arrow Fragment合成回归。**这批改动提交后尚未取得本机重新执行单测的验收输出，不得声称297项或新增总数已经通过。**
+
+修复后先执行下文完整单测，再运行真实A/B；不要使用修复前失败的运行结果作为性能证据。
+
 ## Windows运行（仓库根目录）
 
 先更新代码并运行合成单测：

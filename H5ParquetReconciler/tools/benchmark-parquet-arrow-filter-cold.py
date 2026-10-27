@@ -31,11 +31,16 @@ def arrow_filtered_query(root,symbol,period,start,end,
                          max_candidate_rows=30000000,max_result_bars=25000):
     """Dataset fragment per RowGroup retains exact file+RowGroup provenance."""
     import pyarrow.dataset as ds
+    import pyarrow.fs as fs
 
     started=time.perf_counter()
     context=query.prepare_query(
         root,symbol,period,start,end,max_candidate_rows,max_result_bars)
     fmt=ds.ParquetFileFormat()
+    # PyArrow make_fragment(path) does not infer a local filesystem on some
+    # releases (including Windows); explicit LocalFileSystem is required.
+    # Reuse one filesystem for all RowGroups of this bounded local query.
+    local_fs=fs.LocalFileSystem()
     criterion=(
         (ds.field("ts")>=context["low_ms"])
         & (ds.field("ts")<context["high_ms"])
@@ -45,7 +50,8 @@ def arrow_filtered_query(root,symbol,period,start,end,
     arrow_emitted=0
     nonempty_fragments=0
     for path,pf,group in context["pending"]:
-        fragment=fmt.make_fragment(str(path),row_groups=[group])
+        fragment=fmt.make_fragment(
+            str(path),filesystem=local_fs,row_groups=[group])
         fragment_count=0
         for batch in fragment.to_batches(
                 columns=list(query.NEEDED),filter=criterion,

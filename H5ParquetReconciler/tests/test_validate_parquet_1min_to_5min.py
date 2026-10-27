@@ -43,6 +43,28 @@ def synthetic_pair(symbol=SYMBOL, day=DAY):
     return one,five
 
 
+def with_0930_opening_extra():
+    """Make an internally consistent 241×1min and 48×5min synthetic day.
+
+    Parquet 1min is END-labelled (09:31..11:30, 13:01..15:00)
+    plus a separate 09:30 auction record. Five-minute labels are START.
+    """
+    minute_start, five_start = synthetic_pair()
+    minute_end = {
+        (sym, M.diagnose.shift_bar_stamp(stamp, 1)): tuple(values)
+        for (sym, stamp), values in minute_start.items()
+    }
+    auction = (9.7, 10.0, 9.5, 9.75, 17.0, 1670.0)
+    minute_end[(SYMBOL, 202609280930)] = auction
+    first = five_start[(SYMBOL, 202609280930)]
+    five_start[(SYMBOL, 202609280930)] = (
+        auction[0], max(auction[1], first[1]),
+        min(auction[2], first[2]), first[3],
+        first[4] + auction[4], first[5] + auction[5]
+    )
+    return minute_end, five_start
+
+
 def scanned(duplicates=0,nonfinite=0):
     return {"duplicate_keys":duplicates,"nonfinite_source_rows":nonfinite,
             "availability":"source_files_present"}
@@ -93,6 +115,70 @@ class ParquetOnlyMinuteAggregationTests(unittest.TestCase):
         self.assertEqual(exact["morning"]["complete_one_minute_windows"],24)
         self.assertEqual(exact["afternoon"]["complete_one_minute_windows"],24)
         self.assertFalse(report["one_minute_quality"]["issue_counts"])
+
+    def test_0930_opening_sixth_minute_only_in_first_5min_window(self):
+        opening = "five_start_minute_end_plus_opening_0930"
+        self.assertEqual(
+            M.observed_one_minute_stamps(202609280930, opening),
+            (202609280930, 202609280931, 202609280932,
+             202609280933, 202609280934, 202609280935))
+        self.assertEqual(
+            M.observed_one_minute_stamps(202609280935, opening),
+            (202609280936, 202609280937, 202609280938,
+             202609280939, 202609280940))
+        self.assertEqual(
+            M.observed_one_minute_stamps(202609281300, opening),
+            (202609281301, 202609281302, 202609281303,
+             202609281304, 202609281305))
+
+    def test_opening_0930_explains_47_of_48_and_is_counted_once(self):
+        one, five = with_0930_opening_extra()
+        self.assertEqual(len(one), 241)
+        self.assertEqual(len(five), 48)
+        base = M.compare_one_hypothesis(
+            one, five, SYMBOL, "five_start_minute_end")
+        self.assertEqual(base["whole_day"]["complete_one_minute_windows"], 48)
+        self.assertEqual(base["whole_day"]["strict_all_six_fields_agree"], 47)
+        self.assertEqual(
+            base["mismatched_five_minute_source_stamps_examples"][0][
+                "five_minute_source_stamp"], "202609280930")
+        self.assertEqual(set(base[
+            "mismatched_five_minute_source_stamps_examples"][0][
+                "strict_mismatched_fields"]),
+                {"open", "low", "volume", "amount"})
+        report=M.compare_symbols(
+            one, five, scanned(), scanned(), (SYMBOL,), DAY)[SYMBOL]
+        self.assertEqual(report["best_internal_convention_candidate"],
+                         "five_start_minute_end_plus_opening_0930")
+        self.assertTrue(report["opening_0930_one_minute_key_present"])
+        self.assertTrue(report["first_0930_five_minute_key_present"])
+        self.assertTrue(report["opening_0930_included_once_by_candidate"])
+        self.assertTrue(report["internal_5min_all_bars_tolerance_match"])
+        best = report["hypotheses"][
+            "five_start_minute_end_plus_opening_0930"]
+        self.assertEqual(best["whole_day"]["strict_all_six_fields_agree"], 48)
+        self.assertEqual(best["whole_day"][
+            "volume_factor_existing_tolerance_nonzero"]["1"], 48)
+        self.assertEqual(best["morning"]["strict_all_six_fields_agree"], 24)
+        self.assertEqual(best["afternoon"]["strict_all_six_fields_agree"], 24)
+        self.assertEqual(best[
+            "mismatched_five_minute_source_stamps_examples"], [])
+
+    def test_opening_0930_missing_fails_closed_while_base_may_pass(self):
+        one, five=with_0930_opening_extra()
+        del one[(SYMBOL, 202609280930)]
+        # Standard five-start/minute-end still has five data records, but
+        # the six-record opening hypothesis cannot silently use only five.
+        special = M.compare_one_hypothesis(
+            one, five, SYMBOL, "five_start_minute_end_plus_opening_0930")
+        self.assertEqual(special["whole_day"]["complete_one_minute_windows"], 47)
+        self.assertEqual(
+            special["missing_five_minute_source_stamps_examples"],
+            ["202609280930"])
+        overall=M.compare_symbols(
+            one, five, scanned(), scanned(), (SYMBOL,), DAY)[SYMBOL]
+        self.assertFalse(overall["internal_5min_all_bars_tolerance_match"])
+        self.assertFalse(overall["opening_0930_one_minute_key_present"])
 
     def test_five_end_minute_start_can_be_internal_match_too(self):
         one, five_start=synthetic_pair()

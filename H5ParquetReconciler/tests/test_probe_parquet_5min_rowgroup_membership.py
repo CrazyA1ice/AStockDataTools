@@ -164,7 +164,7 @@ class PilotFiveMinuteMembershipTests(unittest.TestCase):
         class BrokenParquet(FakeParquetFile):
             def iter_batches(self, *, row_groups, columns, batch_size, use_threads):
                 yield FakeBatch([])
-        broken = BrokenParquetFile = BrokenParquet([[
+        broken = BrokenParquet([[
             (ms(2026, 9, 28, 9, 30), "688629.XSHG")]])
         with self.assertRaisesRegex(ValueError, "differs from footer"):
             M.run_probe([(Path("2026-09.parquet"), broken)], TARGETS, DAY, 1)

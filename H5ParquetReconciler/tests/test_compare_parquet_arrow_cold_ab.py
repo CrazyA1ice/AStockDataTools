@@ -22,6 +22,8 @@ def report(order="rowgroup-first", old=3.5, arrow=2.0):
         "symbol": "SH600000", "period": "5min",
         "from_date": "2026-09-30", "to_date": "2026-09-30",
         "requested_execution_order": order,
+        "source_stat_manifest_sha256": "a" * 64,
+        "source_stat_manifest_file_count": 9,
         "matching_bar_count": 48,
         "candidate_row_groups": 47,
         "candidate_source_rows_upper_bound": 5685792,
@@ -68,6 +70,7 @@ class ReversedOrderAuditTests(unittest.TestCase):
                          "arrow_faster_in_both_orders")
         self.assertEqual(outcome["matching_bar_count"], 48)
         self.assertTrue(outcome["source_content_identity_between_runs_not_proven"])
+        self.assertTrue(outcome["same_source_stat_manifest_in_both_runs_verified"])
         self.assertTrue(outcome["two_single_runs_insufficient_to_enable_arrow_in_production"])
         self.assertFalse(outcome["cache_or_paid_market_data_exported"])
         self.assertGreater(outcome["weakest_observed_baseline_over_arrow_ratio"], 1)
@@ -106,6 +109,16 @@ class ReversedOrderAuditTests(unittest.TestCase):
         other = report("arrow-first")
         other["experimental_arrow_filtered"]["arrow_rows_emitted_after_predicate"] += 1
         with self.assertRaisesRegex(ValueError, "Different Arrow output census"):
+            M.compare(report(), other)
+
+    def test_changed_source_stat_fingerprint_rejected(self):
+        other = report("arrow-first")
+        other["source_stat_manifest_sha256"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "Source stat manifest differs"):
+            M.compare(report(), other)
+        other = report("arrow-first")
+        other["source_stat_manifest_sha256"] = "unverified"
+        with self.assertRaisesRegex(ValueError, "Malformed|malformed"):
             M.compare(report(), other)
 
     def test_missing_equality_or_privacy_assertion_rejected(self):

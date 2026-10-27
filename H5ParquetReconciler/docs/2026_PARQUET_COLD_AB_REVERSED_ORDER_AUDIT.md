@@ -1,0 +1,52 @@
+# 2026-10-27：Arrow与RowGroup冷查询反序复核（只读、安全摘要）
+
+## 目的与当前证据
+
+此前真实的 `SH600000 / 2026-09-30 / 5min` 查询：RowGroup传统方式的首次查询耗时3.515286秒，已有私有缓存的重复查询耗时0.050318秒，约69.86倍加速。**这不是Arrow冷查询的速度结论**。新基准 `benchmark-parquet-arrow-filter-cold.py` 可在同一个本地数据源上比较两种读取引擎，分别执行`rowgroup-first`与`arrow-first`以初步观察执行顺序、OS页缓存的影响。
+
+本轮加入源数据`source_stat_manifest_sha256`：基于输入范围内**全部候选年度文件的相对路径、文件长度和mtime_ns**计算SHA256，基准开始与结束各取一次，变化则不生成成功报告。它**不是Parquet文件内容SHA256，不检测保持stat不变的内容修改**，也不能证明操作系统缓存真正处于冷状态。
+
+新增 `tools/compare-parquet-arrow-cold-ab.py`：只读取两个安全摘要JSON，**不打开任何付费原始行情、H5、SQLite、私有缓存或Parquet Footer**，不重新跑基准；严格验证相反顺序、同证券/周期/日期、逐次OHLCVA/时标/源文件+RowGroup等值判定为真、同源stat摘要、同候选行组预算、同基线源行与Arrow过滤后输出计数、正有限耗时，以及所有只读/隐私保护标志。发生任一异常，拒绝写比较报告。
+
+工具的三个可能结论：
+
+- `arrow_faster_in_both_orders`：两次单轮测试均观测到Arrow快，**不足以启用默认生产引擎**；应重复多组证券/日期/周期、隔离冷启动条件并测总耗时。
+- `baseline_faster_in_both_orders`：两次均观测到既有RowGroup方式快，保留原引擎；不为了新技术替换原方案。
+- `mixed_or_equal_order_sensitive`：结果混合或持平，数据不足，优先排除顺序/缓存干扰，不推广任何加速倍数。
+
+报告只写聚合时长、源行预算、匹配数量和保守分类，不输出K线的开高低收、成交量或成交额；不会把Arrow过滤后输出48根错写为物理解码48行或只读48行。
+
+## Windows运行（仓库根目录）
+
+先更新代码并运行合成单测：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+```
+
+首次A/B，RowGroup优先：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-arrow-filter-cold.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --order rowgroup-first --read-only --out "reports\pq-primary-cold-ab-SH600000-20260930-rowgroup-first.json"
+```
+
+第二次A/B，Arrow优先：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-arrow-filter-cold.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --order arrow-first --read-only --out "reports\pq-primary-cold-ab-SH600000-20260930-arrow-first.json"
+```
+
+只读取以上两份`reports/`内的无OHLCVA摘要，生成第三份只读聚合验收报告：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\compare-parquet-arrow-cold-ab.py --rowgroup-first "reports\pq-primary-cold-ab-SH600000-20260930-rowgroup-first.json" --arrow-first "reports\pq-primary-cold-ab-SH600000-20260930-arrow-first.json" --out "reports\pq-primary-cold-ab-SH600000-20260930-reversed-audit.json" --read-only
+```
+
+**请只分享三个`reports/`摘要JSON，勿上传`work/`私有行情缓存、Parquet、H5或任何原始OHLCVA。** 所有输出留在`H5ParquetReconciler/reports/`；不能覆盖既有报告，重复运行先换新文件名。全程默认查询引擎不变，2025年V3五分钟主索引保持只读和未完成状态。
+
+## 验收限制与测试
+
+本轮新增纯合成`tests/test_compare_parquet_arrow_cold_ab.py`，以及对原A/B测试的源元信息变化保护，涵盖顺序反转、数据源stat不一致、数量不守恒、缺失安全标志、NaN/无效计时、路径逃逸与已有文件拒绝覆盖。新增后测试数量**需以Windows实际unittest输出为准**；尚未收到该轮实机执行记录，不宣称已通过。
+
+即便stat清单完全相同，两轮仍可能受OS页缓存、内存页面、后台任务、PyArrow版本等干扰；第三份审计JSON的分类只是**方向性观察**。Arrow实测若持续显著较快，下一步再做正式引擎的受控可选化；若未证明收益，则继续构建原始数据只读前提下的定位/分区索引，切勿直接改写购买源数据。

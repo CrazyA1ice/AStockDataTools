@@ -33,6 +33,7 @@ FIELDS = PRICE_FIELDS + ("volume", "amount")
 CONVENTIONS = (
     "five_start_minute_start",
     "five_start_minute_end",
+    "five_start_minute_end_plus_opening_0930",
     "five_end_minute_start",
     "five_end_minute_end",
 )
@@ -60,8 +61,15 @@ def observed_one_minute_stamps(five_stamp, convention):
     # [t0+1,t0+2,...t0+5] if end.
     offsets = [i + (0 if minute_starts else 1)
                - (0 if five_starts else 5) for i in range(5)]
-    return tuple(int((dt + timedelta(minutes=x)).strftime("%Y%m%d%H%M"))
-                 for x in offsets)
+    stamps = tuple(int((dt + timedelta(minutes=x)).strftime("%Y%m%d%H%M"))
+                   for x in offsets)
+    if (convention == "five_start_minute_end_plus_opening_0930"
+            and dt.hour == 9 and dt.minute == 30):
+        # Test (do not assume) that a separately labelled opening key 09:30
+        # is included ONCE, only in the first 09:30-09:35 five-minute bar.
+        # The other 47 five-minute bars retain exactly five 1min keys.
+        return (five_stamp,) + stamps
+    return stamps
 
 
 def aggregate_one_minute(minute, sym, five_stamp, convention):
@@ -104,6 +112,7 @@ def compare_one_hypothesis(one, five, symbol, convention):
     results = {"whole_day": bucket(), "morning": bucket(),
                "afternoon": bucket()}
     missing_examples = []
+    mismatched_examples = []
     ratio = {"volume": [], "amount": []}
     for (sym, stamp), bar in sorted(five.items()):
         if sym != symbol:
@@ -133,6 +142,19 @@ def compare_one_hypothesis(one, five, symbol, convention):
             for dst in pools:
                 dst["strict_field_agree"][field] += int(strict)
                 dst["existing_tolerance_field_agree"][field] += int(loose)
+        if not all(strict_flags) and len(mismatched_examples) < 8:
+            mismatched_examples.append({
+                "five_minute_source_stamp": str(stamp),
+                "strict_mismatched_fields": [
+                    field for field, equal in zip(FIELDS, strict_flags)
+                    if not equal],
+                "existing_tolerance_mismatched_fields": [
+                    field for field, equal in zip(FIELDS, tolerant_flags)
+                    if not equal],
+                "is_first_morning_five_minute_bar": clock == 570,
+                "one_minute_input_keys": len(
+                    observed_one_minute_stamps(stamp, convention)),
+            })
         for dst in pools:
             dst["ohlc_strict_all_agree"] += int(all(strict_flags[:4]))
             dst["ohlc_existing_tolerance_all_agree"] += int(
@@ -172,6 +194,7 @@ def compare_one_hypothesis(one, five, symbol, convention):
     return {
         **results,
         "missing_five_minute_source_stamps_examples": missing_examples,
+        "mismatched_five_minute_source_stamps_examples": mismatched_examples,
         "five_over_minute_volume_ratio_nonzero": diagnose.summarize_values(
             ratio["volume"], digits=6),
         "five_over_minute_amount_ratio_nonzero": diagnose.summarize_values(
@@ -224,6 +247,10 @@ def compare_symbols(one, five, one_scan, five_scan, symbols, day):
             "parquet_5min_source_bars": five_keys,
             "one_minute_quality": quality_checks(one, sym, "1min", day),
             "five_minute_quality": quality_checks(five, sym, "5min", day),
+            "opening_0930_one_minute_key_present": (
+                (sym, int(day.strftime("%Y%m%d") + "0930")) in one),
+            "first_0930_five_minute_key_present": (
+                (sym, int(day.strftime("%Y%m%d") + "0930")) in five),
             "availability": availability,
         }
         if availability != "testable_parquet_both_periods_available":
@@ -253,6 +280,10 @@ def compare_symbols(one, five, one_scan, five_scan, symbols, day):
             and not source["one_minute_quality"]["issue_counts"]
             and not source["five_minute_quality"]["issue_counts"])
         source["hypotheses"] = results
+        source["opening_0930_included_once_by_candidate"] = (
+            best == "five_start_minute_end_plus_opening_0930"
+            and source["opening_0930_one_minute_key_present"]
+            and source["first_0930_five_minute_key_present"])
         source["best_internal_convention_candidate"] = (
             best if at_least_two else None)
         source["internal_5min_all_bars_tolerance_match"] = safe_full
@@ -405,6 +436,7 @@ def main(argv=None):
                 one, five, one_scan, five_scan, symbols, day),
             "tested_source_labels": list(CONVENTIONS),
             "one_to_five_minute_aggregation_hypotheses_only": True,
+            "opening_0930_special_bar_not_assumed_without_data": True,
             "both_periods_are_same_purchased_parquet_vendor": True,
             "no_h5_source_accessed": True,
             "source_market_files_modified": False,

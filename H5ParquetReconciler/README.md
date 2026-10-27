@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## Parquet主数据源：已收到5个证券日样本台账；新增2011～2026只读Parquet元数据覆盖盘点（2026-10-27）
+
+用户上传`parquet-primary-sampled-evidence-2026-08-24-09-30.json`，两交易日5个证券日样本均被标记为`candidate_parquet_primary_in_this_sample_only`，`sampled_stock_day_count=5`，`sampled_date_count=2`；全部`eligible_for_unattended_import=false`、`verified_full_history_coverage=false`，原市场行情未读写、未自动并集。至此不再反复重读已验的2026年8月/9月行情。
+
+新增只读`tools/inventory-parquet-primary-footers.py`：针对用户准备作为历史主源的购买Parquet，按2011—2026年、day/1min/5min输出每年文件数、Parquet Footer源行总数与RowGroup数、原始北京时间时间标签最早/最新统计、无可信ts统计组数、文件名年份与时间边界冲突、文件元数据stat清单SHA256（**非完整文件内容SHA**）。**仅读取元数据，不读取任何分钟时间键或付费OHLCVA**。明确所有日期边界只为footer覆盖候选，不能声称全股票/全交易日无缺失。新增10项无版权模拟Parquet合成测试待Windows端执行，详见[只读元数据覆盖盘点说明](docs/2026_PARQUET_PRIMARY_FOOTER_ONLY_COVERAGE_PLAN.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\inventory-parquet-primary-footers.py "D:\stock" --from-year 2011 --to-year 2026 --periods day 1min 5min --max-files 5000 --max-row-groups 100000 --read-only --out "reports\parquet-primary-footer-inventory-2011-2026.json"
+```
+
+把`parquet-primary-footer-inventory-2011-2026.json`发回即可，不必上传付费市场文件。下一阶段根据这份报表只对真实疑点年份做key-only精确覆盖检查，再建立可追溯Parquet只读查询及通达信盘后新增层。
+
 ## Parquet历史主源准备：9月30日量额微差极低，已有JSON可直接登记5个证券日（2026-10-27）
 
 已核查`pq-day-vs-minute-2026-09-30.json`：SH600000与SZ000001分别241根1min/48根5min，1→5 **48/48严格六字段合成**，日线OHLC、量与两分钟周期严格一致，日线额相对分钟额仅**0.005ppm与0.049ppm**，均过已有容差但不是原始六字段严格一致；源选定数据无重复、非法时标或非有限数据。8月24日对应离线结果三股票全部标为“价格严格一致、量额≤7.157ppm小偏差需审查”，原严格标志没有被改写。这两个日期已检查的**5组日线-分钟股票日样本全部OHLC严格一致+量额过现有容差**，不等于整个历史库质量全认证。

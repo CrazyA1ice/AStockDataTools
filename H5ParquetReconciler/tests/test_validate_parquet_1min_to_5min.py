@@ -6,8 +6,9 @@ import importlib.util
 import json
 import math
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 SOURCE=(Path(__file__).resolve().parents[1]/"tools"/
         "validate-parquet-1min-to-5min.py")
@@ -166,6 +167,73 @@ class ParquetOnlyMinuteAggregationTests(unittest.TestCase):
         out=M.quality_checks(five,SYMBOL,"5min",DAY)
         self.assertEqual(out["issue_counts"]["bad_ohlc_geometry"],1)
         self.assertEqual(out["issue_counts"]["negative_volume_or_amount"],1)
+
+    def test_small_generated_parquet_1min_and_5min_scan_matches_without_h5(self):
+        # An actual Arrow Parquet file is used to catch schema/column-order and
+        # epoch-millisecond reading issues without licensed market data.
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("pyarrow not installed in test interpreter")
+        def ms(ts):
+            dt=datetime.strptime(str(ts), "%Y%m%d%H%M").replace(
+                tzinfo=timezone(timedelta(hours=8)))
+            return int(dt.timestamp()*1000)
+        with TemporaryDirectory() as d:
+            root=Path(d)
+            for period, minutes in (("1min",10), ("5min",2)):
+                folder=root/"AllCycleAStockData"/period
+                folder.mkdir(parents=True)
+                rows=[]
+                for i in range(minutes):
+                    if period=="1min":
+                        stamp=202609280930+i
+                    else:
+                        stamp=202609280930+i*5
+                    rows.append({
+                        "ts":ms(stamp),"symbol":"688629.XSHG",
+                        "open":10.0,"high":11.0,"low":9.0,
+                        "close":10.0,"volume":100.0,"amount":1000.0
+                    })
+                pq.write_table(pa.Table.from_pylist(rows),
+                               folder/"2026-09.parquet",row_group_size=6)
+            one,one_meta=M.read_parquet_period(
+                root,"1min",DAY,(SYMBOL,),100)
+            five,five_meta=M.read_parquet_period(
+                root,"5min",DAY,(SYMBOL,),100)
+            self.assertEqual(len(one),10)
+            self.assertEqual(len(five),2)
+            self.assertIn((SYMBOL,202609280930),one)
+            self.assertIn((SYMBOL,202609280930),five)
+            self.assertEqual(one_meta["source_rows_examined"],10)
+            self.assertEqual(five_meta["source_rows_examined"],2)
+            self.assertEqual(one_meta["duplicate_keys"],0)
+            self.assertEqual(five_meta["duplicate_keys"],0)
+
+    def test_generated_parquet_read_cap_aborts_before_decoding(self):
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("pyarrow not installed in test interpreter")
+        dt=datetime(2026,9,28,9,30,
+                    tzinfo=timezone(timedelta(hours=8)))
+        ts=int(dt.timestamp()*1000)
+        with TemporaryDirectory() as d:
+            root=Path(d)
+            folder=root/"AllCycleAStockData"/"5min"
+            folder.mkdir(parents=True)
+            rows=[{
+                "ts":ts,"symbol":"688629.XSHG",
+                "open":10.0,"high":11.0,"low":9.0,"close":10.0,
+                "volume":100.0,"amount":1000.0
+            } for _ in range(3)]
+            pq.write_table(pa.Table.from_pylist(rows),
+                           folder/"2026-09.parquet",row_group_size=3)
+            with self.assertRaisesRegex(ValueError,"exceeds --max-candidate-rows"):
+                M.read_parquet_period(
+                    root,"5min",DAY,(SYMBOL,),2)
 
     def test_shareable_json_has_aggregate_counters_not_prices(self):
         one,five=synthetic_pair()

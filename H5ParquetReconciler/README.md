@@ -83,6 +83,19 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ 5分钟精确行组真实定位18/47；新增复用报告的只读同引擎A/B（2026-10-28）
+
+最新真实 `pq-SH600000-20260930-5min-exact-rowgroups.json` 已经**扫描全部47候选组的5,685,792条键行**，准确确认**18组含目标股票日48条键、29组不含键**，原始报告`elapsed_seconds_of_key_only_scan_including_footer_preflight=2.361006`秒。由此确认Footer过滤相对精确键定位存在61.7%的潜在无关行组；**不等于查询净耗时已下降61.7%**。
+
+已新增**只读`tools/benchmark-parquet-exact-rowgroup-reuse.py`**，直接复用之前生成的安全报告，无需重建键列清单；先核对原完整候选行组、源文件stat签名、报告安全标志和各行组键计数，然后运行**full Arrow vs restricted Arrow（仅18组）**，无条件完整逐根比对六字段OHLCVA、时标、源文件和行组。支持反序和可选再与正式RowGroup引擎对照；报告不含付费行情。既有生产查询与缓存均不变。新增7项合成测试，**尚待Windows验证**；详见[真实定位结果、复用实验与严格验收](docs/2026_PARQUET_EXACT_ROWGROUP_REUSE_REAL_AB.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-exact-rowgroup-reuse.py "D:\\stock" --symbol SH600000 --date 2026-09-30 --locator-report "reports\\pq-SH600000-20260930-5min-exact-rowgroups.json" --order full-first --verify-rowgroup --read-only --out "reports\\pq-SH600000-20260930-rg-reuse-full-first.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-exact-rowgroup-reuse.py "D:\\stock" --symbol SH600000 --date 2026-09-30 --locator-report "reports\\pq-SH600000-20260930-5min-exact-rowgroups.json" --order restricted-first --verify-rowgroup --read-only --out "reports\\pq-SH600000-20260930-rg-reuse-restricted-first.json"
+```
+
 ## 🧪 Arrow预览第三次真实查询慢于RowGroup；推进精确证券日行组定位（2026-10-28）
 
 用户本机新增`pq-primary-arrow-preview-SH600000-20260930-verified.json`：**结果仍48根且逐根完全一致**，但同一次验证中Arrow为**2.972944秒**、原RowGroup为**1.791278秒**（Arrow约1.66倍耗时）。之前两次A/B均更快的结论只适用于当时的实验，**不可升格为Arrow全局更快或默认引擎替换**。两次引擎都受系统缓存和负载影响；正式引擎继续保持原RowGroup。

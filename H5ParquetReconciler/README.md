@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 数据合并方向调整：优先选可靠主源，再由通达信盘后增量补录（2026-10-27）
+
+用户明确：购买Parquet覆盖2011～2026-09，Hikyuu H5日线覆盖更长并持续更新至2026-10，但分钟线可能仅从2025年附近开始，计划未来改用通达信盘后更新。**真实目标是一个来源清晰、历史连续、允许不同日期不同供应商但同一证券日单一来源的主数据视图**；不需要强求双方K线完全一样，更不能将原始文件彼此覆盖。初步倾向H5作为日线主线、Parquet补历史缺失分钟、最近重叠段H5为候选主线，最终由同花顺“不复权、同一五分钟区间”的独立人工抽样决定；通达信更新按日线/1m/5m分别记录最后完整时间，盘后增量补齐。过去5min H5在2026-10-13有记录但10-19～23报告缺源，**不能假设日线新就代表分钟线最新**。
+
+新工具`tools/prepare-5min-tonghuashun-spotcheck.py`直接从2026-09-28经过验证的前三股票（SH688629/SH688017/SH688172）中，读取实际H5/PQ两源后自动选择**真实有量价差异**的五分钟K线，优先覆盖上午下午、OHLC差异较明显的时间点，输出只含代码/五分钟区间/差异字段的安全JSON。可选`--show-local-values`将两边OHLCV**只显示在本机终端**供同花顺对照，绝不写入公开仓库报告。**此步骤重扫Parquet当日相关47组（此前5,685,792行），与只读Footer或3组键列探测不同；若只想粗查可先按文档里的固定时间点人工看**。完整[来源优先与同花顺抽样核验方案](docs/2026_H5_PQ_TDX_PRIMARY_SOURCE_THS_SPOTCHECK_20261027.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\prepare-5min-tonghuashun-spotcheck.py "D:\stock" --date 2026-09-28 --baseline-report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json" --top-symbols 3 --per-symbol 3 --show-local-values --read-only --out "reports\ths-2026-09-28-top3-manual-checks.json"
+```
+
+你在同花顺核对后只需告诉我**每个核验区间是H5更接近、Parquet更接近、两边一致或两边都不同**；无需上传付费源K线。此次新增6项合成测试，Windows尚需验收；正式自动并集和原始数据覆盖继续禁止。
+
 ## 已收到Footer真实报告：9月47组全部无法靠symbol min/max剪枝；先做键列成员关系抽样（2026-10-27）
 
 用户上传`pq-5min-2026-09-28-top3-footer-read-plan.json`：2026年9个月文件共407个RowGroup，旧月份360组成功跳过；**剩余47组全部来自2026-09.parquet**，每组都不能通过目标SH688629/SH688017/SH688172的symbol min/max排除，预计读取5,685,792行、Footer未压缩元数据143,128,330字节。这完全重现先前三证券真实诊断的47组、568万行成本；说明主要瓶颈是9月份文件内部的证券—日期定位，而**不是全年文件选择**。

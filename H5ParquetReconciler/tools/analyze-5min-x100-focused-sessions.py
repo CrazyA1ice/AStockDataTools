@@ -147,6 +147,110 @@ def summarized_pair_masks(h5_rows, parquet_starts, selected):
     return analyzed
 
 
+
+def row_group_read_cost(metadata_files, symbols, day, allowed_groups=None):
+    """Conservative metadata-only read plan matching load_parquet's skip order.
+
+    Candidate source-row counts are an *upper bound* for decompression, not the
+    number of selected K-lines or the estimated Arrow predicate result size.
+    An ambiguous/missing symbol min-max never licenses skipping a row group.
+    """
+    _, _, lower_ms, upper_ms = core.parse_day_range(
+        day.year, day.isoformat(), day.isoformat())
+    aliases = set().union(*(diagnose.source_spellings(s) for s in symbols))
+    totals = {
+        "parquet_files": 0,
+        "row_groups_total": 0,
+        "row_groups_skipped_by_completed_index": 0,
+        "row_groups_skipped_by_time_metadata": 0,
+        "row_groups_skipped_by_symbol_min_max": 0,
+        "row_groups_candidate_to_decode": 0,
+        "candidate_source_rows_upper_bound": 0,
+        "candidate_uncompressed_bytes_upper_bound": 0,
+        "candidate_group_rows_max": 0,
+        "file_metadata": [],
+        "plan_only_metadata_opened": True,
+        "ohlcv_column_values_read": False,
+        "candidate_rows_are_selected_symbol_rows": False,
+        "timestamp_symbol_metadata_can_miss_hidden_groups": True,
+    }
+    for path, metadata in metadata_files:
+        path = Path(path)
+        allowed = None
+        if allowed_groups is not None:
+            allowed = allowed_groups.get(str(path.resolve()))
+            if allowed is None:
+                raise ValueError("Completed locator has no entry for source file")
+        group_total = int(metadata.num_row_groups)
+        one = {"file": path.name, "row_groups_total": group_total,
+               "candidate_groups": 0, "candidate_source_rows_upper_bound": 0,
+               "skipped_by_index": 0, "skipped_by_time": 0,
+               "skipped_by_symbol": 0}
+        totals["parquet_files"] += 1
+        totals["row_groups_total"] += group_total
+        for idx in range(group_total):
+            if allowed is not None and idx not in allowed:
+                one["skipped_by_index"] += 1
+                totals["row_groups_skipped_by_completed_index"] += 1
+                continue
+            rg = metadata.row_group(idx)
+            if not core.row_group_overlaps_timestamp(rg, lower_ms, upper_ms):
+                one["skipped_by_time"] += 1
+                totals["row_groups_skipped_by_time_metadata"] += 1
+                continue
+            if not diagnose.might_contain_symbols(rg, aliases):
+                one["skipped_by_symbol"] += 1
+                totals["row_groups_skipped_by_symbol_min_max"] += 1
+                continue
+            rows = int(rg.num_rows)
+            if rows < 0:
+                raise ValueError("Invalid negative Parquet row-group rows")
+            one["candidate_groups"] += 1
+            one["candidate_source_rows_upper_bound"] += rows
+            totals["row_groups_candidate_to_decode"] += 1
+            totals["candidate_source_rows_upper_bound"] += rows
+            totals["candidate_group_rows_max"] = max(
+                totals["candidate_group_rows_max"], rows)
+            totals["candidate_uncompressed_bytes_upper_bound"] += int(
+                rg.total_byte_size)
+        totals["file_metadata"].append(one)
+    counted = sum(totals[key] for key in (
+        "row_groups_skipped_by_completed_index",
+        "row_groups_skipped_by_time_metadata",
+        "row_groups_skipped_by_symbol_min_max",
+        "row_groups_candidate_to_decode"))
+    if counted != totals["row_groups_total"]:
+        raise ValueError("Parquet row-group plan is not conserved")
+    return totals
+
+
+def plan_with_footers(root, symbols, day, allowed_groups=None):
+    """Open only annual Parquet footers; never read ts/symbol or OHLCV values."""
+    import pyarrow.parquet as pq
+    paths = core.year_files(root, "5min", day.year)
+    if not paths:
+        raise ValueError("No Parquet 5min files for requested year")
+    metadata_files = []
+    for path in paths:
+        pf = pq.ParquetFile(str(path))
+        if not set(core.NEEDED).issubset(pf.schema_arrow.names):
+            raise ValueError("Parquet missing expected columns: " + path.name)
+        metadata_files.append((path, pf.metadata))
+    return row_group_read_cost(metadata_files, symbols, day, allowed_groups)
+
+
+def resolve_completed_locator(root, symbols, day, index_path):
+    """Use the existing full source-fingerprint and completion gate; no bypass."""
+    index, _ = core.resolve_module_artifact_paths(index_path, None)
+    spec = importlib.util.spec_from_file_location(
+        "union_planner_for_focused_completed_index",
+        HERE / "plan-5min-readonly-union.py")
+    planner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(planner)
+    return planner.validated_parquet_locator(
+        index, root, symbols, day, "a-share-candidate")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("root", type=Path, help="Local read-only H5 and purchased PQ root")
@@ -154,6 +258,11 @@ def main(argv=None):
     ap.add_argument("--baseline-report", type=Path, required=True,
                     help="Existing one-day exact mask JSON")
     ap.add_argument("--top-symbols", type=int, default=3)
+    ap.add_argument("--plan-only", action="store_true",
+                    help="Report Parquet footer-only candidate I/O; no H5/PQ bar values")
+    ap.add_argument("--coverage-index", type=Path, default=None,
+                    help="Optional COMPLETED, source-verified 2026 V3 coverage locator; "
+                         "partial indexes fail closed")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--read-only", action="store_true", required=True)
     args = ap.parse_args(argv)
@@ -172,8 +281,39 @@ def main(argv=None):
             json.loads(baseline_path.read_text(encoding="utf-8")),
             day, args.top_symbols)
         print("Focused candidate symbols:", ", ".join(selected), flush=True)
+        allowed_groups = None
+        index_info = {"used": False, "complete_source_matched_index": False}
+        if args.coverage_index is not None:
+            allowed_groups, index_info = resolve_completed_locator(
+                root, tuple(selected), day, args.coverage_index)
+            index_info["complete_source_matched_index"] = True
+        if args.plan_only:
+            metadata_plan = plan_with_footers(
+                root, tuple(selected), day, allowed_groups)
+            report = {
+                "format": "AStockDataTools focused parquet metadata read plan v1",
+                "date": day.isoformat(),
+                "selected_symbols": list(selected),
+                "selection": "from completed exact-mask baseline top stock-days",
+                "baseline_report_name": baseline_path.name,
+                "parquet_row_group_plan": metadata_plan,
+                "coverage_index": index_info,
+                "h5_market_files_read": False,
+                "parquet_bar_values_read": False,
+                "source_market_files_modified": False,
+                "not_a_measured_runtime_speedup": True,
+                "unit_mapping_certified": False,
+                "safe_to_automatically_union": False,
+            }
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with out.open("x", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            print("Saved footer-only 5min read cost plan:", out, flush=True)
+            return
         h5, hmeta = diagnose.load_h5(root, tuple(selected), day)
-        pq, pmeta = diagnose.load_parquet(root, tuple(selected), day, True)
+        pq, pmeta = diagnose.load_parquet(
+            root, tuple(selected), day, True, allowed_groups=allowed_groups)
         if any(hmeta[s].get("h5_duplicate_keys", 0) for s in selected):
             raise ValueError("H5 duplicate focused keys")
         if pmeta.get("duplicate_keys", 0) or pmeta.get("nonfinite_rows", 0):
@@ -196,6 +336,7 @@ def main(argv=None):
             "safe_to_automatically_union": False,
             "h5_selected_source": hmeta,
             "parquet_scan": pmeta,
+            "coverage_index": index_info,
             "symbol_results": by_symbol,
         }
         out.parent.mkdir(parents=True, exist_ok=True)

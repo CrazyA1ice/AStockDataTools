@@ -83,6 +83,18 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 🧪 Arrow预览第三次真实查询慢于RowGroup；推进精确证券日行组定位（2026-10-28）
+
+用户本机新增`pq-primary-arrow-preview-SH600000-20260930-verified.json`：**结果仍48根且逐根完全一致**，但同一次验证中Arrow为**2.972944秒**、原RowGroup为**1.791278秒**（Arrow约1.66倍耗时）。之前两次A/B均更快的结论只适用于当时的实验，**不可升格为Arrow全局更快或默认引擎替换**。两次引擎都受系统缓存和负载影响；正式引擎继续保持原RowGroup。
+
+注意47个Footer候选行组中，Arrow只从18组输出目标证券当天K线。新增只读工具`tools/plan-parquet-5min-exact-rowgroups.py`对**全部47候选组的`ts,symbol`键列**进行有预算、有指纹保护的完整扫描，准确规划哪些行组含目标单股票单日键；**仅规划、不进入正式查询、不读OHLCVA、不自动并集**。能否从47减至真实18个仍待独立键列复核，首次完整键扫描本身有成本，不得先行宣称净加速。新增6项合成测试待Windows运行。详见[本次性能反转及精确行组计划](docs/2026_PARQUET_ARROW_PREVIEW_REGRESSION_AND_EXACT_ROWGROUP_PLAN.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\plan-parquet-5min-exact-rowgroups.py "D:\\stock" --symbol SH600000 --date 2026-09-30 --max-candidate-rows 30000000 --max-candidate-groups 1000 --max-result-keys 25000 --read-only --out "reports\\pq-SH600000-20260930-5min-exact-rowgroups.json"
+```
+
 ## ✅ 真实Arrow冷查询A/B双顺序完成；新增安全预览查询（2026-10-27）
 
 用户本机两份真实 `SH600000 / 2026-09-30 / 5min` A/B：**RowGroup优先**传统4.579644秒、Arrow 1.425189秒（3.213×）；**Arrow优先**传统1.925149秒、Arrow 1.383294秒（1.392×）。两轮均48根、OHLCVA+时间+来源严格相同、源stat签名相同，47个候选RowGroup、5,685,792条源记录上限没有变化；Arrow过滤后向Python仅交付48条，不可据此认为物理只读48条。双顺序均更快，仅证明**本次单股票单日实验**，仍有OS缓存/运行顺序影响。

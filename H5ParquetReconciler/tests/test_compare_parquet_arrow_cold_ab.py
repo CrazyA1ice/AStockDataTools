@@ -131,7 +131,7 @@ class ReversedOrderAuditTests(unittest.TestCase):
 
     def test_malformed_counts_and_physical_decode_claims_rejected(self):
         other = report("arrow-first")
-        other["matching_bar_count"] = 49
+        other["matching_bar_count"] = 47
         with self.assertRaisesRegex(ValueError, "Mismatched query"):
             M.compare(report(), other)
         other = report("arrow-first")

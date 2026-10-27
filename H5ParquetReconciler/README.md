@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ 2026年2/8月key-only异常明确在深市B股；A股Parquet直接只读查询首版（2026-10-27）
+
+本机真实JSON`pq-key-only-2026-02.json`/`pq-key-only-2026-08.json`结果：2月77,772个证券日中77,771完整、唯一不完整为2026-02-24 **SZ200706（81×1min/17×5min）**；8月118,064个证券日中118,061完整，三组不完整均为2026-08-03 **SZ200019、SZ200045、SZ200869（各80×1min/16×5min）**。全部4组属于深圳200开头**B股**，两月被检查的时间键无重复或非正常时段。**未观察到代码模式符合普通A股的股票日时间键异常**，但只检查了这两个月及键完整性，不能认定全历史正确，也不能替B股捏造缺失分钟。见[真实2/8月报告与只读查询开发](docs/2026_PARQUET_B_SHARE_KEY_ANOMALIES_AND_PRIMARY_QUERY.md)。
+
+新增`tools/query-parquet-primary-readonly.py`，直接向用户购买的`AllCycleAStockData/{day,1min,5min}`发起**单证券、最多31天的真实行情查询**，不转换数据包、不写Parquet、不使用H5/TDX。公开本地Python`query_bars()`接口返回该证券的原始OHLCVA及来源行组；命令行默认只生成元数据安全报告，`--show-first-bars 3`才会显式在**本机终端**展示前3根付费K线。对源RowGroup按日期/证券保守剪枝、查询前30M行预算、25k结果数上限、重复时间键及OHLC结构异常失败保护；保留day源08:00/1min结束标签+09:30独立源键/5min开始标签，无私自价格复权和量额倍数换算。新增9项合成Arrow测试（待本机），下一阶段再实现TDX盘后**独立增量层**。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-primary-readonly.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --read-only --out "reports\pq-primary-query-SH600000-5min-2026-09-30.json"
+```
+
+这是只读查询，不是合并主库或全历史认证；报告中`matching_bar_count`是**真数据查询结果**，不是根据Footer倍数推断。
+
 ## Parquet覆盖盘点实测：72文件/50.47GiB/2011—2026.09；2026年2月与8月需key-only精确核验（2026-10-27）
 
 收到用户真实`parquet-primary-footer-inventory-2011-2026.json`：2011—2025年day/1min/5min每周期每年都有一个年度Parquet，2026年三个周期分别有1—9月各9份月度Parquet；**总计72文件/约50.47GiB/41.48亿条Footer统计记录**。所有非空行组均有可信`ts`范围统计，无元数据错年、命名歧义或缺失统计。**但这不是每证券逐交易日完整性认证**。实际供应商day原时间标签约08:00，1min为结束标签，5min为开始标签，保留原值供主查询标准化。

@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ Parquet跨日期跨沪深市场384/384六字段严格重建；新增日线↔分钟只读审计（2026-10-27）
+
+新增真实报告：2026-08-24的SH600000、SZ000001、SZ300750均48/48严格一致；2026-09-30的SH600000、SZ000001均48/48严格一致，**本轮240/240**。连同9/28科创板三只144/144，已在2026年8、9月三交易日覆盖沪市主板、科创板、深市主板、创业板，**8组股票交易日384/384根Parquet 5min由同源1min严格重建**，首根09:30额外一分钟只算一次。所有样本同源成交量额分位数及最大值比率均1.0；仅证明该样本内部一致性，不能认证早期历史年份、北交所或交易所逐笔正确性。
+
+下一步新增`tools/validate-parquet-day-to-minute.py`，**纯Parquet**只读原始`day`、`1min`、`5min`三个周期，按交易日完整241根1min/48根5min时间网格、09:30特殊分钟独立聚合两种分钟周期的OHLC/成交量/成交额，再与Parquet日线比较严格值/原容差和**量额倍率候选×1/×100/×0.01**；数据缺失、时间异常、重复键或量额倍率不明都拒绝自动认证，更不自动合并。另增8项合成测试含生成Arrow日线读取测试，Windows真实日线结果待验证。详见[跨市场384/384与日线守恒审计](docs/2026_PARQUET_CROSSMARKET_384_OF_384_AND_DAILY_AUDIT.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\validate-parquet-day-to-minute.py "D:\stock" --date 2026-08-24 --symbols SH600000 SZ000001 SZ300750 --max-candidate-rows 30000000 --read-only --out "reports\pq-day-vs-minute-2026-08-24.json"
+```
+
+请上传新的day↔minute安全汇总JSON核对**日线**的口径后，再选择是否检查9月30日；原H5和购买Parquet始终只读。
+
 ## ✅ Parquet本机真实验证：2026-09-28三股票144/144六字段严格合成成功（2026-10-27）
 
 用户已上传PR #51新增09:30候选规则后的**真实Parquet-only**报告`pq-only-2026-09-28-1min-to-5min-opening0930.json`。SH688629、SH688017、SH688172各有241根1min与48根5min，**三只合计144/144根均满足开高低收、成交量、成交额六字段严格浮点数值准则（abs_tol=1e-6，rel_tol=1e-10）**，上午72/72、下午72/72，且同源五分量额与分钟和比值均1.0。此前47/48的首根09:30差异已证明由一个单独的09:30一分钟键纳入首根五分钟即可完全解释，其他47根各按普通结束标签五根聚合，**无需任何两周期成交量倍率调整**。原源无重复键/非法时间、非有限数值，所有目标股票质量检查无异常。

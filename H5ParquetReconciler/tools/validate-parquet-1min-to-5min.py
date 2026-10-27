@@ -374,7 +374,7 @@ def read_parquet_period(root, period, day, symbols, max_candidate_source_rows):
                     if timestamp % 60000:
                         result["invalid_timestamp_rows"] += 1
                         continue
-                    stamp = core.pq_stamp(timestamp, "1min")
+                    stamp = core.pq_stamp(timestamp, "day" if period == "day" else "1min")
                     values = tuple(float(row[field]) for field in FIELDS)
                     if not all(math.isfinite(x) for x in values):
                         result["nonfinite_source_rows"] += 1
@@ -382,7 +382,7 @@ def read_parquet_period(root, period, day, symbols, max_candidate_source_rows):
                 except (TypeError, ValueError, OverflowError, OSError):
                     result["invalid_timestamp_rows"] += 1
                     continue
-                key = (sym, stamp)  # both Parquet periods kept RAW source labels
+                key = (sym, stamp)  # minute labels raw; daily stamps normalized to YYYYMMDD0000
                 if key in records:
                     result["duplicate_keys"] += 1
                     continue

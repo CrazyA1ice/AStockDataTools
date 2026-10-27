@@ -83,6 +83,21 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## Parquet单股票重复查询：显式本地私有缓存，报告真实冷/热耗时（2026-10-27）
+
+用户上传V2安全报告确认SH600000在2026-09-30的5min **48根**完全找到、09:30～14:55时间正常；9个月Footer均打开、8个非交叠月文件被安全跳过，但**同月47个RowGroup、5,685,792源行仍照常读取**，每返回根118,454源行，说明上轮改善的是规划，不是冷查询吞吐。
+
+本轮新增`tools/private-parquet-query-cache.py`，在`query-parquet-primary-readonly.py`添加明确的**可选`--local-cache`**（Python`query_bars(...,local_cache=True)`）。首次仍从Parquet完整读取；会在**模块内`work/primary_query_cache/`落地真实购买OHLCVA子集**，该目录已被仓库.gitignore忽略，**不可上传、共享或放入reports/**。同股票/日期/周期/读取预算再次查询时只检查源文件清单、大小和mtime，匹配后可**零Parquet行情行读取/零Footer读取**并返回相同本地数据。源文件任何已检测到的stat变化或损坏缓存均触发重算。stat指纹**不是文件内容SHA256**，不能识别保留mtime/大小的隐式篡改。默认不开缓存，保留原接口行为和只读源保护。
+
+新safe summary分别记录本次`source_rows_scanned_this_invocation`、`source_file_footers_opened_this_invocation`与`query_elapsed_seconds_this_invocation`，区分冷扫/热命中和历史冷扫成本，不在报告内输出OHLCVA。**缓存加速仅针对重复查询，不能声称解决首次569万行读取放大**。本轮增加5项合成测试，预计全量276项，待用户本机验证。见[本地缓存安全与冷/热验收](docs/2026_PARQUET_PRIVATE_REPEAT_QUERY_CACHE_AND_COLD_WARM_AUDIT.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-primary-readonly.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --read-only --local-cache --out "reports\pq-primary-SH600000-20260930-cache-cold.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-primary-readonly.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --read-only --local-cache --out "reports\pq-primary-SH600000-20260930-cache-warm.json"
+```
+
 ## ✅ Parquet首个真实查询成功：SH600000 5min 48根；需要改善569万源行读放大（2026-10-27）
 
 真实上传`pq-primary-query-SH600000-5min-2026-09-30.json`：SH600000/2026-09-30/Parquet 5min查询实际`matching_bar_count=48`，原始时间标签09:30～14:55，未调单位、未读H5、未写源，安全JSON不含OHLCVA。**但旧版为了这48根读了47个RowGroup、5,685,792条源行，约118,454条源行/返回根**，需要认真优化而不是继续重复做数据一致性审计。

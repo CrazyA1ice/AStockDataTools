@@ -20,9 +20,11 @@
 
 本机合成测试记录为`Ran 297 tests in 17.426s / FAILED (failures=5, errors=2)`。其中6项均由Arrow Fragment创建处遗漏显式文件系统触发（`cannot construct a FileSource from a path without a FileSystem`），并非证明真实数据不一致；另1项是测试断言期望了第二层预检上限错误，实际先命中第一层RowGroup上限一致性校验。
 
-修复为`pyarrow.fs.LocalFileSystem()`，显式传入`ParquetFileFormat.make_fragment(str(path), filesystem=..., row_groups=[group])`，保留原有目标RowGroup、过滤条件、价量额对比、安全预算及只读行为。同时分别测试两层上限检查，并新增加带空格绝对路径的Arrow Fragment合成回归。**这批改动提交后尚未取得本机重新执行单测的验收输出，不得声称297项或新增总数已经通过。**
+修复为`pyarrow.fs.LocalFileSystem()`，显式传入`ParquetFileFormat.make_fragment(str(path), filesystem=..., row_groups=[group])`，保留原有目标RowGroup、过滤条件、价量额对比、安全预算及只读行为。同时分别测试两层上限检查，并新增加带空格绝对路径的Arrow Fragment合成回归。**用户随后提供2026-10-27 Windows 全套测试日志：298 项测试、16.243 秒、最终 OK，先前失败的全部7项及新增带空格路径测试均通过。此为本地合成测试验收，不能替代真实购买 Parquet 的冷查询性能与来源一致性验证。**
 
-修复后先执行下文完整单测，再运行真实A/B；不要使用修复前失败的运行结果作为性能证据。
+已完成上述 298 项合成测试验收；**下一主线是只执行下面三个 Windows 命令**：按 RowGroup 优先、Arrow 优先跑两个只读真实 A/B，然后离线比较两个报告。请使用首次生成、尚不存在的报告文件名（工具拒绝覆盖）；如果之前试跑产生同名文件，改用末尾 `-v2.json` 并在第三个命令内同步改名。
+
+真实 A/B 应分别核验 `matching_bar_count=48`、`query_output_all_values_times_and_source_provenance_identical=true`、两轮源 stat 指纹一致，以及时间方向；否则保留原正式 RowGroup 查询引擎，不许因合成测试 OK 就声称 Arrow 更快。
 
 ## Windows运行（仓库根目录）
 
@@ -55,6 +57,6 @@ git pull --ff-only origin main
 
 ## 验收限制与测试
 
-本轮新增纯合成`tests/test_compare_parquet_arrow_cold_ab.py`，以及对原A/B测试的源元信息变化保护，涵盖顺序反转、数据源stat不一致、数量不守恒、缺失安全标志、NaN/无效计时、路径逃逸与已有文件拒绝覆盖。新增后测试数量**需以Windows实际unittest输出为准**；尚未收到该轮实机执行记录，不宣称已通过。
+本轮新增纯合成`tests/test_compare_parquet_arrow_cold_ab.py`，以及对原A/B测试的源元信息变化保护，涵盖顺序反转、数据源stat不一致、数量不守恒、缺失安全标志、NaN/无效计时、路径逃逸与已有文件拒绝覆盖。**Windows 用户本机完整结果：`Ran 298 tests in 16.243s`、`OK`，全部已通过。** 无任何付费行情文件进入测试记录；真实 Arrow/RowGroup 冷查询双顺序的性能结论尚待实测，不能提前认证。
 
 即便stat清单完全相同，两轮仍可能受OS页缓存、内存页面、后台任务、PyArrow版本等干扰；第三份审计JSON的分类只是**方向性观察**。Arrow实测若持续显著较快，下一步再做正式引擎的受控可选化；若未证明收益，则继续构建原始数据只读前提下的定位/分区索引，切勿直接改写购买源数据。

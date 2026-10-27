@@ -83,6 +83,12 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ Windows完整298项合成测试全部通过；下一步真实Arrow冷查询双顺序对照（2026-10-27）
+
+用户提供最新Windows完整 `unittest discover` 日志：**`Ran 298 tests in 16.243s`、`OK`**，包括上一轮的 PyArrow `LocalFileSystem` 修复、带空格路径，以及RowGroup/Arrow逐根OHLCVA/时间/来源一致性等回归。此前297项测试中5 failures/2 errors的问题已消除；此次结果只确认**合成测试通过**，不表示真实5分钟行情读取性能已提高。
+
+真实冷查询仍待本机两次只读A/B及第三份安全交叉报告：`rowgroup-first`、`arrow-first`，输出路径均在本模块`reports/`，源数据`D:\\stock`只读、不允许上传付费K线。**按[双顺序A/B验收命令](docs/2026_PARQUET_COLD_AB_REVERSED_ORDER_AUDIT.md)执行；只上传3份汇总JSON，不上传`work/`缓存。** 在取得真实报告以前不替换正式RowGroup引擎、不宣称Arrow解码或磁盘IO更少。
+
 ## ✅ Parquet缓存冷热实测69.86倍；新增首次查询Arrow过滤A/B（2026-10-27）
 
 用户上传`pq-primary-SH600000-20260930-cache-cold.json`/`...cache-warm.json`：2026-09-30 SH600000 5min首次查询48根耗时**3.515286秒、实际569万源行/9份Footer**，热缓存48根耗时**0.050318秒、零Parquet源行/零Footer读取**，实测重复查询约**69.86倍**加速、耗时降低约**98.57%**。这不是未经测试的性能推断，但**只适用于该单次重复查询，不能表示首次查询已提速或缓存来源内容哈希已验证**。

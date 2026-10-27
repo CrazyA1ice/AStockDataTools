@@ -83,6 +83,18 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## Parquet确定为候选历史主源：核验购买数据自身1分钟能否合成5分钟（2026-10-27）
+
+此前实测H5自身1min→5min 144/144吻合，**不等于Parquet两个周期内部也正确**。用户拟改以2011～2026-09购买的Parquet作为主数据源，后续用通达信盘后数据更新，必须先做Parquet的独立周期完整性检查。因此新增`tools/validate-parquet-1min-to-5min.py`：只读取Parquet `AllCycleAStockData/1min`、`5min`，从同一证券日将五根1min合成OHLCVA，尝试五分钟/一分钟各自“开始/结束”两种时间标签共4个候选组合；**严格数值（浮点容差1e-6/1e-10）与原容差两个层次分开**，对比分时段和整日完整窗口、量/额求和、同源候选成交量倍率，并把缺分钟、缺源、重复键和异常价格明确列为未认证。**不读取H5，不写源OHLCVA，不自动并集**；候选RowGroup每周期默认上限3000万行，超过时提示而不直接扫昂贵行情。完整方法见[Parquet同源一分钟到五分钟审计](docs/2026_PARQUET_1MIN_5MIN_PRIMARY_SOURCE_AUDIT_20261027.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\validate-parquet-1min-to-5min.py "D:\stock" --date 2026-09-28 --symbols SH688629 SH688017 SH688172 --max-candidate-rows 30000000 --read-only --out "reports\pq-only-2026-09-28-1min-to-5min-top3.json"
+```
+
+上传安全汇总`pq-only-2026-09-28-1min-to-5min-top3.json`。先看Parquet自身4种时间窗口和1:1成交量额求和能否复现48根，再将结论扩展到8月、深市/北交所和日线互相守恒；**通过内部合成不等于交易所逐笔数据正确**。新增13项合成测试待本机验收。
+
 ## 数据合并方向调整：优先选可靠主源，再由通达信盘后增量补录（2026-10-27）
 
 用户明确：购买Parquet覆盖2011～2026-09，Hikyuu H5日线覆盖更长并持续更新至2026-10，但分钟线可能仅从2025年附近开始，计划未来改用通达信盘后更新。**真实目标是一个来源清晰、历史连续、允许不同日期不同供应商但同一证券日单一来源的主数据视图**；不需要强求双方K线完全一样，更不能将原始文件彼此覆盖。初步倾向H5作为日线主线、Parquet补历史缺失分钟、最近重叠段H5为候选主线，最终由同花顺“不复权、同一五分钟区间”的独立人工抽样决定；通达信更新按日线/1m/5m分别记录最后完整时间，盘后增量补齐。过去5min H5在2026-10-13有记录但10-19～23报告缺源，**不能假设日线新就代表分钟线最新**。

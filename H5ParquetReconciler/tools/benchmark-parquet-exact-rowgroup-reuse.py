@@ -59,7 +59,8 @@ def read_locator(path):
     if location.stat().st_size>131072:
         raise ValueError("Locator report exceeds 128 KiB")
     with location.open("r",encoding="utf-8") as reader:
-        report=json.load(reader)
+        report=json.load(reader,parse_constant=lambda x: (_ for _ in ()).throw(
+            ValueError("Non-finite JSON constant in locator")))
     if type(report) is not dict:
         raise ValueError("Locator must be a JSON object")
     return report
@@ -118,6 +119,12 @@ def validate_locator(locator,ctx,signature):
                             "two_key_columns_source_rows_examined",allow_zero=True)
                !=upper_bound):
         raise ValueError("Locator lacks complete original footer candidate census")
+    creation_seconds=locator.get(
+        "elapsed_seconds_of_key_only_scan_including_footer_preflight")
+    if (type(creation_seconds) not in (int,float)
+            or not math.isfinite(creation_seconds)
+            or creation_seconds<0):
+        raise ValueError("Invalid original locator build time")
     entries=locator.get("nonempty_source_row_group_locators")
     if type(entries) is not list or len(entries)>group_count:
         raise ValueError("Invalid RowGroup locator list")
@@ -209,9 +216,12 @@ def run(root,symbol,day,locator,order="full-first",
         raise ValueError("Engine scanned unexpected RowGroup count")
     old_t=reference["query_elapsed_seconds_this_invocation"]
     new_t=reduced["query_elapsed_seconds_this_invocation"]
-    if any(type(v) not in (int,float) or not math.isfinite(v) or v<0
+    if any(type(v) not in (int,float) or not math.isfinite(v) or v<=0
            for v in (old_t,new_t)):
-        raise ValueError("Nonfinite engine timing")
+        raise ValueError("Nonpositive or nonfinite engine timing")
+    speed_ratio=old_t/new_t
+    if not math.isfinite(speed_ratio):
+        raise ValueError("Nonfinite engine timing ratio")
     selected_upper=reduced[
         "row_group_source_rows_upper_bound_actually_scanned"]
     if not 0<=selected_upper<=ctx["metadata"]["candidate_source_rows_upper_bound"]:
@@ -223,7 +233,7 @@ def run(root,symbol,day,locator,order="full-first",
         "matching_bar_count":len(bars),
         "full_arrow_seconds":old_t,
         "restricted_arrow_seconds":new_t,
-        "full_over_restricted_ratio":round(old_t/new_t,6) if new_t else None,
+        "full_over_restricted_ratio":round(speed_ratio,6),
         "full_footer_candidate_row_groups":len(ctx["pending"]),
         "restricted_row_groups_actually_scanned":len(membership),
         "row_groups_not_read_in_restricted_scan":len(ctx["pending"])-len(membership),

@@ -93,7 +93,7 @@ git pull --ff-only origin main
 .\.venv\Scripts\python.exe H5ParquetReconciler\tools\validate-parquet-1min-to-5min.py "D:\stock" --date 2026-09-28 --symbols SH688629 SH688017 SH688172 --max-candidate-rows 30000000 --read-only --out "reports\pq-only-2026-09-28-1min-to-5min-top3.json"
 ```
 
-上传安全汇总`pq-only-2026-09-28-1min-to-5min-top3.json`。先看Parquet自身4种时间窗口和1:1成交量额求和能否复现48根，再将结论扩展到8月、深市/北交所和日线互相守恒；**通过内部合成不等于交易所逐笔数据正确**。新增9项合成测试待本机验收。
+上传安全汇总`pq-only-2026-09-28-1min-to-5min-top3.json`。先看Parquet自身4种时间窗口和1:1成交量额求和能否复现48根，再将结论扩展到8月、深市/北交所和日线互相守恒；**通过内部合成不等于交易所逐笔数据正确**。新增11项合成测试待本机验收。
 
 ## 数据合并方向调整：优先选可靠主源，再由通达信盘后增量补录（2026-10-27）
 

@@ -172,7 +172,7 @@ def row_group_read_cost(metadata_files, symbols, day, allowed_groups=None):
         "plan_only_metadata_opened": True,
         "ohlcv_column_values_read": False,
         "candidate_rows_are_selected_symbol_rows": False,
-        "timestamp_symbol_metadata_can_miss_hidden_groups": True,
+        "missing_or_unreliable_min_max_never_prunes_row_groups": True,
     }
     for path, metadata in metadata_files:
         path = Path(path)

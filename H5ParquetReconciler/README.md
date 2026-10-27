@@ -87,7 +87,7 @@ py -3.11 -m venv .venv
 
 用户Windows本机**180项unittest全通过**；2026-09-28三证券原检测在47个Parquet行组内解码5,685,792条源行，最终只选中144根股票K线。已有2025 V3行组索引，**不能直接用于2026**；现阶段先不重扫或构建2026大索引。
 
-扩展`tools/analyze-5min-x100-focused-sessions.py`：`--plan-only`仅读年度Parquet **Footer元数据**，不加载H5/Parquet K线，报告在现有时间/symbol最小最大值保守规则下，需要读取哪些RowGroup以及行数；`--coverage-index`可选接入**完整且源清单校验通过**的同年度V3索引，索引无效或只构建部分时直接拒绝，绝不因不完整索引误跳K线；原聚焦对账功能/8mask计数保持不变。新增6项纯合成测试待Windows验收。说明：[Parquet Footer读取成本与索引安全门槛](docs/2026_5MIN_PARQUET_FOOTER_COST_PLAN_INDEX_OPTION_20261027.md)。
+扩展`tools/analyze-5min-x100-focused-sessions.py`：`--plan-only`仅读年度Parquet **Footer元数据**，不加载H5/Parquet K线，报告在现有时间/symbol最小最大值保守规则下，需要读取哪些RowGroup以及行数；`--coverage-index`可选接入**完整且源清单校验通过**的同年度V3索引，索引无效或只构建部分时直接拒绝，绝不因不完整索引误跳K线；原聚焦对账功能/8mask计数保持不变。新增7项纯合成测试待Windows验收。说明：[Parquet Footer读取成本与索引安全门槛](docs/2026_5MIN_PARQUET_FOOTER_COST_PLAN_INDEX_OPTION_20261027.md)。
 
 ```powershell
 git pull --ff-only origin main

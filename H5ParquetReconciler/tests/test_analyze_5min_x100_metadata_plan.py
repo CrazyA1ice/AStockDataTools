@@ -152,6 +152,37 @@ class ParquetMetadataPlanTests(unittest.TestCase):
             self.assertFalse(data["parquet_bar_values_read"])
             self.assertFalse(data["safe_to_automatically_union"])
 
+    def test_incomplete_or_stale_locator_fails_before_any_market_scan(self):
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            module = tmp / "module"
+            (module / "reports").mkdir(parents=True)
+            (module / "tools").mkdir()
+            baseline = tmp / "exact-masks.json"
+            baseline.write_text('{"format": "synthetic"}', encoding="utf-8")
+            output = module / "reports" / "should-not-exist.json"
+            work = module / "work" / "_union_scratch"
+            with (patch.object(M, "HERE", module / "tools"),
+                  patch.object(M.core, "resolve_module_artifact_paths",
+                               return_value=(output, work)),
+                  patch.object(M.core, "resolve_safe_paths",
+                               return_value=(tmp / "stock", output, work)),
+                  patch.object(M, "load_baseline",
+                               return_value={"SH600000": {"volume": 1}}),
+                  patch.object(M, "resolve_completed_locator",
+                               side_effect=ValueError("Index incomplete or fingerprint mismatch")),
+                  patch.object(M, "plan_with_footers") as meta,
+                  patch.object(M.diagnose, "load_parquet") as pq):
+                with self.assertRaises(SystemExit) as caught:
+                    M.main([str(tmp / "stock"), "--date", "2026-09-28",
+                            "--baseline-report", str(baseline),
+                            "--coverage-index", "work/indexes/pq-5min-2025.sqlite",
+                            "--plan-only", "--read-only", "--out", str(output)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(output.exists())
+            meta.assert_not_called()
+            pq.assert_not_called()
+
     def test_invalid_negative_row_count_and_bad_symbols_refused(self):
         with TemporaryDirectory() as d:
             path = Path(d) / "pq.parquet"

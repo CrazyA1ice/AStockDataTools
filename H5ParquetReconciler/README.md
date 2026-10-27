@@ -83,6 +83,19 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ Parquet缓存冷热实测69.86倍；新增首次查询Arrow过滤A/B（2026-10-27）
+
+用户上传`pq-primary-SH600000-20260930-cache-cold.json`/`...cache-warm.json`：2026-09-30 SH600000 5min首次查询48根耗时**3.515286秒、实际569万源行/9份Footer**，热缓存48根耗时**0.050318秒、零Parquet源行/零Footer读取**，实测重复查询约**69.86倍**加速、耗时降低约**98.57%**。这不是未经测试的性能推断，但**只适用于该单次重复查询，不能表示首次查询已提速或缓存来源内容哈希已验证**。
+
+接下来真正待解决的瓶颈是首次每根目标K线要读取118,454源行。新增独立工具`tools/benchmark-parquet-arrow-filter-cold.py`：用经过真实验证的默认ParquetFile RowGroup方式与Arrow Dataset指定同RowGroup的`filter=ts/symbol`过滤方式进行**只读冷查询A/B**，**禁用私有缓存**，在内存逐根严格比较六字段OHLCVA、原始时间、文件/RowGroup来源，任何不等都会拒绝生成性能报告。只向模块`reports/`输出摘要、真实耗时、RowGroup预算及Arrow过滤后交付根数；**过滤输出只有48根不等于底层只解码48根，真实物理解码行/磁盘字节未知**。支持反转执行顺序避免把文件系统缓存效应当成优化结果。7项合成Arrow测试待本机运行，总计预计283项。见[本机真实约70倍热缓存与Arrow首次查询实验](docs/2026_PARQUET_WARM_CACHE_70X_REAL_AND_ARROW_COLD_AB.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-arrow-filter-cold.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --order rowgroup-first --read-only --out "reports\pq-primary-cold-ab-SH600000-20260930-rowgroup-first.json"
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\benchmark-parquet-arrow-filter-cold.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --order arrow-first --read-only --out "reports\pq-primary-cold-ab-SH600000-20260930-arrow-first.json"
+```
+
 ## Parquet单股票重复查询：显式本地私有缓存，报告真实冷/热耗时（2026-10-27）
 
 用户上传V2安全报告确认SH600000在2026-09-30的5min **48根**完全找到、09:30～14:55时间正常；9个月Footer均打开、8个非交叠月文件被安全跳过，但**同月47个RowGroup、5,685,792源行仍照常读取**，每返回根118,454源行，说明上轮改善的是规划，不是冷查询吞吐。

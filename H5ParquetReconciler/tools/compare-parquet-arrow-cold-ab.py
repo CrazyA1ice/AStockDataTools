@@ -24,6 +24,8 @@ TRUE_FLAGS = (
     "arrow_output_rows_are_not_number_of_physical_rows_read",
     "fast_cold_engine_not_automatically_enabled",
     "local_private_ohlcva_cache_not_used",
+    "source_manifest_stat_only_not_content_sha256",
+    "source_stat_manifest_stable_across_both_engines",
     "only_safe_aggregate_metadata_exported",
 )
 FALSE_FLAGS = (
@@ -114,6 +116,12 @@ def validate_summary(data: dict) -> dict:
         raise ValueError("Invalid query window")
     for key in AGGREGATE_KEYS[4:]:
         nonnegative_int(data.get(key), key)
+    nonnegative_int(data.get("source_stat_manifest_file_count"),
+                    "source_stat_manifest_file_count")
+    digest = data.get("source_stat_manifest_sha256")
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)):
+        raise ValueError("Missing or malformed stat-only source manifest SHA256")
     if not isinstance(data.get("baseline_existing_rowgroup"), dict):
         raise ValueError("Baseline measurement missing")
     if not isinstance(data.get("experimental_arrow_filtered"), dict):
@@ -158,6 +166,10 @@ def compare(rowgroup_first: dict, arrow_first: dict) -> dict:
     for key in AGGREGATE_KEYS:
         if left[key] != right[key]:
             raise ValueError("Mismatched query or RowGroup preflight: " + key)
+    for key in ("source_stat_manifest_sha256",
+                "source_stat_manifest_file_count"):
+        if left[key] != right[key]:
+            raise ValueError("Source stat manifest differs between A/B runs: " + key)
     for key in BASELINE_KEYS:
         if (left["baseline_existing_rowgroup"][key] !=
                 right["baseline_existing_rowgroup"][key]):
@@ -196,6 +208,8 @@ def compare(rowgroup_first: dict, arrow_first: dict) -> dict:
         "candidate_row_groups": left["candidate_row_groups"],
         "candidate_source_rows_upper_bound": left["candidate_source_rows_upper_bound"],
         "opposite_orders_and_identical_aggregate_counts_verified": True,
+        "same_source_stat_manifest_in_both_runs_verified": True,
+        "source_manifest_is_stat_only_not_content_hash": True,
         "each_order_ohlcva_time_provenance_identical_within_run": True,
         "measured_trials": trials,
         "preliminary_timing_observation": result,

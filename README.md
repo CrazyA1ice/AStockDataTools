@@ -13,4 +13,6 @@ Hikyuu H5 与购买的年度Parquet行情的全量覆盖、时间差集、重叠
 - [数据格式及局限](H5ParquetReconciler/docs/TECHNICAL_NOTES.md)
 - [开发路线与当前任务](H5ParquetReconciler/docs/ROADMAP.md)
 
+Parquet冷查询A/B目前支持**反序交叉复核与源文件stat清单指纹检查**：两次基准分别按RowGroup优先、Arrow优先运行，再用[只读反序验收工具](H5ParquetReconciler/docs/2026_PARQUET_COLD_AB_REVERSED_ORDER_AUDIT.md)核对两份安全摘要。仅能判断单次观测方向，不能因此自动切换生产引擎；付费原始行情不上传。
+
 该工具不负责自动认定哪个数据商更正确，也不会直接覆盖原始H5或Parquet。

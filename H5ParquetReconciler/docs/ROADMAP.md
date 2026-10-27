@@ -10,7 +10,7 @@
 
 - [x] 用户Windows实测`Ran 180 tests in 6.256s\nOK`，前一轮PR#46合成fixture共享字典问题彻底解决，可进入下一阶段。
 - [x] 发现2026-09-28三只股票H5/PQ的定向诊断从407个Parquet行组中需要读取47组/共5,685,792条源行（仅144根命中）；已有索引V3完成验证机制，但此前该聚焦脚本没有`--coverage-index`接入，用户2025年V3无法直接用于2026年。
-- [x] 扩展`analyze-5min-x100-focused-sessions.py`：新增`--plan-only`读取2026 Parquet年度文件Footer、按日期和证券最小最大值保守过滤，预测实际必须解码的RowGroup行数（不加载任何源行情列）；新增可选`--coverage-index`，复用`validated_parquet_locator`现有完整性/源指纹安全校验，只有真实完成同年度索引时可跳过安全定位的行组。新增6项合成测试待Windows执行。详见[2026年Parquet Footer访问成本评估](2026_5MIN_PARQUET_FOOTER_COST_PLAN_INDEX_OPTION_20261027.md)。
+- [x] 扩展`analyze-5min-x100-focused-sessions.py`：新增`--plan-only`读取2026 Parquet年度文件Footer、按日期和证券最小最大值保守过滤，预测实际必须解码的RowGroup行数（不加载任何源行情列）；新增可选`--coverage-index`，复用`validated_parquet_locator`现有完整性/源指纹安全校验，只有真实完成同年度索引时可跳过安全定位的行组。新增7项合成测试待Windows执行。详见[2026年Parquet Footer访问成本评估](2026_5MIN_PARQUET_FOOTER_COST_PLAN_INDEX_OPTION_20261027.md)。
 - [ ] 用户只运行Footer-only预检，上传`pq-5min-2026-09-28-top3-footer-read-plan.json`；先观察47组/568万行是否由元数据解释清楚，再评估Arrow列谓词下推的A/B收益或完整2026索引的一次性构建成本。**现在不发起2026全年重新索引、数据源转换或自动并集**。
 
 ## 最新节点：H5一分钟结束标记聚合144/144通过；证据链离线守恒门槛（2026-10-27）

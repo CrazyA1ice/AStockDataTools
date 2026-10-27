@@ -28,14 +28,40 @@ ORDER=("rowgroup-first","arrow-first")
 
 
 def arrow_filtered_query(root,symbol,period,start,end,
-                         max_candidate_rows=30000000,max_result_bars=25000):
-    """Dataset fragment per RowGroup retains exact file+RowGroup provenance."""
+                         max_candidate_rows=30000000,max_result_bars=25000,
+                         allowed_rowgroups=None):
+    """Dataset fragment per RowGroup retains exact file+RowGroup provenance.
+
+    allowed_rowgroups is an EXPERIMENTAL explicit subset of (relative_path, id).
+    A separate caller must fully validate its locator and verify full parity.
+    Even when restricted, the original FULL preflight budget is enforced.
+    """
     import pyarrow.dataset as ds
     import pyarrow.fs as fs
 
     started=time.perf_counter()
     context=query.prepare_query(
         root,symbol,period,start,end,max_candidate_rows,max_result_bars)
+    all_pending=context["pending"]
+    if allowed_rowgroups is not None:
+        if (type(allowed_rowgroups) is not frozenset
+                or any(type(v) is not tuple or len(v)!=2
+                       or type(v[0]) is not str or type(v[1]) is not int
+                       for v in allowed_rowgroups)):
+            raise ValueError("allowed_rowgroups must be a frozenset of (path, group)")
+        candidates={
+            (p.relative_to(context["root"]).as_posix(),gid)
+            for p,_,gid in all_pending
+        }
+        if not allowed_rowgroups.issubset(candidates):
+            raise ValueError("Restricted RowGroup was not a footer candidate")
+        pending=[
+            (p,pf,gid) for p,pf,gid in all_pending
+            if (p.relative_to(context["root"]).as_posix(),gid)
+            in allowed_rowgroups
+        ]
+    else:
+        pending=all_pending
     fmt=ds.ParquetFileFormat()
     # PyArrow make_fragment(path) does not infer a local filesystem on some
     # releases (including Windows); explicit LocalFileSystem is required.
@@ -49,7 +75,7 @@ def arrow_filtered_query(root,symbol,period,start,end,
     observed={}
     arrow_emitted=0
     nonempty_fragments=0
-    for path,pf,group in context["pending"]:
+    for path,pf,group in pending:
         fragment=fmt.make_fragment(
             str(path),filesystem=local_fs,row_groups=[group])
         fragment_count=0
@@ -101,6 +127,9 @@ def arrow_filtered_query(root,symbol,period,start,end,
             "candidate_source_rows_upper_bound":context["metadata"][
                 "candidate_source_rows_upper_bound"],
             "candidate_row_groups":len(context["pending"]),
+            "row_groups_actually_scanned":len(pending),
+            "row_group_source_rows_upper_bound_actually_scanned":sum(
+                pf.metadata.row_group(gid).num_rows for _,pf,gid in pending),
             "row_groups_that_emitted_filtered_rows":nonempty_fragments,
             "source_file_footers_opened":context["metadata"][
                 "source_file_footers_opened"],

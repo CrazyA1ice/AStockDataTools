@@ -156,7 +156,7 @@ def plan_reports(reports, review_ppm=10):
         "fallback_for_confirmed_gaps_only": "h5_original_read_only",
         "future_complete_postclose_update_candidate": "tdx_postclose",
         "selected_sampled_stock_days": [
-            gathered[key] for key in sorted(gather)],
+            gathered[key] for key in sorted(gathered)],
         "sampled_stock_day_count": len(gathered),
         "sampled_date_count": len({date for date, _ in gathered}),
         "summary_by_status": dict(sorted(accepted.items())),

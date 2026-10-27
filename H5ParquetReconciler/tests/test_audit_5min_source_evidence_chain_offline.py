@@ -66,7 +66,7 @@ def fixture():
                     "h5_volume_times_100_candidate": {
                         "factor_certified": False,
                         "exact_masks_are_mutually_exclusive": True,
-                        "exact_residual_field_mask_counts": masks,
+                        "exact_residual_field_mask_counts": dict(masks),
                         "candidate_volume_mismatch": 5,
                         "candidate_value_mismatch_with_original_price_and_amount_rules": 8,
                         "exact_residual_top_stock_days": [{
@@ -114,7 +114,7 @@ def fixture():
                 "candidate_volume_factor_h5":100,
                 "h5_5min_bars":48, "parquet_5min_bars":48,
                 "h5_only_bars":0, "parquet_only_bars":0,
-                "exact_residual_masks": masks,
+                "exact_residual_masks": dict(masks),
                 "conservation_on_matched_keys_only":{
                     "volume":{
                         "source_total_ratio_parquet_over_h5":1.0,
@@ -203,9 +203,35 @@ class OfflineSourceChainTests(unittest.TestCase):
 
     def test_focus_must_agree_with_top_exact_baseline(self):
         exact,focus,minute=fixture()
-        focus["symbol_results"][SYMBOL]["exact_residual_masks"]["volume"]+=1
+        global_masks = exact["results"]["5min/2026"]["quantity_scale_diagnostics"][
+            "h5_volume_times_100_candidate"]["exact_residual_field_mask_counts"]
+        focused_masks = focus["symbol_results"][SYMBOL]["exact_residual_masks"]
+        self.assertIsNot(global_masks, focused_masks)
+        self.assertEqual(global_masks["volume"], 1)
+        focused_masks["volume"] += 1
+        # The mutation represents a corrupt *focused* report, not a corrupt
+        # global report; it must reach the focused/exact guard in production.
+        self.assertEqual(global_masks["volume"], 1)
         with self.assertRaisesRegex(ValueError, "focus/exact masks"):
             M.audit_chain(exact,focus,minute)
+
+    def test_fixture_reports_have_independent_mutable_mask_maps(self):
+        exact, focus, minute = fixture()
+        global_masks = exact["results"]["5min/2026"]["quantity_scale_diagnostics"][
+            "h5_volume_times_100_candidate"]["exact_residual_field_mask_counts"]
+        top_masks = exact["results"]["5min/2026"]["quantity_scale_diagnostics"][
+            "h5_volume_times_100_candidate"][
+            "exact_residual_top_stock_days"][0]["field_mask_counts"]
+        focused_masks = focus["symbol_results"][SYMBOL]["exact_residual_masks"]
+        self.assertIsNot(global_masks, focused_masks)
+        self.assertIsNot(global_masks, top_masks)
+        self.assertIsNot(top_masks, focused_masks)
+        top_masks["volume"] = 99
+        self.assertEqual(global_masks["volume"], 1)
+        self.assertEqual(focused_masks["volume"], 1)
+        focused_masks["price"] = 99
+        self.assertEqual(global_masks["price"], 2)
+        self.assertEqual(top_masks["price"], 2)
 
     def test_session_masks_must_sum_back_to_same_stock_day(self):
         exact,focus,minute=fixture()

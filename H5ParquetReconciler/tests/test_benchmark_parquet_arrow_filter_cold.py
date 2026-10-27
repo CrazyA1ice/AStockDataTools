@@ -70,6 +70,9 @@ class ParquetArrowColdQueryBenchmarkTests(unittest.TestCase):
         self.assertTrue(report["experimental_arrow_filtered"][
             "actual_parquet_rows_decoded_unknown"])
         self.assertFalse(report["raw_ohlcva_exported"])
+        self.assertEqual(len(report["source_stat_manifest_sha256"]),64)
+        self.assertTrue(report["source_manifest_stat_only_not_content_sha256"])
+        self.assertTrue(report["source_stat_manifest_stable_across_both_engines"])
 
     def test_arrow_first_order_does_not_change_source_results(self):
         self.write("1min","2026-09.parquet",[
@@ -144,6 +147,25 @@ class ParquetArrowColdQueryBenchmarkTests(unittest.TestCase):
         with mock.patch.object(M.query,"query_bars",side_effect=corruption):
             with self.assertRaisesRegex(ValueError,
                                         "Arrow filter differs"):
+                M.benchmark(self.root,"SH600000","day",
+                            "2026-09-30","2026-09-30")
+
+    def test_source_stat_changes_mid_benchmark_refuses_success_report(self):
+        self.write("day","2026-09.parquet",[
+            self.bar("2026-09-30 08:00")])
+        original=M.query.private_cache.source_signature
+        calls=[0]
+        def moving_source(*args,**kwargs):
+            signature=original(*args,**kwargs)
+            calls[0]+=1
+            if calls[0]==2:
+                signature=dict(signature)
+                signature["manifest_sha256_stat_only"]="0"*64
+            return signature
+        with mock.patch.object(M.query.private_cache,"source_signature",
+                               side_effect=moving_source):
+            with self.assertRaisesRegex(ValueError,
+                                        "manifest changed"):
                 M.benchmark(self.root,"SH600000","day",
                             "2026-09-30","2026-09-30")
 

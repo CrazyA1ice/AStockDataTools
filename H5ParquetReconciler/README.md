@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 已验收H5一分钟到五分钟144/144一致：新增全离线证据链校验（2026-10-27）
+
+用户上传`h5-1min-2026-09-28-top3-no-parquet.json`：SH688629、SH688017、SH688172各有**240根H5一分钟和48根H5五分钟**；每只按一分钟**结束标签**将5根聚合成1根，OHLC四项、成交额、H5五分钟量×100与1分钟量×100，均**48/48非零窗口**在既有容差内；合计144/144一致。反向采用一分钟**开始标签**时，仅138个完整窗口、**OHLC全一致0/138**，成交额3/138、×100量1/138。该证据支持H5的时间标签/量单位内部一致性，**不是供应商时标认证，也不能证明Parquet错误**。此前三股票H5与PQ成交量在上午/下午均报告为**小数精度下0%净差**、单根却存在毛差，继续支持K线时间窗/成交归属差异假说。
+
+本轮新增纯JSON工具`tools/audit-5min-source-evidence-chain-offline.py`，将9月28日**精确8类冲突报告**、**top3分时守恒报告**和本次**H5一分钟报告**互相校验、计算溯源指纹及保守状态；核验证券/日期一致、8mask及边际守恒、晨/午24根计数、分钟重聚合有效分母、源只读及禁止自动并集。**无需读取H5或Parquet源文件**；新增8项合成测试待本机验证。完整分析见[9月28日分钟周期证据链](docs/2026_09_28_H5_1MIN_EVIDENCE_CHAIN_20261027.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-5min-source-evidence-chain-offline.py --exact-report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json" --focused-report "H5ParquetReconciler\reports\h5-parquet-5min-x100-2026-09-28-top3-sessions.json" --h5-minute-report "H5ParquetReconciler\reports\h5-1min-2026-09-28-top3-no-parquet.json" --out "reports\h5-parquet-2026-09-28-provenance-chain.json"
+```
+
+只需上传新`h5-parquet-2026-09-28-provenance-chain.json`。下次若确需比较Parquet边界来源，优先改善索引/减少rowgroup读取，而不是重做已经检查过的47组、568万行扫描。
+
 ## 三只证券×100分时报告验收后：只读取H5一分钟复核，不重扫Parquet（2026-10-26）
 
 2026-09-28真实报告`h5-parquet-5min-x100-2026-09-28-top3-sessions.json`显示：SH688629、SH688017、SH688172各48根两源5min完整配对，候选成交量×100后**三只均上午与下午分别完全守恒（净差0）**，但逐K线毛差存在。三只股票的全天成交量毛差比例分别为0.928496%、0.561701%、0.717788%，相邻成交量差相关系数依次为-0.482、-0.455、-0.446。成交额全天净差仅0.000017%～0.000189%，支持但未证明“分时窗内数据分配差异”假说。**上次仅选144根K线仍解码Parquet 5,685,792行**，下一步应避免再次读Parquet。

@@ -62,6 +62,30 @@ def day_bounds(start,end):
     return int(left.timestamp()*1000),int(right.timestamp()*1000)
 
 
+def monthly_filename_overlaps_query(path, period_directory, first, last):
+    """Skip only root-level, exactly YYYY-MM.parquet files outside date window.
+
+    Leave annual, nested, unexpectedly named and malformed-month filenames
+    untouched: only an unambiguous provider month label may be skipped.
+    This is a metadata-only optimization; it does not reduce row groups inside
+    the matching month and MUST NOT be counted as OHLCVA rows saved.
+    """
+    if path.parent != period_directory or path.suffix.lower() != ".parquet":
+        return True
+    name = path.stem
+    if len(name) != 7 or name[4] != "-" or not (
+            name[:4].isascii() and name[:4].isdigit() and
+            name[5:].isascii() and name[5:].isdigit()):
+        return True
+    year, month = int(name[:4]), int(name[5:])
+    if not 1 <= month <= 12:
+        return True
+    month_first = date(year, month, 1)
+    month_last = (date(year+1, 1, 1) if month == 12
+                  else date(year, month+1, 1)) - timedelta(days=1)
+    return month_first <= last and month_last >= first
+
+
 def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
                   max_result_bars=25000):
     """Preflight ALL source rowgroup costs before any licensed bar value read."""
@@ -77,11 +101,17 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
     pending=[]
     metadata=Counter()
     sources=[]
+    period_directory=purchased/period
     for year in range(start.year,end.year+1):
         for path in core.year_files(root,period,year):
+            metadata["source_files_discovered_for_year"]+=1
             if path.is_symlink() or not path.is_file() or not (
                     path.resolve().is_relative_to(purchased.resolve())):
                 raise ValueError("Unsafe Parquet source path: "+str(path.name))
+            if not monthly_filename_overlaps_query(
+                    path, period_directory, start, end):
+                metadata["source_files_skipped_nonoverlapping_named_month"]+=1
+                continue
             pf=pq.ParquetFile(str(path))
             if not set(NEEDED).issubset(pf.schema_arrow.names):
                 raise ValueError("Missing Parquet OHLCVA keys: "+path.name)
@@ -195,11 +225,19 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
         "from_date":context["start"].isoformat(),
         "to_date":context["end"].isoformat(),
         "source_files_examined":meta["source_files_examined"],
+        "source_files_discovered_for_year":meta[
+            "source_files_discovered_for_year"],
+        "source_files_skipped_nonoverlapping_named_month":meta[
+            "source_files_skipped_nonoverlapping_named_month"],
+        "file_month_filter_only_skips_unambiguous_nonoverlaps":True,
         "candidate_row_groups":len(context["pending"]),
         "candidate_source_rows_upper_bound":meta[
             "candidate_source_rows_upper_bound"],
         "source_rows_scanned":meta["source_rows_scanned"],
         "matching_bar_count":len(bars),
+        "source_rows_read_per_returned_bar": (
+            round(meta["source_rows_scanned"]/len(bars),3) if bars else None),
+        "record_level_scan_amplification_is_observed_not_a_speedup":True,
         "first_matching_raw_beijing_label": (
             bars[0]["source_beijing_time"] if bars else None),
         "last_matching_raw_beijing_label": (

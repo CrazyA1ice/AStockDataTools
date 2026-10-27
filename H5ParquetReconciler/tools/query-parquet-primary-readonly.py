@@ -63,12 +63,11 @@ def day_bounds(start,end):
 
 
 def monthly_filename_overlaps_query(path, period_directory, first, last):
-    """Skip only root-level, exactly YYYY-MM.parquet files outside date window.
+    """Identify root-level YYYY-MM.parquet filenames as month candidates.
 
-    Leave annual, nested, unexpectedly named and malformed-month filenames
-    untouched: only an unambiguous provider month label may be skipped.
-    This is a metadata-only optimization; it does not reduce row groups inside
-    the matching month and MUST NOT be counted as OHLCVA rows saved.
+    The caller MUST confirm nonoverlap from all actual Parquet RowGroup footer
+    timestamps before skipping. Filename alone is NEVER sufficient evidence.
+    This only shortens the per-file metadata plan, not within-month K-line IO.
     """
     if path.parent != period_directory or path.suffix.lower() != ".parquet":
         return True
@@ -78,7 +77,7 @@ def monthly_filename_overlaps_query(path, period_directory, first, last):
             name[5:].isascii() and name[5:].isdigit()):
         return True
     year, month = int(name[:4]), int(name[5:])
-    if not 1 <= month <= 12:
+    if not (1900 <= year <= 9998 and 1 <= month <= 12):
         return True
     month_first = date(year, month, 1)
     month_last = (date(year+1, 1, 1) if month == 12
@@ -108,13 +107,22 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
             if path.is_symlink() or not path.is_file() or not (
                     path.resolve().is_relative_to(purchased.resolve())):
                 raise ValueError("Unsafe Parquet source path: "+str(path.name))
-            if not monthly_filename_overlaps_query(
-                    path, period_directory, start, end):
-                metadata["source_files_skipped_nonoverlapping_named_month"]+=1
-                continue
             pf=pq.ParquetFile(str(path))
+            metadata["source_file_footers_opened"]+=1
             if not set(NEEDED).issubset(pf.schema_arrow.names):
                 raise ValueError("Missing Parquet OHLCVA keys: "+path.name)
+            if not monthly_filename_overlaps_query(
+                    path, period_directory, start, end):
+                # File names alone MUST NOT hide mislabeled data. Inspect
+                # ALL RowGroup timestamp envelopes in the footer first;
+                # unknown/malformed statistics fail OPEN for scanning.
+                can_skip=all(not core.row_group_overlaps_timestamp(
+                    pf.metadata.row_group(i), low_ms, high_ms)
+                    for i in range(pf.metadata.num_row_groups))
+                if can_skip:
+                    metadata["source_files_skipped_nonoverlapping_named_month"]+=1
+                    continue
+                metadata["month_filename_disagrees_with_footer_query_range"]+=1
             metadata["source_files_examined"]+=1
             st=path.stat()
             sources.append({"relative_path":path.relative_to(root).as_posix(),
@@ -225,11 +233,14 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
         "from_date":context["start"].isoformat(),
         "to_date":context["end"].isoformat(),
         "source_files_examined":meta["source_files_examined"],
+        "source_file_footers_opened":meta["source_file_footers_opened"],
         "source_files_discovered_for_year":meta[
             "source_files_discovered_for_year"],
         "source_files_skipped_nonoverlapping_named_month":meta[
             "source_files_skipped_nonoverlapping_named_month"],
-        "file_month_filter_only_skips_unambiguous_nonoverlaps":True,
+        "month_filename_disagrees_with_footer_query_range":meta[
+            "month_filename_disagrees_with_footer_query_range"],
+        "file_month_filter_requires_footer_proof_of_nonoverlap":True,
         "candidate_row_groups":len(context["pending"]),
         "candidate_source_rows_upper_bound":meta[
             "candidate_source_rows_upper_bound"],

@@ -113,6 +113,12 @@ def benchmark(root,symbol,period,start,end,max_candidate_rows=30000000,
               max_result_bars=25000,order="rowgroup-first"):
     if order not in ORDER:
         raise ValueError("Invalid order")
+    # Metadata-only source census before either engine. No licensed values
+    # read, and no cache records created. This is NOT a content checksum.
+    _,first_day,last_day=query.request_dates(
+        symbol,period,start,end,max_candidate_rows,max_result_bars)
+    source_before=query.private_cache.source_signature(
+        root,period,first_day,last_day,query.core)
     first={}
     if order=="rowgroup-first":
         old=query.query_bars(
@@ -130,6 +136,12 @@ def benchmark(root,symbol,period,start,end,max_candidate_rows=30000000,
             root,symbol,period,start,end,
             max_candidate_rows,max_result_bars,local_cache=False)
         first["rowgroup"]=old
+    source_after=query.private_cache.source_signature(
+        root,period,first_day,last_day,query.core)
+    if source_before!=source_after:
+        raise ValueError(
+            "Source Parquet stat manifest changed between A/B engines; "
+            "refusing timing report")
     # Includes OHLCVA exact Python float values, time labels, rowgroup and path.
     # No raw purchased values leave this function or go into report JSON.
     if old["bars"]!=arrow["bars"]:
@@ -142,6 +154,12 @@ def benchmark(root,symbol,period,start,end,max_candidate_rows=30000000,
     arrow_secs=other["query_elapsed_seconds_this_invocation"]
     return {
         "format":"AStockDataTools Parquet cold-read A/B comparison v1",
+        "source_stat_manifest_sha256":
+            source_before["manifest_sha256_stat_only"],
+        "source_stat_manifest_file_count":
+            source_before["manifest_file_count"],
+        "source_manifest_stat_only_not_content_sha256":True,
+        "source_stat_manifest_stable_across_both_engines":True,
         "symbol":base["symbol"],"period":base["period"],
         "from_date":base["from_date"],"to_date":base["to_date"],
         "requested_execution_order":order,

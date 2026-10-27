@@ -71,10 +71,13 @@ def checked_existing_review(report, max_ppm):
                 or (ppm is not None and (
                     not math.isfinite(ppm) or ppm < 0))):
             raise ValueError("Offline evidence grade or relative ratio invalid")
+        reported_strict = row.get("raw_three_periods_strict_flag_from_original")
         if (row.get("not_market_truth_or_automatic_sync_approval") is not True
-                or row.get("raw_three_periods_strict_flag_from_original")
-                is not False and grade !=
-                "all_three_raw_strict_consistent_in_this_sample"):
+                or type(reported_strict) is not bool
+                or (grade == "all_three_raw_strict_consistent_in_this_sample"
+                    and not reported_strict)
+                or (grade == "strict_OHLC_and_minute_aggregation_small_daily_quantity_gap_review"
+                    and reported_strict)):
             raise ValueError("Offline row safety/strictness inconsistent")
         candidate = grade in SAMPLE_CANDIDATES
         # A smaller new review bound can ONLY demote, not upgrade.

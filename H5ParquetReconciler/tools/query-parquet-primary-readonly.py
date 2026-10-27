@@ -14,6 +14,7 @@ import argparse
 import importlib.util
 import json
 import math
+import time
 from collections import Counter
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -172,6 +173,7 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
     """
     # Explicit opt-in: storing paid OHLCVA has a local privacy/storage
     # cost, and is OFF by default. Warm repeats avoid Parquet bar reads.
+    started=time.perf_counter()
     signature_before=None
     cache_file=None
     if local_cache:
@@ -187,6 +189,8 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
             cache_file,signature_before,canonical,period,first,last,
             max_result_bars)
         if hit is not None:
+            hit["safe_summary"]["query_elapsed_seconds_this_invocation"]=round(
+                time.perf_counter()-started,6)
             return hit
     context=prepare_query(
         root,symbol,period,start,end,max_candidate_rows,max_result_bars)
@@ -299,6 +303,8 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
             "local_cache_validated_by_source_stat_only_not_content_hash"]=True
         safe_summary["local_cache_source_file_count"]=signature_before[
             "manifest_file_count"]
+    safe_summary["query_elapsed_seconds_this_invocation"]=round(
+        time.perf_counter()-started,6)
     return result
 
 

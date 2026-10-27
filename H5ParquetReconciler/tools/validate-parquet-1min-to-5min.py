@@ -41,6 +41,7 @@ REGULAR_5MIN_STARTS = tuple(
     list(range(9 * 60 + 30, 11 * 60 + 26, 5))
     + list(range(13 * 60, 14 * 60 + 56, 5))
 )
+REGULAR_5MIN_ENDS = tuple(x + 5 for x in REGULAR_5MIN_STARTS)
 
 
 def time_parts(ts):
@@ -190,7 +191,7 @@ def quality_checks(rows, symbol, period, day):
         if dt.date() != day:
             issues["outside_requested_trading_day"] += 1
         if period == "5min":
-            if minute not in REGULAR_5MIN_STARTS:
+            if minute not in REGULAR_5MIN_STARTS and minute not in REGULAR_5MIN_ENDS:
                 issues["nonstandard_five_minute_source_label"] += 1
         else:
             if not ((570 <= minute <= 690) or (780 <= minute <= 900)):
@@ -246,6 +247,7 @@ def compare_symbols(one, five, one_scan, five_scan, symbols, day):
         safe_full = (
             five_keys == 48 and winner["complete_one_minute_windows"] == 48
             and winner["existing_tolerance_all_six_fields_agree"] == 48
+            and winner["nonzero_volume_windows"] > 0
             and winner["volume_factor_existing_tolerance_nonzero"]["1"]
                 == winner["nonzero_volume_windows"]
             and not source["one_minute_quality"]["issue_counts"]

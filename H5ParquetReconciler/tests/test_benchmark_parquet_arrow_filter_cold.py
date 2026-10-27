@@ -91,10 +91,11 @@ class ParquetArrowColdQueryBenchmarkTests(unittest.TestCase):
         report=M.benchmark(self.root,"SH600000","day",
                            "2026-09-30","2026-09-30")
         self.assertEqual(report["matching_bar_count"],0)
-        self.assertIsNone(report[
-            "observed_baseline_seconds_divided_by_arrow_seconds"]
-            if report["experimental_arrow_filtered"]["elapsed_seconds"] == 0
-            else None)
+        self.assertTrue(report[
+            "query_output_all_values_times_and_source_provenance_identical"])
+        self.assertEqual(report["experimental_arrow_filtered"][
+            "arrow_rows_emitted_after_predicate"],0)
+        self.assertEqual(report["candidate_source_rows_upper_bound"],1)
         wire=json.dumps(report)
         for text in ('"open": 10', '"volume": 20', '"amount": 200'):
             self.assertNotIn(text,wire)

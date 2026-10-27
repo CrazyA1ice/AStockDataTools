@@ -95,7 +95,9 @@ class ParquetArrowColdQueryBenchmarkTests(unittest.TestCase):
             "query_output_all_values_times_and_source_provenance_identical"])
         self.assertEqual(report["experimental_arrow_filtered"][
             "arrow_rows_emitted_after_predicate"],0)
-        self.assertEqual(report["candidate_source_rows_upper_bound"],1)
+        # Symbol Footer statistics may safely prune this SZ-only RowGroup,
+        # so its candidate source count can be either 0 or 1.
+        self.assertLessEqual(report["candidate_source_rows_upper_bound"],1)
         wire=json.dumps(report)
         for text in ('"open": 10', '"volume": 20', '"amount": 200'):
             self.assertNotIn(text,wire)

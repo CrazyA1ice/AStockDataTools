@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ✅ 真实Parquet重复查询约70倍加速；首次读取Arrow A/B实验工具已开发（2026-10-27）
+
+- [x] 用户本机上传同一SH600000/2026-09-30/Parquet5min的缓存冷/热两份**真实安全JSON**：首次48根、`query_delivery=parquet_source_scan`、耗时**3.515286s**、源行情记录**5,685,792**；第二次48根、`query_delivery=local_private_cache_hit`、**0.050318s**、本次源行**0**、Footer**0**，重复查询约**69.86倍快**、耗时下降约**98.57%**。该实测成功验证缓存机制，但不代表各股票/日期总性能，也不改变缓存仅stat文件清单判定（非内容SHA256）和私有付费行情不能上传的约束。
+- [x] 新增独立`tools/benchmark-parquet-arrow-filter-cold.py`：在相同查询/源RowGroup预算、禁用缓存下比较默认`ParquetFile.iter_batches`与`pyarrow.dataset.ParquetFileFormat.make_fragment(row_groups=[...]).to_batches(filter=...)`，严格对照每根OHLCVA、时间、来源行组，不相同就拒绝生成性能结论；仅安全汇总JSON，区别RowGroup源行**上限**、旧查询行数、Arrow**过滤输出**根数，后者不是底层实际解码源行。可反转引擎顺序监控OS页缓存偏差；新增7项无版权Arrow测试，预计全仓**283**项待Windows实测。
+- [ ] Windows分别跑`--order rowgroup-first`及`--order arrow-first`，上传两个汇总JSON判断新引擎是否**双顺序都稳定提高首次查询速度、48根价量额和来源严格一样**；未跑之前不将Arrow路径接入默认查询，也不宣称首次569万源行已减少。
+- [ ] 若Arrow测试确有真实改进且跨周期/历史日期对账通过，再设为可选读取引擎；若无改进，考虑有限的股票日小索引或分区缓存。主任务随后进入**TDX盘后完整交易日独立可回滚新增数据层**，H5/Parquet源保持只读。
+
 ## 用户V2真实报告验收后：按需私有行情缓存降低重复查询成本（2026-10-27）
 
 - [x] V2购买Parquet真实查询`pq-primary-query-SH600000-5min-2026-09-30-v2.json`：目标单股票/五分钟/单日返回**48根**，原时标09:30～14:55，证实月文件规划安全裁掉8份但9份Footer都打开；原`candidate_row_groups=47`、`source_rows_scanned=5,685,792`毫无减少，扫描放大118,454×。**这是cold query真实性能瓶颈，不能把元数据剪枝等同数据列减读。**

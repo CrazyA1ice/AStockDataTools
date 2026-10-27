@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 下一轮：2026五分钟Parquet Footer扫描成本预检及完整索引可选接入（2026-10-27）
+
+用户Windows本机**180项unittest全通过**；2026-09-28三证券原检测在47个Parquet行组内解码5,685,792条源行，最终只选中144根股票K线。已有2025 V3行组索引，**不能直接用于2026**；现阶段先不重扫或构建2026大索引。
+
+扩展`tools/analyze-5min-x100-focused-sessions.py`：`--plan-only`仅读年度Parquet **Footer元数据**，不加载H5/Parquet K线，报告在现有时间/symbol最小最大值保守规则下，需要读取哪些RowGroup以及行数；`--coverage-index`可选接入**完整且源清单校验通过**的同年度V3索引，索引无效或只构建部分时直接拒绝，绝不因不完整索引误跳K线；原聚焦对账功能/8mask计数保持不变。新增7项纯合成测试待Windows验收。说明：[Parquet Footer读取成本与索引安全门槛](docs/2026_5MIN_PARQUET_FOOTER_COST_PLAN_INDEX_OPTION_20261027.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\analyze-5min-x100-focused-sessions.py "D:\stock" --date 2026-09-28 --baseline-report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json" --top-symbols 3 --plan-only --read-only --out "reports\pq-5min-2026-09-28-top3-footer-read-plan.json"
+```
+
+上传新`pq-5min-2026-09-28-top3-footer-read-plan.json`，只核对元数据预期的候选行组和行数，不重扫付费OHLCV。**不要把Footer统计误认为已经实际提速。**
+
 ## 已验收H5一分钟到五分钟144/144一致：新增全离线证据链校验（2026-10-27）
 
 用户上传`h5-1min-2026-09-28-top3-no-parquet.json`：SH688629、SH688017、SH688172各有**240根H5一分钟和48根H5五分钟**；每只按一分钟**结束标签**将5根聚合成1根，OHLC四项、成交额、H5五分钟量×100与1分钟量×100，均**48/48非零窗口**在既有容差内；合计144/144一致。反向采用一分钟**开始标签**时，仅138个完整窗口、**OHLC全一致0/138**，成交额3/138、×100量1/138。该证据支持H5的时间标签/量单位内部一致性，**不是供应商时标认证，也不能证明Parquet错误**。此前三股票H5与PQ成交量在上午/下午均报告为**小数精度下0%净差**、单根却存在毛差，继续支持K线时间窗/成交归属差异假说。

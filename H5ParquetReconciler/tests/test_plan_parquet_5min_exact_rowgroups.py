@@ -51,8 +51,10 @@ class ExactStockDayKeyLocatorTests(unittest.TestCase):
 
     def test_exact_membership_prunes_absent_groups_only_with_full_key_scan(self):
         self.write([
-            self.row("2026-09-29 09:30"),
-            self.row("2026-09-29 09:35"),
+            # Wide symbol min/max would allow the target symbol although
+            # neither key in this RowGroup actually matches SH600000.
+            self.row("2026-09-30 09:30", "000001.XSHE"),
+            self.row("2026-09-30 09:35", "688999.XSHG"),
             self.row("2026-09-30 09:30"),
             self.row("2026-09-30 09:35", "000001.XSHE"),
             self.row("2026-09-30 09:40", "000001.XSHE"),

@@ -1,10 +1,12 @@
 """Footer-only Parquet cost estimation; all synthetic, no licensed stock data."""
 import importlib.util
+import json
 import types
 import unittest
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1] / "tools"
 SPEC = importlib.util.spec_from_file_location(
@@ -110,6 +112,45 @@ class ParquetMetadataPlanTests(unittest.TestCase):
             self.assertEqual(result["row_groups_candidate_to_decode"], 0)
             self.assertEqual(result["row_groups_skipped_by_completed_index"], 5)
             self.assertEqual(result["candidate_source_rows_upper_bound"], 0)
+
+    def test_plan_only_cli_never_loads_market_bar_columns(self):
+        with TemporaryDirectory() as d:
+            tmp = Path(d)
+            module = tmp / "module"
+            (module / "reports").mkdir(parents=True)
+            (module / "tools").mkdir()
+            input_file = tmp / "existing-exact-masks.json"
+            input_file.write_text('{"format": "synthetic"}', encoding="utf-8")
+            output = module / "reports" / "metadata-plan.json"
+            work = module / "work" / "_union_scratch"
+            expected = {
+                "parquet_files": 1, "row_groups_total": 2,
+                "row_groups_candidate_to_decode": 1,
+                "candidate_source_rows_upper_bound": 200,
+                "ohlcv_column_values_read": False,
+            }
+            with (patch.object(M, "HERE", module / "tools"),
+                  patch.object(M.core, "resolve_module_artifact_paths",
+                               return_value=(output, work)),
+                  patch.object(M.core, "resolve_safe_paths",
+                               return_value=(tmp / "stock", output, work)),
+                  patch.object(M, "load_baseline",
+                               return_value={"SH600000": {"volume": 1}}),
+                  patch.object(M, "plan_with_footers", return_value=expected),
+                  patch.object(M.diagnose, "load_h5") as h5,
+                  patch.object(M.diagnose, "load_parquet") as pq):
+                M.main([str(tmp / "stock"), "--date", "2026-09-28",
+                        "--baseline-report", str(input_file),
+                        "--plan-only", "--read-only",
+                        "--out", str(output)])
+            h5.assert_not_called()
+            pq.assert_not_called()
+            data = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(data["format"],
+                             "AStockDataTools focused parquet metadata read plan v1")
+            self.assertEqual(data["parquet_row_group_plan"], expected)
+            self.assertFalse(data["parquet_bar_values_read"])
+            self.assertFalse(data["safe_to_automatically_union"])
 
     def test_invalid_negative_row_count_and_bad_symbols_refused(self):
         with TemporaryDirectory() as d:

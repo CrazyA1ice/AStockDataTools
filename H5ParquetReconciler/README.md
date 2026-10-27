@@ -83,6 +83,18 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ 真实Arrow冷查询A/B双顺序完成；新增安全预览查询（2026-10-27）
+
+用户本机两份真实 `SH600000 / 2026-09-30 / 5min` A/B：**RowGroup优先**传统4.579644秒、Arrow 1.425189秒（3.213×）；**Arrow优先**传统1.925149秒、Arrow 1.383294秒（1.392×）。两轮均48根、OHLCVA+时间+来源严格相同、源stat签名相同，47个候选RowGroup、5,685,792条源记录上限没有变化；Arrow过滤后向Python仅交付48条，不可据此认为物理只读48条。双顺序均更快，仅证明**本次单股票单日实验**，仍有OS缓存/运行顺序影响。
+
+已加入**单独的、用户显式选择** `tools/query-parquet-arrow-preview-readonly.py`，复用实测Arrow过滤函数。仅输出`reports/`内无OHLCVA的元数据JSON；支持`--verify-rowgroup`令两个引擎在当前请求上重新逐根验证，但验证将增加查询耗时。默认`query-parquet-primary-readonly.py`**完全不变**，不建立私有缓存、不改写源行情、不自动合并。新增7项纯合成回归测试（当前**待Windows实际验证**）。详见[真实实验数据、限制与预览接口](docs/2026_PARQUET_REAL_ARROW_AB_RESULT_AND_PREVIEW.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-arrow-preview-readonly.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --verify-rowgroup --read-only --out "reports\pq-primary-arrow-preview-SH600000-20260930-verified.json"
+```
+
 ## ✅ Windows完整298项合成测试全部通过；下一步真实Arrow冷查询双顺序对照（2026-10-27）
 
 用户提供最新Windows完整 `unittest discover` 日志：**`Ran 298 tests in 16.243s`、`OK`**，包括上一轮的 PyArrow `LocalFileSystem` 修复、带空格路径，以及RowGroup/Arrow逐根OHLCVA/时间/来源一致性等回归。此前297项测试中5 failures/2 errors的问题已消除；此次结果只确认**合成测试通过**，不表示真实5分钟行情读取性能已提高。

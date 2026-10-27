@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## 主源覆盖盘点阶段：5组样本级证据成功登记，开始2011～2026只读footer扫描（2026-10-27）
+
+- [x] 用户实测`parquet-primary-sampled-evidence-2026-08-24-09-30.json`：2日期5证券日均`candidate_parquet_primary_in_this_sample_only`，原样保留`verified_full_history_coverage=false`、`eligible_for_unattended_import=false`，没有发生任何市场源改动或数据导入。已满足“小规模跨沪深来源内部一致性验证”这一阶段目标，但不代表购买历史全盘都已验收。
+- [x] 新增`tools/inventory-parquet-primary-footers.py`：按2011～2026年份/周期列出`AllCycleAStockData/{day,1min,5min}`中可由文件名唯一识别年份的Parquet，**只读File/RowGroup footer**时间范围、文件数、源行数、源容量、没有时间统计的行组、文件时间错年异常、元数据指纹；脚本不读取源ts/symbol值或OHLCVA，不建索引、不作自动补全。对文件名无法判年/冲突或文件ts缺统计时输出谨慎标志；`footer_envelope_complete_for_nonempty_row_groups`不代表“证券日完整”。新增10项生成Arrow合成测试待本机；研究说明见[历史Parquet footer覆盖计划](2026_PARQUET_PRIMARY_FOOTER_ONLY_COVERAGE_PLAN.md)。
+- [ ] 先运行本机2011～2026 day/1min/5min footer盘点，上传安全JSON，分析每年不同周期的可用时间**候选范围**及真实疑点。无需扫描数亿分钟行情即可先确定需要少量抽查的年份。
+- [ ] 之后从实际footer缺失/年份过渡日期、北交所及历史早期时间抽最少必要的证券日，采用key-only方法做精准覆盖验证，然后开发带来源ID/源stat指纹的购买Parquet只读主查询接口；盘后通达信数据进入独立可回滚新增层，原购买Parquet/H5不改写。
+
 ## 主源建设路径更新：两日5组日线-分钟样本全OHLC严格、量额原容差通过，开始只读证据登记（2026-10-27）
 
 - [x] 2026-09-30 Parquet三周期真数据：SH600000、SZ000001各241×1min/48×5min，按经核实09:30特殊开盘规则每股5min六字段**48/48严格一致**，day↔两分钟OHLC、volume均严格一致；日成交额与分钟汇总差分别0.005/0.049 ppm（来自JSON9位小数比率），均落在旧容差下。两股原`raw_all_three_periods_strict_agree=false`保持不变。两周期源无重复、无无效时间戳或非有限行。

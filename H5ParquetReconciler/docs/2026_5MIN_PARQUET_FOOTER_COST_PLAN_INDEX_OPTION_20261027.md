@@ -18,7 +18,7 @@
 - `--coverage-index "work/indexes/pq-5min-2026-a-share-candidate-v3.sqlite"`：仅可在**完成且来源指纹匹配**的2026年度V3键索引存在时使用。**直接复用**既有`plan-5min-readonly-union.py:validated_parquet_locator`的源Manifest/版本/完成状态/RowGroup checkpoint/不正常时间键安全校验。仅验证通过后，将`allowed_groups`传入既有`diagnose.load_parquet`以跳过不含目标证券/日期的行组；不通过就拒绝，不允许自动降级为“信任部分索引”。
 - 默认不传索引、不传`--plan-only`仍然沿用**此前经过真实报告核对**的原始Parquet加载及候选8mask校验路径，向后兼容。若使用完整索引进行实际诊断，其8种量价冲突分类仍需与母报告逐只股票一致，否则失败。
 - 报告只包含Footer计数、股票代码、日期和安全标志；不包含任何付费OHLCV，不修改H5/PQ原文件，仍`unit_mapping_certified=false`、`safe_to_automatically_union=false`；不会自动创建年度索引，不会自动跑全年扫描。
-- 新增`tests/test_analyze_5min_x100_metadata_plan.py`共**6个合成测试**，验证日期/代码统计剪枝、完整索引行为、缺少min/max保守处理、空索引、坏输入以及CLI纯Footer模式**不会调用H5/Parquet K线读取函数**。最新Windows测试仍待验收，预期180→**186**。
+- 新增`tests/test_analyze_5min_x100_metadata_plan.py`共**7个合成测试**，验证日期/代码统计剪枝、完整索引行为、缺少min/max保守处理、空索引、坏输入以及CLI纯Footer模式**不会调用H5/Parquet K线读取函数**。最新Windows测试仍待验收，预期180→**187**。
 
 ## 3. Windows下一步：只读Parquet Footer预检（不解码行情）
 

@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 已收到Footer真实报告：9月47组全部无法靠symbol min/max剪枝；先做键列成员关系抽样（2026-10-27）
+
+用户上传`pq-5min-2026-09-28-top3-footer-read-plan.json`：2026年9个月文件共407个RowGroup，旧月份360组成功跳过；**剩余47组全部来自2026-09.parquet**，每组都不能通过目标SH688629/SH688017/SH688172的symbol min/max排除，预计读取5,685,792行、Footer未压缩元数据143,128,330字节。这完全重现先前三证券真实诊断的47组、568万行成本；说明主要瓶颈是9月份文件内部的证券—日期定位，而**不是全年文件选择**。
+
+但min/max无法排除并不表示47组真实包含目标股票。新增`tools/probe-parquet-5min-rowgroup-membership.py`，只对确定性的**3个候选RowGroup（第0/23/46组）**读取`ts/symbol`两列、检查这些样本组里真实的证券—日期键存在性、48时段数和重复键，**不读取价量额、不开H5、不建大索引、不声称未采样组可跳读**。新增6项纯合成测试待本机验证。详见[2026-09-28三组键列成员关系试验](docs/2026_09_28_PARQUET_3GROUP_KEY_MEMBERSHIP_PILOT_20261027.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\probe-parquet-5min-rowgroup-membership.py "D:\stock" --date 2026-09-28 --baseline-report "H5ParquetReconciler\reports\h5-parquet-5min-2026-09-28-exact-residual-masks.json" --top-symbols 3 --max-groups 3 --read-only --out "reports\pq-5min-2026-09-28-top3-key-pilot-3groups.json"
+```
+
+上传新`pq-5min-2026-09-28-top3-key-pilot-3groups.json`，确认3组内实际是否有目标证券/交易日键，再评估只为9月建立月度安全索引的价值。
+
 ## 下一轮：2026五分钟Parquet Footer扫描成本预检及完整索引可选接入（2026-10-27）
 
 用户Windows本机**180项unittest全通过**；2026-09-28三证券原检测在47个Parquet行组内解码5,685,792条源行，最终只选中144根股票K线。已有2025 V3行组索引，**不能直接用于2026**；现阶段先不重扫或构建2026大索引。

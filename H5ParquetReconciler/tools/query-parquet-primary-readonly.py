@@ -62,6 +62,29 @@ def day_bounds(start,end):
     return int(left.timestamp()*1000),int(right.timestamp()*1000)
 
 
+def monthly_filename_overlaps_query(path, period_directory, first, last):
+    """Identify root-level YYYY-MM.parquet filenames as month candidates.
+
+    The caller MUST confirm nonoverlap from all actual Parquet RowGroup footer
+    timestamps before skipping. Filename alone is NEVER sufficient evidence.
+    This only shortens the per-file metadata plan, not within-month K-line IO.
+    """
+    if path.parent != period_directory or path.suffix.lower() != ".parquet":
+        return True
+    name = path.stem
+    if len(name) != 7 or name[4] != "-" or not (
+            name[:4].isascii() and name[:4].isdigit() and
+            name[5:].isascii() and name[5:].isdigit()):
+        return True
+    year, month = int(name[:4]), int(name[5:])
+    if not (1900 <= year <= 9998 and 1 <= month <= 12):
+        return True
+    month_first = date(year, month, 1)
+    month_last = (date(year+1, 1, 1) if month == 12
+                  else date(year, month+1, 1)) - timedelta(days=1)
+    return month_first <= last and month_last >= first
+
+
 def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
                   max_result_bars=25000):
     """Preflight ALL source rowgroup costs before any licensed bar value read."""
@@ -77,14 +100,29 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
     pending=[]
     metadata=Counter()
     sources=[]
+    period_directory=purchased/period
     for year in range(start.year,end.year+1):
         for path in core.year_files(root,period,year):
+            metadata["source_files_discovered_for_year"]+=1
             if path.is_symlink() or not path.is_file() or not (
                     path.resolve().is_relative_to(purchased.resolve())):
                 raise ValueError("Unsafe Parquet source path: "+str(path.name))
             pf=pq.ParquetFile(str(path))
+            metadata["source_file_footers_opened"]+=1
             if not set(NEEDED).issubset(pf.schema_arrow.names):
                 raise ValueError("Missing Parquet OHLCVA keys: "+path.name)
+            if not monthly_filename_overlaps_query(
+                    path, period_directory, start, end):
+                # File names alone MUST NOT hide mislabeled data. Inspect
+                # ALL RowGroup timestamp envelopes in the footer first;
+                # unknown/malformed statistics fail OPEN for scanning.
+                can_skip=all(not core.row_group_overlaps_timestamp(
+                    pf.metadata.row_group(i), low_ms, high_ms)
+                    for i in range(pf.metadata.num_row_groups))
+                if can_skip:
+                    metadata["source_files_skipped_nonoverlapping_named_month"]+=1
+                    continue
+                metadata["month_filename_disagrees_with_footer_query_range"]+=1
             metadata["source_files_examined"]+=1
             st=path.stat()
             sources.append({"relative_path":path.relative_to(root).as_posix(),
@@ -195,11 +233,22 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
         "from_date":context["start"].isoformat(),
         "to_date":context["end"].isoformat(),
         "source_files_examined":meta["source_files_examined"],
+        "source_file_footers_opened":meta["source_file_footers_opened"],
+        "source_files_discovered_for_year":meta[
+            "source_files_discovered_for_year"],
+        "source_files_skipped_nonoverlapping_named_month":meta[
+            "source_files_skipped_nonoverlapping_named_month"],
+        "month_filename_disagrees_with_footer_query_range":meta[
+            "month_filename_disagrees_with_footer_query_range"],
+        "file_month_filter_requires_footer_proof_of_nonoverlap":True,
         "candidate_row_groups":len(context["pending"]),
         "candidate_source_rows_upper_bound":meta[
             "candidate_source_rows_upper_bound"],
         "source_rows_scanned":meta["source_rows_scanned"],
         "matching_bar_count":len(bars),
+        "source_rows_read_per_returned_bar": (
+            round(meta["source_rows_scanned"]/len(bars),3) if bars else None),
+        "record_level_scan_amplification_is_observed_not_a_speedup":True,
         "first_matching_raw_beijing_label": (
             bars[0]["source_beijing_time"] if bars else None),
         "last_matching_raw_beijing_label": (

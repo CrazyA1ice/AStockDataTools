@@ -83,6 +83,18 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ✅ Parquet首个真实查询成功：SH600000 5min 48根；需要改善569万源行读放大（2026-10-27）
+
+真实上传`pq-primary-query-SH600000-5min-2026-09-30.json`：SH600000/2026-09-30/Parquet 5min查询实际`matching_bar_count=48`，原始时间标签09:30～14:55，未调单位、未读H5、未写源，安全JSON不含OHLCVA。**但旧版为了这48根读了47个RowGroup、5,685,792条源行，约118,454条源行/返回根**，需要认真优化而不是继续重复做数据一致性审计。
+
+本轮更新`tools/query-parquet-primary-readonly.py`：对与请求时间不重叠的根目录YYYY-MM.parquet文件，在**实际RowGroup footer逐组验证无时间重叠后**跳过后续查询计划；文件名错月或缺时间统计时**保守保留**，不会静默漏真实行情。新安全报告明确区分已打开Footer数、跳过月文件数、匹配行组数、实际读取源行数及读放大；这只是元数据阶段优化，**不能宣称已经消除了九月内部47个行组的约569万行读取**。新增4项合成Arrow回归测试，预计本工具13项，Windows真实V2报告待运行。详见[真实48根查询及月文件规划优化](docs/2026_PARQUET_FIRST_REAL_QUERY_AND_MONTH_FOOTER_OPTIMIZATION.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-primary-readonly.py "D:\stock" --symbol SH600000 --period 5min --from-date 2026-09-30 --to-date 2026-09-30 --max-candidate-rows 30000000 --read-only --out "reports\pq-primary-query-SH600000-5min-2026-09-30-v2.json"
+```
+
 ## ✅ 2026年2/8月key-only异常明确在深市B股；A股Parquet直接只读查询首版（2026-10-27）
 
 本机真实JSON`pq-key-only-2026-02.json`/`pq-key-only-2026-08.json`结果：2月77,772个证券日中77,771完整、唯一不完整为2026-02-24 **SZ200706（81×1min/17×5min）**；8月118,064个证券日中118,061完整，三组不完整均为2026-08-03 **SZ200019、SZ200045、SZ200869（各80×1min/16×5min）**。全部4组属于深圳200开头**B股**，两月被检查的时间键无重复或非正常时段。**未观察到代码模式符合普通A股的股票日时间键异常**，但只检查了这两个月及键完整性，不能认定全历史正确，也不能替B股捏造缺失分钟。见[真实2/8月报告与只读查询开发](docs/2026_PARQUET_B_SHARE_KEY_ANOMALIES_AND_PRIMARY_QUERY.md)。

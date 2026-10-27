@@ -148,5 +148,68 @@ class DirectPurchasedParquetQueryTests(unittest.TestCase):
         self.assertEqual(report["safe_summary"]["matching_bar_count"],1)
 
 
+    def test_nonoverlapping_months_are_skipped_only_after_footer_checks(self):
+        self.write("5min","2026-01.parquet",[
+            self.row("2026-01-12 09:30")])
+        self.write("5min","2026-08.parquet",[
+            self.row("2026-08-24 09:30")])
+        self.write("5min","2026-09.parquet",[
+            self.row("2026-09-30 09:30"),
+            self.row("2026-09-30 09:35")])
+        report=Q.query_bars(self.root,"SH600000","5min",
+                            "2026-09-30","2026-09-30")
+        summary=report["safe_summary"]
+        self.assertEqual(len(report["bars"]),2)
+        self.assertEqual(summary["source_files_discovered_for_year"],3)
+        self.assertEqual(summary["source_file_footers_opened"],3)
+        self.assertEqual(summary["source_files_skipped_nonoverlapping_named_month"],2)
+        self.assertEqual(summary["source_files_examined"],1)
+        self.assertEqual(summary["candidate_source_rows_upper_bound"],2)
+        self.assertEqual(summary["source_rows_scanned"],2)
+        self.assertEqual(summary["source_rows_read_per_returned_bar"],1.0)
+        self.assertTrue(summary["file_month_filter_requires_footer_proof_of_nonoverlap"])
+        self.assertEqual(
+            summary["source_file_stat_provenance"][0]["relative_path"],
+            "AllCycleAStockData/5min/2026-09.parquet")
+
+    def test_month_filename_mismatch_does_not_hide_matching_data(self):
+        # Incorrect month filename must fail OPEN based on actual ts footer.
+        self.write("5min","2026-01.parquet",[
+            self.row("2026-09-30 09:30")])
+        report=Q.query_bars(self.root,"SH600000","5min",
+                            "2026-09-30","2026-09-30")
+        info=report["safe_summary"]
+        self.assertEqual(info["matching_bar_count"],1)
+        self.assertEqual(info["month_filename_disagrees_with_footer_query_range"],1)
+        self.assertEqual(info["source_files_skipped_nonoverlapping_named_month"],0)
+        self.assertEqual(info["source_files_examined"],1)
+
+    def test_cross_month_date_window_keeps_both_month_files(self):
+        self.write("5min","2026-07.parquet",[
+            self.row("2026-07-31 14:55")])
+        self.write("5min","2026-08.parquet",[
+            self.row("2026-08-31 14:55")])
+        self.write("5min","2026-09.parquet",[
+            self.row("2026-09-01 09:30")])
+        report=Q.query_bars(self.root,"SH600000","5min",
+                            "2026-08-31","2026-09-01")
+        self.assertEqual([v["trading_date"] for v in report["bars"]],
+                         ["2026-08-31","2026-09-01"])
+        info=report["safe_summary"]
+        self.assertEqual(info["source_files_examined"],2)
+        self.assertEqual(info["source_files_skipped_nonoverlapping_named_month"],1)
+
+    def test_annual_and_nested_files_are_not_pruned_by_month_name(self):
+        self.write("day","2026.parquet",[
+            self.row("2026-09-30 08:00")])
+        self.write("day","nested/2026-01.parquet",[
+            self.row("2026-09-29 08:00")])
+        report=Q.query_bars(self.root,"SH600000","day",
+                            "2026-09-29","2026-09-30")
+        self.assertEqual(report["safe_summary"]["matching_bar_count"],2)
+        self.assertEqual(report["safe_summary"]["source_files_examined"],2)
+        self.assertEqual(report["safe_summary"][
+            "source_files_skipped_nonoverlapping_named_month"],0)
+
 if __name__=="__main__":
     unittest.main()

@@ -211,5 +211,122 @@ class DirectPurchasedParquetQueryTests(unittest.TestCase):
         self.assertEqual(report["safe_summary"][
             "source_files_skipped_nonoverlapping_named_month"],0)
 
+    def temporary_private_cache(self):
+        from unittest import mock
+        import contextlib
+        @contextlib.contextmanager
+        def managed():
+            with tempfile.TemporaryDirectory() as tmp:
+                module=Path(tmp)/"H5ParquetReconciler"
+                module.mkdir()
+                cache=module/"work"/"primary_query_cache"
+                with (mock.patch.object(Q.private_cache,"MODULE",module),
+                      mock.patch.object(Q.private_cache,"CACHE",cache)):
+                    yield cache
+        return managed()
+
+    def test_explicit_private_cache_cold_then_warm_zero_market_rows(self):
+        from unittest import mock
+        self.write("5min","2026-09.parquet",[
+            self.row("2026-09-30 09:30"),
+            self.row("2026-09-30 09:35")])
+        with self.temporary_private_cache() as cache:
+            cold=Q.query_bars(self.root,"SH600000","5min",
+                              "2026-09-30","2026-09-30",local_cache=True)
+            self.assertEqual(len(cold["bars"]),2)
+            self.assertFalse(cold["safe_summary"]["local_cache_used"])
+            self.assertTrue(cold["safe_summary"]["local_private_cache_written"])
+            self.assertEqual(cold["safe_summary"][
+                "source_rows_scanned_this_invocation"],2)
+            self.assertEqual(len(list(cache.glob("*.json"))),1)
+            with mock.patch.object(
+                    Q,"prepare_query",
+                    side_effect=AssertionError("Warm hit must not open Parquet")):
+                warm=Q.query_bars(self.root,"SH600000","5min",
+                                  "2026-09-30","2026-09-30",local_cache=True)
+            self.assertEqual(warm["bars"],cold["bars"])
+            self.assertTrue(warm["safe_summary"]["local_cache_used"])
+            self.assertEqual(warm["safe_summary"]["source_rows_scanned"],0)
+            self.assertEqual(warm["safe_summary"][
+                "source_rows_scanned_this_invocation"],0)
+            self.assertEqual(warm["safe_summary"][
+                "source_file_footers_opened_this_invocation"],0)
+            self.assertEqual(warm["safe_summary"][
+                "previous_source_rows_scanned_to_build_cache"],2)
+            self.assertTrue(warm["safe_summary"][
+                "private_cache_contains_licensed_ohlcva"])
+            self.assertNotIn('"open":',__import__("json").dumps(
+                warm["safe_summary"]))
+
+    def test_private_cache_stale_on_source_size_or_mtime_change(self):
+        import os
+        self.write("day","2026-09.parquet",[
+            self.row("2026-09-30 08:00")])
+        with self.temporary_private_cache() as cache:
+            first=Q.query_bars(self.root,"SH600000","day",
+                               "2026-09-30","2026-09-30",local_cache=True)
+            self.assertEqual(len(first["bars"]),1)
+            source=self.root/"AllCycleAStockData"/"day"/"2026-09.parquet"
+            current=source.stat()
+            os.utime(source,ns=(
+                current.st_atime_ns,current.st_mtime_ns+2000000000))
+            second=Q.query_bars(self.root,"SH600000","day",
+                                "2026-09-30","2026-09-30",local_cache=True)
+            self.assertFalse(second["safe_summary"]["local_cache_used"])
+            self.assertEqual(second["safe_summary"][
+                "source_rows_scanned_this_invocation"],1)
+            third=Q.query_bars(self.root,"SH600000","day",
+                               "2026-09-30","2026-09-30",local_cache=True)
+            self.assertTrue(third["safe_summary"]["local_cache_used"])
+            self.assertEqual(third["bars"],first["bars"])
+
+    def test_default_query_does_not_write_local_private_cache(self):
+        from unittest import mock
+        self.write("day","2026-09.parquet",[
+            self.row("2026-09-30 08:00")])
+        with self.temporary_private_cache() as cache:
+            with mock.patch.object(
+                    Q.private_cache,"source_signature",
+                    side_effect=AssertionError("Cache OFF by default")):
+                result=Q.query_bars(self.root,"SH600000","day",
+                                    "2026-09-30","2026-09-30")
+            self.assertFalse(result["safe_summary"]["local_cache_used"])
+            self.assertFalse(cache.exists())
+
+    def test_explicit_smaller_budget_cannot_reuse_larger_budget_cache(self):
+        self.write("5min","2026-09.parquet",[
+            self.row("2026-09-30 09:30"),
+            self.row("2026-09-30 09:35")])
+        with self.temporary_private_cache():
+            good=Q.query_bars(self.root,"SH600000","5min",
+                              "2026-09-30","2026-09-30",
+                              max_candidate_rows=10,local_cache=True)
+            self.assertEqual(len(good["bars"]),2)
+            with self.assertRaisesRegex(ValueError,
+                                        "exceeds --max-candidate-rows"):
+                Q.query_bars(self.root,"SH600000","5min",
+                             "2026-09-30","2026-09-30",
+                             max_candidate_rows=1,local_cache=True)
+            with self.assertRaisesRegex(ValueError,
+                                        "exceed --max-result-bars"):
+                Q.query_bars(self.root,"SH600000","5min",
+                             "2026-09-30","2026-09-30",
+                             max_candidate_rows=10,
+                             max_result_bars=1,local_cache=True)
+
+    def test_invalid_private_cache_file_recomputes_source(self):
+        self.write("day","2026-09.parquet",[
+            self.row("2026-09-30 08:00")])
+        with self.temporary_private_cache() as cache:
+            first=Q.query_bars(self.root,"SH600000","day",
+                               "2026-09-30","2026-09-30",local_cache=True)
+            stored=list(cache.glob("*.json"))
+            self.assertEqual(len(stored),1)
+            stored[0].write_text("{broken",encoding="utf-8")
+            refreshed=Q.query_bars(self.root,"SH600000","day",
+                                   "2026-09-30","2026-09-30",local_cache=True)
+            self.assertFalse(refreshed["safe_summary"]["local_cache_used"])
+            self.assertEqual(refreshed["bars"],first["bars"])
+
 if __name__=="__main__":
     unittest.main()

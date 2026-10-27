@@ -74,6 +74,22 @@ class ParquetArrowColdQueryBenchmarkTests(unittest.TestCase):
         self.assertTrue(report["source_manifest_stat_only_not_content_sha256"])
         self.assertTrue(report["source_stat_manifest_stable_across_both_engines"])
 
+    def test_arrow_fragment_absolute_local_path_with_spaces(self):
+        # Windows: source paths commonly contain spaces or non-ASCII text.
+        # A plain string path passed to make_fragment without filesystem
+        # raises "cannot construct a FileSource from a path without a FileSystem".
+        self.root=Path(self.tmp.name)/"stock data with spaces"
+        (self.root/"AllCycleAStockData").mkdir(parents=True)
+        self.write("5min","2026-09.parquet",[
+            self.bar("2026-09-30 09:30"),
+            self.bar("2026-09-30 09:35",p=11)],group=1)
+        report=M.benchmark(self.root,"SH600000","5min",
+                           "2026-09-30","2026-09-30",
+                           order="arrow-first")
+        self.assertEqual(report["matching_bar_count"],2)
+        self.assertTrue(report[
+            "query_output_all_values_times_and_source_provenance_identical"])
+
     def test_arrow_first_order_does_not_change_source_results(self):
         self.write("1min","2026-09.parquet",[
             self.bar("2026-09-30 09:30"),

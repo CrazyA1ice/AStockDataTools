@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## 用户V2真实报告验收后：按需私有行情缓存降低重复查询成本（2026-10-27）
+
+- [x] V2购买Parquet真实查询`pq-primary-query-SH600000-5min-2026-09-30-v2.json`：目标单股票/五分钟/单日返回**48根**，原时标09:30～14:55，证实月文件规划安全裁掉8份但9份Footer都打开；原`candidate_row_groups=47`、`source_rows_scanned=5,685,792`毫无减少，扫描放大118,454×。**这是cold query真实性能瓶颈，不能把元数据剪枝等同数据列减读。**
+- [x] 新增`tools/private-parquet-query-cache.py`，为本地`query_bars(...,local_cache=True)`及CLI`--local-cache`提供**明确启用**的私有选中K线缓存。仅本模块`work/primary_query_cache`保存**真实OHLCVA原值，.gitignore保护但不是授权外传**。默认关闭；热命中之前先基于文件相对路径+大小+mtime重新验源清单，源stat变化/文件新增删除/参数差异均回源；不覆写购买文件、不接入TDX/H5、原严苛结果数和RowGroup源行上限不因缓存参数不同而绕过。新增安全元数据本次读取源行数/耗时，可验证冷→热；5项合成Arrow测试待Windows端。
+- [ ] 用户实际执行冷/热两次同样SH600000查询，上传**两份不含OHLCVA的安全报告**。冷查询源行数估计仍5,685,792；热查询若源文件stat未变则应`source_rows_scanned_this_invocation=0`与`source_file_footers_opened_this_invocation=0`，真实耗时以实测JSON为准。缓存本身有付费行情，**绝不能上传`work/primary_query_cache/*.json`**。
+- [ ] 下一步继续降低**首次新股票日**RowGroup内读取放大：做PyArrow/DuckDB过滤/列选择基准与源布局分析，仅在明确有性能收益时实施更复杂的轻量索引。历史Parquet作为只读主源；通达信盘后逐完整证券日写入独立可回滚新增层。
+
 ## ✅ 首次真实Parquet主源查询成功；性能瓶颈是47行组/569万源行（2026-10-27）
 
 - [x] 用户上传`pq-primary-query-SH600000-5min-2026-09-30.json`：请求单日单证券`SH600000`的购买Parquet 5min，返回**48根**，原源标签09:30至14:55，符合此前内部5min时间规则；不读取H5、不做100倍量换算、不修改来源、不输出原始付费行情。**原版读取9份月度Footer、47候选RowGroup/5,685,792源行**才能找出48根，扫描放大约118,454×。该安全报告不足以重新验证实际OHLCVA。

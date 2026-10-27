@@ -87,7 +87,7 @@ class THSManualSpotcheckTests(unittest.TestCase):
 
     def test_opt_in_terminal_prints_values_without_modifying_report(self):
         sample = M.select_verification_rows(
-            self.h, self.p, (self.symbol,), 1)
+            self.h, self.p, (self.symbol,), 3)
         with io.StringIO() as buf, redirect_stdout(buf):
             M.show_values_only_locally(sample)
             printed = buf.getvalue()

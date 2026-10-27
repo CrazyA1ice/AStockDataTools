@@ -94,6 +94,32 @@ class ParquetOnlyMinuteAggregationTests(unittest.TestCase):
         self.assertEqual(exact["afternoon"]["complete_one_minute_windows"],24)
         self.assertFalse(report["one_minute_quality"]["issue_counts"])
 
+    def test_five_end_minute_start_can_be_internal_match_too(self):
+        one, five_start=synthetic_pair()
+        five_end={
+            (symbol, M.diagnose.shift_bar_stamp(stamp, 5)): row
+            for (symbol, stamp), row in five_start.items()
+        }
+        report=M.compare_symbols(
+            one,five_end,scanned(),scanned(),(SYMBOL,),DAY)[SYMBOL]
+        self.assertEqual(report["best_internal_convention_candidate"],
+                         "five_end_minute_start")
+        self.assertTrue(report["internal_5min_all_bars_tolerance_match"])
+        self.assertEqual(report["hypotheses"]["five_end_minute_start"][
+            "whole_day"]["strict_all_six_fields_agree"],48)
+        self.assertFalse(report["five_minute_quality"]["issue_counts"])
+
+    def test_all_zero_volume_does_not_certify_volume_factor(self):
+        one,five=synthetic_pair()
+        one={key:(*bar[:4],0,bar[5]) for key,bar in one.items()}
+        five={key:(*bar[:4],0,bar[5]) for key,bar in five.items()}
+        report=M.compare_symbols(
+            one,five,scanned(),scanned(),(SYMBOL,),DAY)[SYMBOL]
+        best=report["hypotheses"]["five_start_minute_start"]["whole_day"]
+        self.assertEqual(best["strict_all_six_fields_agree"],48)
+        self.assertEqual(best["nonzero_volume_windows"],0)
+        self.assertFalse(report["internal_5min_all_bars_tolerance_match"])
+
     def test_wrong_time_convention_does_not_fake_full_match(self):
         one,five=synthetic_pair()
         winner=M.compare_one_hypothesis(

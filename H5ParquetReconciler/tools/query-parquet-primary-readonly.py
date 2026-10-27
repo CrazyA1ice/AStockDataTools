@@ -24,6 +24,10 @@ SPEC=importlib.util.spec_from_file_location(
     "validate-parquet-1min-to-5min.py")
 validator=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(validator)
+CACHE_SPEC=importlib.util.spec_from_file_location(
+    "parquet_primary_private_cache",HERE/"private-parquet-query-cache.py")
+private_cache=importlib.util.module_from_spec(CACHE_SPEC)
+CACHE_SPEC.loader.exec_module(private_cache)
 core=validator.core
 diagnose=validator.diagnose
 PERIODS=("day","1min","5min")
@@ -159,14 +163,31 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
 
 
 def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
-               max_result_bars=25000):
+               max_result_bars=25000,local_cache=False):
     """Return locally requested actual bars plus safe metadata.
 
     All bar data stay in Python memory and are never written to a file by this
     function. Empty result only means no matching keys found in named sources.
     Duplicate requested symbol+source timestamp and bad rows fail closed.
     """
-    import pyarrow.parquet as pq
+    # Explicit opt-in: storing paid OHLCVA has a local privacy/storage
+    # cost, and is OFF by default. Warm repeats avoid Parquet bar reads.
+    signature_before=None
+    cache_file=None
+    if local_cache:
+        canonical,first,last=request_dates(
+            symbol,period,start,end,max_candidate_rows,max_result_bars)
+        private_cache.ensure_private_dir()
+        cache_file=private_cache.cache_target(
+            root,canonical,period,first,last,
+            max_candidate_rows,max_result_bars)
+        signature_before=private_cache.source_signature(
+            root,period,first,last,core)
+        hit=private_cache.read_cache(
+            cache_file,signature_before,canonical,period,first,last,
+            max_result_bars)
+        if hit is not None:
+            return hit
     context=prepare_query(
         root,symbol,period,start,end,max_candidate_rows,max_result_bars)
     import pyarrow as pa
@@ -259,8 +280,26 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
         "no_h5_read":True,"source_market_files_modified":False,
         "no_automatic_gaps_fill":True,"no_source_market_truth_certification":True,
         "no_raw_ohlcva_in_safe_summary":True,
+        "query_delivery":"parquet_source_scan",
+        "source_rows_scanned_this_invocation":meta["source_rows_scanned"],
+        "source_file_footers_opened_this_invocation":meta[
+            "source_file_footers_opened"],
+        "local_cache_used":False,
     }
-    return {"bars":bars,"safe_summary":safe_summary}
+    result={"bars":bars,"safe_summary":safe_summary}
+    if local_cache:
+        signature_after=private_cache.source_signature(
+            root,context["period"],context["start"],context["end"],core)
+        if signature_after!=signature_before:
+            raise ValueError("Source files changed during query; will not cache")
+        private_cache.write_cache(cache_file,signature_before,result)
+        safe_summary["private_cache_contains_licensed_ohlcva"]=True
+        safe_summary["local_private_cache_written"]=True
+        safe_summary[
+            "local_cache_validated_by_source_stat_only_not_content_hash"]=True
+        safe_summary["local_cache_source_file_count"]=signature_before[
+            "manifest_file_count"]
+    return result
 
 
 def main(argv=None):
@@ -272,6 +311,10 @@ def main(argv=None):
     ap.add_argument("--to-date",required=True)
     ap.add_argument("--max-candidate-rows",type=int,default=30000000)
     ap.add_argument("--max-result-bars",type=int,default=25000)
+    ap.add_argument("--local-cache",action="store_true",
+                    help="EXPLICIT opt-in: store selected licensed OHLCVA "
+                         "locally under module work/ (gitignored), and reuse "
+                         "when source-file sizes/mtimes match; off by default")
     ap.add_argument("--show-first-bars",type=int,default=0,
                     help="Explicitly show at most 10 licensed OHLCVA bars "
                          "in LOCAL terminal ONLY; default prints no prices")
@@ -289,7 +332,7 @@ def main(argv=None):
             raise ValueError("Use NEW summary JSON inside module reports/")
         result=query_bars(root,args.symbol,args.period,args.from_date,
                           args.to_date,args.max_candidate_rows,
-                          args.max_result_bars)
+                          args.max_result_bars,local_cache=args.local_cache)
         out.parent.mkdir(parents=True,exist_ok=True)
         with out.open("x",encoding="utf-8") as fh:
             json.dump(result["safe_summary"],fh,indent=2,

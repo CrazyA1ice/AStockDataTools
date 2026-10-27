@@ -83,6 +83,20 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## Parquet覆盖盘点实测：72文件/50.47GiB/2011—2026.09；2026年2月与8月需key-only精确核验（2026-10-27）
+
+收到用户真实`parquet-primary-footer-inventory-2011-2026.json`：2011—2025年day/1min/5min每周期每年都有一个年度Parquet，2026年三个周期分别有1—9月各9份月度Parquet；**总计72文件/约50.47GiB/41.48亿条Footer统计记录**。所有非空行组均有可信`ts`范围统计，无元数据错年、命名歧义或缺失统计。**但这不是每证券逐交易日完整性认证**。实际供应商day原时间标签约08:00，1min为结束标签，5min为开始标签，保留原值供主查询标准化。
+
+比较2026年每个月“241根1min/48根5min”的完整证券日整数倍后，**2月多81根1min/17根5min，8月仅1min差一根**，有必要用真实`ts`与`symbol`两列定位，不应随意把差异视为错误或补数据。新增`tools/audit-parquet-month-minute-keys.py`：按单月限定读取原Parquet的**两列key，不读任何OHLCVA**；按证券日241/48位图统计缺失、重复、非交易时段时间键，异常实例最多60个，单周期读取预算默认5000万源行；报告和暂存只在模块内，**不自动合并、不修改购买源**。新增8项合成/临时Arrow回归测试待Windows本机执行。详见[2011—2026全周期Footer与2026年2/8月key-only诊断](docs/2026_PARQUET_FOOTER_INVENTORY_AND_KEY_ONLY_ANOMALY_TARGETS.md)。
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-parquet-month-minute-keys.py "D:\stock" --year 2026 --month 2 --universe all --max-candidate-rows 50000000 --read-only --out "reports\pq-key-only-2026-02.json"
+```
+
+如2月结果显示异常高度集中，再检查8月`--month 8 --out "reports\pq-key-only-2026-08.json"`。报告出来后，继续推进只读历史主查询接口与通达信盘后分层更新。
+
 ## Parquet主数据源：已收到5个证券日样本台账；新增2011～2026只读Parquet元数据覆盖盘点（2026-10-27）
 
 用户上传`parquet-primary-sampled-evidence-2026-08-24-09-30.json`，两交易日5个证券日样本均被标记为`candidate_parquet_primary_in_this_sample_only`，`sampled_stock_day_count=5`，`sampled_date_count=2`；全部`eligible_for_unattended_import=false`、`verified_full_history_coverage=false`，原市场行情未读写、未自动并集。至此不再反复重读已验的2026年8月/9月行情。

@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 五分钟×100真实精确残余报告已验收：后续改查来源内部日线守恒（2026-10-28）
+
+- [x] 用户已上传`h5-pq-20260930-x100-residual-exact-v1.json`，由修正后的离线triage工具从既存`day/2026+5min/2026`双周期完整安全JSON生成：`separate_day_section_consistency_checked=true`，`exact_mask_evidence_present=true`，`source_report_scan_complete=true`，未读取或修改源OHLCVA。
+- [x] 8类精确残余字段掩码重新核算：无冲突265708，仅volume29，仅amount3，仅price77，volume+amount257，volume+price22，amount+price1，三者均冲突303。合计266400；volume边际611、amount564、price403、任意冲突692，均守恒。
+- [x] 进一步证实**本日残余692条只在BJ/SH代码前缀组**：BJ 184、SH_688_689 155、SH_other 353、SZ_300_301 0、SZ_other 0；这只是2026-09-30单日事实，不能外推全市场/其他月份，亦不是证券上市身份认证。
+- [ ] 尚未收到**PR #99修正后10项合成测试**完整用户日志：新离线真实报告确实生成成功，但不替代全部测试验收。
+- [ ] **优先主线**：让用户执行现有`inspect-h5-day-vs-5min-volume.py`及`inspect-parquet-day-vs-5min-volume.py`，验证各自日线/5min成交量口径；不再扩建重复的离线残余分析工具。
+- [ ] 在两个独立来源内部报告收到后，再对另一个分散日期运行现有有界day+5min主核对，比较×100假说、SZ全匹配是否稳定、BJ/SH残余是否持续；原始数据与生产自动并集保持关闭。详细证据见[单日精确掩码验收记录](2026_H5_PQ_0930_EXACT_X100_RESIDUAL_MAINLINE.md)。
+
 ## ▶ 2026-09-30真实H5/Parquet单日day+5min全扫描通过；成交量×100假设成为主线（2026-10-28）
 
 - [x] 用户回传`h5-pq-overlap-20260930-day5min-v1.json`和Markdown；两个分区均完整且无issues。day H5 5550/PQ 5560/匹配键5550/H5-only0/PQ-only10/量价冲突1241（价格0）；5min H5 266400/PQ 267408/交集266400/H5-only0/PQ-only1008/量价冲突265181，其中PQ-only来自21组全日48根的证券日，不能未经证券身份认证就当真实交易漏数。

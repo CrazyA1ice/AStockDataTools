@@ -97,12 +97,16 @@ def _safe_ratio(numerator: float, denominator: float):
 
 
 def compare_to_reaggregation(minute_rows: dict, five_minute_bars: dict, symbol: str,
-                             convention: str):
+                             convention: str, *, minute_volume_factor: int = 1):
     """Only compare bars with *exactly five* observed minute labels.
 
     five_minute_bars keyed by (symbol, bar_end) with (O,H,L,C,V,A).
     Values are used only transiently. Returned summary has no raw OHLCV.
     """
+    # The factor is an explicit unverified H5-minute-to-purchased-PQ
+    # comparison hypothesis. Never mutate the original minute rows.
+    if type(minute_volume_factor) is not int or minute_volume_factor not in (1, 100):
+        raise ValueError("Only predeclared 1 or 100 diagnostic volume factors are allowed")
     state = Counter()
     ratios = {"volume": [], "amount": []}
     missing = []
@@ -126,10 +130,14 @@ def compare_to_reaggregation(minute_rows: dict, five_minute_bars: dict, symbol: 
         if prices_ok:
             state["all_ohlc_agree"] += 1
         for index, field in ((4, "volume"), (5, "amount")):
-            if diagnostic.close_enough(bar[index], aggregate[index], field):
+            candidate_value = (
+                aggregate[index] * minute_volume_factor if field == "volume"
+                else aggregate[index]
+            )
+            if diagnostic.close_enough(bar[index], candidate_value, field):
                 state[field + "_agree"] += 1
-            if aggregate[index] != 0:
-                ratio = bar[index] / aggregate[index]
+            if candidate_value != 0:
+                ratio = bar[index] / candidate_value
                 if math.isfinite(ratio):
                     ratios[field].append(ratio)
             else:
@@ -138,6 +146,9 @@ def compare_to_reaggregation(minute_rows: dict, five_minute_bars: dict, symbol: 
                 "all_ohlc_agree", "volume_agree", "amount_agree",
                 "zero_minute_volume_sum", "zero_minute_amount_sum")
     result = {key: int(state[key]) for key in counters}
+    result["h5_minute_volume_factor_diagnostic_only"] = minute_volume_factor
+    result["volume_factor_certified"] = False
+    result["raw_market_values_modified"] = False
     result["price_field_agree"] = {field: int(state[field + "_agree"]) for field in PRICE_FIELDS}
     result["bar_over_one_minute_sum_volume_ratio"] = diagnostic.summarize_values(ratios["volume"])
     result["bar_over_one_minute_sum_amount_ratio"] = diagnostic.summarize_values(ratios["amount"])
@@ -190,7 +201,9 @@ def build_crosscheck(h5_five: dict, parquet_start: dict, h5_one: dict,
         for convention in CONVENTIONS:
             report["one_minute_reaggregation"][convention] = {
                 "H5_5min": compare_to_reaggregation(h5_one, h5_five, symbol, convention),
-                "Parquet_5min": compare_to_reaggregation(h5_one, parquet_end, symbol, convention)
+                "Parquet_5min": compare_to_reaggregation(h5_one, parquet_end, symbol, convention),
+                "Parquet_5min_H5_1min_volume_x100_candidate": compare_to_reaggregation(
+                    h5_one, parquet_end, symbol, convention, minute_volume_factor=100)
             }
         if all(v["H5_5min"]["complete_minute_windows"] == 0 and
                v["Parquet_5min"]["complete_minute_windows"] == 0
@@ -232,6 +245,8 @@ def main(argv=None):
                 h5_five, parquet_five, h5_one, one_coverage, symbols),
             "source_files_modified": False,
             "source_units_certified": False,
+            "h5_1min_volume_x100_candidate_certified": False,
+            "parquet_5min_candidate_comparison_is_parallel_to_unchanged_raw_baseline": True,
             "safe_to_automatically_union": False,
             "minute_window_hypotheses": {
                 "minute_end_label": "end-4min...end; 5 exact 1min bars",
@@ -242,6 +257,8 @@ def main(argv=None):
                 "Only five observed 1min bars form a complete 5min window; partial windows are excluded.",
                 "5min Parquet source timestamps are provisionally start-labeled and shifted +5min.",
                 "Volume/amount use unverified H5 units; agreement is not a final source certification.",
+                "The additional Parquet_5min_H5_1min_volume_x100_candidate multiplies only the in-memory H5 1minute aggregate volume by 100; the original H5/PQ comparison stays unchanged.",
+                "A missing or incomplete H5 one-minute window is never counted as a mismatch in either comparison.",
                 "Total ratios compare only 5min keys available in both sources, not missing-source keys.",
                 "No OHLCV source values are written; output is aggregate counts, ratios, availability and bar timestamps."
             ]

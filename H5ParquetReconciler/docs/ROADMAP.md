@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 完成单分钟High峰值机制实测；落实保守的跨周期字段级准入诊断（2026-10-28）
+
+- [x] 用户Windows实际执行`test_triage_tdx_parquet_isolated_high_readonly.py`：9项全部OK（0.303s）。两组真实机制报告证明SH600000/2026-07-16及SH600519/2026-06-30各仅1根1min High不同，这根分钟在两来源中都不是对应5分钟区间最高价，5分钟High未受影响；不能因此宣告1min一致。
+- [x] 新增`evaluate-tdx-parquet-case-evidence-readonly.py`，只读三份现有SAFE报告（minute preview、High机制、TDX/Parquet day/5min跨源），交叉核验股日、TDX原件SHA、购买Parquet的stat-only清单及六字段匹配次数；将分钟High异常与Parquet日线成交量独立输出，任何结果仍不允许生产合并。
+- [x] 开发容器用11个合成测试成功验收；并使用两只股票各三份**真实已上传安全JSON**离线实测：SH600000分钟孤立High/日线Volume一致，SH600519分钟孤立High/日线Volume双重冲突；没有读取或修改任何本机原始行情。详细研究见[字段级证据判定](2026_TDX_PARQUET_FIELD_EVIDENCE_DISPOSITION_V1.md)。
+- [ ] 用户Windows执行新增11项测试及两组SAFE报告的字段级一致性判定；若来源指纹漂移则原样报告并拒绝复用证据，切勿修改行情凑通过。
+- [ ] 此后停止重复研究单根High聚合，从H5和Parquet重叠覆盖/差集证据主线推进；日线Volume差异单独保留，未有新证据前不选择替代源或静默覆盖。
 ## ▶ 单High反例完成TDX/Parquet五分钟与日线三角验证：继续定位分钟极值机制（2026-10-28）
 
 - [x] 用户上传SH600000/2026-07-16与SH600519/2026-06-30真实跨周期安全报告：两股TDX原生1min/5min/day内部各字段诊断一致，TDX5min vs购买Parquet5min六字段48/48匹配；但前述各一根1min High仍不同，不得因高周期吻合忽略分钟错误。

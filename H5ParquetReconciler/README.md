@@ -95,6 +95,10 @@ py -3.11 -m venv .venv
 
 用户Windows运行`test_evaluate_tdx_parquet_case_evidence_readonly.py`的11项测试逐项全部显示ok，并上传两份真实field-disposition安全JSON：SH600000/2026-07-16为单根一分钟High不匹配、五分钟全匹配、日线量无新增冲突；SH600519/2026-06-30同为孤立High不匹配、另有TDX day ↔ Parquet day与Parquet 5min汇总 ↔ Parquet day的Volume双重不一致。两例跨报告来源指纹核验通过，但原分钟差异保留，生产转换仍禁止。本轮不继续开发重复的分钟High工具；使用已存在的`reconcile-local-a-share-h5-parquet.py`执行2026-09-30的day与5min单日有界H5/Parquet覆盖核对。单行PowerShell和证据检查详见[返回主线操作说明](docs/2026_H5_PARQUET_RESUME_BOUNDED_OVERLAP.md)。
 
+## ▶ 2026-09-30 H5/PQ各自成交量守恒已实测；推进沪市残余分时诊断（2026-10-28）
+
+用户真实H5内部安全报告：5550只完整day+48根5min股票日的同倍率成交量汇总在0.1%容差内全部匹配，5497组严格同值；Parquet内部报告：5560组中5556匹配，4组BJ前缀Volume不守恒，另11组仅有完整5min没有day。前期残余较多的SH601579、SH688123、SH688535虽然各自day↔5min及跨来源日量候选均在容差内匹配，但五分钟×100后的原诊断容差仍分别有39、33、34根冲突，尚不能归因为时间边界错位。修正已有的[重点股票分时残余诊断工具](tools/analyze-5min-x100-focused-sessions.py)输入兼容性：可直接使用已完成的day+5min综合核对报告，无需重扫全市场；保留来源异常拒绝和自动合并禁令。新增3项测试（共8项，待Windows），命令及证据见[两来源成交量内部守恒与分时研究](docs/2026_H5_PQ_INTERNAL_VOLUME_AND_FOCUSED_SESSIONS.md)。
+
 ## ▶ 双反例已证实为非五分钟极值的孤立High；新增分钟/日线字段级保守判定（2026-10-28）
 
 用户Windows已实测上一轮孤立High机制9项测试全部通过，并上传两份真实机制安全JSON：SH600000/2026-07-16与SH600519/2026-06-30的一分钟High均有且仅有1根不匹配，该分钟在TDX与购买Parquet中均**不是其5分钟区间最高价**，因而未使5分钟High超出容差；所有生产准入仍拒绝。另此前独立三周期证据表明SH600519购买Parquet日线Volume与5分钟汇总不匹配，应与一分钟High分别跟踪。新增[只读证据字段级判定工具](tools/evaluate-tdx-parquet-case-evidence-readonly.py)：只读三份既存SAFE报告，强制交叉核验TDX完整内容SHA与Parquet stat-only来源指纹，分别输出分钟High/日线Volume冲突，保持任何情况下生产自动并集禁用。开发容器11项合成测试和两份真实安全JSON复核通过，**Windows新增11项测试待验收**。详见[字段级证据交叉判定说明](docs/2026_TDX_PARQUET_FIELD_EVIDENCE_DISPOSITION_V1.md)。

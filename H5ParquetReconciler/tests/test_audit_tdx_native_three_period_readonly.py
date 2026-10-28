@@ -86,6 +86,20 @@ class ThreePeriodTests(unittest.TestCase):
         self.assertEqual(metrics["amount"]["within_diagnostic_tolerance"],48)
         self.assertTrue(result["amount_and_volume_units_not_assumed_identical"])
 
+    def test_single_five_minute_close_price_drift_is_detected_not_modified(self):
+        times=M.probe.time_profiles("5min")["5min_end_48"]
+        self.m5_file.write_bytes(b"".join(
+            minute(t,"5min",volume=10,amount=100.,
+                   close=10.25 if i==0 else 10.)
+            for i,t in enumerate(times)))
+        result=self.run_audit()
+        metrics=result["comparisons"][
+            "one_minute_aggregate_vs_five_minute_native"]["close"]
+        self.assertEqual(metrics["within_diagnostic_tolerance"],47)
+        self.assertGreater(metrics["max_relative_error"],0)
+        self.assertTrue(
+            result["numeric_tolerances_are_diagnostic_not_source_certification"])
+
     def test_bad_241_minute_grid_fails_closed(self):
         self.m1_file.write_bytes(minute(570)+self.m1_file.read_bytes())
         with self.assertRaisesRegex(ValueError,"complete 1min_end_240"):

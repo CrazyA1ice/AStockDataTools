@@ -85,6 +85,10 @@ py -3.11 -m venv .venv
 
 **2026-10-28 实机修复**：TDX原生`.day`文件会包含2004年前历史记录，原探测器把分钟线`2004`压缩日期纪元误用于全部`.day`历史，导致用户本机`sh600000.day`的整文件读取被`calendar is outside 2004..2100`中断。现按格式分开：日线1990–2100年、分钟线2004–2100年，保留日期/价格/顺序校验；新增跨1999–2026合成日线和非法年份负测试。仍需Windows实机重跑，详情见[TDX原生探测协议与修复记录](docs/2026_TDX_NATIVE_READONLY_PROBE_V1.md)。
 
+## ▶ 双周期交叉核验确认：分钟High孤立差异 + 贵州茅台日线成交量差异（2026-10-28）
+
+用户实际回传SH600000/2026-07-16和SH600519/2026-06-30两份`audit-tdx-vs-parquet-day5min-readonly.py`安全报告：TDX原生1min/5min/day内部全字段诊断通过，TDX5min与购买Parquet5min六字段全部48/48通过；但已知两股各一根1min High不匹配。**贵州茅台还新增独立的Parquet日线成交量疑点**：TDX日线vs购买Parquet日线volume 0/1（最大相对差1.99456e-05），购买5min汇总vs购买day volume 0/1（2.52474e-05）；不能将日线差异归因于分钟High。新增[只读单High差异机制定位工具](tools/triage-tdx-parquet-isolated-high-readonly.py)和9项纯合成测试（尚待Windows），聚合统计异常分钟是否控制其所属五分钟区间最大High，不输出具体异常分钟、OHLCVA或私有路径，永不生产落库。见[单High反例机制与日线量差异记录](docs/2026_TDX_PARQUET_ISOLATED_HIGH_MECHANISM_V1.md)。
+
 ## ▶ 两组反例已精确定位为“单根一分钟High异常”（2026-10-28）
 
 用户新回传浦发银行SH600000/2026-07-16与贵州茅台SH600519/2026-06-30的完整安全预演JSON：各有且仅有**1根常规一分钟的High**不匹配（238/239），其余Open/Low/Close/Volume/Amount均239/239匹配；首根6字段1/1、候选与购买Parquet原生5min的6字段48/48仍匹配。High最大相对误差分别约0.11299866%和0.00169735%，不能将这两个不同量级的差异笼统视为舍入或删除分钟。新增[跨周期只读复核说明与单行PowerShell](docs/2026_TDX_PARQUET_ISOLATED_HIGH_CROSSCYCLE_TRIAGE.md)，复用已有TDX日/5分钟/1分钟与购买Parquet日/5分钟交叉验证工具，**待实测确认**差异是否跨周期可见，暂不增加未经证据支持的归因或改写算法。生产自动合并仍禁止。

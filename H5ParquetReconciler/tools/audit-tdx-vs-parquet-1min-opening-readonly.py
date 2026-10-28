@@ -163,6 +163,19 @@ def audit(root,tdx_minute1_file,symbol,day_text,
         raise ValueError("240 common ending-minute labels not aligned")
     common=native._compare(tdx,pq_one[1:])
 
+    # Distinguish a *separate* Parquet 09:30 observation from an
+    # independently testable hypothesis: native TDX may encode both
+    # Parquet 09:30 and 09:31 observations inside its first 09:31 bar.
+    # This is a read-only diagnostic, not a policy to discard either
+    # original purchased record or to rewrite a TDX first minute.
+    pq_first_two_aggregate=native._aggregate(pq_one[:2])
+    first_unmerged=native._compare(tdx[:1],pq_one[1:2])
+    first_merged=native._compare(
+        tdx[:1],[(tdx[0][0],pq_first_two_aggregate)])
+    remaining=native._compare(tdx[1:],pq_one[2:])
+    reconstructed=[(tdx[0][0],pq_first_two_aggregate)]+pq_one[2:]
+    all_240_merged=native._compare(tdx,reconstructed)
+
     regular=[]
     with_open=[]
     for i,(start,five_bar) in enumerate(pq_five):
@@ -203,6 +216,21 @@ def audit(root,tdx_minute1_file,symbol,day_text,
         "parquet_verified_five_minute_count":48,
         "parquet_stat_only_provenance":provenance,
         "common_240_minutes_tdx_vs_parquet":common,
+        "first_minute_opening_merge_hypothesis":{
+            "native_0931_vs_parquet_0931_without_opening":first_unmerged,
+            "native_0931_vs_aggregation_of_parquet_0930_and_0931":
+                first_merged,
+            "remaining_239_native_vs_parquet":remaining,
+            "all_240_native_vs_first_merged_plus_remaining_239":
+                all_240_merged,
+            "first_minute_all_six_fields_match_after_merge":
+                _within_all(first_merged),
+            "remaining_239_all_six_fields_match":
+                _within_all(remaining),
+            "all_240_all_six_fields_match_after_merge":
+                _within_all(all_240_merged),
+            "opening_merge_is_only_a_hypothesis_not_a_mapping_rule":True,
+        },
         "parquet_regular_240_minutes_vs_five_minute":without,
         "parquet_opening_241_in_first_five_minute_vs_five_minute":including,
         "parquet_first_five_minute_without_opening":first_regular,

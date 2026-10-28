@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 用户真实跨来源day/5min一致；进入TDX240 vs Parquet241开盘分钟条核验（2026-10-28）
+
+- [x] 已收到用户`tdx-vs-pq-sh600000-20260930-day5min.json`真实安全JSON：SH600000在2026-09-30的TDX日线/Parquet日线各1、五分钟各48根；逐5min四个价格字段48/48匹配、最大相对差约4.83e-08；volume每根严格相同；amount最大相对差1.048e-07；日线OHLC完全相同、volume相对差1.356e-07；Parquet 5min→日线自身六字段均匹配。**两个独立源在这个股票日具有高度一致性，尚未认证多日多股。**
+- [x] 增加`audit-tdx-vs-parquet-1min-opening-readonly.py`，读取TDX原生`.lc1`单股单日240结束标签和Parquet同日1min（241条、单独09:30开盘条）及5min（48条起点），对240共享结束标签逐根量价对账；另外验证Parquet第一根5min**含/不含09:30条**两种聚合假说，输出字段容差匹配数、误差和量额倍率及开盘额/量是否零，绝不静默删补09:30或修改任何源数据。报告仅安全统计、SHA和stat来源摘要，`eligible_for_automatic_production_union=false`。新增8项合成测试待Windows。详见[运行指南](2026_TDX_PARQUET_1MIN_OPENING_READONLY_AUDIT.md)。
+- [ ] 用户执行Windows`py_compile`、8项新测试及真实SH600000/2026-09-30只读分钟开盘对账，将reports安全JSON回传，以判定是否存在可解释的额外09:30记录贡献。
+- [ ] 在确定241特殊记录语义及多只股票多日泛化证据后才进入明确源优先级、可回滚的**用户显式授权的私有增量暂存**；不启动生产Parquet/H5自动覆盖。
+
 ## ▶ 正式跨来源实证：TDX vs 购买Parquet 48个5分钟区间和日线（2026-10-28）
 
 - [x] 用户新上传`tdx-native-sh600000-three-period-20260930-audit.json`：SH600000/2026-09-30的TDX日线1、1min240、5min48，1min→5min 48组OHLC/volume完全吻合；amount最大相对差约1.048e-07；5min与1min分别对TDX日线所有六字段容差通过，volume比约1.00000014。**TDX内部三周期数值守恒已在一个真实股票日上验证**；不代表TDX与Parquet/H5等外部源一致。

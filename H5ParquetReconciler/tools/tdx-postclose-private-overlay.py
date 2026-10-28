@@ -197,7 +197,9 @@ def read_pointer(directory):
 def read_version(directory,digest):
     digest=ensure_hash(digest)
     p=directory/"versions"/(digest+".json")
-    if not p.is_file() or p.is_symlink():
+    if (not p.is_file() or p.is_symlink()
+            or (directory/"versions").is_symlink()
+            or not p.resolve().is_relative_to(WORK)):
         raise ValueError("Missing/corrupt private overlay version")
     if p.stat().st_size>MAX_INPUT_BYTES+8192:
         raise ValueError("Oversized private version")
@@ -257,6 +259,9 @@ def stage(record,raw_sha):
         digest=sha(version_body)
         version=dict(version_body,format=STORE_FORMAT,version_sha256=digest)
         versions=directory/"versions"
+        if (versions.is_symlink() or
+                not versions.resolve().is_relative_to(WORK)):
+            raise ValueError("Unsafe private versions destination")
         versions.mkdir(exist_ok=True)
         target=versions/(digest+".json")
         if target.exists() or target.is_symlink():

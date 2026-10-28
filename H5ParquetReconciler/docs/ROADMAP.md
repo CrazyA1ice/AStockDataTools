@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 字段级跨报告判定已实机成功，恢复双源覆盖差集与冲突实证主线（2026-10-28）
+
+- [x] 用户Windows新一轮11个`test_evaluate_tdx_parquet_case_evidence_readonly.py`测试逐项显示ok（0.620s；粘贴末尾缺完整OK行）。已实际上传SH600000/2026-07-16和SH600519/2026-06-30两份字段级SAFE输出：均保留各一根分钟High异常，5min跨源六字段通过，SH600519额外保留两个日线成交量冲突。来源交叉核验通过，自动生产合并/原始改写仍关闭。
+- [x] 已审查既有`reconcile-local-a-share-h5-parquet.py`主核对入口，确认支持有界日期单日窗口、day/5min分周期、A股候选集合、SQLite有界scratch、H5-only/Parquet-only/交集/量价冲突及5min完整/局部股票日缺失汇总；**无需再复制开发新的主核对程序**。
+- [x] 新增[返回H5/Parquet覆盖主线的实机运行协议](2026_H5_PARQUET_RESUME_BOUNDED_OVERLAP.md)：先对2026-09-30单日的day和5min运行真实只读核对，并保留JSON/Markdown，仅模块内临时scratch。
+- [ ] 用户Windows执行单日day/5min主核对，回传真实报告；先检查scan_complete、精确交集、H5-only、Parquet-only、数值冲突及5min stock-day缺失分类。若遇性能瓶颈，再据实定向改造，避免无界全年度扫描。
+- [ ] 后续以同一天单独核验1min并显式保留Parquet 09:30特殊来源语义；待来源覆盖与单位问题被充分实证解决后才规划可追溯/可回滚的新库，不能自动覆盖H5或购买Parquet。
+
 ## ▶ 完成单分钟High峰值机制实测；落实保守的跨周期字段级准入诊断（2026-10-28）
 
 - [x] 用户Windows实际执行`test_triage_tdx_parquet_isolated_high_readonly.py`：9项全部OK（0.303s）。两组真实机制报告证明SH600000/2026-07-16及SH600519/2026-06-30各仅1根1min High不同，这根分钟在两来源中都不是对应5分钟区间最高价，5分钟High未受影响；不能因此宣告1min一致。

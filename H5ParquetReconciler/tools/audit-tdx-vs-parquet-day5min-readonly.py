@@ -180,10 +180,20 @@ def audit(root,day_file,minute5_file,minute1_file,symbol,day_text,
             native._compare(tdx["5min"],converted["5min"]),
         "tdx_daily_vs_parquet_daily":
             native._compare(tdx["day"],converted["day"]),
+        "parquet_5min_aggregate_vs_parquet_daily":
+            native._compare(
+                [(None,native._aggregate(converted["5min"]))],
+                converted["day"]),
     }
+    tdx_internal_all_close=all(
+        item["within_diagnostic_tolerance"]==item["n"]
+        for comparison in prior["comparisons"].values()
+        for item in comparison.values())
     return {
         "format":FORMAT,"symbol":symbol,"date":day_text,
         "tdx_internal_three_period_checked_against_real_bytes":True,
+        "tdx_internal_three_period_all_fields_within_tolerance":
+            tdx_internal_all_close,
         "tdx_source_sha256":{
             p:prior["input"][p]["source_content_sha256"]
             for p in ("day","1min","5min")},

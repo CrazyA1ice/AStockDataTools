@@ -369,14 +369,14 @@ def main(argv=None):
             if args.input is not None or args.allow_private_copy:
                 raise ValueError("rollback never reads source or accepts a copy flag")
             summary=rollback(args.symbol,args.period,args.date)
-        result=dict(summary,
+        result=dict(summary, **{
             "format":"AStockDataTools local TDX postclose overlay safe action summary v1",
             "raw_ohlcva_in_report":False,
             "source_market_files_modified":False,
             "original_parquet_or_h5_accessed":False,
             "production_query_automatically_changed":False,
             "private_data_only_under_gitignored_work":args.action=="stage",
-            "source_timestamp_units_and_adjustment_unverified":True)
+            "source_timestamp_units_and_adjustment_unverified":True})
         dest.parent.mkdir(parents=True,exist_ok=True)
         with dest.open("x",encoding="utf-8") as fh:
             json.dump(result,fh,ensure_ascii=False,indent=2,allow_nan=False)

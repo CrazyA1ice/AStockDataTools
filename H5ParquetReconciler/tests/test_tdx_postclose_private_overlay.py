@@ -152,12 +152,20 @@ class TdxPrivateOverlayTests(unittest.TestCase):
     def test_exclusive_lock_prevents_concurrent_mutations(self):
         record=sample()
         directory=M.private_dir("SH600000","5min","2026-10-27")
+        # A scope that has never been created is distinct from a scope
+        # created by a lock but having no active version.
+        self.assertFalse(directory.exists())
+        with self.assertRaisesRegex(ValueError,"No private overlay to rollback"):
+            M.rollback("SH600000","5min","2026-10-27")
         with M.exclusive_lock(directory):
             with self.assertRaisesRegex(ValueError,"lock exists"):
                 M.stage(record,"a"*64)
+        self.assertTrue(directory.is_dir())
         self.assertFalse((directory/".operation.lock").exists())
-        with self.assertRaisesRegex(ValueError,"No private overlay"):
+        with self.assertRaisesRegex(ValueError,"No active private overlay version"):
             M.rollback("SH600000","5min","2026-10-27")
+        self.assertFalse((directory/".operation.lock").exists())
+        self.assertFalse((directory/"active.json").exists())
 
     def test_cli_validate_stage_rollback_are_safe_and_explicit(self):
         source=self.input_file()

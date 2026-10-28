@@ -83,6 +83,14 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## 🧪 精确定位查询的重复Footer预检已在代码中消除（2026-10-28）
+
+本机最新真实安全报告：带完整对账调用总耗时**5.763604秒**；显式`--fast-stat-only`调用总耗时**1.641963秒**，其中缩组Arrow读取计时**0.646492秒**，其余约0.995471秒尚未有分阶段证据。源stat稳定、返回48根、目标组18/47；快路径未做当次完整数据对照、定位文件未签名，不能作为生产默认。
+
+代码审查发现此前定位预览**外部已做完整`prepare_query()`，调用Arrow扫描时再次做相同Footer预检**（完整校验模式甚至重复3次）。本轮给`benchmark-parquet-arrow-filter-cold.py`增添**仅内部使用**的`prepared_context`，验证请求身份、源路径与完整预算、全候选RowGroup来源及计数守恒之后复用预检。定位预览现在只执行一次完整Footer预检，仍保留stat前后校验和默认full Arrow逐根对账，正式查询入口保持不变。新增两项合成测试待Windows确认。
+
+新报告附带`full_footer_preflight_seconds`、`source_manifest_before_seconds`、`locator_validation_seconds`、`source_manifest_after_seconds`等阶段耗时，**Arrow耗时字段现在仅代表复用预检后的数据扫描**，不能直接与旧报告同名字段做同比；应比较整次`total_invocation_wall_seconds_including_validations`。完整[变更原理、真实数据、验收命令](docs/2026_PARQUET_LOCATOR_SINGLE_PREFLIGHT_EXPERIMENT.md)。
+
 ## ✅ 精确18组查询两种顺序真实提速；新增离线验收与本地可选定位查询（2026-10-28）
 
 本机两个真实报告：`SH600000/2026-09-30/5min` full 47组→restricted 18组，`full-first`为**2.580526s→0.479882s（5.38×）**；`restricted-first`为**1.000471s→0.528956s（1.89×）**。两次48根价量额/时标/源文件+行组逐根一致，并各自与默认引擎相同；参与解码候选RowGroup原始行数上限从5,685,792降至2,213,909（约61.1%，**非物理IO实测**）。旧locator建造2.361006s不在以上引擎耗时内，简单情景回本为**2～6次复用，不代表稳定全场景净提速**。

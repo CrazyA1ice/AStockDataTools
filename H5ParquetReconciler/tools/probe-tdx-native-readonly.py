@@ -26,10 +26,6 @@ MINUTE=struct.Struct("<HHfffffII")
 FORMAT="AStockDataTools bounded TDX native binary read-only probe v1"
 
 
-def _minutes_to_labels(minutes):
-    return tuple(f"{minute//60:02d}:{minute%60:02d}" for minute in minutes)
-
-
 def time_profiles(period):
     if period=="day":
         return {"single_daily_record":(None,)}
@@ -131,7 +127,6 @@ def inspect(source,symbol,requested_date,max_source_bytes=MAX_SOURCE_BYTES):
     prev=None
     digest=hashlib.sha256()
     with file.open("rb") as handle:
-        stat_open=handle.stat() if hasattr(handle,"stat") else None
         for _ in range(stats.st_size//ROW_BYTES):
             raw=handle.read(ROW_BYTES)
             if len(raw)!=ROW_BYTES:

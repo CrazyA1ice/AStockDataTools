@@ -101,6 +101,51 @@ class ExactLocatorPreviewTests(unittest.TestCase):
         self.assertTrue(out["safe_summary"][
             "not_certified_for_unattended_production_pruning"])
 
+    def test_preflight_invoked_only_once_per_query_even_with_full_parity(self):
+        loc=self.fixture()
+        original=M.query.prepare_query
+        for fast in (False,True):
+            with self.subTest(fast_stat_only=fast),mock.patch.object(
+                    M.query,"prepare_query",wraps=original) as plan:
+                result=M.query_bars(
+                    self.root,"SH600000","2026-09-30",loc,
+                    fast_stat_only=fast)
+                self.assertEqual(plan.call_count,1)
+                safe=result["safe_summary"]
+                self.assertEqual(
+                    safe["full_footer_preflight_executions_this_invocation"],1)
+                self.assertTrue(
+                    safe["prepared_preflight_context_reused_for_arrow_scans"])
+                self.assertTrue(
+                    safe["arrow_engine_seconds_are_scan_only_in_prepared_mode"])
+                self.assertGreaterEqual(safe["full_footer_preflight_seconds"],0)
+                self.assertGreaterEqual(safe["source_manifest_before_seconds"],0)
+                self.assertGreaterEqual(safe["locator_validation_seconds"],0)
+                self.assertEqual(safe["matching_bar_count"],2)
+                self.assertEqual(safe["full_arrow_equality_checked_this_invocation"],
+                                 not fast)
+
+    def test_prepared_context_rejects_wrong_query_and_budget(self):
+        loc=self.fixture()
+        ctx=M.query.prepare_query(
+            self.root,"SH600000","5min","2026-09-30","2026-09-30")
+        original=M.benchmark.arrow_filtered_query
+        with self.assertRaisesRegex(ValueError,"context does not match"):
+            original(self.root,"SH600000","5min","2026-09-29",
+                     "2026-09-29",prepared_context=ctx)
+        with self.assertRaisesRegex(ValueError,"budget is invalid"):
+            original(self.root,"SH600000","5min","2026-09-30",
+                     "2026-09-30",max_candidate_rows=1,
+                     prepared_context=ctx)
+        with self.assertRaisesRegex(ValueError,"context does not match"):
+            original(self.root,"SH600000","5min","2026-09-30",
+                     "2026-09-30",max_result_bars=1,prepared_context=ctx)
+        # A source-specific cached context must not be mistaken for another
+        # file root even if relative file names and group IDs coincide.
+        with self.assertRaisesRegex(ValueError,"context does not match"):
+            original(self.home,"SH600000","5min","2026-09-30",
+                     "2026-09-30",prepared_context=ctx)
+
     def test_tampered_locator_rejected_in_parity_mode(self):
         loc=self.fixture()
         entries=loc["nonempty_source_row_group_locators"]

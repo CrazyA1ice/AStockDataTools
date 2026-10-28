@@ -159,6 +159,9 @@ def private_dir(symbol,period,day):
 
 @contextmanager
 def exclusive_lock(directory):
+    if (not WORK.is_relative_to(MODULE.resolve()/"work")
+            or (MODULE/"work").is_symlink()):
+        raise ValueError("Private overlay must remain within module work/")
     directory.mkdir(parents=True,exist_ok=True)
     if directory.is_symlink() or not directory.resolve().is_relative_to(WORK):
         raise ValueError("Unsafe private overlay destination")
@@ -330,7 +333,10 @@ def rollback(symbol,period,day):
 def out_path(value):
     p=Path(value)
     dest=(p if p.is_absolute() else MODULE/p).resolve()
-    if (p.is_symlink() or not dest.is_relative_to(REPORTS)
+    if (not REPORTS.is_relative_to(MODULE.resolve())
+            or REPORTS.name!="reports"
+            or (MODULE/"reports").is_symlink()
+            or p.is_symlink() or not dest.is_relative_to(REPORTS)
             or dest.suffix.lower()!=".json" or dest.exists()):
         raise ValueError("Use a NEW JSON file within H5ParquetReconciler/reports")
     return dest

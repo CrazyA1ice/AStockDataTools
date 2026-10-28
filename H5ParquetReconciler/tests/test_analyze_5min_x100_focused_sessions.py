@@ -76,6 +76,61 @@ class FocusedX100SessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "top-symbols"):
             M.load_baseline(baseline(), __import__("datetime").date(2026, 9, 28), 9)
 
+    def test_real_shape_day_plus_fivemin_baseline_selects_top_symbols(self):
+        report = baseline()
+        report["requested_periods"] = ["day", "5min"]
+        report["results"]["day/2026"] = {
+            "period": "day", "year": 2026,
+            "from_date": "2026-09-28", "to_date": "2026-09-28",
+            "universe_mode": "a-share-candidate",
+            "scan_complete": True, "issues": [],
+            "safe_to_automatically_union": False,
+        }
+        selected = M.load_baseline(
+            report, __import__("datetime").date(2026, 9, 28), 3)
+        self.assertEqual(list(selected), ["SH688629", "SH688017", "SH688172"])
+
+    def test_invalid_day_companion_is_rejected_not_silenced(self):
+        report = baseline()
+        report["requested_periods"] = ["day", "5min"]
+        report["results"]["day/2026"] = {
+            "period": "day", "year": 2026,
+            "from_date": "2026-09-28", "to_date": "2026-09-28",
+            "universe_mode": "a-share-candidate",
+            "scan_complete": True, "issues": [],
+            "safe_to_automatically_union": False,
+        }
+        expected_day = __import__("datetime").date(2026, 9, 28)
+        for broken in ("to_date", "scan_complete", "issues", "safe_to_automatically_union"):
+            bad = copy.deepcopy(report)
+            bad_day = bad["results"]["day/2026"]
+            bad_day[broken] = {
+                "to_date": "2026-09-29",
+                "scan_complete": False,
+                "issues": ["source_read_error"],
+                "safe_to_automatically_union": True,
+            }[broken]
+            with self.subTest(broken=broken), self.assertRaisesRegex(
+                    ValueError, "day companion"):
+                M.load_baseline(bad, expected_day, 3)
+
+    def test_source_section_or_requested_cycle_mismatch_is_rejected(self):
+        d = __import__("datetime").date(2026, 9, 28)
+        report = baseline()
+        report["requested_periods"] = ["day", "5min"]
+        with self.assertRaisesRegex(ValueError, "Source section set"):
+            M.load_baseline(report, d, 3)
+        report = baseline()
+        report["results"]["day/2026"] = {
+            "period": "day", "year": 2026,
+            "from_date": "2026-09-28", "to_date": "2026-09-28",
+            "universe_mode": "a-share-candidate",
+            "scan_complete": True, "issues": [],
+            "safe_to_automatically_union": False,
+        }
+        with self.assertRaisesRegex(ValueError, "Source section set"):
+            M.load_baseline(report, d, 3)
+
     def test_one_hundred_scale_exact_masks_and_session_conservation(self):
         before = copy.deepcopy(self.h5)
         got = M.summarized_pair_masks(self.h5, self.parquet, self.selected)

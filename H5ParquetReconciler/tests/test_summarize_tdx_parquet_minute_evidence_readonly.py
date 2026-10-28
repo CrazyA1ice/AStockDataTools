@@ -110,11 +110,41 @@ class SafeCohortTests(unittest.TestCase):
     def test_any_true_mismatch_reports_disagreement(self):
         files=[self.write("one.json",example()),
                self.write("two.json",example("SZ000001","2026-09-29",False))]
-        result=M.summarize(files)
+        # summarize() sorts samples by (date,symbol), NOT input-file order.
+        # Always locate the actual disagreeing stock-day by identity.
+        for inputs in (files,list(reversed(files))):
+            with self.subTest(input_order=[p.name for p in inputs]):
+                result=M.summarize(inputs)
+                self.assertEqual(result["verdict"],
+                                 "disagreement_observed_do_not_apply_mapping")
+                self.assertFalse(result["all_supplied_stock_days_match"])
+                by_stock_day={
+                    (sample["symbol"],sample["date"]):
+                        sample["all_required_diagnostics_match"]
+                    for sample in result["samples"]
+                }
+                self.assertEqual(by_stock_day,{
+                    ("SH600000","2026-09-30"):True,
+                    ("SZ000001","2026-09-29"):False,
+                })
+                self.assertEqual(sum(not ok for ok in by_stock_day.values()),1)
+
+    def test_mismatch_is_not_assumed_to_be_at_first_or_last_index(self):
+        # Deliberately place a bad sample in the middle of the deterministic
+        # date/symbol sort, independent of the order in which reports arrive.
+        inputs=[
+            self.write("later.json",example("SH600000","2026-09-30")),
+            self.write("middle.json",example("SZ000001","2026-09-29",False)),
+            self.write("earlier.json",example("SH600000","2026-09-28")),
+        ]
+        result=M.summarize(inputs)
         self.assertEqual(result["verdict"],
                          "disagreement_observed_do_not_apply_mapping")
-        self.assertFalse(result["all_supplied_stock_days_match"])
-        self.assertFalse(result["samples"][1]["all_required_diagnostics_match"])
+        self.assertEqual([x["date"] for x in result["samples"]],
+                         ["2026-09-28","2026-09-29","2026-09-30"])
+        self.assertEqual(
+            [x["all_required_diagnostics_match"] for x in result["samples"]],
+            [True,False,True])
 
     def test_reject_duplicate_stock_day_or_wrong_format(self):
         a=self.write("one.json",example())

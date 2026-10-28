@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 正式跨来源实证：TDX vs 购买Parquet 48个5分钟区间和日线（2026-10-28）
+
+- [x] 用户新上传`tdx-native-sh600000-three-period-20260930-audit.json`：SH600000/2026-09-30的TDX日线1、1min240、5min48，1min→5min 48组OHLC/volume完全吻合；amount最大相对差约1.048e-07；5min与1min分别对TDX日线所有六字段容差通过，volume比约1.00000014。**TDX内部三周期数值守恒已在一个真实股票日上验证**；不代表TDX与Parquet/H5等外部源一致。
+- [x] 新增`audit-tdx-vs-parquet-day5min-readonly.py`：一只股票一天、TDX三周期重新全文件读+SHA、Parquet只有day/5min的内存查询、每来源读取有上限；Parquet原5分钟开始标签+5m才与TDX结束标签配对。强制48:48与1:1，全六字段相对误差/容差匹配数、量额比例及Parquet内部5min→day守恒；输出只有安全统计、Parquet源清单stat-only指纹，额外复验真实文件stat未变化，绝不把TDX240根冒充Parquet241根、不自动跨源换算或补值。新增8项合成测试待Windows。详见[跨来源协议](2026_TDX_PARQUET_DAY5MIN_SOURCE_PARITY_READONLY.md)。
+- [ ] 用户在Windows上对`D:\software\TDX\vipdoc\sh\...`与`D:\stock\AllCycleAStockData`执行同日2026-09-30的**实际跨供应商对账**，只回传reports安全JSON。若差异存在，按OHLC、volume、amount分开定位，禁止将单日一致性扩展为全历史认证。
+- [ ] 只有在实测跨源价格、量额单位与时间约定后，才计划受人工批准的TDX私有版本化增量候选接入；Parquet 241条特殊09:30仍单独保留待验证，**目前不接入自动融合/覆盖**。
+
 ## ▶ TDX真实240/48终点标记已验；三周期OHLCVA只读守恒核验进入主线（2026-10-28）
 
 - [x] 用户Windows真实原生`SH600000`、2026-09-30：`sh600000.lc1`为**240根，1min_end_240**、5/11至10/13共25,200根；`sh600000.lc5`为**48根，5min_end_48**、同期5,040根。两源的source content SHA、顺序、稳定读取证明就绪。日线真实源1999-11-10至10/13可读，`2026-09-30`这一天是否有数据将由新三周期工具实际核验。

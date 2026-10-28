@@ -32,6 +32,23 @@ Parquet候选240→原生Parquet48根五分钟的门槛也未失败；
 这些反例必须阻止对应股票日的候选材料化；不能通过放宽容差、
 改原始行情、删除异常分钟或直接按五分钟线倒推来“修好”。
 
+## 最新进展：两组详细反例已回传，真正失败字段均为High
+
+用户在Windows实测后上传：
+`tdx-pq-sh600000-20260716-boundary-detail-v1.json`
+和`tdx-pq-sh600519-20260630-boundary-detail-v1.json`。
+两份均满足：首根六字段1/1，余239根Open/Low/Close/Volume/Amount
+全部239/239，**High仅238/239**；完整240根High为239/240。
+两组的High最大相对差分别`0.0011299866`、
+`0.0000169735`。候选自身聚合至购买Parquet原生
+48根五分钟六字段48/48均匹配，不能据此推断TDX原生
+5min也匹配；仍保持`diagnostic_candidate_mismatch_do_not_materialize`。
+
+现阶段唯一合理主线是先复用既有跨源日/5min审计工具，
+补足与**TDX原生5min和日线**的外部粒度对照，
+而不是大规模扩大样本或开发源数据自动覆盖功能。
+见[两组单High异常的跨周期只读复核](2026_TDX_PARQUET_ISOLATED_HIGH_CROSSCYCLE_TRIAGE.md)。
+
 ## 下一步——使用已实现的安全逐字段统计定位，而不是重复开发聚合
 
 已有 `tools/preview-tdx-parquet-1min-normalization-readonly.py`

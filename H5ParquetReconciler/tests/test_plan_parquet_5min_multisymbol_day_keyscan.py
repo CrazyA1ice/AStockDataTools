@@ -175,7 +175,12 @@ class SharedMultiStockDayKeyScanTests(unittest.TestCase):
             def close(self):
                 self.reader.close()
                 self.closes += 1
+            def iter_batches(self, *args, **kwargs):
+                # License safety: never project open/high/low/close/volume/amount.
+                self_outer.assertEqual(kwargs.get("columns"), ["ts", "symbol"])
+                return self.reader.iter_batches(*args, **kwargs)
 
+        self_outer = self
         with mock.patch.object(pq, "ParquetFile", Reader):
             self.assertEqual(M.plan(
                 self.root, ["SH600000", "SZ000001"], "2026-09-30")[

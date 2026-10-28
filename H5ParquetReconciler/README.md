@@ -85,6 +85,19 @@ py -3.11 -m venv .venv
 
 **2026-10-28 实机修复**：TDX原生`.day`文件会包含2004年前历史记录，原探测器把分钟线`2004`压缩日期纪元误用于全部`.day`历史，导致用户本机`sh600000.day`的整文件读取被`calendar is outside 2004..2100`中断。现按格式分开：日线1990–2100年、分钟线2004–2100年，保留日期/价格/顺序校验；新增跨1999–2026合成日线和非法年份负测试。仍需Windows实机重跑，详情见[TDX原生探测协议与修复记录](docs/2026_TDX_NATIVE_READONLY_PROBE_V1.md)。
 
+## ▶ 真实10组241→240候选预演全部通过；独立审计交叉门槛（2026-10-28）
+
+用户Windows已通过新增8项候选预演合成测试，并回传所有10组真实
+只读标准化预演安全JSON（4只股票、4个日期、两个月）：
+每组四道六字段检查首根1/1、余239/239、全240/240、五分钟48/48
+全部通过；241原始分钟在内存候选里全部有贡献，未改源数据。
+10组全240根最大价格字段相对误差5.08e-08、成交量0、
+成交额1.07e-08，不能宣称浮点位级一致。
+新增[summarize-tdx-parquet-normalization-previews-readonly.py](tools/summarize-tdx-parquet-normalization-previews-readonly.py)
+安全汇总工具，支持与已运行的10股票日原始开盘审计cohort
+逐股票日期交叉核对TDX全文件SHA及Parquet stat-only清单指纹；
+新增8项合成测试尚待Windows。操作见[十组预演安全交叉验收](docs/2026_TDX_PARQUET_10_PREVIEW_COHORT_SAFE_GATE.md)。
+**不输出任何行情，不做生产转换或自动并集。**
 ## ▶ 首份241→240候选预演真实数据已通过（2026-10-28）
 
 用户实际回传SH600000/2026-09-30候选预演安全JSON：内存241→240映射的首根六字段1/1、剩余239根六字段239/239、全240根六字段240/240、候选聚合原生48根5min六字段48/48均匹配；成交量/额全240根最大相对误差0，所有241条原始购买分钟均有贡献且原始文件未改。`diagnostic_candidate_matches_both_sources_not_production_certified`，生产认证仍禁止。新增[其余九组股票日的单行PowerShell实际候选预演命令](docs/2026_TDX_PARQUET_241_TO_240_READONLY_PREVIEW.md)；8项合成测试Windows结果仍待回传。

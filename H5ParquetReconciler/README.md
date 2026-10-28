@@ -95,6 +95,10 @@ py -3.11 -m venv .venv
 
 用户Windows运行`test_evaluate_tdx_parquet_case_evidence_readonly.py`的11项测试逐项全部显示ok，并上传两份真实field-disposition安全JSON：SH600000/2026-07-16为单根一分钟High不匹配、五分钟全匹配、日线量无新增冲突；SH600519/2026-06-30同为孤立High不匹配、另有TDX day ↔ Parquet day与Parquet 5min汇总 ↔ Parquet day的Volume双重不一致。两例跨报告来源指纹核验通过，但原分钟差异保留，生产转换仍禁止。本轮不继续开发重复的分钟High工具；使用已存在的`reconcile-local-a-share-h5-parquet.py`执行2026-09-30的day与5min单日有界H5/Parquet覆盖核对。单行PowerShell和证据检查详见[返回主线操作说明](docs/2026_H5_PARQUET_RESUME_BOUNDED_OVERLAP.md)。
 
+## ▶ H5原生1min已逐根重组48/48，下一步只读核验购买Parquet原生1min→5min（2026-10-29）
+
+真实2026-09-30三股票安全报告确认：H5分钟结束标签下240根1min重构H5五分钟48根的OHLC/量/额各字段全部48/48，开始标签仅46个完整窗口且OHLC全字段0匹配；对Parquet 5min同窗口仅有16/17/20根OHLC全字段匹配，H5分钟volume×100后仅9/14/15根成交量匹配。H5内周期自洽不能认证来源真实成交，更不能直接改写Parquet。复用已有[Parquet原生一分钟→五分钟重组工具](tools/validate-parquet-1min-to-5min.py)，新增`--plan-only`安全预检模式，只打开两周期Parquet footer，给出源行与候选字节上界、30M读入预算，不读取行情列；新增2项合成测试（总18，Windows待验收）。单行PowerShell见[新证据与预检说明](docs/2026_H5_ENDLABEL_AND_PQ_1M5M_PREFLIGHT.md)。
+
 ## ▶ 3只沪市高冲突股票分时审计完成，新增H5原生1min重聚合的并行×100诊断（2026-10-29）
 
 Windows实机8项分时分析合成测试逐项通过；真实安全JSON显示SH601579、SH688535、SH688123的全天及上午/下午成交量跨来源候选总和分别一致，但仍有39/34/33根五分钟成交量冲突，区间净差抵消、相邻差值负相关，提示五分钟分配差异而非日总量漏失。只为3只股票筛选144根K线，现有无索引计划仍读取47组Parquet RowGroup、约569万候选源行，优先利用已有完整索引，不直接无限扩大扫描。现已在[原生H5一分钟→五分钟只读交叉验证工具](tools/validate-5min-against-h5-1min.py)中保留原始比较，同时新增H5一分钟成交量合计×100后与购买Parquet五分钟的**并行诊断性候选**，不准自动映射或合并。测试扩展至11项（Windows待验收），详见[单分钟重聚合实验记录](docs/2026_FOCUSED_X100_SESSION_REAGG_1MIN_NEXT.md)。

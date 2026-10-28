@@ -347,6 +347,58 @@ class ParquetOnlyMinuteAggregationTests(unittest.TestCase):
                 M.read_parquet_period(
                     root,"5min",DAY,(SYMBOL,),2)
 
+    def test_metadata_only_preflight_reports_both_period_costs_without_decoding(self):
+        # Generated synthetic Parquet: the footer plan must succeed even
+        # when the chosen decode budget would prohibit a real scan.
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("pyarrow unavailable")
+        def ms(stamp):
+            dt = datetime.strptime(str(stamp), "%Y%m%d%H%M").replace(
+                tzinfo=timezone(timedelta(hours=8)))
+            return int(dt.timestamp() * 1000)
+        with TemporaryDirectory() as d:
+            root = Path(d)
+            for period, stamps in (
+                ("1min", (202609280930, 202609280931, 202609280932)),
+                ("5min", (202609280930, 202609280935))):
+                folder = root / "AllCycleAStockData" / period
+                folder.mkdir(parents=True)
+                bars = [
+                    {"ts": ms(t), "symbol": "688629.XSHG",
+                     "open": 10.0, "high": 11.0, "low": 9.0,
+                     "close": 10.0, "volume": 100.0, "amount": 1000.0}
+                    for t in stamps
+                ]
+                pq.write_table(pa.Table.from_pylist(bars),
+                               folder / "2026-09.parquet", row_group_size=2)
+            for period, expected_rows in (("1min", 3), ("5min", 2)):
+                records, metadata = M.read_parquet_period(
+                    root, period, DAY, (SYMBOL,), 1, plan_only=True)
+                self.assertEqual(records, {})
+                self.assertEqual(metadata["candidate_source_rows_upper_bound"],
+                                 expected_rows)
+                self.assertGreater(metadata["candidate_uncompressed_bytes_upper_bound"], 0)
+                self.assertTrue(metadata["plan_only_metadata_opened"])
+                self.assertFalse(metadata["market_ohlcva_columns_read"])
+                self.assertFalse(metadata["candidate_rows_within_configured_cap"])
+                self.assertEqual(metadata["source_rows_examined"], 0)
+                with self.assertRaisesRegex(ValueError, "exceeds --max-candidate-rows"):
+                    M.read_parquet_period(root, period, DAY, (SYMBOL,), 1)
+
+    def test_missing_source_period_preflight_is_not_falsely_certified(self):
+        with TemporaryDirectory() as d:
+            records, meta = M.read_parquet_period(
+                Path(d), "1min", DAY, (SYMBOL,), 1, plan_only=True)
+            self.assertEqual(records, {})
+            self.assertEqual(meta["availability"], "no_period_files_for_year")
+            self.assertEqual(meta["candidate_source_rows_upper_bound"], 0)
+            self.assertTrue(meta["plan_only_metadata_opened"])
+            self.assertFalse(meta["market_ohlcva_columns_read"])
+            self.assertTrue(meta["candidate_rows_within_configured_cap"])
+
     def test_shareable_json_has_aggregate_counters_not_prices(self):
         one,five=synthetic_pair()
         out=M.compare_symbols(

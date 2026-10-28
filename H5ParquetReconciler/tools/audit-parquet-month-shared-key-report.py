@@ -116,10 +116,16 @@ def audit(report, single_day=None):
                 "no_raw_ohlcva_or_individual_intraday_time_keys_exported"):
         if report.get(key) is not True:
             raise ValueError("Required evidence/caveat flag missing: "+key)
-    for key in ("no_h5_read","source_market_files_modified",
+    # These provenance fields have opposite polarities by design:
+    # "no_h5_read": True means the planner did NOT access H5;
+    # the two action flags below must be False. Keep explicit expectations
+    # so a correctly generated, read-only report is never rejected.
+    if report.get("no_h5_read") is not True:
+        raise ValueError("Expected no_h5_read=true (H5 was not accessed)")
+    for key in ("source_market_files_modified",
                 "automatic_source_union_or_import_performed"):
         if report.get(key) is not False:
-            raise ValueError("Unexpected source modification or H5 use: "+key)
+            raise ValueError("Unexpected source modification or import: "+key)
     signature=source_fingerprint(report)
     try:
         first=date.fromisoformat(report["from_date"])

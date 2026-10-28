@@ -51,86 +51,96 @@ def query_bars(root,symbol,day,locator,*,max_candidate_rows=30000000,
     ctx=query.prepare_query(
         root,canonical,"5min",first,last,max_candidate_rows,max_result_bars)
     full_footer_preflight_seconds=round(time.perf_counter()-stamp,6)
-    stamp=time.perf_counter()
-    membership=gate.validate_locator(locator,ctx,sig_before)
-    locator_validation_seconds=round(time.perf_counter()-stamp,6)
-    allowed=frozenset(membership)
-    restricted=benchmark.arrow_filtered_query(
-        root,canonical,"5min",first,last,max_candidate_rows,
-        max_result_bars,allowed_rowgroups=allowed,prepared_context=ctx)
-    restricted_measurement=restricted["safe_measurement"]
-    if restricted_measurement["row_groups_actually_scanned"]!=len(membership):
-        raise ValueError("Restricted Arrow scanned a different RowGroup count")
-    selected=restricted["bars"]
-    if len(selected)!=locator["matching_source_keys"]:
-        raise ValueError("Locator selected key count mismatches restricted source")
-    delivered=dict(Counter(
-        (bar["source_file_relative_path"],bar["source_row_group"])
-        for bar in selected))
-    if delivered!=membership:
-        raise ValueError("Locator per-RowGroup counts differ from restricted source")
-    full=None
-    if not fast_stat_only:
-        full=benchmark.arrow_filtered_query(
+    # prepare_query() returns open ParquetFile readers shared by every
+    # candidate RowGroup. Explicitly close each DISTINCT reader even when
+    # validation or Arrow parity raises. On Windows, keeping a ParquetFile
+    # alive through mock call history can otherwise block TemporaryDirectory
+    # deletion with WinError 32. Do not rely on garbage collection.
+    readers={id(pf):pf for _,pf,_ in ctx["pending"]}
+    try:
+        stamp=time.perf_counter()
+        membership=gate.validate_locator(locator,ctx,sig_before)
+        locator_validation_seconds=round(time.perf_counter()-stamp,6)
+        allowed=frozenset(membership)
+        restricted=benchmark.arrow_filtered_query(
             root,canonical,"5min",first,last,max_candidate_rows,
-            max_result_bars,prepared_context=ctx)
-        if full["bars"]!=selected:
-            raise ValueError("Full Arrow parity disagrees with locator-restricted result")
-        if (full["safe_measurement"]["candidate_row_groups"]!=
-                restricted_measurement["candidate_row_groups"]):
-            raise ValueError("Query preflights diverged")
-    stamp=time.perf_counter()
-    sig_after=query.private_cache.source_signature(
-        root,"5min",first,last,query.core)
-    source_manifest_after_seconds=round(time.perf_counter()-stamp,6)
-    if sig_before!=sig_after:
-        raise ValueError("Source stat manifest changed during locator query")
-    measurement=restricted["safe_measurement"]
-    safe={
-        "format":"AStockDataTools experimental exact locator 5min query v1",
-        "symbol":canonical,"date":first.isoformat(),"period":"5min",
-        "query_engine":"experimental_arrow_restricted_by_local_complete_key_locator",
-        "matching_bar_count":len(selected),
-        "full_preflight_candidate_row_groups":len(ctx["pending"]),
-        "restricted_row_groups_actually_scanned":len(membership),
-        "footer_candidate_source_rows_upper_bound":ctx["metadata"][
-            "candidate_source_rows_upper_bound"],
-        "restricted_row_group_source_rows_upper_bound":measurement[
-            "row_group_source_rows_upper_bound_actually_scanned"],
-        "restricted_engine_elapsed_seconds":measurement[
-            "query_elapsed_seconds_this_invocation"],
-        "total_invocation_wall_seconds_including_validations":round(
-            time.perf_counter()-started,6),
-        "source_manifest_before_seconds":source_manifest_before_seconds,
-        "full_footer_preflight_seconds":full_footer_preflight_seconds,
-        "locator_validation_seconds":locator_validation_seconds,
-        "source_manifest_after_seconds":source_manifest_after_seconds,
-        "full_footer_preflight_executions_this_invocation":1,
-        "prepared_preflight_context_reused_for_arrow_scans":True,
-        "arrow_engine_seconds_are_scan_only_in_prepared_mode":True,
-        "full_arrow_equality_checked_this_invocation":not fast_stat_only,
-        "full_arrow_seconds_if_verified":(
-            full["safe_measurement"]["query_elapsed_seconds_this_invocation"]
-            if full else None),
-        "source_stat_manifest_sha256":sig_before["manifest_sha256_stat_only"],
-        "source_stat_manifest_file_count":sig_before["manifest_file_count"],
-        "source_stat_manifest_stable_during_query":True,
-        "locator_group_membership_counts_match_restricted_rows":True,
-        "full_original_candidate_budget_enforced":True,
-        "locator_report_is_editable_and_not_signed":True,
-        "source_stat_fingerprint_is_not_content_hash":True,
-        "fast_path_can_silently_omit_bars_if_locator_is_tampered":fast_stat_only,
-        "production_default_engine_unchanged":True,
-        "not_certified_for_unattended_production_pruning":True,
-        "physical_parquet_rows_and_disk_bytes_read_unknown":True,
-        "licensed_ohlcva_in_process_memory_only":True,
-        "raw_ohlcva_in_safe_summary":False,
-        "local_private_ohlcva_cache_used":False,
-        "h5_source_accessed":False,
-        "source_market_files_modified":False,
-        "automatic_source_union_or_import_performed":False,
-    }
-    return {"bars":selected,"safe_summary":safe}
+            max_result_bars,allowed_rowgroups=allowed,prepared_context=ctx)
+        restricted_measurement=restricted["safe_measurement"]
+        if restricted_measurement["row_groups_actually_scanned"]!=len(membership):
+            raise ValueError("Restricted Arrow scanned a different RowGroup count")
+        selected=restricted["bars"]
+        if len(selected)!=locator["matching_source_keys"]:
+            raise ValueError("Locator selected key count mismatches restricted source")
+        delivered=dict(Counter(
+            (bar["source_file_relative_path"],bar["source_row_group"])
+            for bar in selected))
+        if delivered!=membership:
+            raise ValueError("Locator per-RowGroup counts differ from restricted source")
+        full=None
+        if not fast_stat_only:
+            full=benchmark.arrow_filtered_query(
+                root,canonical,"5min",first,last,max_candidate_rows,
+                max_result_bars,prepared_context=ctx)
+            if full["bars"]!=selected:
+                raise ValueError("Full Arrow parity disagrees with locator-restricted result")
+            if (full["safe_measurement"]["candidate_row_groups"]!=
+                    restricted_measurement["candidate_row_groups"]):
+                raise ValueError("Query preflights diverged")
+        stamp=time.perf_counter()
+        sig_after=query.private_cache.source_signature(
+            root,"5min",first,last,query.core)
+        source_manifest_after_seconds=round(time.perf_counter()-stamp,6)
+        if sig_before!=sig_after:
+            raise ValueError("Source stat manifest changed during locator query")
+        measurement=restricted["safe_measurement"]
+        safe={
+            "format":"AStockDataTools experimental exact locator 5min query v1",
+            "symbol":canonical,"date":first.isoformat(),"period":"5min",
+            "query_engine":"experimental_arrow_restricted_by_local_complete_key_locator",
+            "matching_bar_count":len(selected),
+            "full_preflight_candidate_row_groups":len(ctx["pending"]),
+            "restricted_row_groups_actually_scanned":len(membership),
+            "footer_candidate_source_rows_upper_bound":ctx["metadata"][
+                "candidate_source_rows_upper_bound"],
+            "restricted_row_group_source_rows_upper_bound":measurement[
+                "row_group_source_rows_upper_bound_actually_scanned"],
+            "restricted_engine_elapsed_seconds":measurement[
+                "query_elapsed_seconds_this_invocation"],
+            "total_invocation_wall_seconds_including_validations":round(
+                time.perf_counter()-started,6),
+            "source_manifest_before_seconds":source_manifest_before_seconds,
+            "full_footer_preflight_seconds":full_footer_preflight_seconds,
+            "locator_validation_seconds":locator_validation_seconds,
+            "source_manifest_after_seconds":source_manifest_after_seconds,
+            "full_footer_preflight_executions_this_invocation":1,
+            "prepared_preflight_context_reused_for_arrow_scans":True,
+            "arrow_engine_seconds_are_scan_only_in_prepared_mode":True,
+            "full_arrow_equality_checked_this_invocation":not fast_stat_only,
+            "full_arrow_seconds_if_verified":(
+                full["safe_measurement"]["query_elapsed_seconds_this_invocation"]
+                if full else None),
+            "source_stat_manifest_sha256":sig_before["manifest_sha256_stat_only"],
+            "source_stat_manifest_file_count":sig_before["manifest_file_count"],
+            "source_stat_manifest_stable_during_query":True,
+            "locator_group_membership_counts_match_restricted_rows":True,
+            "full_original_candidate_budget_enforced":True,
+            "locator_report_is_editable_and_not_signed":True,
+            "source_stat_fingerprint_is_not_content_hash":True,
+            "fast_path_can_silently_omit_bars_if_locator_is_tampered":fast_stat_only,
+            "production_default_engine_unchanged":True,
+            "not_certified_for_unattended_production_pruning":True,
+            "physical_parquet_rows_and_disk_bytes_read_unknown":True,
+            "licensed_ohlcva_in_process_memory_only":True,
+            "raw_ohlcva_in_safe_summary":False,
+            "local_private_ohlcva_cache_used":False,
+            "h5_source_accessed":False,
+            "source_market_files_modified":False,
+            "automatic_source_union_or_import_performed":False,
+        }
+        return {"bars":selected,"safe_summary":safe}
+    finally:
+        for pf in readers.values():
+            pf.close()
 
 
 def main(argv=None):

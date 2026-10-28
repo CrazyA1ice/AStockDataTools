@@ -80,6 +80,64 @@ class ExactLocatorPreviewTests(unittest.TestCase):
         self.assertNotIn('"close":',wire)
         self.assertNotIn('"amount":',wire)
 
+    class _TrackedParquetFile:
+        def __init__(self, wrapped):
+            self.wrapped=wrapped
+            self.close_calls=0
+
+        def __getattr__(self, name):
+            return getattr(self.wrapped,name)
+
+        def close(self):
+            self.close_calls+=1
+            self.wrapped.close()
+
+    def _captured_preflight(self):
+        """Hold references intentionally, like unittest.mock call history."""
+        original=M.query.prepare_query
+        captured=[]
+        def prepare(*args,**kwargs):
+            ctx=original(*args,**kwargs)
+            proxies={}
+            entries=[]
+            for path,pf,gid in ctx["pending"]:
+                key=id(pf)
+                if key not in proxies:
+                    proxies[key]=self._TrackedParquetFile(pf)
+                entries.append((path,proxies[key],gid))
+            ctx["pending"]=entries
+            captured.extend(proxies.values())
+            return ctx
+        return captured,prepare
+
+    def test_win32_parquet_handles_closed_even_when_mock_retains_context(self):
+        loc=self.fixture()
+        for fast in (False,True):
+            with self.subTest(fast=fast):
+                readers,prepare=self._captured_preflight()
+                with mock.patch.object(M.query,"prepare_query",
+                                       side_effect=prepare) as patched:
+                    result=M.query_bars(
+                        self.root,"SH600000","2026-09-30",loc,
+                        fast_stat_only=fast)
+                    self.assertEqual(patched.call_count,1)
+                    self.assertEqual(len(result["bars"]),2)
+                    self.assertTrue(readers)
+                    # Even with readers and patched call history alive,
+                    # Windows must be able to delete the temporary Parquet.
+                    self.assertTrue(all(r.close_calls==1 for r in readers))
+
+    def test_win32_parquet_handles_closed_on_locator_validation_error(self):
+        loc=self.fixture()
+        readers,prepare=self._captured_preflight()
+        bad=dict(loc,source_stat_manifest_sha256="0"*64)
+        with mock.patch.object(M.query,"prepare_query",
+                               side_effect=prepare):
+            with self.assertRaisesRegex(ValueError,"stale or mismatched"):
+                M.query_bars(self.root,"SH600000","2026-09-30",bad)
+        self.assertTrue(readers)
+        self.assertTrue(all(r.close_calls==1 for r in readers))
+
     def test_explicit_fast_path_skips_full_query_but_counts_check(self):
         loc=self.fixture()
         original=M.benchmark.arrow_filtered_query

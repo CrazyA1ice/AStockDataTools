@@ -124,7 +124,13 @@ class BoundarySurveyTests(unittest.TestCase):
                        64*1024*1024,10000)
         self.assertEqual(r["samples"][0]["reason_category"],
                          "source_or_validation_error_unclassified")
-        self.assertNotIn("private",json.dumps(r))
+        # The safe report legitimately contains a key named
+        # "no_private_source_paths_in_report". Check the actual simulated
+        # sensitive path and exception text, not the generic word "private".
+        payload=json.dumps(r)
+        self.assertNotIn(json.dumps("D:\\private\\source")[1:-1],payload)
+        self.assertNotIn("Unexpected vendor time convention",payload)
+        self.assertTrue(r["no_private_source_paths_in_report"])
         self.assertFalse(r["all_requested_samples_match"])
 
     def test_invalid_cases_duplicate_or_limits_rejected_before_any_read(self):

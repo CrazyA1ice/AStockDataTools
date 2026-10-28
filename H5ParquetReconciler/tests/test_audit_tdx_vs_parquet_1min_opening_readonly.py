@@ -20,10 +20,10 @@ SYMBOL="SH600000"
 OHLC={"open":10.,"high":11.,"low":9.,"close":10.}
 
 
-def minute_bytes(t):
+def minute_bytes(t,volume=2,amount=20.,opening=10.):
     packed=(2026-2004)*2048+9*100+30
     return struct.pack("<HHfffffII",
-                       packed,t,10.,11.,9.,10.,20.,2,0)
+                       packed,t,opening,11.,9.,10.,amount,volume,0)
 
 
 def synthetic_pq(opening_volume=0.,opening_amount=0.,shared_volume=2.):
@@ -95,6 +95,8 @@ class OpeningMinuteAuditTests(unittest.TestCase):
         self.assertTrue(extra["opening_zero_volume"])
         self.assertEqual(extra["aggregation_hypothesis_outcome"],
                          "both_hypotheses_match_within_tolerance")
+        merge=report["first_minute_opening_merge_hypothesis"]
+        self.assertTrue(merge["all_240_all_six_fields_match_after_merge"])
         self.assertFalse(report["eligible_for_automatic_production_union"])
 
     def test_nonzero_opening_contributes_only_if_included(self):
@@ -110,6 +112,52 @@ class OpeningMinuteAuditTests(unittest.TestCase):
             "volume"]["within_diagnostic_tolerance"],1)
         self.assertTrue(report[
             "first_0930_key_never_synthesized_or_dropped_for_production"])
+
+    def test_realistic_0930_and_0931_merge_matches_native_first_bar(self):
+        # Synthetic opening observation contains real nonzero turnover and
+        # different opening price. Native's FIRST 09:31 record represents
+        # the aggregation of this opening observation with regular 09:31.
+        rows=synthetic_pq(opening_volume=7.,opening_amount=70.)
+        rows["1min"][0].update({
+            "open":9.9,"high":9.9,"low":9.9,"close":9.9})
+        rows["5min"][0]["open"]=9.9
+        minutes=M.probe.time_profiles("1min")["1min_end_240"]
+        self.tdx.write_bytes(b"".join(
+            minute_bytes(t,volume=9,amount=90.,opening=9.9)
+            if index==0 else minute_bytes(t)
+            for index,t in enumerate(minutes)))
+        report=self.examine(rows)
+        diagnostic=report["first_minute_opening_merge_hypothesis"]
+        self.assertFalse(
+            M._within_all(diagnostic[
+                "native_0931_vs_parquet_0931_without_opening"]))
+        self.assertTrue(
+            diagnostic["first_minute_all_six_fields_match_after_merge"])
+        self.assertTrue(diagnostic["remaining_239_all_six_fields_match"])
+        self.assertTrue(diagnostic["all_240_all_six_fields_match_after_merge"])
+        for metrics in diagnostic[
+                "all_240_native_vs_first_merged_plus_remaining_239"].values():
+            self.assertEqual(metrics["n"],240)
+            self.assertEqual(metrics["within_diagnostic_tolerance"],240)
+        self.assertTrue(diagnostic[
+            "opening_merge_is_only_a_hypothesis_not_a_mapping_rule"])
+        self.assertFalse(report["eligible_for_automatic_production_union"])
+
+    def test_opening_merge_is_rejected_when_first_native_bar_does_not_contain_it(self):
+        # Opening Parquet record is nonzero but synthetic native 09:31
+        # still only contains the regular minute: flag, never auto-merge.
+        report=self.examine(
+            synthetic_pq(opening_volume=7.,opening_amount=70.))
+        diagnostic=report["first_minute_opening_merge_hypothesis"]
+        self.assertFalse(
+            diagnostic["first_minute_all_six_fields_match_after_merge"])
+        self.assertTrue(diagnostic["remaining_239_all_six_fields_match"])
+        self.assertFalse(diagnostic[
+            "all_240_all_six_fields_match_after_merge"])
+        first=diagnostic[
+            "native_0931_vs_aggregation_of_parquet_0930_and_0931"]
+        self.assertEqual(first["volume"]["within_diagnostic_tolerance"],0)
+        self.assertEqual(first["amount"]["within_diagnostic_tolerance"],0)
 
     def test_100x_shared_minute_volume_surfaces_as_ratio(self):
         report=self.examine(synthetic_pq(shared_volume=200.))

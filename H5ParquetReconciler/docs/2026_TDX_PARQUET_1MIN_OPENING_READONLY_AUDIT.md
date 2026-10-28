@@ -1,5 +1,72 @@
 # 2026-10-28：SH600000真实跨来源day/5min一致；Parquet额外09:30分钟记录只读诊断
 
+## 2026-10-28 真实241根一分钟报告回传：开盘合并假说进一步核对
+
+用户本机真实 `tdx-vs-pq-sh600000-20260930-1min-opening-audit.json`
+已经证明 SH600000、2026-09-30：
+
+- TDX分钟240、Parquet分钟241、Parquet五分钟48，源文件完整性验证通过。
+- **共同240根：** high/low/close三项均240/240匹配；
+  open/volume/amount各239/240匹配。开盘价最大相对差
+  0.0021692263，成交量最大相对差0.0991382916，
+  成交额最大相对差0.0992703168。报告未输出具体错位时间，
+  不能仅凭239/240就断言差异必然是09:31。
+- Parquet的额外**09:30**开盘记录volume、amount均非零，
+  且它的open不同于09:31常规开盘价；纳入09:30后
+  Parquet 1min→原生Parquet 5min 的48组OHLCVA**全部匹配**。
+  不纳入则第一根5min开盘价、volume、amount不匹配，
+  第一根volume相对差约0.0410460686、
+  amount相对差约0.0410340581。
+- **待验证的新解释：** TDX原生09:31可能已经合并了Parquet
+  的09:30与09:31两条记录（如开盘阶段成交归属不同）。
+  需要明确比较：TDX 09:31一根OHLCVA
+  **vs** Parquet 09:30+09:31两根OHLCVA合并结果；
+  其余239根是否逐根吻合；检查合并后240根是否全六字段吻合。
+  不可提前标记为已认证转换规则。
+
+因此扩展`audit-tdx-vs-parquet-1min-opening-readonly.py`，
+在**原始两源各一次只读读取的数据**上额外输出：
+
+- `first_minute_opening_merge_hypothesis.native_0931_vs_parquet_0931_without_opening`
+- `first_minute_opening_merge_hypothesis.native_0931_vs_aggregation_of_parquet_0930_and_0931`
+- `first_minute_opening_merge_hypothesis.remaining_239_native_vs_parquet`
+- `first_minute_opening_merge_hypothesis.all_240_native_vs_first_merged_plus_remaining_239`
+- 三个独立布尔结论，用来表明合并前、合并后与其余239根的
+  容差匹配结果。即使全部通过，仍然
+  `opening_merge_is_only_a_hypothesis_not_a_mapping_rule=true`、
+  `eligible_for_automatic_production_union=false`。
+
+本次新增2项合成回归：
+1. 真实模拟：Parquet09:30记录价、量、额非零、开盘价不同于
+   Parquet09:31；TDX09:31聚合包含两根数据，需出现
+   原始第一根不匹配→合并后六字段全部匹配、其余239根匹配。
+2. 反例：即使Parquet09:30非零，如果TDX09:31不包含这些值，
+   必须明确将合并假说标记为不通过，而不能进行静默修正。
+
+### Windows复验（仓库根目录）
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\audit-tdx-vs-parquet-1min-opening-readonly.py
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_tdx_vs_parquet_1min_opening_readonly.py" -v
+```
+
+此前已存在报告同名文件，**必须换新名称**，否则CLI拒绝覆盖：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-tdx-vs-parquet-1min-opening-readonly.py --parquet-root "D:\stock" --tdx-1min-file "D:\software\TDX\vipdoc\sh\minline\sh600000.lc1" --symbol SH600000 --date 2026-09-30 --read-only --out "reports\tdx-vs-pq-sh600000-20260930-first-minute-merge-v2.json"
+```
+
+这次复验不增加新的Parquet行组扫描范围：仍使用单股单日
+1min与5min两周期，数据未出本机内存，仅新增字段级统计。
+工具新增回归测试现为10项，**Windows真实执行结果尚未回传**。
+报告可以提供给ChatGPT，不能上传真实原生二进制/Parquet
+或包含市场OHLCVA明细的JSON。
+
+---
+
+
+
 ## 前置真实证据（来自用户上传的安全JSON）
 
 `tdx-vs-pq-sh600000-20260930-day5min.json`：

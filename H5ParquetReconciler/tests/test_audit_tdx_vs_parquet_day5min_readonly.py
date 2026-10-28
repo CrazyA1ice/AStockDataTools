@@ -37,8 +37,13 @@ def fixture():
         "symbol":SYMBOL,"period":"day","trading_date":DAY,
         "source_beijing_time":DAY+" 00:00",**dict(zip(M.FIELDS,DAY_VALUE)),
     }]
-    evidence={"input":{period:{"source_content_sha256":period[0]*64}
-                       for period in ("day","5min","1min")}}
+    evidence={
+        "input":{period:{"source_content_sha256":period[0]*64}
+                 for period in ("day","5min","1min")},
+        "comparisons":{"one_minute_aggregate_vs_five_minute_native":{
+            name:{"n":48,"within_diagnostic_tolerance":48}
+            for name in M.FIELDS}},
+    }
     parquet_src={p:{"source_files_examined":1,
          "candidate_source_rows_upper_bound":100,
          "matching_bar_count":n,
@@ -83,6 +88,8 @@ class TdxVsParquetAuditTests(unittest.TestCase):
                 self.assertEqual(metric["n"],metric["within_diagnostic_tolerance"])
                 self.assertEqual(metric["max_relative_error"],0)
         self.assertTrue(report["parquet_one_minute_241_special_opening_not_compared"])
+        self.assertTrue(report["tdx_internal_three_period_all_fields_within_tolerance"])
+        self.assertIn("parquet_5min_aggregate_vs_parquet_daily",report["comparisons"])
         self.assertFalse(report["eligible_for_automatic_production_union"])
         self.assertFalse(report["staging_or_production_union_performed"])
 
@@ -172,7 +179,7 @@ class TdxVsParquetAuditTests(unittest.TestCase):
             path=self.reports/"tdx-parquet-safe-test.json"
             blob=path.read_text()
             doc=json.loads(blob)
-            self.assertFalse(doc["no_raw_ohlcva_or_individual_times_in_report"] is False)
+            self.assertTrue(doc["no_raw_ohlcva_or_individual_times_in_report"])
             self.assertEqual(doc["symbol"],SYMBOL)
             for raw in ('"open": 10','"volume": 480','"amount": 4800',
                         '"source_beijing_time"','"bars"'):

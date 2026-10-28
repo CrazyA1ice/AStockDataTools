@@ -19,6 +19,42 @@
 - https://www.sse.com.cn/disclosure/announcement/general/c/c_20260915_10832273.shtml
 - https://www.szse.cn/www/disclosure/notice/general/t20260917_622911.html
 
+## 2026-10-28：Windows 原生日线实机问题修复（历史数据早于2004年）
+
+用户对本机`D:\\software\\TDX\\vipdoc\\sh\\lday\\sh600000.day`，
+指定2026-10-27执行单文件只读探测时，收到
+`Native TDX source calendar is outside 2004..2100`。
+原探测器**扫描整份文件**，`.day`字段直接是`YYYYMMDD`，
+却错误地把`.lc1/.lc5`采用的**2004压缩日期纪元**
+也用于`.day`全部历史记录。沪市股票的正常日线历史可能早于2004，
+因此此约束会误拒绝合法的旧日线。
+
+现修复为**按周期分开限制**：
+- `.day`：完整原文件的记录日期及用户指定日期允许**1990～2100**年；
+  仍验证每条记录的真实日历合法性、OHLCVA、时间键严格递增，
+  对1990之前和2100之后的记录继续失败封闭。
+- `.lc1/.lc5`：维持压缩日期纪元**2004**起、上界2100的单独规则，
+  不放宽分钟线格式或价格检核。
+- 遇到坏记录时追加其**1基记录序号**及解码年份（仅日期元信息、
+  不暴露价格），方便追查真实异常。
+- 新增1999→2003→2004→2026的跨期日线合成测试，以及1989、2101
+  与分钟线2003日期的负测试；**无真实行情文件在GitHub中读取或上传**。
+
+注意：此次错误文本**只能说明至少有一条记录被旧日期限制拒绝**，
+不能仅凭报错证明它一定是1999年合法数据；修复后的安全摘要会报告
+`source_first_date`、`source_last_date`，可据此核验。
+原失败发生在JSON写出前，因此重跑通常可以沿用原`--out`名称。
+源仍只读，暂存/主库/购买Parquet/H5均不变。
+
+Windows验证：
+```powershell
+git pull --ff-only origin main
+.\\.venv\\Scripts\\python.exe -m py_compile H5ParquetReconciler\\tools\\probe-tdx-native-readonly.py
+.\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_probe_tdx_native_readonly.py" -v
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\probe-tdx-native-readonly.py --source "D:\\software\\TDX\\vipdoc\\sh\\lday\\sh600000.day" --symbol SH600000 --date 2026-10-27 --read-only --out "reports\\tdx-native-sh600000-day-20261027-probe.json"
+```
+若报告名已存在，换一个新的`-v2.json`。**实机测试待用户回传**。
+
 ## 本轮支持的候选通达信二进制布局
 
 常见的32字节无文件头、小端格式（以下**不是对用户当前安装版本的实测**）：

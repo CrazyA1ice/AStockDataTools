@@ -24,6 +24,11 @@ ROW_BYTES=32
 DAY=struct.Struct("<IIIIIfII")
 MINUTE=struct.Struct("<HHfffffII")
 FORMAT="AStockDataTools bounded TDX native binary read-only probe v1"
+# YYYYMMDD day files can contain records from before the compressed
+# intraday format's 2004 epoch. Shanghai's exchange opened in 1990.
+MIN_DAY_YEAR=1990
+MIN_INTRADAY_YEAR=2004
+MAX_YEAR=2100
 
 
 def time_profiles(period):
@@ -59,15 +64,16 @@ def _symbol_and_period(file):
     return match.group(0),period
 
 
-def _date(value):
+def _date(value,period):
     if type(value) is not str:
         raise ValueError("Date must be YYYY-MM-DD")
     try:
         d=date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("Bad probe date") from exc
-    if d.isoformat()!=value or not 2004<=d.year<=2100:
-        raise ValueError("Probe date outside 2004..2100")
+    lower=MIN_DAY_YEAR if period=="day" else MIN_INTRADAY_YEAR
+    if d.isoformat()!=value or not lower<=d.year<=MAX_YEAR:
+        raise ValueError(f"Probe {period} date outside {lower}..{MAX_YEAR}")
     return d
 
 
@@ -89,8 +95,11 @@ def _decode(raw,period):
         decoded=date(y,m,d)
     except ValueError as exc:
         raise ValueError("Invalid native TDX packed calendar date") from exc
-    if not 2004<=decoded.year<=2100:
-        raise ValueError("Native TDX source calendar is outside 2004..2100")
+    earliest=MIN_DAY_YEAR if period=="day" else MIN_INTRADAY_YEAR
+    if not earliest<=decoded.year<=MAX_YEAR:
+        raise ValueError(
+            f"Native TDX {period} source calendar year {decoded.year} "
+            f"is outside {earliest}..{MAX_YEAR}")
     if (any(not math.isfinite(v) or v<=0 or v>1e9 for v in prices)
             or not math.isfinite(amount) or amount<0 or amount>1e20
             or volume<0 or
@@ -110,7 +119,7 @@ def inspect(source,symbol,requested_date,max_source_bytes=MAX_SOURCE_BYTES):
     canonical,period=_symbol_and_period(file)
     if type(symbol) is not str or canonical!=symbol:
         raise ValueError("Requested symbol must equal canonical filename")
-    target=_date(requested_date)
+    target=_date(requested_date,period)
     if (type(max_source_bytes) is not int or
             not ROW_BYTES<=max_source_bytes<=MAX_SOURCE_BYTES):
         raise ValueError("Invalid bounded source byte limit")
@@ -127,12 +136,18 @@ def inspect(source,symbol,requested_date,max_source_bytes=MAX_SOURCE_BYTES):
     prev=None
     digest=hashlib.sha256()
     with file.open("rb") as handle:
-        for _ in range(stats.st_size//ROW_BYTES):
+        for row_index in range(stats.st_size//ROW_BYTES):
             raw=handle.read(ROW_BYTES)
             if len(raw)!=ROW_BYTES:
                 raise ValueError("Source truncated during read")
             digest.update(raw)
-            day,minute=_decode(raw,period)
+            try:
+                day,minute=_decode(raw,period)
+            except ValueError as exc:
+                # Reveal record position and decoded calendar year (if bad),
+                # never licensed OHLCVA or individual source time keys.
+                raise ValueError(
+                    f"Native TDX record #{row_index + 1}: {exc}") from exc
             current=(day,minute if minute is not None else -1)
             if prev is not None and current<=prev:
                 raise ValueError("Native source has duplicate/nonascending time keys")

@@ -297,7 +297,7 @@ def compare_symbols(one, five, one_scan, five_scan, symbols, day):
     return output
 
 
-def read_parquet_period(root, period, day, symbols, max_candidate_source_rows):
+def read_parquet_period(root, period, day, symbols, max_candidate_source_rows, *, plan_only=False):
     """Bounded rowgroup scan; only selected symbol/day tuples persist in RAM."""
     import pyarrow as pa
     import pyarrow.compute as pc
@@ -312,6 +312,7 @@ def read_parquet_period(root, period, day, symbols, max_candidate_source_rows):
         "row_groups_skipped_symbol_statistics": 0,
         "candidate_row_groups_to_read": 0,
         "candidate_source_rows_upper_bound": 0,
+        "candidate_uncompressed_bytes_upper_bound": 0,
         "source_rows_examined": 0,
         "selected_source_rows": 0,
         "duplicate_keys": 0,
@@ -342,7 +343,17 @@ def read_parquet_period(root, period, day, symbols, max_candidate_source_rows):
                 continue
             result["candidate_row_groups_to_read"] += 1
             result["candidate_source_rows_upper_bound"] += int(rg.num_rows)
+            result["candidate_uncompressed_bytes_upper_bound"] += int(rg.total_byte_size)
             pending.append((path, pf, idx))
+    if plan_only:
+        # Strictly metadata-only: no iter_batches/column values, including
+        # when candidate row-group count exceeds the selected decode budget.
+        result["plan_only_metadata_opened"] = True
+        result["market_ohlcva_columns_read"] = False
+        result["source_rows_examined"] = 0
+        result["candidate_rows_within_configured_cap"] = (
+            result["candidate_source_rows_upper_bound"] <= max_candidate_source_rows)
+        return {}, result
     if result["candidate_source_rows_upper_bound"] > max_candidate_source_rows:
         raise ValueError(
             f"{period} Parquet candidate rowgroups contain "
@@ -402,6 +413,8 @@ def main(argv=None):
     ap.add_argument("--max-candidate-rows", type=int, default=30000000,
                     help="Per-period source rowgroup decoded-row safety cap (default 30M)")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--plan-only", action="store_true",
+                    help="Only inspect both period Parquet row-group metadata; do not read any OHLCVA")
     ap.add_argument("--read-only", action="store_true", required=True)
     args = ap.parse_args(argv)
     try:
@@ -419,6 +432,34 @@ def main(argv=None):
             or not output.is_relative_to((HERE.parent / "reports").resolve())
             or output.exists()):
             raise ValueError("Choose a new, unused JSON inside module reports/")
+        if args.plan_only:
+            _, five_plan = read_parquet_period(
+                root, "5min", day, symbols, args.max_candidate_rows,
+                plan_only=True)
+            _, one_plan = read_parquet_period(
+                root, "1min", day, symbols, args.max_candidate_rows,
+                plan_only=True)
+            report = {
+                "format": "AStockDataTools Parquet only 1min to 5min metadata preflight v1",
+                "date": day.isoformat(), "symbols": list(symbols),
+                "parquet_5min_plan": five_plan, "parquet_1min_plan": one_plan,
+                "max_candidate_rows_per_period": args.max_candidate_rows,
+                "both_periods_within_configured_cap": (
+                    five_plan["candidate_rows_within_configured_cap"]
+                    and one_plan["candidate_rows_within_configured_cap"]),
+                "plan_only_metadata_opened": True,
+                "raw_ohlcva_columns_read": False,
+                "no_h5_source_accessed": True,
+                "source_market_files_modified": False,
+                "source_correctness_certified": False,
+                "safe_to_automatically_union": False,
+            }
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with output.open("x", encoding="utf-8") as fp:
+                json.dump(report, fp, ensure_ascii=False, indent=2)
+                fp.write("\n")
+            print("Saved metadata-only 1min/5min Parquet read plan:", output, flush=True)
+            return
         five, five_scan = read_parquet_period(
             root, "5min", day, symbols, args.max_candidate_rows)
         print("Parquet 5min selected:", len(five),

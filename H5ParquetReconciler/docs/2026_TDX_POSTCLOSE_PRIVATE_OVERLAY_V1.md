@@ -97,6 +97,18 @@ stage和rollback使用独占lock，所有指针更新先写同目录临时文件
 以及本地活动指针`active.json`。版本是**本机未加密的真实价量额**，
 禁止上传或提交`work/`目录。仅上传`reports/`安全摘要。
 
+## 2026-10-28 Windows导入语法错误修复
+
+用户本机`unittest discover`报告`tdx-postclose-private-overlay.py:373`
+`SyntaxError: invalid syntax`，在导入阶段停止，**8项测试未实际执行**。
+检查发现`result=dict(summary, "format": "...", ...)`错误混用字典字面量
+`"key": value`与`dict()`调用语法。已改为
+`dict(summary, **{"format": "...", ...})`，保持安全报告字段与业务行为原样，
+并在既有CLI合成测试中增加`format`和6个安全标志校验。
+语法尾段已单独通过Python的`compile()`检查；**完整模块Windows回归
+仍要以用户本机命令的测试输出为准**。本轮不涉及真实源/私有版本修改，
+不需要生成任何新行情或上传原始付费数据。
+
 ## Windows命令（仓库根目录）
 
 ```powershell

@@ -171,6 +171,14 @@ class TdxPrivateOverlayTests(unittest.TestCase):
         doc=json.loads((self.reports/"tdx-validate.json").read_text())
         self.assertFalse(doc["raw_ohlcva_in_report"])
         self.assertEqual(doc["outcome"],"validated_only")
+        self.assertEqual(doc["format"],
+                         "AStockDataTools local TDX postclose overlay safe action summary v1")
+        self.assertIs(doc["raw_ohlcva_in_report"],False)
+        self.assertIs(doc["source_market_files_modified"],False)
+        self.assertIs(doc["original_parquet_or_h5_accessed"],False)
+        self.assertIs(doc["production_query_automatically_changed"],False)
+        self.assertIs(doc["private_data_only_under_gitignored_work"],False)
+        self.assertTrue(doc["source_timestamp_units_and_adjustment_unverified"])
         self.assertFalse(self.work.exists())
         stage=[
             "--action","stage","--input",str(source),"--allow-private-copy",

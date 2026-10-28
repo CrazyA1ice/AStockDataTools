@@ -48,6 +48,63 @@ class MinuteIndependentCrosscheckTests(unittest.TestCase):
         self.assertEqual(v["bar_over_one_minute_sum_volume_ratio"]["median"],1.0)
         self.assertEqual(v["price_field_agree"]["high"],1)
 
+    def test_pq_volume_x100_candidate_is_parallel_to_raw_baseline(self):
+        pq_end = {(self.symbol, self.end): (
+            self.expected[0], self.expected[1], self.expected[2],
+            self.expected[3], 1500, self.expected[5])}
+        before = dict(self.minute)
+        raw = M.compare_to_reaggregation(
+            self.minute, pq_end, self.symbol, "minute_end_label")
+        candidate = M.compare_to_reaggregation(
+            self.minute, pq_end, self.symbol, "minute_end_label",
+            minute_volume_factor=100)
+        self.assertEqual(raw["volume_agree"], 0)
+        self.assertEqual(candidate["volume_agree"], 1)
+        self.assertEqual(raw["all_ohlc_agree"], candidate["all_ohlc_agree"])
+        self.assertEqual(raw["amount_agree"], candidate["amount_agree"])
+        self.assertEqual(raw["bar_over_one_minute_sum_volume_ratio"]["median"], 100.0)
+        self.assertEqual(candidate["bar_over_one_minute_sum_volume_ratio"]["median"], 1.0)
+        self.assertEqual(candidate["h5_minute_volume_factor_diagnostic_only"], 100)
+        self.assertFalse(candidate["volume_factor_certified"])
+        self.assertFalse(candidate["raw_market_values_modified"])
+        self.assertEqual(self.minute, before)
+
+    def test_crosscheck_keeps_raw_and_x100_candidate_separately(self):
+        pq = {(self.symbol, 202509300930): (
+            self.expected[0], self.expected[1], self.expected[2],
+            self.expected[3], 1500, self.expected[5])}
+        coverage = {self.symbol: {
+            "availability": "has_records", "one_minute_rows": 5,
+            "duplicate_minute_keys": 0}}
+        cross = M.build_crosscheck(
+            self.h5, pq, self.minute, coverage, (self.symbol,))[self.symbol]
+        group = cross["one_minute_reaggregation"]["minute_end_label"]
+        self.assertEqual(group["H5_5min"]["volume_agree"], 1)
+        self.assertEqual(group["Parquet_5min"]["volume_agree"], 0)
+        self.assertEqual(group["Parquet_5min_H5_1min_volume_x100_candidate"]["volume_agree"], 1)
+        self.assertEqual(group["Parquet_5min"]["all_ohlc_agree"], 1)
+        self.assertEqual(group["Parquet_5min_H5_1min_volume_x100_candidate"]["all_ohlc_agree"], 1)
+
+    def test_incomplete_window_and_invalid_factor_fail_closed(self):
+        pq_end = {(self.symbol, self.end): (
+            self.expected[0], self.expected[1], self.expected[2],
+            self.expected[3], 1500, self.expected[5])}
+        truncated = dict(self.minute)
+        truncated.pop((self.symbol, 202509300933))
+        diag = M.compare_to_reaggregation(
+            truncated, pq_end, self.symbol, "minute_end_label",
+            minute_volume_factor=100)
+        self.assertEqual(diag["complete_minute_windows"], 0)
+        self.assertEqual(diag["incomplete_minute_windows"], 1)
+        self.assertEqual(diag["volume_agree"], 0)
+        self.assertEqual(diag["all_ohlc_agree"], 0)
+        for invalid in (0, 10, 1000, True, 100.0, "100"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    ValueError, "predeclared"):
+                M.compare_to_reaggregation(
+                    self.minute, pq_end, self.symbol, "minute_end_label",
+                    minute_volume_factor=invalid)
+
     def test_incomplete_minute_window_is_not_reported_as_price_conflict(self):
         partial=dict(self.minute)
         del partial[(self.symbol,202509300933)]

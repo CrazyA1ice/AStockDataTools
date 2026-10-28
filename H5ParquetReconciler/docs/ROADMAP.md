@@ -6,6 +6,12 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ Windows 332项测试仅余Parquet临时文件WinError32：修复句柄生命周期（2026-10-28）
+
+- [x] 用户日志：`Ran 332 tests in 16.841s / FAILED (errors=1)`，唯一`test_explicit_fast_path_skips_full_query_but_counts_check`在`TemporaryDirectory.cleanup()`删除合成`2026-09.parquet`时触发Windows `WinError 32`。没有行情结果不一致证据。
+- [x] 根因代码审查：实验`query-parquet-exact-locator-preview.py`复用`prepared_context`中的`ParquetFile`，但未显式关闭；Mock可能延长引用。新增`finally`对共享Reader按对象去重关闭，无论成功或异常；追加2项合成测试验证生命周期和失败路径。正式查询、缓存、旧索引、原始源均不变。详见[修复记录](2026_WINDOWS_PARQUET_HANDLE_RELEASE_FIX.md)。
+- [ ] Windows先针对`test_query_parquet_exact_locator_preview.py`回归，再全套`test*.py`。预期332+2项但以实测为准，不得预报已通过。通过后再推进之前single-preflight性能报告与月度索引评估。
+
 ## ▶ 定位查询端到端开销优化：避免同请求重复Footer预检（2026-10-28）
 
 - [x] 最新真实回传：SH600000/2026-09-30/5min默认全量校验模式总**5.763604s**（缩组Arrow1.573799s，full Arrow复核2.136311s）；实验快路径总**1.641963s**（缩组Arrow0.646492s），两者均48根、源stat一致、仅18组数据读。快路径**当次无full等值校验**，未签名locator不能生产自动剪枝。

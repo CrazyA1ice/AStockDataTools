@@ -83,6 +83,10 @@ py -3.11 -m venv .venv
 
 真实H5、购买的Parquet都继续保存在 `D:\stock`，脚本只读，不会把它们复制到模块内。若你的整个项目位于 `D:\stock` 源树之下，仍会拒绝生成报告，以保护源行情不被写入。
 
+## ▶ 多股票同交易日共享5分钟键列扫描试点（2026-10-28）
+
+新增`tools/plan-parquet-5min-multisymbol-day-keyscan.py`：为**2～8只不同A股**在同一个交易日，先合并所有股票的真实Footer候选RowGroup，再对**并集仅完整扫描一遍`ts/symbol`**，一次生成每只股票实际有数据的行组编号及匹配键数。与分别为每只股票建单日locator相比，可直接衡量重复扫描的理论上限，先收集收益证据，**不直接新建全月生产索引**。强制所有候选源行/行组预算、真实候选全覆盖、北京时间键验证、重复键检测、源stat前后保护、`ExitStack`关闭全部Parquet读取器；仅在模块`reports/`写入安全无OHLCVA新JSON，不读取H5/不修改购买源/不碰默认查询和私有缓存。新增7项合成测试，待Windows实测。详见[试点原理、验收命令和局限](docs/2026_5MIN_SHARED_MULTISYMBOL_SINGLE_DAY_KEYSCAN_PILOT.md)。
+
 ## ✅ 修复Windows实验测试 ParquetFile未释放导致的 WinError 32（2026-10-28）
 
 用户本机全套`332`项测试中，**331项未报错、仅一项在TemporaryDirectory清理时出现`WinError 32`**。核查发现新实验定位查询共享预检上下文中的`ParquetFile`读取器，但未显式close，Mock保留引用可导致Windows临时源文件无法删除。本轮在实验预览中增加唯一读取器`try/finally close()`，覆盖成功及异常路径，并新增2项保留对象引用和失败清理的合成回归。**尚待Windows重新跑全套测试**；生产默认查询和付费源行情未修改。详见[Windows文件句柄修复与验收](docs/2026_WINDOWS_PARQUET_HANDLE_RELEASE_FIX.md)。

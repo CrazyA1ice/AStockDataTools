@@ -6,6 +6,12 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 从单证券定位走向多证券共用键扫描：先做2～8只同日试点（2026-10-28）
+
+- [x] 新增`plan-parquet-5min-multisymbol-day-keyscan.py`，只读同日2～8只A股的5min源：先用全部source Footer建立**多股票候选RowGroup并集**并预检原始候选源行与行组完整上限，再只扫描一次`ts/symbol`键列，按股票输出真实非空组、键数及与分别建单股票索引相比的理论源行上限节省。不产生可复用生产索引、不读取价量额、不触碰H5/Parquet原件/2025V3索引/正式查询，自动显式关闭全部读取器。新增7项合成测试（含与旧单股票`plan()`输出严格比较和Win32资源释放）；待Windows验收。
+- [ ] 优先跑全部合成测试，阻止既有`WinError 32`的遗留问题。随后在`SH600000,SZ000001,SZ300750`同日2026-09-30上做一次共享键扫描，回传安全JSON。应核对SH600000仍48键/18组、源stat一致；统计多股票共享`whole_planning_seconds`而非把组行上限错当物理IO节省。详见[多股票共享键试点文档](2026_5MIN_SHARED_MULTISYMBOL_SINGLE_DAY_KEYSCAN_PILOT.md)。
+- [ ] 依据共享/独立真实成本决定是否值得为2026-09设计持久月度证券日索引；届时先实现可验证完整性、失效重建、回源一致性及回滚，**不以可编辑的未签名JSON作为生产可信剪枝依据**。下一大方向仍是Parquet历史主源+通达信盘后独立可回滚增量层，不因单日性能小实验长期阻塞主线。
+
 ## ▶ Windows 332项测试仅余Parquet临时文件WinError32：修复句柄生命周期（2026-10-28）
 
 - [x] 用户日志：`Ran 332 tests in 16.841s / FAILED (errors=1)`，唯一`test_explicit_fast_path_skips_full_query_but_counts_check`在`TemporaryDirectory.cleanup()`删除合成`2026-09.parquet`时触发Windows `WinError 32`。没有行情结果不一致证据。

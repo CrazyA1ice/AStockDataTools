@@ -1,5 +1,37 @@
 # 2026-10-28：整月3股共享键扫描实证；离线严格审计完整性和单日定位一致性
 
+## 2026-10-28 Windows离线审计报错修复（PR #75）
+
+用户运行旧离线审计命令时得到：
+`error: Unexpected source modification or H5 use: no_h5_read`。
+
+**根因**：月度键扫描工具在未读取H5时正确输出
+`"no_h5_read": true`，但离线审计器把这个名字为否定式的安全字段
+与另两个肯定式**行为发生标志**一起要求为`false`。
+此前合成测试也错误地把`no_h5_read`设为false，导致假阳性通过。
+
+现已统一：`no_h5_read is True`；`source_market_files_modified is False`；
+`automatic_source_union_or_import_performed is False`；
+严格验证Python布尔值，不允许缺失、整数1/0或字符串冒充。
+更新测试fixture、增加明确覆盖正反语义的回归测试。
+这一修复**仅改离线审计程序与测试**，没有更改数据报告生成器、
+购买源、行情值或旧报告；可以重新使用原JSON，不必重新扫描569万键列。
+
+Windows仓库根目录运行：
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_parquet_month_shared_key_report.py" -v
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test*.py" -v
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-parquet-month-shared-key-report.py --month-report "reports\pq-202609-three-symbol-month-shared-5min-keys.json" --single-day-report "reports\pq-20260930-three-symbol-shared-5min-keys.json" --read-only --out "reports\pq-202609-three-symbol-month-shared-5min-offline-audit.json"
+```
+上次执行在实际写出文件前就拒绝了，所以原目标文件**通常不会存在**；
+若已存在则用新的`-v2.json`文件名，禁止覆盖。
+
+**验证状态**：代码修复已提交；新测试/实际用户Windows命令
+尚需本机回传成功日志，不应预先声明通过。
+
+
+
 ## 用户本机真实安全JSON（不是估计）
 
 报告`pq-202609-three-symbol-month-shared-5min-keys.json`：

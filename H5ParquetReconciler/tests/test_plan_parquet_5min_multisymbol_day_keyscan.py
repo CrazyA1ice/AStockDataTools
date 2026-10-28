@@ -114,6 +114,13 @@ class SharedMultiStockDayKeyScanTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(ValueError, "Duplicate source timestamp"):
             M.plan(self.root, ["SH600000", "SZ000001"], "2026-09-30")
+        # Use a nonduplicate source for independent budget-failure tests.
+        self.write([
+            self.row("2026-09-30 09:30", "600000.XSHG"),
+            self.row("2026-09-30 09:35", "000001.XSHE"),
+            self.row("2026-09-30 09:40", "600000.XSHG"),
+            self.row("2026-09-30 09:45", "000001.XSHE"),
+        ])
         with self.assertRaisesRegex(ValueError, "--max-candidate-rows"):
             M.plan(self.root, ["SH600000", "SZ000001"], "2026-09-30",
                    max_candidate_rows=1)
@@ -128,7 +135,7 @@ class SharedMultiStockDayKeyScanTests(unittest.TestCase):
         self.fixture()
         for symbols in (
             ["SH600000"], ["SH600000", "SH600000"],
-            ["SH600000", "SZ200001"], ["sh600000", "SZ000001"],
+            ["SH600000", "SZ200001"], ["BADCODE", "SZ000001"],
             ["SH600000", "SZ000001"] * 5,
         ):
             with self.subTest(symbols=symbols), self.assertRaises(ValueError):

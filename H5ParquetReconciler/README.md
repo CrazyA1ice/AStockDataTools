@@ -85,6 +85,9 @@ py -3.11 -m venv .venv
 
 **2026-10-28 实机修复**：TDX原生`.day`文件会包含2004年前历史记录，原探测器把分钟线`2004`压缩日期纪元误用于全部`.day`历史，导致用户本机`sh600000.day`的整文件读取被`calendar is outside 2004..2100`中断。现按格式分开：日线1990–2100年、分钟线2004–2100年，保留日期/价格/顺序校验；新增跨1999–2026合成日线和非法年份负测试。仍需Windows实机重跑，详情见[TDX原生探测协议与修复记录](docs/2026_TDX_NATIVE_READONLY_PROBE_V1.md)。
 
+## ▶ 双反例已证实为非五分钟极值的孤立High；新增分钟/日线字段级保守判定（2026-10-28）
+
+用户Windows已实测上一轮孤立High机制9项测试全部通过，并上传两份真实机制安全JSON：SH600000/2026-07-16与SH600519/2026-06-30的一分钟High均有且仅有1根不匹配，该分钟在TDX与购买Parquet中均**不是其5分钟区间最高价**，因而未使5分钟High超出容差；所有生产准入仍拒绝。另此前独立三周期证据表明SH600519购买Parquet日线Volume与5分钟汇总不匹配，应与一分钟High分别跟踪。新增[只读证据字段级判定工具](tools/evaluate-tdx-parquet-case-evidence-readonly.py)：只读三份既存SAFE报告，强制交叉核验TDX完整内容SHA与Parquet stat-only来源指纹，分别输出分钟High/日线Volume冲突，保持任何情况下生产自动并集禁用。开发容器11项合成测试和两份真实安全JSON复核通过，**Windows新增11项测试待验收**。详见[字段级证据交叉判定说明](docs/2026_TDX_PARQUET_FIELD_EVIDENCE_DISPOSITION_V1.md)。
 ## ▶ 双周期交叉核验确认：分钟High孤立差异 + 贵州茅台日线成交量差异（2026-10-28）
 
 用户实际回传SH600000/2026-07-16和SH600519/2026-06-30两份`audit-tdx-vs-parquet-day5min-readonly.py`安全报告：TDX原生1min/5min/day内部全字段诊断通过，TDX5min与购买Parquet5min六字段全部48/48通过；但已知两股各一根1min High不匹配。**贵州茅台还新增独立的Parquet日线成交量疑点**：TDX日线vs购买Parquet日线volume 0/1（最大相对差1.99456e-05），购买5min汇总vs购买day volume 0/1（2.52474e-05）；不能将日线差异归因于分钟High。新增[只读单High差异机制定位工具](tools/triage-tdx-parquet-isolated-high-readonly.py)和9项纯合成测试（尚待Windows），聚合统计异常分钟是否控制其所属五分钟区间最大High，不输出具体异常分钟、OHLCVA或私有路径，永不生产落库。见[单High反例机制与日线量差异记录](docs/2026_TDX_PARQUET_ISOLATED_HIGH_MECHANISM_V1.md)。

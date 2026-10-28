@@ -35,6 +35,45 @@ tools/preview-tdx-parquet-1min-normalization-readonly.py
 不写私有缓存、暂存、生产查询和自动并集。安全JSON只有字段级
 匹配数、误差、来源指纹与贡献行数说明，没有真实价量额。
 
+## 2026-10-28真实首次预演验收（用户本机实际回传）
+
+文件：tdx-pq-sh600000-20260930-normalization-preview-v1.json
+真实股票日：SH600000 / 2026-09-30。
+用户已在Windows运行241→240只读候选程序并回传完整安全JSON，
+不是单纯由之前的摘要推导。关键结论：
+
+- 原始Parquet分钟241根，内存候选240根；第一根聚合使用原始2条，
+  其余239条各自使用1条；原始241条全部参与、没有删除或新造分钟。
+- 候选首根vs TDX首根：六字段1/1匹配；其余239根：六字段239/239匹配；
+  完整候选240根：六字段240/240匹配；候选聚合到购买5min：六字段48/48匹配。
+- 完整240根比较中四个价格字段最大相对差均不超过4.96e-08，
+  volume和amount最大相对误差均为0。
+- gates.diagnostic_preview_consistent=true，preview_verdict=
+  diagnostic_candidate_matches_both_sources_not_production_certified。
+- candidate_ohlcva_exported=false、original_sources_modified=false、
+  private_staging_or_production_union_performed=false、
+  eligible_for_automatic_production_union=false；
+  Parquet仍然只有stat-only来源指纹，尚不具备内容认证。
+
+这是**一个股票日的候选转换实际验收**；之前10个股票日是
+假说/原始分钟核验，尚未全部运行此新候选预演工具。
+新增8项合成测试的Windows执行结果也尚未收到，不能宣称已通过。
+
+## 下一轮：对其余9个已知源股票日批量运行候选预演
+
+已通过的SH600000/2026-09-30不要重复执行；以下命令会核验
+其余九组来源文件和输出新文件名是否可用，成功则保留各自安全JSON。
+任何脚本错误都停止后续运行，不会补造/修改任何市场记录。
+
+PowerShell单行命令（在 D:\ChatGPT\AStockDataTools 仓库根目录执行）：
+
+```powershell
+$cases=@(@("SH600000","2026-09-28"),@("SH600000","2026-09-29"),@("SZ000001","2026-09-28"),@("SZ000001","2026-09-29"),@("SZ000001","2026-09-30"),@("SH600519","2026-08-17"),@("SH600519","2026-09-30"),@("SZ300750","2026-08-17"),@("SZ300750","2026-09-30")); foreach($c in $cases){$symbol=$c[0];$day=$c[1];$market=$symbol.Substring(0,2).ToLower();$src="D:\software\TDX\vipdoc\$market\minline\$($symbol.ToLower()).lc1";$out="reports\tdx-pq-$($symbol.ToLower())-$($day.Replace('-',''))-normalization-preview-v1.json";if(!(Test-Path $src)){Write-Warning "源文件不存在：$src";break};if(Test-Path "H5ParquetReconciler\$out"){Write-Warning "输出已存在，拒绝覆盖：$out";break};& ".\.venv\Scripts\python.exe" "H5ParquetReconciler\tools\preview-tdx-parquet-1min-normalization-readonly.py" --parquet-root "D:\stock" --tdx-1min-file $src --symbol $symbol --date $day --read-only --out $out;if($LASTEXITCODE -ne 0){Write-Warning "预演失败：$symbol $day";break}}
+```
+
+请同时单独执行之前文档列出的8项合成测试，并保留真实报错。
+优先分析首个失败股票日，不应为了凑齐成功报告修改原始价量额。
+
 ## Windows验收：均为单行PowerShell
 
 在 D:\ChatGPT\AStockDataTools 根目录执行：

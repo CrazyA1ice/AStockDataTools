@@ -90,7 +90,7 @@ py -3.11 -m venv .venv
 用户Windows已通过新预演汇总工具8项合成测试，并实际运行10组安全
 预演cohort与10组历史开盘审计cohort的来源SHA/Parquet stat-only
 指纹交叉核验：4股票×4不同日期的10组真实案例全部通过，
-判定仍是experimental_preview_target_met_not_certified。
+判定仍是exploratory_preview_target_met_not_certified。
 据此新增[只读边界调查工具](tools/survey-tdx-parquet-minute-rule-boundaries-readonly.py)，
 定义显式实验规则ID，对最多12个SH/SZ股票日重复调用真正的241→240
 候选预演；源缺失、时间网格错误、值异常、来源漂移或六字段不匹配

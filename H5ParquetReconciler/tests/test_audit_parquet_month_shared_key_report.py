@@ -72,7 +72,7 @@ def fixture():
         "locator_unsigned_not_trusted_for_production":True,
         "production_default_engine_unchanged":True,
         "no_raw_ohlcva_or_individual_intraday_time_keys_exported":True,
-        "no_h5_read":False,"source_market_files_modified":False,
+        "no_h5_read":True,"source_market_files_modified":False,
         "automatic_source_union_or_import_performed":False,
     }
 
@@ -136,6 +136,37 @@ class OfflineMonthlyKeyEvidenceTests(unittest.TestCase):
             mutate(changed)
             with self.subTest(mutate=repr(mutate)),self.assertRaises(ValueError):
                 M.audit(changed)
+
+    def test_real_producer_flag_polarities_and_negative_cases(self):
+        # Match the actual plan-parquet-5min-multiday-shared-keys.py
+        # producer: no_h5_read=True while actions performed=False.
+        source=fixture()
+        self.assertIs(source["no_h5_read"],True)
+        self.assertIs(source["source_market_files_modified"],False)
+        self.assertIs(source["automatic_source_union_or_import_performed"],False)
+        self.assertEqual(M.audit(source)["matching_keys_all_stock_days"],5)
+        # False/missing/1 must not be accepted as proof that H5 was untouched.
+        for value in (False,None,1,"true"):
+            altered=json.loads(json.dumps(source))
+            if value is None:
+                altered.pop("no_h5_read")
+            else:
+                altered["no_h5_read"]=value
+            with self.subTest(value=value),self.assertRaisesRegex(
+                    ValueError,"no_h5_read=true"):
+                M.audit(altered)
+        # Action flags have the inverse polarity: they must stay exactly False.
+        for name in ("source_market_files_modified",
+                     "automatic_source_union_or_import_performed"):
+            for value in (True,None,0):
+                altered=json.loads(json.dumps(source))
+                if value is None:
+                    altered.pop(name)
+                else:
+                    altered[name]=value
+                with self.subTest(flag=name,value=value),self.assertRaisesRegex(
+                        ValueError,"Unexpected source modification or import"):
+                    M.audit(altered)
 
     def test_reference_catches_mismatched_group_membership_or_manifest(self):
         report=fixture()

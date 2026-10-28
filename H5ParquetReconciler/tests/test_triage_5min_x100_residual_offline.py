@@ -40,7 +40,7 @@ def fixture():
         "eligible_for_automatic_union": False,
         "results": {
             "5min/2026": {
-                "period": "5min", "from_date": "2026-09-28",
+                "period": "5min", "year": 2026, "from_date": "2026-09-28",
                 "to_date": "2026-09-29", "scan_complete": True,
                 "issues": [], "safe_to_automatically_union": False,
                 "matched_keys": 10, "price_mismatch_rows": 3,
@@ -133,7 +133,7 @@ class OfflineFiveMinuteResidualTests(unittest.TestCase):
             M.analyze(src)
         src = fixture()
         src["results"]["day/2026"] = copy.deepcopy(src["results"]["5min/2026"])
-        with self.assertRaisesRegex(ValueError, "exactly one"):
+        with self.assertRaisesRegex(ValueError, "Companion day"):
             M.analyze(src)
 
     def test_disjoint_group_mandatory_nonvolume_bounds(self):
@@ -157,6 +157,78 @@ class OfflineFiveMinuteResidualTests(unittest.TestCase):
         self.assertEqual(b["g"]["candidate_any_mismatch_lower_bound"], 5)
         self.assertEqual(b["g"]["candidate_any_mismatch_upper_bound"], 5)
         self.assertFalse(b["g"]["breakdown_is_exact"])
+
+
+    def test_bounded_day_and_five_minute_report_is_accepted(self):
+        src = fixture()
+        base = src["results"]["5min/2026"]
+        src["requested_years"] = [2026]
+        src["requested_periods"] = ["day", "5min"]
+        src["results"]["day/2026"] = {
+            "period": "day", "year": 2026,
+            "scan_complete": True, "issues": [],
+            "safe_to_automatically_union": False,
+            "from_date": base["from_date"], "to_date": base["to_date"],
+            "universe_mode": base.get("universe_mode"),
+        }
+        result = M.analyze(src)
+        self.assertTrue(result["separate_day_section_consistency_checked"])
+        self.assertEqual(result["candidate_any_field_mismatch"], 6)
+        self.assertFalse(result["exact_mask_evidence_present"])
+
+    def test_exact_disjoint_field_masks_reconcile_all_marginals(self):
+        src = fixture()
+        cand = src["results"]["5min/2026"][
+            "quantity_scale_diagnostics"]["h5_volume_times_100_candidate"]
+        names = M.MASK_NAMES
+        def group(**kwargs):
+            return {key: kwargs.get(key, 0) for key in names}
+        sh = group(none=2, volume=1, volume_amount=1,
+                   volume_amount_price=2)
+        bj = group(none=2, volume=1, amount_price=1)
+        global_mask = {k: sh[k] + bj[k] for k in names}
+        cand["exact_residual_field_mask_counts"] = global_mask
+        cand["exact_field_mask_by_prefix"] = {
+            "SH_other_prefix": sh, "BJ_prefix": bj}
+        cand["exact_field_mask_by_day"] = {
+            "20260928": sh, "20260929": bj}
+        cand["exact_masks_are_mutually_exclusive"] = True
+        result = M.analyze(src)
+        self.assertTrue(result["exact_mask_evidence_present"])
+        self.assertEqual(result["verified_exact_disjoint_field_masks"][
+            "global_disjoint_field_mask_counts"], global_mask)
+        self.assertTrue(result["verified_exact_disjoint_field_masks"][
+            "all_field_overlap_counts_are_exact_not_estimated"])
+        self.assertFalse(result["underlying_ohlcv_read"])
+        self.assertFalse(result["safe_to_automatically_union"])
+
+        tamper = copy.deepcopy(src)
+        tamper["results"]["5min/2026"]["quantity_scale_diagnostics"][
+            "h5_volume_times_100_candidate"][
+            "exact_field_mask_by_day"]["20260928"]["volume"] += 1
+        with self.assertRaisesRegex(ValueError, "conserve|marginal"):
+            M.analyze(tamper)
+
+    def test_partial_masks_or_wrong_day_companion_fail_closed(self):
+        src = fixture()
+        cand = src["results"]["5min/2026"][
+            "quantity_scale_diagnostics"]["h5_volume_times_100_candidate"]
+        cand["exact_residual_field_mask_counts"] = {"none": 10}
+        with self.assertRaisesRegex(ValueError, "Partial exact residual"):
+            M.analyze(src)
+
+        src = fixture()
+        five = src["results"]["5min/2026"]
+        src["results"]["day/2026"] = {
+            "period": "day", "year": 2026,
+            "scan_complete": True, "issues": [],
+            "safe_to_automatically_union": False,
+            "from_date": five["from_date"], "to_date": "2026-09-30",
+            "universe_mode": five.get("universe_mode")
+        }
+        with self.assertRaisesRegex(ValueError, "Companion day"):
+            M.analyze(src)
+
 
 
 if __name__ == "__main__":

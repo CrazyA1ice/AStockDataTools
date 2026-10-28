@@ -94,6 +94,48 @@ git pull --ff-only origin main
 .\.venv\Scripts\python.exe H5ParquetReconciler\tools\triage-5min-x100-residual-offline.py --report "H5ParquetReconciler\reports\h5-pq-overlap-20260930-day5min-v1.json" --out "reports\h5-pq-20260930-x100-residual-exact-v1.json"
 ```
 
+## 已收到真实离线精确归因报告：2026-10-28实机完成
+
+用户本机执行修复后的离线工具，上传
+`h5-pq-20260930-x100-residual-exact-v1.json`。
+已核对：`source_result_key=5min/2026`、日期窗口
+`2026-09-30`、`separate_day_section_consistency_checked=true`、
+`exact_mask_evidence_present=true`、
+`source_report_scan_complete=true`；
+`underlying_ohlcv_read=false`、`underlying_ohlcv_modified=false`、
+`safe_to_automatically_union=false`。
+
+独立将全局8类精确掩码相加得266,400条；
+含volume的各类合计611、含amount的各类合计564、
+含price的各类合计403，七类不匹配合计692。
+按日期以及代码前缀的各类精确子计数均守恒。
+
+### 实际残余证券代码前缀分布
+
+| 代码前缀候选组 | 重叠K线 | ×100后无冲突 | 残余冲突 | 说明 |
+| --- | ---: | ---: | ---: | --- |
+| BJ_prefix | 16,272 | 16,088 | 184 | 价格、成交量额都有残余 |
+| SH_688_689_prefix | 29,568 | 29,413 | 155 | 价格、成交量额都有残余 |
+| SH_other_prefix | 81,504 | 81,151 | 353 | 价格、成交量额都有残余 |
+| SZ_300_301_prefix | 67,536 | 67,536 | **0** | **仅限本日和当前诊断规则** |
+| SZ_other_prefix | 71,520 | 71,520 | **0** | **仅限本日和当前诊断规则** |
+| **合计** | **266,400** | **265,708** | **692** | 不能外推全年或正式证券分类 |
+
+本日全部692条残余都位于BJ/SH前缀组，
+但来源、单位、复权与具体原因**尚未认证**。
+本报告只证实来源安全JSON的**内部数学一致性**，
+并非对购买Parquet内容独立做了哈希认证，
+更不能将候选×100直接投入生产。
+
+**验收状态划分**：
+- 已完成：离线真实综合报告解析、8类精确分组守恒以及独立重新核算。
+- 未提供：用户Windows修复后10项合成测试的最终完整通过日志；
+  此次上传的真实JSON不能代替回归测试结果。
+- 下一步主线：分别验证H5和Parquet各自的day↔5min成交量守恒；
+  这两个来源内部报告尚未在本轮上传。
+- 禁止：修改数据源、扩大容差、擅自认证证券类型、
+  因一个交易日的SZ全匹配就宣布全历史源质量一致。
+
 ## 下一步：独立验证×100候选，不应先做生产换算
 
 现有工具可针对同日分别运行**来源内部**day↔5min volume守恒：

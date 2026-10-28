@@ -260,7 +260,20 @@ def stage(record,raw_sha):
         versions.mkdir(exist_ok=True)
         target=versions/(digest+".json")
         if target.exists() or target.is_symlink():
-            raise ValueError("Version already exists but is not active; refusing unsafe reuse")
+            # A rollback may have disabled an otherwise valid immutable
+            # snapshot. Reactivate only after verifying its bytes and chain.
+            existing=read_version(directory,digest)
+            if (existing["record"]!=record or
+                    existing["source_input_sha256"]!=raw_sha or
+                    existing["previous_version_sha256"]!=previous):
+                raise ValueError("Existing version has mismatched provenance")
+            if existing["record"]["symbol"]!=summary["symbol"]:
+                raise ValueError("Existing version stock mismatch")
+            atomic_pointer(directory,digest)
+            return dict(summary,action="stage",
+                        outcome="verified_private_version_reactivated",
+                        local_private_version_sha256=digest,
+                        prior_version_exists=previous is not None)
         try:
             with target.open("x",encoding="utf-8") as fh:
                 json.dump(version,fh,sort_keys=True,allow_nan=False,

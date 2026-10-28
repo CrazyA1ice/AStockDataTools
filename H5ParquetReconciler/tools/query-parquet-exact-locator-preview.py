@@ -43,15 +43,21 @@ def query_bars(root,symbol,day,locator,*,max_candidate_rows=30000000,
     canonical,first,last=query.request_dates(
         symbol,"5min",day,day,max_candidate_rows,max_result_bars)
     started=time.perf_counter()
+    stamp=time.perf_counter()
     sig_before=query.private_cache.source_signature(
         root,"5min",first,last,query.core)
+    source_manifest_before_seconds=round(time.perf_counter()-stamp,6)
+    stamp=time.perf_counter()
     ctx=query.prepare_query(
         root,canonical,"5min",first,last,max_candidate_rows,max_result_bars)
+    full_footer_preflight_seconds=round(time.perf_counter()-stamp,6)
+    stamp=time.perf_counter()
     membership=gate.validate_locator(locator,ctx,sig_before)
+    locator_validation_seconds=round(time.perf_counter()-stamp,6)
     allowed=frozenset(membership)
     restricted=benchmark.arrow_filtered_query(
         root,canonical,"5min",first,last,max_candidate_rows,
-        max_result_bars,allowed_rowgroups=allowed)
+        max_result_bars,allowed_rowgroups=allowed,prepared_context=ctx)
     restricted_measurement=restricted["safe_measurement"]
     if restricted_measurement["row_groups_actually_scanned"]!=len(membership):
         raise ValueError("Restricted Arrow scanned a different RowGroup count")
@@ -67,14 +73,16 @@ def query_bars(root,symbol,day,locator,*,max_candidate_rows=30000000,
     if not fast_stat_only:
         full=benchmark.arrow_filtered_query(
             root,canonical,"5min",first,last,max_candidate_rows,
-            max_result_bars)
+            max_result_bars,prepared_context=ctx)
         if full["bars"]!=selected:
             raise ValueError("Full Arrow parity disagrees with locator-restricted result")
         if (full["safe_measurement"]["candidate_row_groups"]!=
                 restricted_measurement["candidate_row_groups"]):
             raise ValueError("Query preflights diverged")
+    stamp=time.perf_counter()
     sig_after=query.private_cache.source_signature(
         root,"5min",first,last,query.core)
+    source_manifest_after_seconds=round(time.perf_counter()-stamp,6)
     if sig_before!=sig_after:
         raise ValueError("Source stat manifest changed during locator query")
     measurement=restricted["safe_measurement"]
@@ -93,6 +101,13 @@ def query_bars(root,symbol,day,locator,*,max_candidate_rows=30000000,
             "query_elapsed_seconds_this_invocation"],
         "total_invocation_wall_seconds_including_validations":round(
             time.perf_counter()-started,6),
+        "source_manifest_before_seconds":source_manifest_before_seconds,
+        "full_footer_preflight_seconds":full_footer_preflight_seconds,
+        "locator_validation_seconds":locator_validation_seconds,
+        "source_manifest_after_seconds":source_manifest_after_seconds,
+        "full_footer_preflight_executions_this_invocation":1,
+        "prepared_preflight_context_reused_for_arrow_scans":True,
+        "arrow_engine_seconds_are_scan_only_in_prepared_mode":True,
         "full_arrow_equality_checked_this_invocation":not fast_stat_only,
         "full_arrow_seconds_if_verified":(
             full["safe_measurement"]["query_elapsed_seconds_this_invocation"]

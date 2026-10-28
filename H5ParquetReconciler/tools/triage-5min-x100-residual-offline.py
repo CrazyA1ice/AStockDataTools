@@ -102,6 +102,107 @@ def validated_rows(original, key, compared, amount, price, volume):
     return result
 
 
+
+MASK_NAMES = (
+    "none", "volume", "amount", "price", "volume_amount",
+    "volume_price", "amount_price", "volume_amount_price"
+)
+
+
+def select_five_minute_result(report):
+    """Select a single bounded 5min section; validate any day companion.
+
+    This accepts historical 5min-only reports and newer one-window day+5min
+    reports without touching raw H5/PQ. Multiple years/extra cycles fail closed.
+    """
+    results = report.get("results")
+    if not isinstance(results, dict) or len(results) not in (1, 2):
+        raise ValueError("Require one 5min result or one matched day+5min window")
+    names = [key for key, obj in results.items()
+             if isinstance(obj, dict) and obj.get("period") == "5min"]
+    if len(names) != 1:
+        raise ValueError("Require exactly one bounded 5min audit result")
+    label = names[0]
+    result = results[label]
+    year = integer(result.get("year"), "five minute year", minimum=2000)
+    if label != f"5min/{year}":
+        raise ValueError("5min label/year mismatch")
+    companion = False
+    if len(results) == 2:
+        companion_name = f"day/{year}"
+        d = results.get(companion_name)
+        if (not isinstance(d, dict) or d.get("period") != "day" or
+                d.get("year") != year or d.get("scan_complete") is not True or
+                d.get("issues") != [] or
+                d.get("safe_to_automatically_union") is not False or
+                d.get("from_date") != result.get("from_date") or
+                d.get("to_date") != result.get("to_date") or
+                d.get("universe_mode") != result.get("universe_mode")):
+            raise ValueError("Companion day section must be a complete matching bounded window")
+        companion = True
+    if report.get("requested_years") is not None and report["requested_years"] != [year]:
+        raise ValueError("Audit request year must equal selected 5min year")
+    if report.get("requested_periods") is not None and set(
+            report["requested_periods"]) != ({"day", "5min"} if companion else {"5min"}):
+        raise ValueError("Audit requested cycles do not match selected evidence")
+    return label, result, companion
+
+
+def _validated_mask_group(raw, matched, volume, amount, price, any_diff=None):
+    if not isinstance(raw, dict) or set(raw) != set(MASK_NAMES):
+        raise ValueError("Exact residual masks must contain all eight disjoint classes")
+    out = {name: integer(raw[name], "exact residual mask " + name)
+           for name in MASK_NAMES}
+    if sum(out.values()) != matched:
+        raise ValueError("Exact residual masks do not conserve matched row count")
+    for field, expected in (
+            ("volume", volume), ("amount", amount), ("price", price)):
+        got = sum(n for key, n in out.items() if field in key.split("_"))
+        if got != expected:
+            raise ValueError("Exact residual masks disagree with " + field + " marginal")
+    if any_diff is not None and matched - out["none"] != any_diff:
+        raise ValueError("Exact residual masks disagree with total residual")
+    return out
+
+
+def exact_masks_if_present(candidate, by_prefix, by_day,
+                           matched, volume, amount, price, any_diff):
+    """Prove optional existing exact masks from all marginals; never infer overlaps."""
+    global_mask = candidate.get("exact_residual_field_mask_counts")
+    prefix_mask = candidate.get("exact_field_mask_by_prefix")
+    day_mask = candidate.get("exact_field_mask_by_day")
+    if all(x is None for x in (global_mask, prefix_mask, day_mask)):
+        return None
+    if any(x is None for x in (global_mask, prefix_mask, day_mask)):
+        raise ValueError("Partial exact residual evidence; require global, by-prefix and by-day")
+    validated = _validated_mask_group(
+        global_mask, matched, volume, amount, price, any_diff)
+    summaries = {}
+    for partition, records, masks in (
+            ("by_code_prefix_group", by_prefix, prefix_mask),
+            ("by_day", by_day, day_mask)):
+        if not isinstance(masks, dict) or set(masks) != set(records):
+            raise ValueError("Exact residual mask group keys disagree: " + partition)
+        details = {}
+        for key, row in records.items():
+            details[key] = _validated_mask_group(
+                masks[key], row["matched"], row["volume"], row["amount"], row["price"])
+        if any(sum(mask[k] for mask in details.values()) != validated[k]
+               for k in MASK_NAMES):
+            raise ValueError("Exact residual masks do not conserve across " + partition)
+        summaries[partition] = details
+    if candidate.get("exact_masks_are_mutually_exclusive") is not True:
+        raise ValueError("Exact mask source did not affirm disjoint classes")
+    return {
+        "global_disjoint_field_mask_counts": validated,
+        "by_code_prefix_group_disjoint_field_mask_counts":
+            summaries["by_code_prefix_group"],
+        "by_day_disjoint_field_mask_counts": summaries["by_day"],
+        "all_field_overlap_counts_are_exact_not_estimated": True,
+        "no_raw_ohlcva_or_individual_bar_keys_exported": True,
+    }
+
+
 def analyze(report):
     if not isinstance(report, dict) or report.get("format") != (
         "AStockDataTools H5-Parquet local coverage/difference report v1"
@@ -109,12 +210,7 @@ def analyze(report):
         raise ValueError("Expected a local H5/Parquet reconciliation JSON v1")
     if report.get("status") != "complete":
         raise ValueError("Only completed audits can be attributed")
-    results = report.get("results")
-    if not isinstance(results, dict) or len(results) != 1:
-        raise ValueError("Require exactly one year/5min audit result")
-    label, original = next(iter(results.items()))
-    if not isinstance(original, dict) or original.get("period") != "5min":
-        raise ValueError("Only bounded 5min candidate results are supported")
+    label, original, verified_day_companion = select_five_minute_result(report)
     if (not original.get("from_date") or not original.get("to_date")
         or original.get("scan_complete") is not True
         or original.get("issues") != []
@@ -162,7 +258,11 @@ def analyze(report):
 
     prefix_bounds = bounds_for_group(prefix, extra)
     day_bounds = bounds_for_group(days, extra)
+    exact_masks = exact_masks_if_present(
+        candidate, prefix, days, matched, volume, amount, price, any_diff)
     result = {
+        "separate_day_section_consistency_checked": verified_day_companion,
+        "exact_mask_evidence_present": exact_masks is not None,
         "format": "AStockDataTools offline x100 five-minute residual triage v1",
         "source_result_key": label,
         "period": "5min",
@@ -202,6 +302,8 @@ def analyze(report):
         "original_report_modified": False,
         "source_report_scan_complete": True
     }
+    if exact_masks is not None:
+        result["verified_exact_disjoint_field_masks"] = exact_masks
     return result
 
 

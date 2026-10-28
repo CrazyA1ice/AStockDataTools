@@ -85,6 +85,12 @@ py -3.11 -m venv .venv
 
 **2026-10-28 实机修复**：TDX原生`.day`文件会包含2004年前历史记录，原探测器把分钟线`2004`压缩日期纪元误用于全部`.day`历史，导致用户本机`sh600000.day`的整文件读取被`calendar is outside 2004..2100`中断。现按格式分开：日线1990–2100年、分钟线2004–2100年，保留日期/价格/顺序校验；新增跨1999–2026合成日线和非法年份负测试。仍需Windows实机重跑，详情见[TDX原生探测协议与修复记录](docs/2026_TDX_NATIVE_READONLY_PROBE_V1.md)。
 
+## ▶ 首个完整2026-09-30单日H5/Parquet双周期核对：识别5min成交量×100主因（2026-10-28）
+
+用户Windows实测day/5min两个分区均scan_complete=true、issues=[]：day H5 5550/PQ 5560/交集5550/PQ-only10/H5-only0/原始量价冲突1241（全部量额、价格0）；5min H5 266400/PQ 267408/交集266400/PQ-only1008（21只完整48根股票日）/H5-only0/原始量价冲突265181。五分钟冲突主要为**成交量单位候选差异**：H5 5min volume×100假设将原成交量冲突265181降至611，综合价格/成交量/成交额残余692；未认证换算。源JSON已包含准确的8类互斥残余字段掩码：无冲突265708，volume29、amount3、price77、volume+amount257、volume+price22、amount+price1、三者同时303，不能把未知交集的估计代替精确计数。
+
+已完善[只读离线×100残余归因工具](tools/triage-5min-x100-residual-offline.py)：兼容单5min与同日期窗口且完整的day+5min综合报告，验证源已有互斥掩码的全局、代码前缀、交易日分组守恒，输出安全精确分类，不读取原始付费行情或改变正式比较规则；扩展到10项纯合成测试（Windows待运行）。下一步复用已有H5、Parquet各自day↔5min成交量守恒工具核验×100假说，暂不做生产换算。单行PowerShell详见[09月30日真实报告与下一阶段验证](docs/2026_H5_PQ_0930_EXACT_X100_RESIDUAL_MAINLINE.md)。
+
 ## ▶ 字段级源证据实机验收完成；返回H5↔Parquet覆盖与差集主线（2026-10-28）
 
 用户Windows运行`test_evaluate_tdx_parquet_case_evidence_readonly.py`的11项测试逐项全部显示ok，并上传两份真实field-disposition安全JSON：SH600000/2026-07-16为单根一分钟High不匹配、五分钟全匹配、日线量无新增冲突；SH600519/2026-06-30同为孤立High不匹配、另有TDX day ↔ Parquet day与Parquet 5min汇总 ↔ Parquet day的Volume双重不一致。两例跨报告来源指纹核验通过，但原分钟差异保留，生产转换仍禁止。本轮不继续开发重复的分钟High工具；使用已存在的`reconcile-local-a-share-h5-parquet.py`执行2026-09-30的day与5min单日有界H5/Parquet覆盖核对。单行PowerShell和证据检查详见[返回主线操作说明](docs/2026_H5_PARQUET_RESUME_BOUNDED_OVERLAP.md)。

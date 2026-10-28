@@ -29,19 +29,61 @@ ORDER=("rowgroup-first","arrow-first")
 
 def arrow_filtered_query(root,symbol,period,start,end,
                          max_candidate_rows=30000000,max_result_bars=25000,
-                         allowed_rowgroups=None):
+                         allowed_rowgroups=None,prepared_context=None):
     """Dataset fragment per RowGroup retains exact file+RowGroup provenance.
 
     allowed_rowgroups is an EXPERIMENTAL explicit subset of (relative_path, id).
-    A separate caller must fully validate its locator and verify full parity.
-    Even when restricted, the original FULL preflight budget is enforced.
+    prepared_context is internal-only and must come from prepare_query() on
+    this invocation. Reusing it avoids reopening all source Footers; full
+    candidate RowGroup costs and the original safety budget remain enforced.
+    The locator caller MUST check source manifest before AND after use.
     """
     import pyarrow.dataset as ds
     import pyarrow.fs as fs
 
     started=time.perf_counter()
-    context=query.prepare_query(
-        root,symbol,period,start,end,max_candidate_rows,max_result_bars)
+    if prepared_context is None:
+        context=query.prepare_query(
+            root,symbol,period,start,end,max_candidate_rows,max_result_bars)
+    else:
+        # Internal, deliberately strict: the shared ParquetFile handles are
+        # valid only for the exact previously preflighted query and budgets.
+        canonical,first,last=query.request_dates(
+            symbol,period,start,end,max_candidate_rows,max_result_bars)
+        context=prepared_context
+        if (type(context) is not dict
+                or context.get("root")!=Path(root).resolve()
+                or context.get("symbol")!=canonical
+                or context.get("period")!=period
+                or context.get("start")!=first
+                or context.get("end")!=last
+                or context.get("max_result_bars")!=max_result_bars
+                or (context.get("low_ms"),context.get("high_ms"))
+                   !=query.day_bounds(first,last)
+                or context.get("aliases")!=set(
+                    query.diagnose.source_spellings(canonical))):
+            raise ValueError("Prepared Parquet context does not match request")
+        all_pending=context.get("pending")
+        meta=context.get("metadata")
+        if (type(all_pending) is not list or meta is None
+                or type(meta.get("candidate_source_rows_upper_bound")) is not int
+                or meta["candidate_source_rows_upper_bound"]>max_candidate_rows
+                or meta["candidate_source_rows_upper_bound"]<0):
+            raise ValueError("Prepared full RowGroup budget is invalid")
+        seen=set()
+        counted=0
+        for path,pf,group in all_pending:
+            if (type(group) is not int or group<0
+                    or not path.resolve().is_relative_to(
+                        context["root"]/"AllCycleAStockData")):
+                raise ValueError("Unsafe prepared RowGroup")
+            key=(path.relative_to(context["root"]).as_posix(),group)
+            if key in seen:
+                raise ValueError("Duplicate prepared RowGroup")
+            seen.add(key)
+            counted+=pf.metadata.row_group(group).num_rows
+        if counted!=meta["candidate_source_rows_upper_bound"]:
+            raise ValueError("Prepared RowGroup census failed conservation")
     all_pending=context["pending"]
     if allowed_rowgroups is not None:
         if (type(allowed_rowgroups) is not frozenset
@@ -124,6 +166,9 @@ def arrow_filtered_query(root,symbol,period,start,end,
         "bars":[observed[key] for key in sorted(observed)],
         "safe_measurement":{
             "engine":"arrow_dataset_rowgroup_fragment_filter",
+            "preflight_context_reused":prepared_context is not None,
+            "query_elapsed_excludes_preflight_when_context_reused":
+                prepared_context is not None,
             "candidate_source_rows_upper_bound":context["metadata"][
                 "candidate_source_rows_upper_bound"],
             "candidate_row_groups":len(context["pending"]),

@@ -35,11 +35,33 @@ def load_baseline(data: dict, day: date, count: int):
         or data.get("status") != "complete"
         or data.get("requested_from_date") != day.isoformat()
         or data.get("requested_to_date") != day.isoformat()
-        or data.get("requested_periods") != ["5min"]
+        or data.get("requested_periods") not in (["5min"], ["day", "5min"])
         or data.get("requested_years") != [day.year]
         or data.get("universe_mode") != "a-share-candidate"
         or data.get("eligible_for_automatic_union") is not False):
         raise ValueError("Require a matching completed single-day 5min candidate report")
+    results = data.get("results")
+    if not isinstance(results, dict):
+        raise ValueError("Missing bounded source result sections")
+    expected = (
+        {f"day/{day.year}", f"5min/{day.year}"}
+        if data["requested_periods"] == ["day", "5min"]
+        else {f"5min/{day.year}"}
+    )
+    if set(results) != expected:
+        raise ValueError("Source section set differs from requested periods")
+    if "day" in data["requested_periods"]:
+        daily = results[f"day/{day.year}"]
+        if (not isinstance(daily, dict)
+                or daily.get("period") != "day"
+                or daily.get("year") != day.year
+                or daily.get("from_date") != day.isoformat()
+                or daily.get("to_date") != day.isoformat()
+                or daily.get("universe_mode") != "a-share-candidate"
+                or daily.get("scan_complete") is not True
+                or daily.get("issues") != []
+                or daily.get("safe_to_automatically_union") is not False):
+            raise ValueError("Incomplete or mismatched day companion for focused 5min source")
     section = data.get("results", {}).get(f"5min/{day.year}")
     if (not isinstance(section, dict)
         or section.get("scan_complete") is not True

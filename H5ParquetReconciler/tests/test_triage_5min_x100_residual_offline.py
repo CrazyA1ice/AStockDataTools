@@ -132,7 +132,16 @@ class OfflineFiveMinuteResidualTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "integer"):
             M.analyze(src)
         src = fixture()
+        # An entry named day/2026 that still claims period=5min is
+        # a duplicate 5min section, not a malformed day companion.
         src["results"]["day/2026"] = copy.deepcopy(src["results"]["5min/2026"])
+        with self.assertRaisesRegex(ValueError, "exactly one bounded 5min"):
+            M.analyze(src)
+
+        # Once labeled as day, an inconsistent date window must instead
+        # fail the distinct day-companion provenance check.
+        src["results"]["day/2026"]["period"] = "day"
+        src["results"]["day/2026"]["to_date"] = "2026-09-30"
         with self.assertRaisesRegex(ValueError, "Companion day"):
             M.analyze(src)
 

@@ -89,6 +89,7 @@ def _purchase_bars(root,symbol,day_text,budget):
         raise ValueError("Purchased AllCycleAStockData root missing")
     got={}
     provenance={}
+    manifests=[]
     for period,max_results in (("day",2),("5min",49)):
         query=parquet.query_bars(
             root,symbol,period,day_text,day_text,
@@ -106,6 +107,7 @@ def _purchase_bars(root,symbol,day_text,budget):
         # source immutability. Never export individual paths.
         manifest=summary.get("source_file_stat_provenance")
         _verify_stat_manifest(root,manifest)
+        manifests.append(manifest)
         stamp=hashlib.sha256(json.dumps(
             sorted(manifest,key=lambda x:x["relative_path"]),sort_keys=True,
             separators=(",",":")).encode("utf-8")).hexdigest()
@@ -117,6 +119,10 @@ def _purchase_bars(root,symbol,day_text,budget):
             "matching_bar_count":summary["matching_bar_count"],
             "source_manifest_is_stat_only_not_content_authenticated":True,
         }
+    # Repeat the stat check for BOTH queries after all reads; do not
+    # report success if a source changed during the second query.
+    for manifest in manifests:
+        _verify_stat_manifest(root,manifest)
     return got,provenance
 
 

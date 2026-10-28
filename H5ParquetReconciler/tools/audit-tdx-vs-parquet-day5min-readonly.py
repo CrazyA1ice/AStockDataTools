@@ -51,6 +51,36 @@ def _native_bars(files,symbol,day_text,max_source_bytes):
     return evidence,result
 
 
+def _verify_stat_manifest(root,manifest):
+    # Query planning holds file sizes/mtimes, not content SHA. Fail closed
+    # when any original source stat changes between planning and reporting.
+    base=Path(root).resolve()
+    purchased=(base/"AllCycleAStockData").resolve()
+    if type(manifest) is not list or not manifest:
+        raise ValueError("Empty purchased stat manifest")
+    names=set()
+    for entry in manifest:
+        if type(entry) is not dict or set(entry)!={
+                "relative_path","size_bytes","mtime_ns"}:
+            raise ValueError("Malformed purchased stat manifest entry")
+        name=entry["relative_path"]
+        if (type(name) is not str or "\\\\" in name or
+                not name.startswith("AllCycleAStockData/") or
+                ".." in Path(name).parts or name in names):
+            raise ValueError("Unsafe purchased stat manifest path")
+        names.add(name)
+        file=base/name
+        if (file.is_symlink() or not file.is_file() or
+                not file.resolve().is_relative_to(purchased)):
+            raise ValueError("Purchased source path escaped or disappeared")
+        st=file.stat()
+        if (type(entry["size_bytes"]) is not int
+                or type(entry["mtime_ns"]) is not int
+                or st.st_size!=entry["size_bytes"]
+                or st.st_mtime_ns!=entry["mtime_ns"]):
+            raise ValueError("Purchased source stat changed during reconciliation")
+
+
 def _purchase_bars(root,symbol,day_text,budget):
     root=Path(root)
     if root.is_symlink() or not root.is_dir():
@@ -75,8 +105,7 @@ def _purchase_bars(root,symbol,day_text,budget):
         # These are STAT-ONLY attributes, not content SHA or proof of
         # source immutability. Never export individual paths.
         manifest=summary.get("source_file_stat_provenance")
-        if type(manifest) is not list or not manifest:
-            raise ValueError("Empty purchased source stat provenance")
+        _verify_stat_manifest(root,manifest)
         stamp=hashlib.sha256(json.dumps(
             sorted(manifest,key=lambda x:x["relative_path"]),sort_keys=True,
             separators=(",",":")).encode("utf-8")).hexdigest()

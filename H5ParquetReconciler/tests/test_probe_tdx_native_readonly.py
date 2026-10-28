@@ -66,6 +66,43 @@ class NativeTdxReadOnlyTests(unittest.TestCase):
         self.assertFalse(audit["automatic_normalization_or_staging_performed"])
         self.assertEqual(src.read_bytes(),data)
 
+    def test_daily_pre_2004_history_is_valid_in_full_file_scan(self):
+        # SH600000.day can legitimately contain older YYYYMMDD bars;
+        # 2004 is only the base year of the *minute* date encoding.
+        raw=(day_bar(19991110)+day_bar(20031231)
+             +day_bar(20040102)+day_bar(20261027))
+        src=self.put("sh600000.day",raw)
+        summary=M.inspect(src,"SH600000","2026-10-27")
+        self.assertEqual(summary["source_total_records"],4)
+        self.assertEqual(summary["source_first_date"],"1999-11-10")
+        self.assertEqual(summary["source_last_date"],"2026-10-27")
+        self.assertEqual(summary["source_content_sha256"],
+                         hashlib.sha256(raw).hexdigest())
+        self.assertEqual(summary["requested_date_source_records"],1)
+        self.assertEqual(summary["time_grid_classification"],
+                         "single_daily_record")
+        self.assertFalse(summary["source_market_file_modified"])
+        self.assertEqual(src.read_bytes(),raw)
+        # A historical requested day is also legal for native .day files.
+        early=M.inspect(src,"SH600000","1999-11-10")
+        self.assertEqual(early["requested_date_source_records"],1)
+
+    def test_date_bounds_remain_strict_for_day_and_intraday(self):
+        for day in (19891229,21010102):
+            with self.subTest(day=day):
+                src=self.put("sh600000.day",day_bar(day))
+                with self.assertRaisesRegex(
+                        ValueError,r"record #1: Native TDX day source calendar year"):
+                    M.inspect(src,"SH600000","2026-10-27")
+        src=self.put("sh600000.lc5",minute_bar())
+        with self.assertRaisesRegex(ValueError,"5min date outside 2004"):
+            M.inspect(src,"SH600000","2003-12-31")
+        with self.assertRaisesRegex(ValueError,"day date outside 1990"):
+            M.inspect(self.put("sh600000.day",day_bar()),
+                      "SH600000","1989-12-29")
+        with self.assertRaisesRegex(ValueError,"day date outside 1990"):
+            M.inspect(self.home/"sh600000.day","SH600000","2101-01-01")
+
     def test_classify_5min_start_and_end_profiles_without_rescaling(self):
         for label in ("5min_start_48","5min_end_48"):
             with self.subTest(label=label):

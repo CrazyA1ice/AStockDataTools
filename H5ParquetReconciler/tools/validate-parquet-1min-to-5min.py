@@ -322,6 +322,10 @@ def read_parquet_period(root, period, day, symbols, max_candidate_source_rows, *
     }
     records = {}
     if not paths:
+        if plan_only:
+            result["plan_only_metadata_opened"] = True
+            result["market_ohlcva_columns_read"] = False
+            result["candidate_rows_within_configured_cap"] = True
         return records, result
     _, _, start_ms, end_ms = core.parse_day_range(
         day.year, day.isoformat(), day.isoformat())
@@ -444,6 +448,9 @@ def main(argv=None):
                 "date": day.isoformat(), "symbols": list(symbols),
                 "parquet_5min_plan": five_plan, "parquet_1min_plan": one_plan,
                 "max_candidate_rows_per_period": args.max_candidate_rows,
+                "both_periods_source_files_present": (
+                    five_plan["availability"] == "source_files_present"
+                    and one_plan["availability"] == "source_files_present"),
                 "both_periods_within_configured_cap": (
                     five_plan["candidate_rows_within_configured_cap"]
                     and one_plan["candidate_rows_within_configured_cap"]),

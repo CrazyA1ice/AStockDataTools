@@ -85,6 +85,18 @@ py -3.11 -m venv .venv
 
 **2026-10-28 实机修复**：TDX原生`.day`文件会包含2004年前历史记录，原探测器把分钟线`2004`压缩日期纪元误用于全部`.day`历史，导致用户本机`sh600000.day`的整文件读取被`calendar is outside 2004..2100`中断。现按格式分开：日线1990–2100年、分钟线2004–2100年，保留日期/价格/顺序校验；新增跨1999–2026合成日线和非法年份负测试。仍需Windows实机重跑，详情见[TDX原生探测协议与修复记录](docs/2026_TDX_NATIVE_READONLY_PROBE_V1.md)。
 
+## ▶ 规则边界调查：不完整/异常股票日只读归类（2026-10-28）
+
+用户Windows已通过新预演汇总工具8项合成测试，并实际运行10组安全
+预演cohort与10组历史开盘审计cohort的来源SHA/Parquet stat-only
+指纹交叉核验：4股票×4不同日期的10组真实案例全部通过，
+判定仍是exploratory_preview_target_met_not_certified。
+据此新增[只读边界调查工具](tools/survey-tdx-parquet-minute-rule-boundaries-readonly.py)，
+定义显式实验规则ID，对最多12个SH/SZ股票日重复调用真正的241→240
+候选预演；源缺失、时间网格错误、值异常、来源漂移或六字段不匹配
+只能得到稳定的、匿名的拒绝类别，不可能自动开生产合并。
+新增9项合成测试，尚待Windows验收；详见
+[边界调查与单行PowerShell指令](docs/2026_TDX_PARQUET_MINUTE_RULE_BOUNDARY_SURVEY_V1.md)。
 ## ▶ 真实10组241→240候选预演全部通过；独立审计交叉门槛（2026-10-28）
 
 用户Windows已通过新增8项候选预演合成测试，并回传所有10组真实

@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ▶ 已验收10组安全候选与原始审计交叉来源；启动异常规则边界调查（2026-10-28）
+
+- [x] 用户Windows已经运行新增10组候选预演cohort合成测试8/8：Ran 8 tests, OK（0.445s）。
+- [x] 用户上传tdx-pq-normalization-preview-cohort-ten-stockdays-v1.json：unique_stock_days=10、distinct_symbols=4、distinct_dates=4，原始开盘审计cohort交叉来源核验通过，all_supplied_previews_match=true，verdict=exploratory_preview_target_met_not_certified；来源仍Parquet stat-only，不获生产认证。
+- [x] 新增survey-tdx-parquet-minute-rule-boundaries-readonly.py，实验规则ID固定experimental_tdx_end240_from_pq241_opening_fold_v1，支持显式最多12组SH/SZ股票日的真实只读预演，按通过/六字段不一致/缺失或不支持来源三类汇总，不输出异常原始消息、来源绝对路径或行情数值；新增9项纯合成单测（待Windows）。
+- [ ] Windows先执行新9项合成测试；再挑选此前10组以外的历史股票日验证边界（建议2026-07-16、2026-06-30），无论异常还是成功均按安全JSON回传；不在报告里断言具体停牌/除权原因。
+- [ ] 基于真实不支持/异常结果制定版本化准入策略；如无反例，继续按时间和板块扩样。未经用户授权不得落库、修改源文件或开启统一生产查询。
 ## ▶ 首轮标准化预演10/10真实通过；进入双批次来源交叉验证（2026-10-28）
 
 - [x] 用户Windows已执行8项只读241→240内存预演合成测试：Ran 8 tests, OK。

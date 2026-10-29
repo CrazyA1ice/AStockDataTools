@@ -245,16 +245,32 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
     def test_timeout_phases_distinguish_import_vs_exit_wait(self):
         self.assertEqual(
             P.timeout_phase(None),"hikyuu_subprocess_startup_timeout")
-        before=(P.PHASE_MARKER+"before_import\\n").encode("utf-8")
+        # subprocess.TimeoutExpired.stdout is bytes on Python 3.11, even
+        # when text=True. Use actual newline characters, NOT literal
+        # backslash+n, to represent print(..., flush=True) output.
+        lf=chr(10)
+        before=(P.PHASE_MARKER+"before_import"+lf).encode("utf-8")
         self.assertEqual(P.timeout_phase(before),"hikyuu_import_timeout")
-        after=before+(P.PHASE_MARKER+"after_import\\n").encode("utf-8")
+        after=before+(P.PHASE_MARKER+"after_import"+lf).encode("utf-8")
         self.assertEqual(
             P.timeout_phase(after),"hikyuu_post_import_probe_timeout")
-        complete=after+(P.PHASE_MARKER+"after_probe\\n").encode("utf-8")
+        complete=after+(P.PHASE_MARKER+"after_probe"+lf).encode("utf-8")
         self.assertEqual(
             P.timeout_phase(complete),"hikyuu_subprocess_exit_timeout")
         self.assertEqual(P.timeout_phase("random import logs"),
                          "hikyuu_subprocess_startup_timeout")
+
+        # Last line can be truncated at timeout without a newline.
+        self.assertEqual(
+            P.timeout_phase(P.PHASE_MARKER+"before_import"),
+            "hikyuu_import_timeout")
+        self.assertEqual(
+            P.timeout_phase((P.PHASE_MARKER+"after_import").encode("utf-8")),
+            "hikyuu_post_import_probe_timeout")
+        # Literal escaped characters are NOT a complete phase marker.
+        self.assertEqual(
+            P.timeout_phase(P.PHASE_MARKER+r"before_import\n"),
+            "hikyuu_subprocess_startup_timeout")
 
     def test_isolated_worker_bypasses_hanging_atexit_with_fake_hikyuu(self):
         # A synthetic hikyuu stub registers the exact type of problematic

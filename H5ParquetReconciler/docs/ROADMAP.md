@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 已实测core311可用：正式进入仅6条虚构K线的原生C++ H5读取试点（2026-10-29）
+
+- [x] 用户Windows新core311-only离线测试**9/9 OK（0.387秒）**；真实`D:\\software\\Python311\\python.exe`执行后SAFE `hikyuu-core311-only-preflight-v1.json`得到`core311_bindings_ready=true`，`last_core311_phase=finished`，版本2.8.1，`StockManager`/`Stock`/`Query`/`Parameter`/`KDataDriver`/`DataDriverFactory`/`KRecord`均为True，且没有完整包初始化、没有读取native H5/用户行情。这证实无需继续追究绘图模块即可访问核心C++绑定。
+- [x] 将先前原生6条合成H5读取工具改为仅导入`hikyuu.core`及已验证的编译扩展`cpp.core311`，不再执行卡住的顶层`hikyuu/__init__.py`；原有SHA哈希复核、`-I`外部Python311子进程、仅2只虚构股票SQLite注册库、仅2份已验证合成H5、空插件目录、无原始行情/付费Parquet写入安全界限保留。
+- [x] `--core-proof`设为必须提供的**真实、先前成功的同canary SAFE凭据**，同时检验版本、7项API、合成SHA相同、从未初始化StockManager/原生数据驱动/正式路由；不匹配直接拒绝启动native。每次子进程尝试仅到`Stock.get_kdata(Query(0,3,DAY))`读取2×3条虚构日线，核对日期及所有OHLCVA整数缩放。
+- [x] Native SAFE新增`last_native_phase`固定标签，用于区分core311、虚构SQLite、StockManager初始化、KData读取阶段；不会保存用户路径、stdout/stderr或原始行情数据。新增原生读取离线验证至**13项（待Windows实测）**，含缺失/伪造core proof、core331导入和native测试误认证、半路超时进度脱敏。
+- [ ] 用户实际运行13项离线测试，再用新`hikyuu-native-read-core311-v1.json`首次真正执行6条虚构KData读取。**当前尚无原生H5读出这6条的真实结果**，不能将`core311_bindings_ready`替代为原生H5兼容认证；真实H5/付费Parquet单位转换研究仍未开始。Windows命令及run-id规则详见[原生H5试点更新](2026_HIKYUU_281_SYNTHETIC_NATIVE_READ.md)。
+
 ## ★ 绕过绘图模块的Hikyuu 2.8.1 core311隔离预检（2026-10-29）
 
 - [x] 用户Windows运行原有18项阶段追踪测试**全数OK（2.123秒）**，真实45秒预检仍`hikyuu_import_timeout`。v3 SAFE显示`active_import_stage=package_draw`、`last_import_stage=bokeh`、`last_import_stage_event=leave`、已跟踪63个事件。这表明顶层绘图初始化仍未完成，但不能认定Bokeh自身死锁；合成H5哈希校验成功，native KData仍未执行。

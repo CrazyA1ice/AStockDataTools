@@ -24,8 +24,15 @@ MODULE=Path(__file__).resolve().parent.parent
 REPORTS=MODULE/"reports"
 WORK=MODULE/"work"
 MIRRORS=WORK/"h5_mirror"
-FORMAT="AStockDataTools isolated synthetic Hikyuu 2.8.1 native H5 read verification v1"
+FORMAT="AStockDataTools isolated synthetic Hikyuu 2.8.1 native H5 read verification v2"
+CORE_PROOF_FORMAT="AStockDataTools Hikyuu 2.8.1 isolated core311-only import preflight v1"
+REQUIRED_CORE_APIS=frozenset(("StockManager","Stock","Query","Parameter",
+                             "KDataDriver","DataDriverFactory","KRecord"))
 MARKER="ASTOCKTOOLS_NATIVE_H5_281_RESULT:"
+PHASE_MARKER="ASTOCKTOOLS_NATIVE_H5_281_PHASE:"
+PHASES=frozenset(("before_core311","core311_loaded","registry_ready",
+                  "before_stock_manager","stock_manager_ready",
+                  "before_native_read","native_read_complete","finished"))
 
 SPEC=importlib.util.spec_from_file_location(
     "synthetic_native_preflight_verifier",
@@ -37,17 +44,23 @@ SPEC.loader.exec_module(CHECK)
 # supplied after parent verified original report/file SHA. DB built from
 # hard-coded fictional registry, never copied from user's stock.db.
 WORKER=r'''
+import importlib
 import importlib.metadata
+import importlib.util
 import json
 import os
 import sqlite3
 import sys
+import types
 from pathlib import Path
 
 PREFIX="ASTOCKTOOLS_NATIVE_H5_281_RESULT:"
+PHASE="ASTOCKTOOLS_NATIVE_H5_281_PHASE:"
+print(PHASE+"before_core311",flush=True)
 out={
  "state":"not_started",
- "hikyuu_imported":False,
+ "core311_loaded":False,
+ "full_hikyuu_package_imported":False,
  "hikyuu_281_version_confirmed":False,
  "synthetic_registry_initialized":False,
  "stock_manager_initialized":False,
@@ -57,15 +70,54 @@ out={
  "source_market_files_accessed":False,
  "production_query_switched":False
 }
-stage="import"
+stage="core311"
 try:
-    import hikyuu as hk
-    out["hikyuu_imported"]=True
+    # The full 'import hikyuu' was confirmed stuck at package_draw in the
+    # user's Python311 installation. Load only the ACTUAL compiled C++
+    # core311 extension, exactly as the separate passing core-only preflight.
+    # An in-memory package prevents executing hikyuu/__init__.py.
     version=importlib.metadata.version("hikyuu")
-    if version!="2.8.1":
+    if version!="2.8.1" or sys.version_info[:2]!=(3,11):
         out["state"]="unsupported_installed_hikyuu_version"
-        raise RuntimeError("guard: different hikyuu wheel version")
+        raise RuntimeError("guard: only installed hikyuu 2.8.1/Python311")
     out["hikyuu_281_version_confirmed"]=True
+    spec=importlib.util.find_spec("hikyuu")
+    dist=importlib.metadata.distribution("hikyuu")
+    installed=Path(dist.locate_file("hikyuu")).resolve()
+    if (spec is None or spec.submodule_search_locations is None
+            or len(spec.submodule_search_locations)!=1):
+        raise RuntimeError("missing installed ordinary package")
+    found=Path(next(iter(spec.submodule_search_locations))).resolve()
+    if (found!=installed or not found.is_dir() or found.is_symlink()
+            or not (found/"__init__.py").is_file()
+            or not (found/"core.py").is_file()
+            or not (found/"cpp").is_dir()
+            or (found/"cpp").is_symlink()):
+        raise RuntimeError("unsafe installed native package root")
+    package=types.ModuleType("hikyuu")
+    package.__path__=[str(found)]
+    package.__package__="hikyuu"
+    package.__spec__=spec
+    sys.modules["hikyuu"]=package
+    cpp=found/"cpp"
+    if sys.platform=="win32":
+        _hikyuu_dll=os.add_dll_directory(str(cpp))
+        os.environ["PATH"]=str(cpp)+os.pathsep+os.environ.get("PATH","")
+    hk=importlib.import_module("hikyuu.core")
+    native=sys.modules.get("hikyuu.cpp.core311")
+    native_file=getattr(native,"__file__",None)
+    if not isinstance(native_file,str):
+        raise RuntimeError("compiled core311 not loaded")
+    native_path=Path(native_file).resolve()
+    if (native_path.suffix.lower() not in (".pyd",".so")
+            or not native_path.is_relative_to(cpp.resolve())):
+        raise RuntimeError("core.py fell back from compiled core311")
+    for name in ("StockManager","Stock","Query","Parameter",
+                 "KDataDriver","DataDriverFactory","KRecord"):
+        if not hasattr(hk,name):
+            raise RuntimeError("missing core311 required native API")
+    out["core311_loaded"]=True
+    print(PHASE+"core311_loaded",flush=True)
     stage="registry"
     # argv is only: private run dir, verified synthetic sh_day, verified
     # synthetic sz_day. No paths to original market sources are supplied.
@@ -124,6 +176,7 @@ try:
            (2,2,"000001","Synthetic SZ",1,1,20260930,20261014)])
         cx.commit()
     out["synthetic_registry_initialized"]=True
+    print(PHASE+"registry_ready",flush=True)
     stage="stock_manager"
     def p(**kwargs):
         obj=hk.Parameter()
@@ -145,10 +198,13 @@ try:
     empty_plugin_dir=root/"empty_plugins"
     empty_plugin_dir.mkdir(exist_ok=False)
     sm.set_plugin_path(str(empty_plugin_dir))
+    print(PHASE+"before_stock_manager",flush=True)
     sm.init(base,block,kdata,preload,extras)
     sm.wait_data_ready()
     out["stock_manager_initialized"]=True
+    print(PHASE+"stock_manager_ready",flush=True)
     stage="native_read"
+    print(PHASE+"before_native_read",flush=True)
     days=[20260930,20261008,20261013]
     for venue,code,seed in (("SH","600000",1),("SZ","000001",2)):
         symbol=venue+code
@@ -181,6 +237,7 @@ try:
                 raise RuntimeError("Hikyuu decoded a synthetic field incorrectly")
             out["per_symbol_matching_rows"][symbol]+=1
     out["native_h5_values_matched"]=True
+    print(PHASE+"native_read_complete",flush=True)
     out["state"]="native_h5_six_synthetic_rows_matched"
 except BaseException as ex:
     if out["state"]=="not_started":
@@ -191,6 +248,7 @@ finally:
     # one-shot child owns ONLY newly-created fictional SQLite and read-only
     # synthetic H5: emit a complete SAFE result and bypass that callback.
     # A native crash or deadlock BEFORE this point remains a failure/timeout.
+    print(PHASE+"finished",flush=True)
     print(PREFIX+json.dumps(out,sort_keys=True),flush=True)
     os._exit(0)
 '''
@@ -206,7 +264,8 @@ def parse_native(stdout,returncode):
     except (ValueError,TypeError):
         return None
     required={
-        "state","hikyuu_imported","hikyuu_281_version_confirmed",
+        "state","core311_loaded","full_hikyuu_package_imported",
+        "hikyuu_281_version_confirmed",
         "synthetic_registry_initialized","stock_manager_initialized",
         "native_h5_kdata_method_called","native_h5_values_matched",
         "per_symbol_matching_rows","source_market_files_accessed",
@@ -218,6 +277,7 @@ def parse_native(stdout,returncode):
                 "state","per_symbol_matching_rows"})
             or v["source_market_files_accessed"]
             or v["production_query_switched"]
+            or v["full_hikyuu_package_imported"]
             or type(v["per_symbol_matching_rows"]) is not dict
             or set(v["per_symbol_matching_rows"])!={"SH600000","SZ000001"}
             or any(type(n) is not int or n<0 or n>3
@@ -226,7 +286,7 @@ def parse_native(stdout,returncode):
     passed=v["state"]=="native_h5_six_synthetic_rows_matched"
     if passed and not (
             all(v[k] for k in (
-                "hikyuu_imported","hikyuu_281_version_confirmed",
+                "core311_loaded","hikyuu_281_version_confirmed",
                 "synthetic_registry_initialized","stock_manager_initialized",
                 "native_h5_kdata_method_called","native_h5_values_matched"))
             and list(v["per_symbol_matching_rows"].values())==[3,3]):
@@ -236,13 +296,65 @@ def parse_native(stdout,returncode):
     return v
 
 
+def verify_core_proof(proof_path, canary):
+    """Require a real prior successful SAFE core311 report for this canary.
+
+    No arbitrary file outside module reports/ may authorize the H5 trial.
+    A prior successful bindings check is necessary but NOT equivalent to
+    a native KData read.
+    """
+    path=CHECK._module_input(proof_path)
+    proof=json.loads(path.read_text(encoding="utf-8"))
+    required_true=(
+        "canary_file_hashes_reverified","isolated_core311_only",
+        "explicit_python_executable_used","core311_bindings_ready",
+        "no_licensed_market_data_read","no_raw_ohlcva_or_worker_logs_in_safe_summary")
+    required_false=(
+        "hikyuu_full_package_imported","stock_manager_initialized",
+        "native_h5_driver_read_executed","hikyuu_h5_compatibility_certified",
+        "licensed_parquet_to_h5_mapping_certified","full_market_mirror_allowed",
+        "original_market_files_modified","original_hikyuu_config_modified",
+        "private_overlay_activated")
+    if (not isinstance(proof,dict)
+            or proof.get("format")!=CORE_PROOF_FORMAT
+            or proof.get("canary_safe_summary_sha256")!=canary["report_sha256"]
+            or proof.get("hikyuu_core311_status")!="core311_bindings_ready"
+            or proof.get("last_core311_phase")!="finished"
+            or proof.get("hikyuu_distribution_version")!="2.8.1"
+            or any(proof.get(k) is not True for k in required_true)
+            or any(proof.get(k) is not False for k in required_false)):
+        raise ValueError("Valid matching successful core311 SAFE proof required")
+    apis=proof.get("public_core_api_presence")
+    if (type(apis) is not dict or set(apis)!=REQUIRED_CORE_APIS
+            or any(v is not True for v in apis.values())):
+        raise ValueError("Core311 SAFE proof missing required APIs")
+    return True
+
+
+def last_native_phase(stdout):
+    if isinstance(stdout,bytes):
+        stdout=stdout.decode("utf-8",errors="replace")
+    if not isinstance(stdout,str):
+        return None
+    final=None
+    for line in stdout.splitlines():
+        if line.startswith(PHASE_MARKER):
+            label=line[len(PHASE_MARKER):]
+            if label in PHASES:
+                final=label
+    return final
+
+
 def native_read(canary_report, output, python_exe, runner=subprocess.run,
-                timeout=45, run_id="run001"):
+                timeout=45, run_id="run001", core_proof=None):
     """Run isolated native read; only machine-state metadata leaves worker."""
     if python_exe is None:
         raise ValueError("--python-exe must select a pre-existing Hikyuu environment")
     interpreter=CHECK._explicit_python(python_exe)
     file_check=CHECK.verify_canary(canary_report)
+    if core_proof is None:
+        raise ValueError("--core-proof is required before native H5 driver access")
+    verify_core_proof(core_proof,file_check)
     report_dest=CHECK._module_output(output)
     canary_dir=file_check["isolated_canary_dir"]
     if (WORK.is_symlink() or MIRRORS.is_symlink()
@@ -260,6 +372,7 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
     root.mkdir(exist_ok=True)
     stage.mkdir(exist_ok=False)
     runtime_status="native_subprocess_unavailable"
+    last_phase=None
     result=None
     try:
         try:
@@ -270,10 +383,12 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
                 cwd=stage,capture_output=True,text=True,
                 timeout=timeout,check=False,
                 env=CHECK._sandbox_env(stage,interpreter))
+            last_phase=last_native_phase(proc.stdout)
             result=parse_native(proc.stdout,proc.returncode)
             runtime_status=(
                 result["state"] if result else "native_subprocess_invalid_or_crashed")
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            last_phase=last_native_phase(exc.stdout)
             runtime_status="native_subprocess_timeout"
         except (ValueError,OSError,TypeError):
             runtime_status="native_subprocess_spawn_failed"
@@ -283,15 +398,19 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
             raise ValueError("Synthetic source changed during native read") from ex
         if after!=file_check["source_file_details"]:
             raise ValueError("Synthetic source changed during native read")
-        success=(result is not None and result["state"]==
-                 "native_h5_six_synthetic_rows_matched")
+        success=(result is not None and last_phase=="finished"
+                 and result["state"]=="native_h5_six_synthetic_rows_matched")
         safe={
             "format":FORMAT,
             "canary_safe_summary_sha256":file_check["report_sha256"],
             "canary_h5_hashes_reverified":True,
             "synthetic_only":True,
+            "verified_prior_core311_only_safe_proof":True,
+            "full_hikyuu_package_imported":False,
+            "native_core311_loaded":bool(result["core311_loaded"] if result else False),
             "native_hikyuu_runtime_version_expected":"2.8.1",
             "native_h5_read_status":runtime_status,
+            "last_native_phase":last_phase,
             "native_stock_manager_initialized":bool(
                 result["stock_manager_initialized"] if result else False),
             "native_h5_get_kdata_called":bool(
@@ -328,15 +447,18 @@ def main(argv=None):
     p.add_argument("--canary-report",type=Path,required=True)
     p.add_argument("--out",type=Path,required=True)
     p.add_argument("--python-exe",type=Path,required=True)
+    p.add_argument("--core-proof",type=Path,required=True,
+                   help="Verified prior core311-only SAFE report from this canary")
     p.add_argument("--run-id",default="run001",
                    help="NEW synthetic-only scratch name; use run002 for retry")
     p.add_argument("--synthetic-native-read",action="store_true",required=True)
     args=p.parse_args(argv)
     try:
         safe=native_read(args.canary_report,args.out,args.python_exe,
-                         run_id=args.run_id)
+                         run_id=args.run_id,core_proof=args.core_proof)
         print("SAFE native Hikyuu 2.8.1 verification:",args.out)
         print("Status:",safe["native_h5_read_status"])
+        print("Last native phase:",safe["last_native_phase"])
         print("Matched synthetic records:",
               safe["per_symbol_matching_rows"])
         print("Real market H5/Parquet read: NO")

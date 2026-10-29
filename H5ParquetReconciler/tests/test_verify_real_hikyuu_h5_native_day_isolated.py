@@ -195,6 +195,7 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
         self.assertEqual(out["native_status"],"native_timeout")
         self.assertFalse(out["all_two_native_h5_real_daily_records_match"])
         self.assertEqual(out["native_final_phase"],"before_native")
+        self.assertEqual(out["native_last_work_phase"],"before_native")
 
     def test_original_h5_changed_during_native_is_refused(self):
         def replace(args,**kwargs):

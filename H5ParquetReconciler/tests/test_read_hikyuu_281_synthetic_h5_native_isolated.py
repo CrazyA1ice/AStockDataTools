@@ -136,11 +136,70 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         args=runner.call_args.args[0]
         self.assertEqual(args[:3],[str(self.alt.resolve()),"-I","-c"])
         self.assertEqual(args[3],N.WORKER)
+        # Never allow Windows text-mode GBK/CP936 log decoding in reader threads.
+        self.assertIs(runner.call_args.kwargs["text"],False)
         self.assertEqual(runner.call_args.kwargs["cwd"],
                          self.folder/"_native_h5_281"/"run001")
         self.assertEqual(len(args),7)
         self.assertEqual(args[-2:],[str(self.folder/"sh_day.h5"),
                                     str(self.folder/"sz_day.h5")])
+
+    def test_native_mixed_encoding_windows_bytes_are_parsed_without_gbk(self):
+        # Chinese native/C++ logs can mix UTF-8 and invalid GBK sequences.
+        # Only ASCII SAFE markers and JSON are relevant to success.
+        worker=result()
+        raw=(b"native log: "+bytes([0xac,0xff,0x81])+bytes([10])
+             +bytes([0xe4,0xb8,0xad,0xe6,0x96,0x87])+bytes([13,10])
+             +worker.stdout.encode("ascii")
+             +bytes([10])+b"invalid trailing log "+bytes([0x81,0xac]))
+        proc=SimpleNamespace(stdout=raw,stderr=bytes([0xac]),
+                             returncode=0)
+        safe,runner=self.runmock(process=proc)
+        self.assertEqual(safe["last_native_phase"],"finished")
+        self.assertEqual(safe["per_symbol_matching_rows"],
+                         {"SH600000":3,"SZ000001":3})
+        self.assertTrue(safe["native_h5_synthetic_six_records_matched"])
+        self.assertTrue(safe["native_h5_compatibility_certified_for_synthetic_v1"])
+        self.assertIs(runner.call_args.kwargs["text"],False)
+        reported=self.out.read_text(encoding="utf-8")
+        self.assertNotIn("native log",reported)
+        self.assertNotIn("invalid trailing log",reported)
+        self.assertNotIn("Hikyuu banner",reported)
+
+    def test_none_stdout_or_bad_binary_cannot_claim_native_success(self):
+        for index,payload in enumerate((
+            None,
+            b"unstructured native logs only "+bytes([0xac,0xff]),
+            N.PHASE_MARKER.encode("ascii")+b"finished"+bytes([10])
+                +N.MARKER.encode("ascii")+b"{bad json",
+        )):
+            with self.subTest(index=index):
+                if index:
+                    self.out.unlink()
+                proc=SimpleNamespace(stdout=payload,stderr=None,
+                                     returncode=0)
+                safe,_=self.runmock(process=proc,run_id="run"+str(index+100))
+                self.assertEqual(safe["native_h5_read_status"],
+                                 "native_subprocess_invalid_or_crashed")
+                self.assertFalse(safe["native_h5_synthetic_six_records_matched"])
+                self.assertFalse(safe["native_h5_compatibility_certified_for_synthetic_v1"])
+                self.assertFalse(safe["native_h5_get_kdata_called"])
+        self.assertIsNone(N.parse_native(None,0))
+        self.assertIsNone(N.last_native_phase(None))
+
+    def test_duplicate_or_invalid_binary_safe_markers_fail_closed(self):
+        worker=result()
+        ascii_payload=worker.stdout.encode("ascii")
+        twice=ascii_payload+ascii_payload
+        self.assertIsNone(N.parse_native(twice,0))
+        self.assertIsNone(N.parse_native(ascii_payload,3221225477))
+        # Corrupt the structured JSON marker, not just unrelated noise.
+        invalid=ascii_payload.replace(
+            N.MARKER.encode("ascii")+b"{",
+            N.MARKER.encode("ascii")+bytes([0xac])+b"{")
+        self.assertIsNone(N.parse_native(invalid,0))
+        self.assertIsNone(N.last_native_phase(
+            N.PHASE_MARKER.encode("ascii")+bytes([0xac])+b"finished"))
 
     def test_partial_rows_never_certified(self):
         safe,runner=self.runmock(process=result("native_h5_value_mismatch"))

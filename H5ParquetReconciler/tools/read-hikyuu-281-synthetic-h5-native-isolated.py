@@ -254,10 +254,30 @@ finally:
 '''
 
 
+def _marker_payloads(stdout,marker):
+    """Extract only exact ASCII SAFE lines from bytes (or test str).
+
+    On Windows, the Hikyuu C++ runtime may print UTF-8, CP936/GBK and other
+    mixed-encoding log bytes. subprocess.run(text=True) asks a reader thread
+    to decode *every byte* using the Windows locale, and may lose stdout
+    entirely on UnicodeDecodeError. Avoid decoding unrelated native logs.
+    The worker's JSON marker is ASCII (json.dumps defaults ensure_ascii=True).
+    """
+    if isinstance(stdout,bytes):
+        prefix=marker.encode("ascii")
+    elif isinstance(stdout,str):
+        prefix=marker
+    else:
+        return []
+    return [line[len(prefix):] for line in stdout.splitlines()
+            if line.startswith(prefix)]
+
+
 def parse_native(stdout,returncode):
-    lines=[line[len(MARKER):] for line in stdout.splitlines()
-           if line.startswith(MARKER)]
-    if returncode!=0 or len(lines)!=1:
+    if returncode!=0:
+        return None
+    lines=_marker_payloads(stdout,MARKER)
+    if len(lines)!=1:
         return None
     try:
         v=json.loads(lines[0])
@@ -332,16 +352,17 @@ def verify_core_proof(proof_path, canary):
 
 
 def last_native_phase(stdout):
-    if isinstance(stdout,bytes):
-        stdout=stdout.decode("utf-8",errors="replace")
-    if not isinstance(stdout,str):
-        return None
+    # Decode only fixed ASCII stage labels; never process or persist arbitrary
+    # native DLL logs, which may have inconsistent Windows encodings.
     final=None
-    for line in stdout.splitlines():
-        if line.startswith(PHASE_MARKER):
-            label=line[len(PHASE_MARKER):]
-            if label in PHASES:
-                final=label
+    for label in _marker_payloads(stdout,PHASE_MARKER):
+        if isinstance(label,bytes):
+            try:
+                label=label.decode("ascii")
+            except UnicodeDecodeError:
+                continue
+        if label in PHASES:
+            final=label
     return final
 
 
@@ -380,7 +401,7 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
                 [str(interpreter),"-I","-c",WORKER,
                  str(stage),str(canary_dir/"sh_day.h5"),
                  str(canary_dir/"sz_day.h5")],
-                cwd=stage,capture_output=True,text=True,
+                cwd=stage,capture_output=True,text=False,
                 timeout=timeout,check=False,
                 env=CHECK._sandbox_env(stage,interpreter))
             last_phase=last_native_phase(proc.stdout)

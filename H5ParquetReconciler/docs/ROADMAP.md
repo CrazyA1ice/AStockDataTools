@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 九月份6/6真实日线比对已通过：进入2025/2026跨月日线小样本（2026-10-30）
+
+- [x] 用户Windows运行第144轮修复后的12项合成Parquet/H5测试**全部OK（2.241秒）**；成功只读生成`real-h5-parquet-heldout-day-factors-20260928-29-v1.json`，证实2026-09-28、29 SH600000和SZ000001各1根共4条真实日线：原始H5量×100候选**4/4**、原始H5成交额×1000候选**4/4**、开高低收raw÷1000各**4/4**，成交量和成交额共4/4均正数非零，不是全零凑出的伪命中。使用一个已审核2026-09 Parquet月文件，原始行扫描236416、4个行组（同一月文件按两天两次受控读取）。源H5/Parquet未改；当日未重复运行native C++。加上之前2026-09-30原生真实H5样本2/2，该月份**共6个股票日**支持上述倍率，仅一个月尚不足以证实跨年通用。
+- [x] 增加`tools/probe-real-h5-parquet-crossyear-day-readonly.py`，不重复9月样本，固定选择**2025-09-30**与**2026-08-24**，两只股票各1根，共4个跨年两个月新股票日；必须先完整验证已有真实2026-09-30原始H5↔Parquet SAFE、同日Hikyuu native C++ 2/2 HMAC SAFE、2026-09-28/29留出日4/4 SAFE及三份文档的互相SHA256对应。每个Parquet月文件分别≤150000行/32组，总扫描预算≤300000/64组；仅两份原始H5文件以只读二分提取四条日线，不执行新原生C++、不打开正式SQLite或分钟线、绝不写市场H5。
+- [x] SAFE只保留两个新日期各自候选倍率和价格容差的计数、正非零/双零/单零数量、输入脱敏报告SHA256、总扫描预算、安全拒绝标记，禁止商业行情OHLCVA、原始H5整数、时间戳值、源路径导出。若某个历史日线缺文件、欠行、重复或schema不符，直接拒绝，不自行换股票、补日期或进入宽范围扫描。即使跨年4/4，供应商物理单位和全市场H5镜像资格仍false。
+- [x] 新增**13项仅合成小Parquet/H5回归（尚待用户Windows实测）**，验证成功4条配对、跨年单日冲突不隐藏、零值不能产生倍率支持、历史证据链、路径拒绝、缺月文件、重复键及源扫描预算。参见[跨年日线小样本倍率试验](2026_REAL_H5_PARQUET_CROSSYEAR_DAY_FACTORS.md)。下一步先13项测试，并确认`D:\\stock\\AllCycleAStockData\\day\\2025-09.parquet`与`2026-08.parquet`存在，再运行一次只读小样本并上传SAFE；新样本上的native KRecord仍未重验。
+
 ## ★ Windows留出日12项单测：4处异常文案大小写误报（2026-10-30）
 
 - [x] 用户本地Windows新增`test_probe_real_h5_parquet_heldout_day_factors_readonly.py`运行**12项中11项ok、1项包含4个subTest FAIL（5.173秒）**。四个失败均是同一项`test_prior_native_must_prove_real_2_of_2_not_merely_called`：程序**正确拒绝**被人为篡改的前序原生SAFE并抛出`ValueError("Previous real native H5 two-stock-day SAFE not qualified")`，但测试`assertRaisesRegex(ValueError, "previous real native")`首字母小写且Python正则区分大小写，导致4个误报。**并未指示真实原生解码失败、真实留出日数据不一致，亦未开始下一次真实市场数据核验。**

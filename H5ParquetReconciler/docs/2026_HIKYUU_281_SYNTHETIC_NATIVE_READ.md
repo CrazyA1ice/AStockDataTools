@@ -1,5 +1,30 @@
 # Hikyuu 2.8.1：隔离调用原生HDF5驱动读取完全合成日线（2026-10-29）
 
+> **2026-10-29 core311-only路线更新：** 下文部分“完整包导入”操作背景已被新工具替代。用户已提供`hikyuu-core311-only-preflight-v1.json`真实Windows SAFE，证明Python3.11中Hikyuu2.8.1的`core311`绑定和7项API可加载；完整包导入曾卡在`package_draw`。本轮原生读取脚本不再`import hikyuu`完整包，而是用同一经过验证的`hikyuu.core`加载方法。运行原生读取时**必须**用`--core-proof`提供该v1 SAFE，且与合成H5对应同一份canary摘要SHA，否则执行前即拒绝。当前只有**core-only预检9/9测试及真实绑定证明通过**，下面的原生读取13项离线测试和真正6条合成KData仍待Windows验收。
+
+## core311-only原生读取的实际操作（替代旧命令）
+
+在仓库根目录：
+
+```powershell
+git pull --ff-only origin main
+.\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_read_hikyuu_281_synthetic_h5_native_isolated.py" -v
+```
+
+预期`Ran 13 tests / OK`，但必须以本机实际结果为准。通过后，在完整包导入不变、正式行情不变的条件下执行：
+
+```powershell
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\read-hikyuu-281-synthetic-h5-native-isolated.py --canary-report "H5ParquetReconciler\\reports\\hikyuu-native-synthetic-day-canary-v1.json" --core-proof "H5ParquetReconciler\\reports\\hikyuu-core311-only-preflight-v1.json" --python-exe "D:\\software\\Python311\\python.exe" --run-id run001 --out "H5ParquetReconciler\\reports\\hikyuu-native-read-core311-v1.json" --synthetic-native-read
+```
+
+本次**首次真实KData读取能否通过尚未知**。即使子进程崩溃，SAFE报告也会记录`native_h5_read_status`以及`last_native_phase`（固定白名单的`before_core311/core311_loaded/registry_ready/before_stock_manager/stock_manager_ready/before_native_read/native_read_complete/finished`之一），不包含源码路径、stdout/stderr或行情字段。
+
+成功状态只能是`native_h5_six_synthetic_rows_matched`，匹配条数`SH600000=3`、`SZ000001=3`且`native_h5_synthetic_six_records_matched=true`。**即使成功，也严格不允许认为购买Parquet单位已经核验，不能直接启动全市场镜像转换。**
+
+如果目标`run001`或JSON已存在，必须两者同时更换为新的`--run-id run002`及`...-v2.json`。任何失败只需回传模块`reports/`的SAFE JSON及测试摘要，不上传隔离SQLite、原始H5或购买Parquet。以下保留原始试点的设计依据和历史操作流程以供追溯。
+
+
+
 ## 真实证据、版本与边界
 
 - 已知用户电脑`D:\\software\\Python311\\python.exe`安装`hikyuu 2.8.1`，该路径与虚拟环境分离；更新的旧版隔离预检测试`Ran 12 tests in 1.592s / OK`。

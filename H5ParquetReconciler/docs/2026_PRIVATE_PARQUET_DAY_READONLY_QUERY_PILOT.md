@@ -32,6 +32,45 @@
 - H5日线价格÷1000、成交量×100、成交额×1000仍只是候选量纲，**不视作供应商认证**。分钟线没有被补齐，也不改H5镜像。
 - 真实对账需要重新扫描被查询的H5-only整日，即使查询一只股票，也可能有较高本地I/O；这是第一版的可验证性优先设计，不作“高性能生产版”承诺。
 
+## SH600000真实只读试点验收与统计口径修正（2026-10-29）
+
+用户Windows新回传8项合成测试逐项均为`ok`，终端截取末行为`Ran 8 tests in 6.183s`，未见最终`OK`或退出码；**只记录为逐项通过，不推断完整退出状态**。
+
+用户上传`private-day-query-SH600000-20260930-20261013-v1.json`实际证明：
+
+- 显式SHA等于已准备四日版本`46bd847de3d00c0f48ff50830fa8688547198c6db1a3cf3b10eb7d2261770c03`；基础购买数据返回1根、私有缺口返回4根、合计5根；
+- 四个缺失日期均现场重审、全部私有stage的SHA和证券键重验成功；未执行任何正式路由切换、未修改原来源。
+- 购买Parquet只找到1个候选RowGroup，读取28,191源行，开了9个源文件footer（8个由footer证明不相关后跳过）；查询日期是2026-09-30～10-13。
+- **旧统计口径有两处错误**：源行/返回bar比值`28191.0`沿用了购买Parquet单根数据的比例，不能直接解释为组合返回5根后的整体放大比；`query_elapsed_seconds_this_invocation=0.568659`只计购买Parquet查询，不包含私有4日的现场来源复核、全部4日私有stage键读取和私有bar解码。
+
+为修正这一统计边界，后续v2及以上safe报告分别输出：
+
+- `purchased_parquet_source_rows_scanned`、`purchased_parquet_source_rows_per_purchased_bar`：仅购买Parquet来源的扫描成本和其自身bar分母；
+- `private_stage_key_rows_decoded_during_version_verification`：校验**全部已准备日期**的stage键数，本版本为22,191，即使查询窗没覆盖私有日期也需要这一步；
+- `private_stage_rows_decoded_for_selected_dates`：本查询窗选中日期的完整暂存数据解码行数，4日共22,191；
+- `known_minimum_purchased_plus_stage_rows_decoded`：上述三类确定执行过的行级读取次数之和，**实际本次至少28,191+22,191+22,191=72,573**，不包括现场H5+购买PQ整日差集审计的额外读取、文件哈希字节I/O或底层Arrow物理IO；不是统一数据库的实际逐字节I/O；
+- `known_minimum_rows_per_combined_returned_bar`：仅此最低已知解码量/最终返回bar数，本次若重跑相同源文件与日期应为72,573/5=14,514.6；`source_rows_read_per_returned_bar`主动置`null`，避免将购买Parquet自身单根比例误认为综合比例；
+- `purchased_query_elapsed_seconds_this_invocation`保留购买接口原测时，`query_elapsed_seconds_this_invocation`调整为**完整统一查询方法调用**，新增独立的版本验证、现场复核、购买读取及私有阶段解码计时。整段时间才可用于后续真实性能对比。
+
+以上是本轮代码修正，**未在Windows跑新的10项回归或v2真实报告**；不宣称新数值已有实测。原始`v1.json`是历史证据，必须保留原件，不改写重算它。
+
+### 下一轮最小本机验收
+
+仓库更新后在项目根目录执行：
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_query_parquet_primary_day_overlay_readonly.py" -v
+```
+
+新测试文件预期10项（8旧项+2项预算/空结果回归），如有任何失败，先处理失败，不改动源数据。全部通过后只跑相同的单股只读查询，**仅变更输出新文件名**防止覆盖旧报告：
+
+```powershell
+.\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-parquet-primary-day-overlay-readonly.py "D:\stock" --symbol SH600000 --from-date 2026-09-30 --to-date 2026-10-13 --version-sha256 "46bd847de3d00c0f48ff50830fa8688547198c6db1a3cf3b10eb7d2261770c03" --max-candidate-rows 30000000 --max-result-bars 50 --max-overlay-source-rows 30000 --out "reports\private-day-query-SH600000-20260930-20261013-v2.json" --read-only
+```
+
+只回传新的SAFE报告与完整测试末尾`OK`或`$LASTEXITCODE`；不要上传真实商业OHLCVA或模块work目录内的`day.parquet`。
+
 ## Windows执行（仓库根目录）
 
 先更新：

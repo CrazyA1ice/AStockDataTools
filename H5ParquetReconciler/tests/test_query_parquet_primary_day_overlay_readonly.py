@@ -85,6 +85,28 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertEqual(FIXTURE.M.stage_tool.file_digest(original),
                              source_sha)
 
+    def test_explicit_query_rechecks_gap_with_one_bounded_live_scan(self):
+        with prepared_synthetic() as (root, module, report, gate, original,
+                                      stage_dir, plan):
+            real_batch = FIXTURE.M.stage_tool.verify_live_absence_dates
+            with patch.object(
+                    FIXTURE.M.stage_tool, "verify_live_absence_dates",
+                    wraps=real_batch) as batch, \
+                    patch.object(
+                        FIXTURE.M.stage_tool, "verify_live_absence",
+                        side_effect=AssertionError("redundant per-day scan")):
+                result = self.query(root, plan["version_sha256"],
+                                    start="2026-10-08", end="2026-10-08")
+            batch.assert_called_once()
+            self.assertEqual(
+                batch.call_args.args[2], {"2026-10-08": 1})
+            safe = result["safe_summary"]
+            self.assertTrue(safe["live_absence_recheck_single_bounded_scan"])
+            self.assertEqual(safe["live_absence_recheck_scan_count"], 1)
+            self.assertEqual(safe["live_absence_recheck_h5_in_window_rows"], 1)
+            self.assertEqual(safe["live_absence_recheck_purchased_in_window_rows"], 0)
+            self.assertEqual(len(result["bars"]), 1)
+
     def test_baseline_only_query_does_not_claim_private_selected_day_reads(self):
         with prepared_synthetic() as (root, module, report, gate, original,
                                       stage_dir, plan):
@@ -93,6 +115,8 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             safe = result["safe_summary"]
             self.assertEqual(len(result["bars"]), 1)
             self.assertEqual(safe["private_overlay_dates_live_rechecked"], [])
+            self.assertEqual(safe["live_absence_recheck_scan_count"], 0)
+            self.assertFalse(safe["live_absence_recheck_single_bounded_scan"])
             self.assertEqual(safe["private_overlay_bars_returned"], 0)
             self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"], 0)
             self.assertTrue(safe["no_h5_read"])

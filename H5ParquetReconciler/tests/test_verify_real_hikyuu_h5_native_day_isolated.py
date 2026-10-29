@@ -267,10 +267,73 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
             G.run(self.h5root,self.proof,outside,Path("/fake/python311"),
                   runner=self.runner())
 
+    def test_safe_native_query_failure_status_is_accepted(self):
+        body={
+            "state":"failed_at_before_query",
+            "core311":True,"registry_only_temp":True,
+            "stock_manager_initialized":True,
+            "native_get_kdata_called":False,
+            "h5_file_read_only":True,
+            "records_examined_per_stock":{"SH600000":0,"SZ000001":0},
+            "hmac_by_stock":{"SH600000":"","SZ000001":""},
+        }
+        raw=G.MARKER+json.dumps(body,sort_keys=True).encode("ascii")
+        self.assertEqual(G.decode_status(raw,0),body)
+        body["state"]="failed_at_before_get_kdata"
+        raw=G.MARKER+json.dumps(body,sort_keys=True).encode("ascii")
+        self.assertEqual(G.decode_status(raw,0),body)
+        body["state"]="native_target_day_not_found"
+        raw=G.MARKER+json.dumps(body,sort_keys=True).encode("ascii")
+        self.assertEqual(G.decode_status(raw,0),body)
+
+    def test_unrecognized_or_excess_native_errors_are_never_echoed(self):
+        body={
+            "state":"failed_at_untrusted_native_message_including_path",
+            "core311":True,"registry_only_temp":True,
+            "stock_manager_initialized":True,
+            "native_get_kdata_called":True,"h5_file_read_only":True,
+            "records_examined_per_stock":{"SH600000":1,"SZ000001":0},
+            "hmac_by_stock":{"SH600000":"","SZ000001":""},
+        }
+        raw=G.MARKER+json.dumps(body).encode("ascii")
+        self.assertIsNone(G.decode_status(raw,0))
+        body["state"]="failed_at_before_get_kdata"
+        body["arbitrary_raw_ohlcva"]="restricted"
+        raw=G.MARKER+json.dumps(body).encode("ascii")
+        self.assertIsNone(G.decode_status(raw,0))
+
+    def test_failure_code_and_stage_survive_to_safe_report_without_raw_logs(self):
+        def controlled_failure(args,**kw):
+            body={
+                "state":"failed_at_before_get_kdata",
+                "core311":True,"registry_only_temp":True,
+                "stock_manager_initialized":True,
+                "native_get_kdata_called":True,
+                "h5_file_read_only":True,
+                "records_examined_per_stock":{"SH600000":0,"SZ000001":0},
+                "hmac_by_stock":{"SH600000":"","SZ000001":""},
+            }
+            out=(G.STAGE_MARKER+b"before_get_kdata\n"+
+                 G.STAGE_MARKER+b"finished\n"+
+                 G.MARKER+json.dumps(body).encode("ascii")+b"\n")
+            return SimpleNamespace(returncode=0,stdout=out,stderr=b"PRIVATE Native failure info")
+        result=G.run(self.h5root,self.proof,self.out,Path("/fake/python311"),
+                     runner=controlled_failure)
+        self.assertEqual(result["native_status"],"failed_at_before_get_kdata")
+        self.assertEqual(result["native_last_work_phase"],"before_get_kdata")
+        self.assertFalse(result["all_two_native_h5_real_daily_records_match"])
+        text=self.out.read_text(encoding="utf-8")
+        self.assertNotIn("PRIVATE",text)
+        self.assertNotIn("HikyuuData",text)
+        self.assertFalse(result["ready_for_full_market_mirror"])
+
     def test_worker_never_prints_real_ohlcva_and_no_source_h5_writes(self):
         self.assertNotIn("record.amount",G.WORKER.split("print(PREFIX")[1])
         self.assertIn("os._exit(0)",G.WORKER)
-        self.assertIn("stock.get_kdata(hk.Query(-64,hk.Query.DAY))",G.WORKER)
+        self.assertIn("query=hk.Query(first,n,hk.Query.DAY)",G.WORKER)
+        self.assertIn("stock.get_count(hk.Query.DAY)",G.WORKER)
+        self.assertIn("recs=stock.get_kdata(query)",G.WORKER)
+        self.assertNotIn("hk.Query(-64,hk.Query.DAY)",G.WORKER)
         self.assertNotIn("h5py.File",G.WORKER)
         self.assertNotIn("hikyuu_init()",G.WORKER)
         self.assertIn("hmac.new(key,msg,hashlib.sha256)",G.WORKER)

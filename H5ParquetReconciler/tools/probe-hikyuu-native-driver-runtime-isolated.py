@@ -72,7 +72,8 @@ def digest(path):
 
 def _module_input(path):
     p=Path(path)
-    if (REPORTS.is_symlink() or p.is_symlink()
+    if (REPORTS.is_symlink() or WORK.is_symlink()
+            or MIRRORS.is_symlink() or p.is_symlink()
             or not p.is_file() or p.suffix.lower()!=".json"
             or p.resolve().parent!=REPORTS.resolve()):
         raise ValueError("Synthetic canary summary must be an existing module reports/ JSON")
@@ -81,7 +82,8 @@ def _module_input(path):
 
 def _module_output(path):
     p=Path(path)
-    if (REPORTS.is_symlink() or p.is_symlink() or p.exists()
+    if (REPORTS.is_symlink() or WORK.is_symlink()
+            or MIRRORS.is_symlink() or p.is_symlink() or p.exists()
             or p.suffix.lower()!=".json"
             or p.resolve().parent!=REPORTS.resolve()):
         raise ValueError("Output must be a NEW SAFE JSON directly in module reports/")
@@ -129,6 +131,8 @@ def verify_canary(canary_report):
                 or p.is_symlink()
                 or not p.resolve().is_relative_to(MIRRORS.resolve())):
             raise ValueError("Unsafe/missing synthetic H5 canary file")
+        if p.resolve().parent.parent!=MIRRORS.resolve():
+            raise ValueError("Synthetic canary must be direct H5 mirror child directory")
         if parent is None:
             parent=p.resolve().parent
         elif parent!=p.resolve().parent:

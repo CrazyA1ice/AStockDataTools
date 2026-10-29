@@ -21,7 +21,7 @@ SPEC=importlib.util.spec_from_file_location(
     TOOLS/"audit-sanitized-parquet-h5-unit-evidence.py")
 AUDIT=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUDIT)
-FORMAT="AStockDataTools bounded real Parquet Arrow footer-only schema v1"
+FORMAT="AStockDataTools bounded real Parquet Arrow footer-only schema v2"
 PERIODS=("day","5min","1min")
 FOOTER_MAX=16*1024*1024
 ALIASES={
@@ -106,6 +106,43 @@ def _timezone(t,pa):
     return "unknown"
 
 
+def _date_arrow_storage_family(t,pa):
+    """Return a closed, non-sensitive Arrow type FAMILY for the date role.
+
+    Date fields of type string/int64 are common, but their contents are NOT
+    calendar-encoding evidence. Do not infer YYYYMMDD, Beijing time, or a
+    market-session label from a footer alone. No source values are read.
+    """
+    if t is None:
+        return "unresolved"
+    if pa.types.is_timestamp(t):
+        return {"s":"timestamp_s","ms":"timestamp_ms",
+                "us":"timestamp_us","ns":"timestamp_ns"}.get(
+                    t.unit,"unsupported_timestamp")
+    for pred,label in (
+        (pa.types.is_date32,"date32"),
+        (pa.types.is_date64,"date64"),
+        (pa.types.is_string,"utf8"),
+        (pa.types.is_large_string,"large_utf8"),
+        (pa.types.is_int8,"int8"),
+        (pa.types.is_int16,"int16"),
+        (pa.types.is_int32,"int32"),
+        (pa.types.is_int64,"int64"),
+        (pa.types.is_uint8,"uint8"),
+        (pa.types.is_uint16,"uint16"),
+        (pa.types.is_uint32,"uint32"),
+        (pa.types.is_uint64,"uint64"),
+        (pa.types.is_float32,"float32"),
+        (pa.types.is_float64,"float64"),
+        (pa.types.is_binary,"binary"),
+        (pa.types.is_large_binary,"large_binary"),
+        (pa.types.is_dictionary,"dictionary"),
+    ):
+        if pred(t):
+            return label
+    return "unsupported"
+
+
 def canonical_schema(schema,pa):
     """Do not return raw field names, free-text metadata or arbitrary type repr."""
     fields={}
@@ -131,6 +168,12 @@ def canonical_schema(schema,pa):
     date_type=_datetime_type(date_t,pa) if date_t is not None else "unknown"
     tz=_timezone(date_t,pa) if date_t is not None else "unknown"
     price_kind=price[0] if all(p==price[0] for p in price) else "unknown"
+    date_role_status=("ambiguous" if "date" in ambiguous else
+                      "matched" if date_t is not None else "missing")
+    float_roles=sorted(
+        label for label in ("open","high","low","close","amount","volume")
+        if found[label] is not None
+        and (_type_label(found[label],pa) in ("float32","float64")))
     return {
         "audit_schema":{
             "date_type":date_type,
@@ -147,6 +190,14 @@ def canonical_schema(schema,pa):
         "recognized_alias_presence":{key:found[key] is not None
                                      for key in ALIASES},
         "ambiguous_alias_roles":sorted(ambiguous),
+        # Strictly whitelisted Arrow type families, NOT raw schema text.
+        "date_role_match_status":date_role_status,
+        "date_arrow_storage_family":_date_arrow_storage_family(date_t,pa),
+        "date_time_label_semantics_certified":False,
+        "date_raw_calendar_encoding_certified":False,
+        # Binary floats cannot be implicitly promoted to exact decimal money.
+        "numeric_binary_float_roles":float_roles,
+        "binary_float_to_native_h5_precision_certified":False,
         "arrow_columns_in_schema":len(schema),
     }
 

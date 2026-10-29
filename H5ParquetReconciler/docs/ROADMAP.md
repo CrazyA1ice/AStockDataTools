@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 合成Decimal H5二次原生读出6/6：转入真实单位证据的脱敏报告审核（2026-10-29）
+
+- [x] 用户Windows已运行第二次native H5验收**9/9项离线回归OK（1.180秒）**，并生成SAFE `synthetic-decimal-h5-native-reread-v1.json`，证实`new_native_h5_read_status=native_h5_six_synthetic_rows_matched`、`last_native_phase=finished`、`core311_loaded_in_native_worker=true`、`native_h5_get_kdata_called=true`，新生成两份完全虚构Decimal桥接H5分别3/3匹配，合成Parquet→H5→C++ native读取闭环全部通过，四份新旧虚构文件哈希被重新验证。
+- [x] 用户粘贴的9项结果及同一个`run001`命令在消息内重复了一次；仓库正常阻止重复run ID和SAFE覆盖，因此这应按**一次有效验收**入账，不能计算为两次独立运行。SAFE仍明确`licensed_parquet_units_verified=false`、`licensed_parquet_to_h5_mapping_certified=false`、`ready_for_full_market_mirror=false`。
+- [x] 下一步不继续制造重复合成H5试验，重点是**真实购买Parquet的金额/交易量物理单位及字段/时区证据**，但本轮继续严格**不读取或修改真实H5、商业Parquet或用户stock.db**。新增`tools/audit-sanitized-parquet-h5-unit-evidence.py`：仅从模块`reports/`接受事先整理的脱敏Schema/跨周期汇总JSON，不接受外部文件路径、OHLC逐行数据；检查2股票×≥2日期、日/5分钟/1分钟字段类型/时区、闭市覆盖、分钟时间网格、复权一致性、金额/量跨周期聚合差异及有无独立物理单位文档。
+- [x] 新增**11项不读真实数据的离线单测（待用户Windows实际执行）**；有任何数据窗口/Schema缺口都清晰列出不可推进原因；即使所有聚合指标通过，审核器也**永远不会**认证真实成交额是元/万元、真实成交量是手/股，亦永远不会开放正式镜像写入。详细格式、样例、Windows测试/审核命令见[脱敏单位证据要求](2026_PARQUET_H5_UNITS_SANITIZED_EVIDENCE.md)。
+- [ ] 用户优先运行新增11项离线回归；如已持有前轮只读工具产出的真实聚合报告，再**人工审阅与脱敏**为本阶段严格JSON，再审核。没有足够源证据，不允许编造示例数据冒充真实结论，更不应直接启动购买Parquet→生产H5转换。
+
 ## ★ 合成Decimal Parquet→H5整数往返成功：新生成H5的第二次native验收（2026-10-29）
 
 - [x] 用户在Windows运行修正后的**13/13项合成数值精度与Parquet/H5往返测试，全数OK（5.646秒）**，包括真正的`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`集成测试（没有skipped）；本机实际运行`synthetic-parquet-to-hikyuu-h5-numeric-gate.py`，SAFE `synthetic-parquet-h5-decimal-gate-v1.json`证实`all_six_synthetic_records_exactly_matched_native_baseline=true`，两只股票分别3条，与先前经Hikyuu 2.8.1 native C++读取的合成基准H5逐字段整数相同，四个新Parquet/H5文件输出哈希齐全。

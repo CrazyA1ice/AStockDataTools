@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 绕过绘图模块的Hikyuu 2.8.1 core311隔离预检（2026-10-29）
+
+- [x] 用户Windows运行原有18项阶段追踪测试**全数OK（2.123秒）**，真实45秒预检仍`hikyuu_import_timeout`。v3 SAFE显示`active_import_stage=package_draw`、`last_import_stage=bokeh`、`last_import_stage_event=leave`、已跟踪63个事件。这表明顶层绘图初始化仍未完成，但不能认定Bokeh自身死锁；合成H5哈希校验成功，native KData仍未执行。
+- [x] 核对上游**Hikyuu 2.8.1标签**的`core.py`：Python3.11选择`cpp.core311`；顶层`hikyuu/__init__.py`才加载util/extend/indicator/trade_manage/trade_sys/analysis/hub/draw。为避免不必要的绘图依赖，新增`tools/probe-hikyuu-281-core311-only-isolated.py`：验证已有wheel与Python3.11、受控动态库目录后，只在`-I`子进程用内存包命名空间导入`hikyuu.core`。**强制检查编译的`cpp.core311`实际载入**，拒绝无声回退到`cpp.core`，不初始化StockManager或查询行情。
+- [x] 仍由项目虚拟环境对两只虚构股票合成H5进行前后SHA验证，只输出`core311_bindings_ready`、白名单核心接口及固定阶段机器状态；完整`hikyuu`顶层初始化不执行，客户原始H5/付费Parquet/真实`stock.db`均不读/不写，原生KData兼容认证始终为False。
+- [x] 单独新增**9项离线模拟回归测试（待用户Windows实际执行）**，与已经验收的18项完整导入阶段预检互不覆盖；运行说明见[Core311-only隔离预检](2026_HIKYUU_281_CORE311_ONLY_PREFLIGHT.md)。
+- [ ] 使用已安装的`D:\\software\\Python311\\python.exe`运行新预检，输出`reports/hikyuu-core311-only-preflight-v1.json`；仅当真实`core311_bindings_ready=true`后才修改原生H5读取金丝雀采用core-only路线，仍不得直接执行生产全市场H5镜像。
+
 ## ★ Hikyuu 2.8.1实际Python311导入45秒仍超时：定位嵌套模块（2026-10-29）
 
 - [x] 用户Windows回传：**15/15隔离预检测试OK（2.055秒）**，**9/9原生H5试点模拟测试OK（0.477秒）**。真正用`D:\\software\\Python311\\python.exe`执行45秒Python预检后仍`hikyuu_import_timeout`；`hikyuu-native-runtime-preflight-python311-v2.json`两份合成H5 SHA复核为true、`installed_hikyuu_version=null`、API为空、原生驱动未执行。当前不能将其解释成`atexit`单一原因，也不能误报原生H5读取成功。

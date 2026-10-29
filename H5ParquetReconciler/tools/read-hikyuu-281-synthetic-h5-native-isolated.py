@@ -398,8 +398,8 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
             raise ValueError("Synthetic source changed during native read") from ex
         if after!=file_check["source_file_details"]:
             raise ValueError("Synthetic source changed during native read")
-        success=(result is not None and result["state"]==
-                 "native_h5_six_synthetic_rows_matched")
+        success=(result is not None and last_phase=="finished"
+                 and result["state"]=="native_h5_six_synthetic_rows_matched")
         safe={
             "format":FORMAT,
             "canary_safe_summary_sha256":file_check["report_sha256"],

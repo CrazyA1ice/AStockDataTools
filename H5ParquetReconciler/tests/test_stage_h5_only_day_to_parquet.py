@@ -108,6 +108,78 @@ class H5DailyStageTests(unittest.TestCase):
                 M.stage(stock, gate, report, date(2026, 10, 8),
                         stage_dir, 200)
 
+    def test_multiple_h5_only_dates_use_exactly_one_live_source_scan(self):
+        with small_sources() as (stock, module, report, gate, purchased):
+            h5 = stock / "HikyuuData" / "sh_day.h5"
+            with h5py.File(h5, "r+") as fh:
+                data = fh["data"]
+                prior = data["SH600000"][:]
+                appended = np.array([(
+                    202610090000, 12500, 12600, 12400, 12550, 151, 1900
+                )], dtype=DTYPE)
+                del data["SH600000"]
+                data.create_dataset("SH600000", data=np.concatenate(
+                    [prior, appended]))
+            expected = {"2026-10-08": 1, "2026-10-09": 1}
+            with patch.object(M.core, "reconcile_section",
+                              wraps=M.core.reconcile_section) as scan:
+                observed = M.verify_live_absence_dates(
+                    stock, module / "work" / "batch-recheck", expected)
+            scan.assert_called_once()
+            self.assertEqual(observed["by_day"]["20261008"]["h5_unique"], 1)
+            self.assertEqual(observed["by_day"]["20261009"]["h5_unique"], 1)
+            self.assertEqual(observed["pq_rows"], 0)
+            self.assertTrue(observed["scan_complete"])
+
+    def test_second_day_newly_purchased_fails_batch_even_when_first_day_clean(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        with small_sources() as (stock, module, report, gate, purchased):
+            h5 = stock / "HikyuuData" / "sh_day.h5"
+            with h5py.File(h5, "r+") as fh:
+                data = fh["data"]
+                rows = data["SH600000"][:]
+                del data["SH600000"]
+                data.create_dataset("SH600000", data=np.concatenate([
+                    rows, np.array([(
+                        202610090000, 12500, 12600, 12400, 12550, 151, 1900
+                    )], dtype=DTYPE)]))
+            target = purchased.parent / "2026-10.parquet"
+            pq.write_table(pa.Table.from_pylist([{
+                "ts": stamp_ms(date(2026, 10, 9)),
+                "symbol": "600000.XSHG",
+                "open": 12.5, "high": 12.6, "low": 12.4,
+                "close": 12.55, "volume": 15100.0,
+                "amount": 1900000.0, "source": "new_purchased"
+            }]), target)
+            expected = {"2026-10-08": 1, "2026-10-09": 1}
+            with patch.object(M.core, "reconcile_section",
+                              wraps=M.core.reconcile_section) as scan:
+                with self.assertRaisesRegex(
+                        ValueError, "Live source recheck"):
+                    M.verify_live_absence_dates(
+                        stock, module / "work" / "batch-stale", expected)
+            scan.assert_called_once()
+
+    def test_batch_guard_rejects_bad_day_shapes_without_source_scan(self):
+        with small_sources() as (stock, module, report, gate, purchased):
+            rejected = (
+                {},
+                {"20261008": 1},
+                {"2026-10-08": 0},
+                {"2026-10-08": True},
+                {"2026-10-08": 1, "2027-10-09": 1},
+                {"2026-10-08": 1, "2026-12-09": 1},
+            )
+            with patch.object(M.core, "reconcile_section",
+                              side_effect=AssertionError("should not scan")):
+                for expected in rejected:
+                    with self.subTest(expected=expected):
+                        with self.assertRaises(ValueError):
+                            M.verify_live_absence_dates(
+                                stock, module / "work" / "bad-batch",
+                                expected)
+
     def test_staging_overlap_date_is_rejected(self):
         with small_sources() as (stock, module, report, gate, pq_file):
             path = module / "work" / "unified_parquet" / "staging" / "overlap"

@@ -221,7 +221,12 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=20):
         runtime_status="hikyuu_import_timeout"
     except (ValueError,OSError,TypeError):
         runtime_status="hikyuu_subprocess_failed"
-    if verify_canary(report)["source_file_details"]!=sources_before:
+    try:
+        sources_after=verify_canary(report)["source_file_details"]
+    except (ValueError,OSError) as exc:
+        raise ValueError(
+            "Synthetic canary changed during native runtime preflight") from exc
+    if sources_after!=sources_before:
         raise ValueError("Synthetic canary changed during native runtime preflight")
     safe={
         "format":FORMAT,

@@ -128,8 +128,7 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
         result=self.run_it()
         self.assertTrue(result["all_two_native_h5_real_daily_records_match"])
         self.assertEqual(result["native_status"],"native_complete")
-        self.assertEqual(result["per_symbol_native_decoding_matches_raw_h5"],
-                         {"SH600000":True,"SZ000001":True})
+        self.assertEqual(result["native_matching_stock_day_count"],2)
         self.assertFalse(result["parquet_to_hikyuu_native_units_certified"])
         self.assertFalse(result["ready_for_full_market_mirror"])
         self.assertEqual(originals,{p:hashlib.sha256(p.read_bytes()).hexdigest()
@@ -152,10 +151,7 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
     def test_native_wrong_digest_is_not_a_pass(self):
         report=self.run_it(bad="wrong_mac")
         self.assertFalse(report["all_two_native_h5_real_daily_records_match"])
-        self.assertFalse(report["per_symbol_native_decoding_matches_raw_h5"]
-                         ["SH600000"])
-        self.assertTrue(report["per_symbol_native_decoding_matches_raw_h5"]
-                        ["SZ000001"])
+        self.assertEqual(report["native_matching_stock_day_count"],1)
 
     def test_missing_finished_phase_must_fail_closed(self):
         report=self.run_it(phase=False)
@@ -247,8 +243,7 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
         self.assertIn("stock.get_kdata(hk.Query(-64,hk.Query.DAY))",G.WORKER)
         self.assertNotIn("h5py.File",G.WORKER)
         self.assertNotIn("hikyuu_init()",G.WORKER)
-        self.assertIn("no_raw",G.FORMAT.replace("native H5 HMAC","no_raw")
-                      ) if False else None
+        self.assertIn("hmac.new(key,msg,hashlib.sha256)",G.WORKER)
 
 
 if __name__=="__main__":

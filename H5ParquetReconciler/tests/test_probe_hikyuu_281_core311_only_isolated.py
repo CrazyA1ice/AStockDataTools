@@ -21,6 +21,7 @@ def worker(valid=True):
         "status":"core311_bindings_ready" if valid else "core311_bindings_incomplete",
         "distribution_version":"2.8.1","python311_confirmed":True,
         "package_location_verified":True,"core_loaded":True,
+        "core311_extension_loaded":True,
         "public_core_apis":{name:(valid or name!="KRecord")
                             for name in P.REQUIRED_APIS},
         "top_level_hikyuu_initializer_executed":False,
@@ -73,6 +74,7 @@ class Core311OnlyPreflightTests(unittest.TestCase):
         self.assertIn('sys.modules["hikyuu"]=package',P.WORKER)
         self.assertIn('importlib.import_module("hikyuu.core")',P.WORKER)
         self.assertIn('os._exit(0)',P.WORKER)
+        self.assertIn('sys.modules.get("hikyuu.cpp.core311")',P.WORKER)
         self.assertNotIn("stock_manager.init(",P.WORKER.lower())
         self.assertNotIn('importlib.import_module("hikyuu.draw")',P.WORKER)
         self.assertNotIn("hikyuu_init(",P.WORKER)
@@ -110,6 +112,9 @@ class Core311OnlyPreflightTests(unittest.TestCase):
         self.assertIsNone(P.parse_core_worker(P.MARKER+json.dumps(r),0))
         r["public_core_apis"]["KRecord"]=True
         r["stock_manager_initialized"]=True
+        self.assertIsNone(P.parse_core_worker(P.MARKER+json.dumps(r),0))
+        r["stock_manager_initialized"]=False
+        r["core311_extension_loaded"]=False
         self.assertIsNone(P.parse_core_worker(P.MARKER+json.dumps(r),0))
         self.assertIsNone(P.parse_core_worker(worker().stdout,7))
         self.assertIsNone(P.parse_core_worker(worker().stdout+worker().stdout,0))

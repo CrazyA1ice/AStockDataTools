@@ -263,8 +263,10 @@ def timeout_phase(stdout):
     return "hikyuu_subprocess_startup_timeout"
 
 
-def runtime_preflight(report,out,runner=subprocess.run,timeout=20,
+def runtime_preflight(report,out,runner=subprocess.run,timeout=45,
                       python_exe=None):
+    if type(timeout) is not int or not (10 <= timeout <= 120):
+        raise ValueError("Hikyuu import timeout must be between 10 and 120 seconds")
     canary=verify_canary(report)
     output=_module_output(out)
     interpreter=_explicit_python(python_exe)
@@ -333,11 +335,14 @@ def main(argv=None):
                    help="Explicit absolute path to another python.exe "
                         "(e.g. a pre-existing Anaconda environment); "
                         "never invokes shell or installs packages")
+    p.add_argument("--timeout-seconds",type=int,default=45,
+                   help="Bounded isolated import timeout (10 to 120 seconds)")
     p.add_argument("--isolated-preflight",action="store_true",required=True)
     args=p.parse_args(argv)
     try:
         safe=runtime_preflight(
-            args.canary_report,args.out,python_exe=args.python_exe)
+            args.canary_report,args.out,python_exe=args.python_exe,
+            timeout=args.timeout_seconds)
         print("SAFE Hikyuu runtime probe:",args.out)
         print("Runtime status:",safe["hikyuu_runtime_status"])
         print("Native HDF5 driver executed: NO")

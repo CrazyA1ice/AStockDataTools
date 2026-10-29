@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 10月8日日线5546根真实隔离Parquet已完成，推进四日版本封装（2026-10-29）
+
+- [x] 用户回传真实`manifest.json`：2026-10-08`staged_verified_not_promoted`，审计5546=实际5546；BJ339+SH2314+SZ2893=5546，Parquet及来源gate SHA-256齐备，原H5和购买Parquet未修改；上传manifest可校对计数，但云端无法直接重哈希本机实际day.parquet。
+- [x] 新增`build-parquet-primary-day-overlay.py`：验证2026-09-01～10-28完整日线gate中**恰好4个**H5-only整日候选的隔离Parquet文件，逐个SHA/Schema/数量/日期/代码/市场分布及执行时源数据仍无键；生成不可变私有日线overlay版本，只有明确`--confirm-private-pointer`才会切换模块内活动指针，可回滚且不触碰外部正式行情路径。新增9项自造H5+Parquet集成测试待Windows运行。
+- [ ] 验收9项测试，独立暂存10-09=5547、10-12=5549、10-13=5549（总待暂存16645）；四份私有manifest都一致后运行一次版本`prepare`，目标行数22191。尚未执行私有指针激活/回滚，也**未建好生产Parquet读取接口与H5镜像**。见[命令与验收依据](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。
+- [ ] 下一阶段正式开发统一Parquet读取入口（购买原版优先、私有overlay只补空白天），然后通达信补到最新实有交易日、H5原生镜像；历史分钟线机理分析继续暂停。
+
 ## ★ 2026-09-01至10-28真实日线门槛验收并启动H5→Parquet安全暂存（2026-10-29）
 
 - [x] `test_plan_parquet_primary_day_bootstrap_offline.py` 11项Windows实机逐项通过（Ran 11 tests in 0.023s、OK），纯离线日线gate`parquet-primary-day-bootstrap-plan-20260901-20261028-v1.json`源扫描完整、键守恒：H5=138641、PQ=116567、重叠=116450、OHLC价差0（原容差）、量/额冲突25183、H5-only22191、PQ-only117。

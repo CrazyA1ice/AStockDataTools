@@ -274,13 +274,13 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
 
     def test_import_stage_diagnostics_only_expose_allowlisted_names(self):
         marker=P.IMPORT_STAGE_MARKER
-        log=(
-            "arbitrary user paths must not be copied\\n"
-            +marker+"enter:package_extend\\n"
-            +marker+"enter:python_core\\n"
-            +marker+"enter:cpp_core311\\n"
-            +marker+"enter:SECRET_USER_PATH\\n"
-        ).replace("\\\\n",chr(10))
+        log=chr(10).join((
+            "arbitrary user paths must not be copied",
+            marker+"enter:package_extend",
+            marker+"enter:python_core",
+            marker+"enter:cpp_core311",
+            marker+"enter:SECRET_USER_PATH",
+        ))+chr(10)
         result=P.inspect_import_stages(log.encode("utf-8"))
         self.assertEqual(result,{
             "active_import_stage":"cpp_core311",

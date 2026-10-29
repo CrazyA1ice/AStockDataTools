@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu 2.8.1实际Python311导入45秒仍超时：定位嵌套模块（2026-10-29）
+
+- [x] 用户Windows回传：**15/15隔离预检测试OK（2.055秒）**，**9/9原生H5试点模拟测试OK（0.477秒）**。真正用`D:\\software\\Python311\\python.exe`执行45秒Python预检后仍`hikyuu_import_timeout`；`hikyuu-native-runtime-preflight-python311-v2.json`两份合成H5 SHA复核为true、`installed_hikyuu_version=null`、API为空、原生驱动未执行。当前不能将其解释成`atexit`单一原因，也不能误报原生H5读取成功。
+- [x] 核查上游**2.8.1标签**的`hikyuu/__init__.py`与`hikyuu/core.py`；顶层包导入会加载`util`、`extend`、`indicator`、`trade_manage`、`trade_sys`、`analysis`、`hub`、`draw`，并可能阻塞于`cpp.core311`或Pandas/NumPy/绘图依赖。
+- [x] 为已有的隔离Python预检增加只追踪**固定模块白名单**的轻量`builtins.__import__` enter/leave标记，父进程仅提取`import_stage_diagnostics`中的最后未完成阶段/最终事件/计数，不记录真实路径、原始日志或任何行情字段；合成H5 SHA前后复核仍不变，且绝不初始化真实StockManager或读取native H5。
+- [x] 原15项测试新增3项模拟诊断，当前共**18项待本机验收**；下一步安全命令见[Hikyuu导入具体模块阶段诊断](2026_HIKYUU_281_IMPORT_STAGE_DIAGNOSTICS.md)。使用全新`hikyuu-native-runtime-preflight-python311-v3.json`报告；若仍超时，依据`active_import_stage`而不是猜测依赖定位。
+- [ ] 在实际Python311导入成功前，不允许直接执行原生C++ H5数据读取试点，不安装软件、不修改`HikyuuData`或付费Parquet、不启动全市场H5镜像。
+
 ## ★ 修复15项预检中超时阶段模拟测试换行错误（2026-10-29）
 
 - [x] 用户Windows执行15项离线预检：**14项ok、1项FAIL**（`test_timeout_phases_distinguish_import_vs_exit_wait`，2.414秒）。前一版模拟`TimeoutExpired.stdout`错误地使用`"before_import\\\\n"`，产生反斜杠+n的文字而非真实换行；实际`print(..., flush=True)`输出真实换行。

@@ -1,5 +1,17 @@
 # 2026-10-29：经原生驱动核对后的合成Parquet → Hikyuu H5数值精度验收
 
+> **2026-10-29 Windows首次12项测试反馈与修复：** 实测11项通过、1项错误；出错项为`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`，在构造NumPy结构化dtype时出现`TypeError: Tuple must have size 2, but has size 7`，并未进行完整Parquet→H5往返。生产`generate()`使用了相同错误，现已同时修正。NumPy 7项字段描述必须使用`np.dtype(list(LAYOUT))`而不是`np.dtype(LAYOUT)`。集中到`native_h5_dtype(np)`函数，增加40字节宽度、固定字段名以及字段偏移检查，并新增一个不依赖PyArrow的回归测试，更新为**13项待Windows复测**。下面旧文中的“12项”属于上一版本历史记录。
+
+**修复版验收命令（在项目根目录）：**
+
+```powershell
+git pull --ff-only origin main
+.\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_synthetic_parquet_to_hikyuu_h5_numeric_gate.py" -v
+```
+
+预期`Ran 13 tests ... OK`且`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`为`ok`，不是`skipped`。测试全部通过后，再按本文原有的`synthetic_decimal_bridge_v1`命令运行，输出尚未产生时可使用v1，已存在则必须更换全新目录与SAFE名。
+
+
 ## 真实验收依据（只支持合成数据）
 
 用户Windows已实际运行`read-hikyuu-281-synthetic-h5-native-isolated.py`：离线模拟回归**16/16通过（1.271秒）**，真实Python 3.11 + Hikyuu **2.8.1**原生C++驱动读取两份合成H5日线，`SH600000=3`、`SZ000001=3`，合计6条日期、OHLC、成交额和成交量全部匹配。`reports/hikyuu-native-read-core311-v2.json`中`native_h5_read_status=native_h5_six_synthetic_rows_matched`、`native_h5_compatibility_certified_for_synthetic_v1=true`、`licensed_parquet_to_h5_mapping_certified=false`。

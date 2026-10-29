@@ -194,6 +194,20 @@ class SyntheticParquetH5GateTests(unittest.TestCase):
         self.assertEqual((G.PRICE_SCALE,G.AMOUNT_SCALE,G.VOLUME_SCALE),
                          (Decimal(1000),Decimal(10),Decimal(1)))
 
+    def test_numpy_dtype_descriptor_must_be_list_and_offsets_are_exact(self):
+        # Regression for Windows: np.dtype(G.LAYOUT) interprets a seven-
+        # element tuple as (base_dtype, shape) and raises TypeError.
+        import numpy as np
+        dtype=G.native_h5_dtype(np)
+        self.assertEqual(dtype.itemsize,40)
+        self.assertEqual(dtype.names,tuple(name for name,_ in G.LAYOUT))
+        self.assertEqual(
+            {name:dtype.fields[name][1] for name in dtype.names},
+            {"closePrice":0,"datetime":4,"highPrice":12,"lowPrice":16,
+             "openPrice":20,"transAmount":24,"transCount":32})
+        self.assertEqual(tuple(dtype.fields[name][0].itemsize
+                               for name in dtype.names),(4,8,4,4,4,8,8))
+
     def test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline(self):
         try:
             import numpy as np
@@ -202,7 +216,7 @@ class SyntheticParquetH5GateTests(unittest.TestCase):
             import pyarrow
         except ImportError:
             self.skipTest("optional synthetic Parquet/PyTables dependencies missing")
-        dtype=np.dtype(G.LAYOUT)
+        dtype=G.native_h5_dtype(np)
         for sym,(filename,seed) in G.STOCKS.items():
             values=np.zeros(3,dtype=dtype)
             for i,row in enumerate(G.synthetic_decoded_rows(seed)):

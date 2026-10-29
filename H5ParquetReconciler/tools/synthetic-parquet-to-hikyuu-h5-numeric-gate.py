@@ -110,6 +110,25 @@ def encode_day_row(row):
     return encoded
 
 
+def native_h5_dtype(np):
+    """Construct and validate Hikyuu's 40-byte compound disk record dtype.
+
+    NumPy interprets a tuple as the special (base_dtype, shape) constructor
+    form, not as a compound-field sequence. Feed the field descriptors as a
+    LIST, and verify offsets so this cannot silently change across versions.
+    """
+    dtype=np.dtype(list(LAYOUT))
+    expected={
+        "closePrice":0,"datetime":4,"highPrice":12,"lowPrice":16,
+        "openPrice":20,"transAmount":24,"transCount":32,
+    }
+    if (dtype.itemsize!=40 or dtype.names!=tuple(expected)
+            or any(dtype.fields[name][1]!=offset
+                   for name,offset in expected.items())):
+        raise ValueError("NumPy compound dtype differs from native 40-byte H5 layout")
+    return dtype
+
+
 def synthetic_decoded_rows(seed):
     """Numbers are fictional, by construction, and declared in driver units."""
     rows=[]
@@ -182,9 +201,7 @@ def generate(canary_report,native_proof,out_dir,safe_report):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    dtype=np.dtype(LAYOUT)
-    if dtype.itemsize!=40:
-        raise ValueError("Platform cannot reproduce 40-byte native H5 layout")
+    dtype=native_h5_dtype(np)
     for key in STOCKS:
         baseline=canary["isolated_canary_dir"]/STOCKS[key][0]
         if not baseline.is_file() or baseline.is_symlink():

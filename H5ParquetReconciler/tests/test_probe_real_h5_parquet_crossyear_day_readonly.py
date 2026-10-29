@@ -302,12 +302,12 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
         reader=self.pq.ParquetFile(file)
         try:
             self.assertEqual(reader.metadata.num_row_groups,13)
-            selected=[i for i in range(reader.metadata.num_row_groups)
-                      if reader.metadata.row_group(i).column(
-                          reader.schema_arrow.names.index("ts")
-                      ).statistics.min<=target<=reader.metadata.row_group(i)
-                          .column(reader.schema_arrow.names.index("ts")
-                      ).statistics.max]
+            ts_index=reader.schema_arrow.names.index("ts")
+            selected=[]
+            for i in range(reader.metadata.num_row_groups):
+                stats=reader.metadata.row_group(i).column(ts_index).statistics
+                if stats.min<=target<=stats.max:
+                    selected.append(i)
             self.assertEqual(len(selected),2)
         finally:
             reader.close()

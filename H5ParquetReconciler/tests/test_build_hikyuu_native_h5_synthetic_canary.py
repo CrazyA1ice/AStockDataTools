@@ -143,9 +143,11 @@ class CanaryTests(unittest.TestCase):
                 self.assertFalse(self.target.exists())
 
     def test_refuse_missing_or_external_survey_and_unsafe_output(self):
+        external=self.module/"other.json"
+        external.write_text(self.source.read_text(encoding="utf-8"),
+                            encoding="utf-8")
         with self.assertRaisesRegex(ValueError,"directly under"):
-            M.build_canary(self.source.parent.parent/"other.json",
-                           self.target,self.output)
+            M.build_canary(external,self.target,self.output)
         self.assertFalse(self.target.exists())
         with self.assertRaisesRegex(ValueError,"NEW direct child"):
             M.build_canary(self.source,self.work/"other_canary",self.output)

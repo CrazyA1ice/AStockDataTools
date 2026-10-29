@@ -99,7 +99,7 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.assertEqual(args[:3],[str(self.alt.resolve()),"-I","-c"])
         self.assertEqual(args[3],N.WORKER)
         self.assertEqual(runner.call_args.kwargs["cwd"],
-                         self.folder/"_native_h5_281"/"run")
+                         self.folder/"_native_h5_281"/"run001")
         self.assertEqual(len(args),7)
         self.assertEqual(args[-2:],[str(self.folder/"sh_day.h5"),
                                     str(self.folder/"sz_day.h5")])
@@ -143,11 +143,31 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"NEW SAFE"):
             N.native_read(self.manifest,self.out,self.alt,runner=runner)
         self.out.unlink()
-        folder=self.folder/"_native_h5_281"
-        folder.mkdir()
+        folder=self.folder/"_native_h5_281"/"run001"
+        folder.mkdir(parents=True)
         with self.assertRaisesRegex(ValueError,"already exists"):
             N.native_read(self.manifest,self.out,self.alt,runner=runner)
         runner.assert_not_called()
+
+    def test_separate_run_id_allows_retry_without_reusing_scratch(self):
+        first,_=self.runmock()
+        self.assertTrue(first["native_h5_synthetic_six_records_matched"])
+        self.out.unlink()
+        retry=N.native_read(
+            self.manifest,self.out,self.alt,
+            runner=Mock(return_value=result()),run_id="run002")
+        self.assertTrue(retry["native_h5_synthetic_six_records_matched"])
+        self.assertTrue((self.folder/"_native_h5_281"/"run001").is_dir())
+        self.assertTrue((self.folder/"_native_h5_281"/"run002").is_dir())
+        self.out.unlink()
+        for bad in ("..","run/a","",1):
+            with self.subTest(run_id=bad):
+                with self.assertRaisesRegex(ValueError,"safe --run-id"):
+                    N.native_read(
+                        self.manifest,self.out,self.alt,
+                        runner=Mock(side_effect=AssertionError("must not run")),
+                        run_id=bad)
+                self.assertFalse(self.out.exists())
 
     def test_cannot_run_without_explicit_valid_python(self):
         runner=Mock(side_effect=AssertionError("never run"))

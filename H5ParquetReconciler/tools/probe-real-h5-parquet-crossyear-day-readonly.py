@@ -28,8 +28,12 @@ DAY=HELD.DAY
 AUDIT=HELD.AUDIT
 
 FORMAT="AStockDataTools real H5 Parquet two-month cross-year daily candidate factors v1"
-SAMPLES=(("2025-09-30","day/2025-09.parquet"),
+SAMPLES=(("2025-09-30","day/2025.parquet"),
          ("2026-08-24","day/2026-08.parquet"))
+MAX_YEAR_FOOTER_ROWS=1600000
+MAX_YEAR_ROW_GROUPS=16
+MAX_YEAR_SELECTED_ROW_GROUPS=2
+MAX_YEAR_READ_ROWS=150000
 MAX_SCANNED_TOTAL=300000
 MAX_GROUPS_TOTAL=64
 MIN_DISCOVERY_REFERENCE=6
@@ -85,7 +89,7 @@ def verified_sources(raw_safe,native_safe,heldout_safe):
 
 def check_calendar():
     if (len(SAMPLES)!=2
-            or SAMPLES!=(("2025-09-30","day/2025-09.parquet"),
+            or SAMPLES!=(("2025-09-30","day/2025.parquet"),
                           ("2026-08-24","day/2026-08.parquet"))
             or any(day in HELD.DAYS or day==PAIR.DAY_DATE
                    for day,_ in SAMPLES)):
@@ -134,6 +138,99 @@ def compare(days):
     return results,total
 
 
+def read_annual_2025_selected_day(path,day,pa,pq,pc):
+    """Read ONLY rowgroups whose verified int64 ts bounds overlap 2025-09-30.
+
+    A paid annual 2025 day file has >1.3 million total rows and must NOT be
+    scanned by the old 150k monthly reader. The 12-group historical footer
+    inventory motivated this explicit annual + per-group bounded adapter.
+    Missing/unsafe stats, broad groups or duplicate keys fail closed.
+    """
+    if day!="2025-09-30" or path.name!="2025.parquet":
+        raise ValueError("Only fixed 2025 annual Parquet day sample allowed")
+    stamp=DAY.FOOTER.footer_guard(path)
+    pf=None
+    try:
+        pf=pq.ParquetFile(str(path),memory_map=False,pre_buffer=False)
+        schema=pf.schema_arrow
+        if (not set(DAY.NEEDED).issubset(schema.names)
+                or len(schema.names)>512
+                or not pa.types.is_int64(schema.field("ts").type)
+                or not pa.types.is_string(schema.field("symbol").type)
+                or any(not pa.types.is_float64(schema.field(f).type)
+                       for f in DAY.FIELDS)):
+            raise ValueError("Annual Parquet day schema invalid")
+        groups=pf.metadata.num_row_groups
+        if not 1<=groups<=MAX_YEAR_ROW_GROUPS:
+            raise ValueError("Annual rowgroup total exceeds budget")
+        total=sum(pf.metadata.row_group(i).num_rows for i in range(groups))
+        if not 1<=total<=MAX_YEAR_FOOTER_ROWS:
+            raise ValueError("Annual source footer row count exceeds budget")
+        low,high=DAY._range_ms(day)
+        year_low=DAY._range_ms("2025-01-01")[0]
+        year_high=DAY._range_ms("2025-12-31")[1]
+        ts_index=schema.names.index("ts")
+        selected=[]
+        for i in range(groups):
+            rg=pf.metadata.row_group(i)
+            if rg.num_rows<1:
+                raise ValueError("Annual empty rowgroup cannot be pruned safely")
+            stats=rg.column(ts_index).statistics
+            if (stats is None or not stats.has_min_max
+                    or type(stats.min) is not int or type(stats.max) is not int
+                    or stats.min>stats.max
+                    or not year_low<=stats.min<year_high
+                    or not year_low<=stats.max<year_high):
+                raise ValueError("Missing or untrusted annual ts footer bounds")
+            if stats.max>=low and stats.min<high:
+                selected.append(i)
+        if not 1<=len(selected)<=MAX_YEAR_SELECTED_ROW_GROUPS:
+            raise ValueError("Annual source day has no bounded rowgroups")
+        selected_rows=sum(pf.metadata.row_group(i).num_rows for i in selected)
+        if not 1<=selected_rows<=MAX_YEAR_READ_ROWS:
+            raise ValueError("Annual selected rowgroups exceed 150k scan budget")
+        aliases={name:sym for sym,spellings in DAY.ALIASES.items()
+                 for name in spellings}
+        alias_values=pa.array(sorted(aliases),type=pa.string())
+        found={}
+        scanned=0
+        for batch in pf.iter_batches(
+                row_groups=selected,batch_size=16384,
+                columns=list(DAY.NEEDED),use_threads=False):
+            scanned+=batch.num_rows
+            if scanned>MAX_YEAR_READ_ROWS:
+                raise ValueError("Actual annual day scan exceeds 150k budget")
+            columns={name:batch.column(i)
+                     for i,name in enumerate(DAY.NEEDED)}
+            mask=pc.and_(
+                pc.is_in(columns["symbol"],value_set=alias_values),
+                pc.and_(pc.greater_equal(columns["ts"],low),
+                        pc.less(columns["ts"],high)))
+            for item in batch.filter(mask).to_pylist():
+                symbol=aliases.get(item["symbol"])
+                if symbol is None or symbol in found:
+                    raise ValueError("Annual selected stock-day missing identity/duplicated")
+                if type(item["ts"]) is not int:
+                    raise ValueError("Annual source timestamp invalid")
+                record={field:item[field] for field in DAY.FIELDS}
+                import math
+                if any(type(v) is not float or not math.isfinite(v)
+                       for v in record.values()):
+                    raise ValueError("Annual source float64 invalid")
+                found[symbol]=record
+        if set(found)!=set(DAY.SYMBOLS):
+            raise ValueError("Fixed annual target stock-days absent")
+        return found,scanned,len(selected),total,groups
+    except Exception:
+        # No PyArrow errors or paid source paths are exposed in SAFE diagnostics.
+        raise ValueError("Cannot safely inspect bounded annual 2025 day rowgroups") from None
+    finally:
+        if pf is not None:
+            pf.close()
+        if DAY.FOOTER.footer_guard(path)!=stamp:
+            raise ValueError("Source annual Parquet file changed during read")
+
+
 def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
     target=AUDIT._path(out,False)
     check_calendar()
@@ -155,16 +252,24 @@ def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
     import numpy as np
     scanned=0
     groups=0
+    annual_source_total_rows_from_footer=0
+    annual_source_rowgroups_from_footer=0
+    annual_selected_rowgroups=0
     paired={}
     try:
         for day,path in month_files.items():
-            vals,n,g=DAY._read_bounded_daily(path,day,pa,pq,pc)
+            if day=="2025-09-30":
+                vals,n,g,annual_source_total_rows_from_footer,annual_source_rowgroups_from_footer=(
+                    read_annual_2025_selected_day(path,day,pa,pq,pc))
+                annual_selected_rowgroups=g
+            else:
+                vals,n,g=DAY._read_bounded_daily(path,day,pa,pq,pc)
             scanned+=n
             groups+=g
             if scanned>MAX_SCANNED_TOTAL or groups>MAX_GROUPS_TOTAL:
                 raise ValueError("Cross-year fixed source scan budget exceeded")
-            h5={s:PAIR._read_single_h5(h5_root,s,day,h5py,np)
-                for s in PAIR.SYMBOLS}
+            h5={symbol:PAIR._read_single_h5(h5_root,symbol,day,h5py,np)
+                for symbol in PAIR.SYMBOLS}
             paired[day]={"parquet":vals,"h5":h5}
         breakdown,aggregate=compare(paired)
     finally:
@@ -180,7 +285,12 @@ def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
         "independent_of_prior_2026_09_discovery_and_heldout_days":True,
         "symbols_sampled_count":2,
         "source_period":"day",
-        "source_parquet_month_files_read":2,
+        "source_parquet_files_read":2,
+        "source_parquet_layouts":{"2025":"annual_footer_pruned",
+                                  "2026":"monthly"},
+        "annual_2025_source_total_rows_from_footer":annual_source_total_rows_from_footer,
+        "annual_2025_source_rowgroups_from_footer":annual_source_rowgroups_from_footer,
+        "annual_2025_selected_rowgroups_scanned":annual_selected_rowgroups,
         "source_parquet_total_rows_scanned":scanned,
         "source_parquet_row_groups_scanned":groups,
         "raw_h5_day_records_read":4,

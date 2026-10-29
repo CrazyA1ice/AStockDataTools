@@ -201,17 +201,22 @@ def diagnose(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
             report["last_stage"]=stage if stage in STAGES else "prior_safe_chain"
     finally:
         try:
-            unchanged=bool(parquet_before and h5_before)
+            # A failed preliminary source check means some source stamps
+            # were never recorded: do not mistake that for a file mutation,
+            # or overwrite the *real* diagnostic stage as "source_changed".
+            observed_changed=False
             for day,path in parquet_paths.items():
                 if day in parquet_before and T.DAY.FOOTER.footer_guard(
                         path)!=parquet_before[day]:
-                    unchanged=False
+                    observed_changed=True
             for symbol,path in h5_paths.items():
                 if symbol in h5_before and (path.stat().st_size,
                     path.stat().st_mtime_ns)!=h5_before[symbol]:
-                    unchanged=False
-            report["source_files_stat_or_footer_unchanged"]=unchanged
-            if not unchanged and (parquet_before or h5_before):
+                    observed_changed=True
+            fully_observed=(len(parquet_before)==2 and len(h5_before)==2)
+            report["source_files_stat_or_footer_unchanged"]=(
+                fully_observed and not observed_changed)
+            if observed_changed:
                 report["status"]="blocked"
                 report["last_stage"]="source_footer_and_stat_unchanged"
         except Exception:

@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu 2.8.1原生HDF5实际读取的隔离金丝雀（2026-10-29）
+
+- [x] 下一阶段不是重复PyTables审计，新增`read-hikyuu-281-synthetic-h5-native-isolated.py`：严格核验已生成的6条虚构日线canary SHA，显式调用已安装Hikyuu 2.8.1的Python311子进程，以模块`work/h5_mirror`内全新运行目录创建**仅两只虚构证券**的SQLite注册库，并显式指定`sh_day/sz_day`为原合成H5路径，真正调用`Stock.get_kdata(Query(...DAY))`。
+- [x] 依据上游**2.8.1**原生C++ HDF5驱动检查H5整数到KRecord的OHLC×0.001、transAmount×0.1、transCount×1，并严格验证两股每只3条虚构日线的时间、开高低收、成交金额和成交量；失败、崩溃、超时、版本不匹配均`fail-closed`，不以Python导入/纯h5py成功冒充原生验收。
+- [x] 所有新增SQLite与子进程日志只在模块`work/h5_mirror/synthetic_day_canary_v1/_native_h5_281/<全新run-id>/`；不读取任何原始H5、付费Parquet或默认stock.db，不激活私有overlay，不切换生产路由；SAFE报告仅记录机器状态/行数、无OHLCVA。
+- [x] 新增9项离线/模拟回归测试，含失败、伪造绿色状态、超时、源修改、路径限制、不同run-id可恢复重试；**Windows尚未运行**。操作与安全边界详见[2.8.1原生H5隔离KData验收](2026_HIKYUU_281_SYNTHETIC_NATIVE_READ.md)。
+- [ ] 用户应先运行新9项合成测试；再由Python311产生`hikyuu-native-runtime-preflight-python311-v1.json`确认真实wheel可导入；最后运行本轮native试点并回传`hikyuu-native-read-281-canary-v1.json`。**当前没有证据说明原生读取已经通过**，仅开发/静态审查完成。
+- [ ] 真实原生六条虚构日线读取验收完成后，才执行购买Parquet→原生H5价格/量/额单位、精度、整数溢出界限评估与回滚镜像试点；禁止直接转全市场。
+
 ## ★ 已定位已有Hikyuu 2.8.1 / Python311，核对原生H5读数比例（2026-10-29）
 
 - [x] 用户本机修复后**12/12测试通过（1.592秒）**；Python 3.11 `D:\\software\\Python311\\python.exe` 中`pip show hikyuu`确认为**2.8.1**，无需在项目.venv中安装Hikyuu。Python 3.15及Anaconda base的`pip show`未找到；Conda另有`hikyuuQ`环境待核对。

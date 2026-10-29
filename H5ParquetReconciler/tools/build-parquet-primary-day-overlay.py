@@ -286,7 +286,10 @@ def prepare(root, gate, source, stage_dirs):
         "safe_to_automatically_union": False,
     }
     with locked():
-        body["previous_version_sha256"] = read_active()
+        previous = read_active()
+        if previous is not None:
+            load_version(previous)
+        body["previous_version_sha256"] = previous
         h = digest_bytes(canonical(body))
         item = {**body, "version_sha256": h}
         VERSIONS.mkdir(parents=True, exist_ok=True)

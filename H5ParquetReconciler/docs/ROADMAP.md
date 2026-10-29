@@ -6,18 +6,25 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 四日缺口22,191根真实私有版本已prepare，启动显式查询试点（2026-10-29）
+
+- [x] 用户Windows回传10-09=5547、10-12=5549、10-13=5549三日`STAGED verified only`及各自SHA，加上此前10-08=5546，总计22,191根；四日`--action prepare`实际返回成功，`version_sha256=46bd847de3d00c0f48ff50830fa8688547198c6db1a3cf3b10eb7d2261770c03`、`production_query_route_modified=false`。GitHub侧未重新读取商业Parquet实际内容；**版本尚未activate，非生产主库**。
+- [x] 新增独立`query-parquet-primary-day-overlay-readonly.py`：显式选择已prepare的不可变SHA，逐stage SHA及来源关联验证；涉及私有日期时重跑真实整日缺失审计并核对源文件稳定性，旧购买Parquet基线优先，遇到新到货日期/重复键fail-closed；仅写模块`reports/`安全JSON。分钟与现有Parquet-only查询不变。
+- [ ] 新增8项合成查询回归待Windows运行；通过后用SH600000/2026-09-30～10-13的有界**只读**查询验证baseline+4日缺口选择、溯源和真实I/O成本，见[完整命令与证据](2026_PRIVATE_PARQUET_DAY_READONLY_QUERY_PILOT.md)。不启用指针，不自动补H5或接入生产。
+- [ ] 读取试点完成后再设计独立的私有active消费策略、原生Hikyuu H5镜像以及实际存在的TDX盘后增量；不回到分钟机理细究主线。
+
 ## ★ 私有overlay日期契约修复：四日版本prepare阻塞消除（2026-10-29）
 
 - [x] 修复 `daily_coverage` 的 `YYYYMMDD` 与已验收 stage `manifest.day` 的 `YYYY-MM-DD` 格式不一致，统一只在版本验收侧转成ISO日期；不触碰购买Parquet/H5、既有报告或暂存行情。
 - [x] 修改原端到端测试的ISO预期，增加2项“紧凑报告日期→ISO暂存”和“非规范清单拒绝”回归；版本测试文件共11项。
 - [x] **2026-10-29用户Windows实际测试已通过11/11**，`Ran 11 tests in 3.196s`、`OK`，含日期契约及版本准备/激活/回滚合成测试；另外日线暂存工具7/7（6.003秒）同样通过。
-- [ ] 下一步独立暂存10-09、10-12、10-13并做四日 `prepare`，合计22191根。不自动启用私有指针，也不声称生产库已补齐。详见[日期契约修复与验收命令](2026_PRIVATE_DAY_OVERLAY_DATE_CONTRACT_FIX_20261029.md)。
+- [x] 用户Windows已独立暂存10-09、10-12、10-13并完成四日 `prepare`，合计22191根（私有版本SHA见本页顶部）；未启用私有指针、未完成生产补库。
 
 ## ★ 10月8日日线5546根真实隔离Parquet已完成，推进四日版本封装（2026-10-29）
 
 - [x] 用户回传真实`manifest.json`：2026-10-08`staged_verified_not_promoted`，审计5546=实际5546；BJ339+SH2314+SZ2893=5546，Parquet及来源gate SHA-256齐备，原H5和购买Parquet未修改；上传manifest可校对计数，但云端无法直接重哈希本机实际day.parquet。
 - [x] 新增`build-parquet-primary-day-overlay.py`：验证2026-09-01～10-28完整日线gate中**恰好4个**H5-only整日候选的隔离Parquet文件，逐个SHA/Schema/数量/日期/代码/市场分布及执行时源数据仍无键；生成不可变私有日线overlay版本，只有明确`--confirm-private-pointer`才会切换模块内活动指针，可回滚且不触碰外部正式行情路径。此前新增9项自造H5+Parquet集成测试，含本轮日期键修复后累计11项，**用户Windows已通过11/11**。
-- [ ] 独立暂存10-09=5547、10-12=5549、10-13=5549（总待暂存16645）；四份私有manifest都一致后运行一次版本`prepare`，目标行数22191。尚未执行私有指针激活/回滚，也**未建好生产Parquet读取接口与H5镜像**。见[命令与验收依据](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。
+- [x] Windows实际独立暂存10-09=5547、10-12=5549、10-13=5549，加上10-08=5546后执行四日版本`prepare`成功，目标22191根已达到；活动私有指针尚未激活、**正式生产Parquet查询接口与H5镜像仍未建好**。见[命令与验收依据](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。
 - [ ] 下一阶段正式开发统一Parquet读取入口（购买原版优先、私有overlay只补空白天），然后通达信补到最新实有交易日、H5原生镜像；历史分钟线机理分析继续暂停。
 
 ## ★ 2026-09-01至10-28真实日线门槛验收并启动H5→Parquet安全暂存（2026-10-29）

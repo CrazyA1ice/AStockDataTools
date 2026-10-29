@@ -164,6 +164,31 @@ class ParquetPrimaryBootstrapGateTests(unittest.TestCase):
         self.assertFalse(result["existing_tolerance_ohlc_overlap_pass"])
         self.assertEqual(result["overlap_ohlc_keys_tested"], 0)
 
+    def test_missing_source_counters_or_mismatch_above_overlap_rejected(self):
+        for field in (
+                "h5_rows", "pq_rows", "matched_keys", "h5_only_rows",
+                "pq_only_rows", "value_mismatch_rows", "price_mismatch_rows",
+                "quantity_mismatch_rows"):
+            damaged = fixture()
+            del damaged["results"]["day/2026"][field]
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                M.analyze(damaged)
+        damaged = fixture()
+        damaged["results"]["day/2026"]["by_day"]["20260930"]["value_mismatch"] = 4
+        damaged["results"]["day/2026"]["value_mismatch_rows"] = 4
+        damaged["results"]["day/2026"]["quantity_mismatch_rows"] = 4
+        with self.assertRaisesRegex(ValueError, "conservation"):
+            M.analyze(damaged)
+
+    def test_ambiguous_daily_only_counts_never_marked_ready_for_writes(self):
+        report = fixture()
+        day = report["results"]["day/2026"]["by_day"]["20261001"]
+        self.assertEqual(day["h5_unique"], 2)
+        out = M.analyze(report)
+        self.assertFalse(out["ready_for_unattended_data_fill"])
+        self.assertTrue(out["daily_price_gate_does_not_certify_all_history"])
+        self.assertIn("Parquet wins", out["source_preference"])
+
     def test_noninteger_false_negative_counters_rejected(self):
         for value in (True, -1, 0.5, "1"):
             bad = fixture()

@@ -194,9 +194,10 @@ def recheck_live(root, evidence):
         next(iter(evidence["expected"]))).year)
     scratch = MODULE / "work" / "day_overlay_fresh_check"
     scratch.mkdir(parents=True, exist_ok=True)
-    for stamp, expected in sorted(evidence["expected"].items()):
-        d = date.fromisoformat(stamp)
-        stage_tool.verify_live_absence(root, scratch, d, expected)
+    # One bounded exact source scan still checks every expected date-stock
+    # partition, including mid-window days with no candidate H5 rows.
+    stage_tool.verify_live_absence_dates(
+        root, scratch, evidence["expected"])
     if before != stage_tool.source_file_states(root, date.fromisoformat(
             next(iter(evidence["expected"]))).year):
         raise ValueError("Source files changed during final overlay live audit")

@@ -33,7 +33,8 @@ def result(state="native_h5_six_synthetic_rows_matched"):
         "production_query_switched":False
     }
     return SimpleNamespace(
-        stdout="Hikyuu banner not for SAFE\n"+N.MARKER+
+        stdout="Hikyuu banner not for SAFE\n"+
+               N.PHASE_MARKER+"finished\n"+N.MARKER+
                json.dumps(data)+"\n",returncode=0)
 
 
@@ -123,6 +124,7 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.assertTrue(safe["native_h5_compatibility_certified_for_synthetic_v1"])
         self.assertTrue(safe["verified_prior_core311_only_safe_proof"])
         self.assertTrue(safe["native_core311_loaded"])
+        self.assertEqual(safe["last_native_phase"],"finished")
         self.assertFalse(safe["full_hikyuu_package_imported"])
         self.assertTrue(safe["native_h5_synthetic_six_records_matched"])
         self.assertFalse(safe["licensed_parquet_to_h5_mapping_certified"])
@@ -247,6 +249,46 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
                 self.assertFalse(self.out.exists())
         self.core_proof.write_text(json.dumps(baseline),encoding="utf-8")
         runner.assert_not_called()
+
+    def test_native_phase_progress_and_missing_finished_marker(self):
+        trace=chr(10).join((
+            N.PHASE_MARKER+"before_core311",
+            N.PHASE_MARKER+"core311_loaded",
+            N.PHASE_MARKER+"registry_ready",
+            N.PHASE_MARKER+"before_stock_manager",
+        ))
+        self.assertEqual(N.last_native_phase(trace),"before_stock_manager")
+        self.assertEqual(
+            N.last_native_phase((trace+chr(10)+"private stack trace").encode()),
+            "before_stock_manager")
+        self.assertIsNone(N.last_native_phase("untrusted path only"))
+        self.assertIsNone(N.last_native_phase(
+            N.PHASE_MARKER+"unknown_stage"))
+        success=result()
+        success.stdout=success.stdout.replace(
+            N.PHASE_MARKER+"finished"+chr(10),"")
+        safe,_=self.runmock(process=success)
+        self.assertFalse(safe["native_h5_synthetic_six_records_matched"])
+        self.assertFalse(
+            safe["native_h5_compatibility_certified_for_synthetic_v1"])
+        self.assertIsNone(safe["last_native_phase"])
+
+    def test_native_timeout_reports_safe_progress_only(self):
+        stdout=(N.PHASE_MARKER+"before_core311"+chr(10)
+                +N.PHASE_MARKER+"core311_loaded"+chr(10)
+                +N.PHASE_MARKER+"before_stock_manager"+chr(10)
+                +"secret path should never appear in SAFE JSON")
+        run=Mock(side_effect=subprocess.TimeoutExpired(
+            ["python"],45,output=stdout.encode("utf-8")))
+        safe=N.native_read(self.manifest,self.out,self.alt,
+                           runner=run,core_proof=self.core_proof)
+        self.assertEqual(safe["native_h5_read_status"],
+                         "native_subprocess_timeout")
+        self.assertEqual(safe["last_native_phase"],
+                         "before_stock_manager")
+        self.assertFalse(safe["native_h5_synthetic_six_records_matched"])
+        self.assertNotIn("secret path",
+                         self.out.read_text(encoding="utf-8"))
 
     def test_native_success_forged_without_core311_rejected(self):
         payload=json.loads(result().stdout.split(N.MARKER,1)[1])

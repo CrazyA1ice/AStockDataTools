@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 修复合成Parquet/H5集成测试的NumPy dtype元组解析错误（2026-10-29）
+
+- [x] Windows本机12项新增测试：**11项OK、1项ERROR（19.838秒）**。`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`在`dtype=np.dtype(G.LAYOUT)`失败：`TypeError: Tuple must have size 2, but has size 7`。由于7个`(name,type)`字段描述以外层**tuple**传给NumPy，误触发另一种`dtype`构造协议。生产`generate()`内部的`np.dtype(LAYOUT)`含有相同潜在错误，所以必须同步修改两处，不能只修测试。
+- [x] 新增`native_h5_dtype(np)`专用构造函数，将7项字段描述转换为**list**后传入`np.dtype(list(LAYOUT))`，强制核对字段名/偏移0、4、12、16、20、24、32和固定40字节。`generate()`和测试fixture均使用该函数。
+- [x] 新增1项不依赖PyArrow的NumPy回归测试，目前**共13项（待Windows本机复验）**；仅纯合成数据路径，不改真实行情、商业Parquet、已证实core311原生读取基准或生产查询。
+- [ ] 拉取修复后运行13项，重点检查PyArrow集成测试必须`ok`且不能`skipped`；然后再执行首次合成Decimal桥接`synthetic_decimal_bridge_v1`，输出全新SAFE。真实商业Parquet单位映射及全市场镜像始终禁止。
+
 ## ★ Hikyuu 2.8.1 native六条合成K线首次实际读取成功 → 进入Parquet数值转换精度门禁（2026-10-29）
 
 - [x] 用户Windows本轮测试：原生H5读取工具**16/16离线回归OK（1.271秒）**。改用二进制SAFE解析及`run002`真实读取，`hikyuu-native-read-core311-v2.json`证实`native_h5_read_status=native_h5_six_synthetic_rows_matched`、`last_native_phase=finished`，`SH600000=3`、`SZ000001=3`，独立虚构SQLite注册库和Hikyuu2.8.1原生C++ `Stock.get_kdata`均实际成功；源H5 SHA复核通过，原始行情和生产指针未修改。**仅合成H5兼容认证完成**，不应误写为购买Parquet源数据单位已经匹配。

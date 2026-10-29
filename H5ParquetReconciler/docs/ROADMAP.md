@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实Parquet与原始Hikyuu H5双股票日倍率小样本（2026-10-29）
+
+- [x] 用户Windows纯离线SAFE证据合并门禁**10/10项通过（0.493秒）**，真实`real-precision-crosssource-evidence-bridge-v1.json`生成成功。报告完整保留2026-09-30两股Parquet日线float64精度2/2、SH600000 TDX↔Parquet 5min 48/48旧容差匹配及另一日2026-09-28 H5↔Parquet三股144根5min中仍有95根残差的事实；各物理单位与全市场转换许可明确false。用户本机三份历史SAFE均存在，不再重复真实分钟线巨量扫描。
+- [x] 发现已有`reconcile-local-a-share-h5-parquet.py`针对真实H5采用原始整数解码候选：价格`openPrice/1000`等、`transCount`按周期候选变换、`transAmount`候选比例。**这些属于旧H5解析实现与报告用过的候选，不等于独立原生C++真实源数据解码证据**；之前Parquet真实源的物理单位仍缺独立文档。
+- [x] 直接推进受控**两源真实数据**实验：新增`tools/probe-real-parquet-h5-day-unit-factors-readonly.py`，严格限定2026-09-30**SH600000及SZ000001**各一条日线。Parquet端复用此前已Windows测试的2026-09单月日线≤150000行/≤32组浮点Reader；H5端仅访问`HikyuuData/sh_day.h5`和`sz_day.h5`各一个目标dataset的单条有序`YYYYMMDD0000`原始整数记录，H5文件只读，无正式H5写入，无SQLite/源缓存。
+- [x] 使用假设性数值`Parquet float64 ≈ 原始H5磁盘整数 × F`、`F∈{0.01,0.1,1,10,100,1000}`分别统计volume、amount的非零配对及符合`1e-5`相对容差的数量；价格H5整数÷1000的2股日线候选仅报告落`0.005`绝对容差数量。只输出固定倍率和计数，不导出证券编号、真实OHLCVA、日期整数、H5原始整数或用户源目录。不把单日样本倍率、供应商量纲、Hikyuu native C++解码误认作已认证通用映射。
+- [x] 新增**11项全部小型虚构Parquet及H5的离线测试（待Windows执行）**，覆盖源字节不变、双源配对、数据完整性、日期、H5字段类型、零值不能证明倍率、输出路径/非覆盖和无H5写模式。操作指南与单行PowerShell命令见[真实双源日线单位倍率试验](2026_REAL_PQ_VS_H5_TWO_STOCK_DAY_UNIT_FACTOR.md)。
+- [ ] 用户先执行11项测试；确认`D:\\stock\\HikyuuData\\sh_day.h5`和`sz_day.h5`均存在，再只读运行同日2股的Parquet↔原始H5整数配对，回传新SAFE并分析倍率是否有**样本级**证据。保持正式镜像写入关闭，供应商金额/量单位文件定义和真实原生Hikyuu C++读取仍须独立验证。
+
 ## ★ 真实float64精度与旧TDX/H5跨源报告：离线证据合流，防止错认统一单位（2026-10-29）
 
 - [x] 用户Windows**12/12项新增单日精度试验全通过（10.332秒）**；实际只读2026-09日线月文件，2个Row Group共118208条扫描，定位SH600000/SZ000001在2026-09-30两条日线。SAFE`parquet-day-float64-h5-tick-candidates-20260930-v1.json`：四个OHLC价格字段各2/2满足`Decimal(str(float))×1000`最短十进制可整数量化，但各**0/2**满足原始二进制float64严格整数刻度；amount、volume在假设Hikyuu驱动解码刻度下两条均满足最短十进制/原二进制刻度；无短十进制舍入和整数溢出。用户报告仍确证**实际购买Parquet物理单位、H5转换精度策略均未认证**，H5未写入。

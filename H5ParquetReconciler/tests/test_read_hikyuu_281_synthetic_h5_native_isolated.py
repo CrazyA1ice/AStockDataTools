@@ -148,10 +148,10 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         # Chinese native/C++ logs can mix UTF-8 and invalid GBK sequences.
         # Only ASCII SAFE markers and JSON are relevant to success.
         worker=result()
-        raw=(b"native log: "+bytes([0xac,0xff,0x81])+b"\\n"
-             +bytes([0xe4,0xb8,0xad,0xe6,0x96,0x87])+b"\\r\\n"
+        raw=(b"native log: "+bytes([0xac,0xff,0x81])+bytes([10])
+             +bytes([0xe4,0xb8,0xad,0xe6,0x96,0x87])+bytes([13,10])
              +worker.stdout.encode("ascii")
-             +b"\\ninvalid trailing log "+bytes([0x81,0xac]))
+             +bytes([10])+b"invalid trailing log "+bytes([0x81,0xac]))
         proc=SimpleNamespace(stdout=raw,stderr=bytes([0xac]),
                              returncode=0)
         safe,runner=self.runmock(process=proc)
@@ -170,7 +170,7 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         for index,payload in enumerate((
             None,
             b"unstructured native logs only "+bytes([0xac,0xff]),
-            N.PHASE_MARKER.encode("ascii")+b"finished\\n"
+            N.PHASE_MARKER.encode("ascii")+b"finished"+bytes([10])
                 +N.MARKER.encode("ascii")+b"{bad json",
         )):
             with self.subTest(index=index):

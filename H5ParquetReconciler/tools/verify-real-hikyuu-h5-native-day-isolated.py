@@ -333,6 +333,7 @@ def run(h5_root,proof,output,python_exe,run_id="run001",timeout=60,
         raise ValueError("Native run id already exists; use a new ID")
     stage.mkdir(exist_ok=False)
     phase=None
+    work_phase=None
     parsed=None
     state="native_unavailable"
     try:
@@ -350,6 +351,8 @@ def run(h5_root,proof,output,python_exe,run_id="run001",timeout=60,
                 valid=[p.decode("ascii") for p in phases
                        if p in {a.encode("ascii") for a in PHASES}]
                 phase=valid[-1] if valid else None
+                work_phase=next((item for item in reversed(valid)
+                                 if item!="finished"),None)
             parsed=decode_status(proc.stdout,proc.returncode)
             state=parsed["state"] if parsed else "native_invalid_or_crashed"
         except subprocess.TimeoutExpired as exc:
@@ -358,6 +361,8 @@ def run(h5_root,proof,output,python_exe,run_id="run001",timeout=60,
                 valid=[p.decode("ascii") for p in phases
                        if p in {a.encode("ascii") for a in PHASES}]
                 phase=valid[-1] if valid else None
+                work_phase=next((item for item in reversed(valid)
+                                 if item!="finished"),None)
             state="native_timeout"
         except (ValueError,OSError,TypeError):
             state="native_spawn_error"
@@ -379,6 +384,7 @@ def run(h5_root,proof,output,python_exe,run_id="run001",timeout=60,
             "native_python_expected_minor":"3.11",
             "native_status":state,
             "native_final_phase":phase,
+            "native_last_work_phase":work_phase,
             "original_raw_h5_stock_days_compared":2,
             "native_matching_stock_day_count":sum(matched.values()),
             "all_two_native_h5_real_daily_records_match":bool(passed),

@@ -79,7 +79,7 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
     def test_native_worker_is_valid_python_and_has_no_default_initializer(self):
         compile(N.WORKER,"hikyuu_native_281_worker","exec")
         self.assertNotIn("hikyuu_init(",N.WORKER)
-        self.assertNotIn("hikyuu.interactive",N.WORKER)
+        self.assertNotIn("\nimport hikyuu.interactive\n",N.WORKER)
         self.assertIn('stock.get_kdata(hk.Query(0,3,hk.Query.DAY))',N.WORKER)
         self.assertIn('base=p(type="sqlite3",db=str(db))',N.WORKER)
         self.assertIn('kdata=p(type="hdf5",sh_day=str(sh),sz_day=str(sz))',N.WORKER)

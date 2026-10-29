@@ -53,7 +53,7 @@ def existing(date,missing=False):
 
 
 def safe_json(obj):
-    return json.dumps(obj,ensure_ascii=False,default=lambda v:format(v,"f"))
+    return json.dumps(obj,ensure_ascii=False,default=float)
 
 
 class PriorReportAdapterTests(unittest.TestCase):

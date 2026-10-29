@@ -201,11 +201,13 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
     # elapsed time. Those metrics exclude staged Parquet reads and the
     # costly fresh full-day H5/PQ absence audits. A unified denominator of
     # five returned bars must not be paired with a numerator for only one
-    # purchased bar without an explicit measurement scope.
+    # purchased bar without an explicit measurement scope. Verified stage
+    # key decoding also reads every date, even for baseline-only queries.
     purchased_scanned = summary["source_rows_scanned"]
     purchased_count = len(baseline_rows)
     private_decoded = sum(item["rows"] for item in requested_stages)
-    known_read_rows = purchased_scanned + private_decoded
+    stage_keys_verified = record["rows_in_overlay"]
+    known_read_rows = purchased_scanned + stage_keys_verified + private_decoded
     purchased_elapsed = summary["query_elapsed_seconds_this_invocation"]
     summary.update({
         "format": FORMAT,
@@ -224,6 +226,9 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         "purchased_parquet_source_rows_per_purchased_bar": (
             round(purchased_scanned / purchased_count, 3)
             if purchased_count else None),
+        "private_stage_key_rows_decoded_during_version_verification": (
+            stage_keys_verified),
+        "private_stage_version_verification_reads_all_prepared_days": True,
         "known_minimum_purchased_plus_stage_rows_decoded": known_read_rows,
         "known_minimum_rows_per_combined_returned_bar": (
             round(known_read_rows / len(rows), 3) if rows else None),
@@ -233,7 +238,7 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
             version_verified_at - query_started, 6),
         "live_absence_recheck_elapsed_seconds_this_invocation": round(
             live_recheck_finished_at - version_verified_at, 6),
-        "purchased_stage_elapsed_seconds_this_invocation": round(
+        "purchased_query_wall_seconds_in_unified_pipeline": round(
             purchased_query_finished_at - live_recheck_finished_at, 6),
         "private_stage_decode_elapsed_seconds_this_invocation": round(
             private_decode_finished_at - purchased_query_finished_at, 6),

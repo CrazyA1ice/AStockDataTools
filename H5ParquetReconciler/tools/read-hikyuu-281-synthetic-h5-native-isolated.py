@@ -139,6 +139,11 @@ try:
              load_history_finance=False,lazy_preload=False,
              use_shm_server=False,load_stock_weight=False)
     sm=hk.StockManager.instance()
+    # Package import can set a plugin directory globally. Explicitly replace
+    # it BEFORE init to prevent installed/external plugin discovery.
+    empty_plugin_dir=root/"empty_plugins"
+    empty_plugin_dir.mkdir(exist_ok=False)
+    sm.set_plugin_path(str(empty_plugin_dir))
     sm.init(base,block,kdata,preload,extras)
     sm.wait_data_ready()
     out["stock_manager_initialized"]=True

@@ -32,7 +32,8 @@ PHASES=frozenset(("before_core","core_ready","registry_ready",
                    "before_query","query_ready","before_get_kdata",
                    "kdata_returned","target_found","before_hmac",
                    "native_complete","finished"))
-FAIL_STAGES=frozenset(("before_core","before_stock_lookup","before_count",
+FAIL_STAGES=frozenset(("before_core","before_registry","before_stock_manager",
+                       "before_stock_lookup","before_count",
                        "before_query","before_get_kdata","kdata_returned",
                        "target_found","before_hmac"))
 SAFE_NATIVE_FAILS=frozenset(("native_no_day_rows","native_day_count_exceeds_budget",
@@ -232,6 +233,7 @@ try:
         raise RuntimeError("compiled native core311 missing")
     out["core311"]=True
     mark("core_ready")
+    failure_step="before_registry"
     db=stage/"isolated_fictional_registry.sqlite3"
     if db.exists():
         raise RuntimeError("existing registry forbidden")
@@ -265,6 +267,7 @@ try:
         conn.commit()
     out["registry_only_temp"]=True
     mark("registry_ready")
+    failure_step="before_stock_manager"
     def p(**kw):
         obj=hk.Parameter()
         for k,v in kw.items(): obj[k]=v

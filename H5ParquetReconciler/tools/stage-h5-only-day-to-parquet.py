@@ -164,6 +164,66 @@ def verify_live_absence(root, scratch, day, expected):
     return result
 
 
+def verify_live_absence_dates(root, scratch, expected_by_day):
+    """One exact day/2026 reconciliation for multiple H5-only candidate dates.
+
+    Avoids re-reading the same H5 symbol files and monthly Parquet footers once
+    *per day*. This is a live key reconciliation, NOT a cache or an inferred
+    date gap from filenames. Every requested date must remain wholly absent
+    from purchased Parquet and have exactly its audited H5 stock-day keys.
+    """
+    if not isinstance(expected_by_day, dict) or not expected_by_day:
+        raise ValueError("Live source recheck requires nonempty expected days")
+    selected = []
+    for label, count in expected_by_day.items():
+        if type(label) is not str:
+            raise ValueError("Live source recheck requires canonical ISO dates")
+        try:
+            parsed = date.fromisoformat(label)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Live source recheck requires canonical ISO dates") from exc
+        if (parsed.isoformat() != label or
+                type(count) is not int or count <= 0):
+            raise ValueError("Live source recheck requires positive ISO day counts")
+        selected.append(parsed)
+    selected.sort()
+    if (len({day.year for day in selected}) != 1 or
+            (selected[-1] - selected[0]).days >= 31):
+        raise ValueError("Live source recheck must fit one bounded 31-day year window")
+    root = Path(root).resolve()
+    scratch = Path(scratch).resolve()
+    if root == scratch or scratch.is_relative_to(root):
+        raise ValueError("Live source recheck scratch must be outside source root")
+    year = selected[0].year
+    before = source_file_states(root, year)
+    scratch.mkdir(parents=True, exist_ok=True)
+    result = core.reconcile_section(
+        root, scratch, "day", year, 8192, "a-share-candidate",
+        selected[0].isoformat(), selected[-1].isoformat(), False)
+    if (result.get("scan_complete") is not True
+            or result.get("issues") != []
+            or result.get("pq_year_metadata_only_no_h5_rows") is not False
+            or result.get("parquet_year_files", 0) <= 0):
+        raise ValueError("Live source recheck failed exact multi-day scan")
+    by_day = result.get("by_day")
+    if not isinstance(by_day, dict):
+        raise ValueError("Live source recheck missing daily key evidence")
+    for requested in selected:
+        label = requested.isoformat()
+        wanted = expected_by_day[label]
+        bucket = by_day.get(requested.strftime("%Y%m%d"), {})
+        if (not isinstance(bucket, dict)
+                or bucket.get("h5_unique") != wanted
+                or bucket.get("parquet_unique", 0) != 0
+                or bucket.get("intersection_unique", 0) != 0
+                or bucket.get("h5_only", 0) != wanted
+                or bucket.get("pq_only", 0) != 0):
+            raise ValueError("Live source recheck disagrees with audited whole-day gap: " + label)
+    if before != source_file_states(root, year):
+        raise ValueError("Market source files changed during live day-gap recheck")
+    return result
+
+
 def stage(root, gate_path, report_path, day, stage_dir, max_bars):
     import pyarrow as pa
     import pyarrow.parquet as pq

@@ -158,6 +158,7 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         if start <= date.fromisoformat(item["day"]) <= end
     ]
     source_before = None
+    live_audit = None
     if requested_stages:
         year = date.fromisoformat(requested_stages[0]["day"]).year
         if any(date.fromisoformat(x["day"]).year != year
@@ -168,10 +169,13 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         source_before = versioner.stage_tool.source_file_states(root, year)
         scratch = versioner.MODULE / "work" / "overlay_query_live_recheck"
         scratch.mkdir(parents=True, exist_ok=True)
-        for stage in requested_stages:
-            versioner.stage_tool.verify_live_absence(
-                root, scratch, date.fromisoformat(stage["day"]),
-                evidence["expected"][stage["day"]])
+        # One bounded, exact source reconciliation across all requested
+        # private dates. It validates each selected day separately and
+        # still refuses a newly arrived purchased Parquet stock-day.
+        live_audit = versioner.stage_tool.verify_live_absence_dates(
+            root, scratch,
+            {stage["day"]: evidence["expected"][stage["day"]]
+             for stage in requested_stages})
     live_recheck_finished_at = time.perf_counter()
     base = purchased.query_bars(
         root, canonical, "day", start.isoformat(), end.isoformat(),
@@ -216,6 +220,17 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         "private_version_prepared_not_activated": True,
         "private_overlay_dates_live_rechecked": [
             item["day"] for item in requested_stages],
+        "live_absence_recheck_single_bounded_scan": bool(requested_stages),
+        "live_absence_recheck_scan_count": 1 if requested_stages else 0,
+        "live_absence_recheck_purchased_parquet_source_rows_scanned": (
+            live_audit.get("pq_source_rows_scanned", 0)
+            if live_audit is not None else 0),
+        "live_absence_recheck_h5_in_window_rows": (
+            live_audit.get("h5_rows", 0)
+            if live_audit is not None else 0),
+        "live_absence_recheck_purchased_in_window_rows": (
+            live_audit.get("pq_rows", 0)
+            if live_audit is not None else 0),
         "private_overlay_stages_sha_and_keys_verified": True,
         "private_overlay_bars_returned": len(private_rows),
         "purchased_parquet_bars_returned": len(baseline_rows),

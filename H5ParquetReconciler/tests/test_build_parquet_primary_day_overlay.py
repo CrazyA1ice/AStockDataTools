@@ -70,6 +70,20 @@ class PrivateDayOverlayTests(unittest.TestCase):
             self.assertTrue((M.VERSIONS / (h + ".json")).is_file())
             self.assertEqual(M.load_version(h)["version_sha256"], h)
 
+    def test_prepare_rechecks_all_candidate_dates_via_bounded_batch(self):
+        with ready() as (root, module, report, gate, purchased, stage_dir, stage):
+            real_batch = M.stage_tool.verify_live_absence_dates
+            with patch.object(M.stage_tool, "verify_live_absence_dates",
+                              wraps=real_batch) as batch, \
+                    patch.object(M.stage_tool, "verify_live_absence",
+                                 side_effect=AssertionError(
+                                     "unexpected day-by-day rescan")):
+                prepared = M.prepare(root, gate, report, [stage_dir])
+            batch.assert_called_once()
+            self.assertEqual(
+                batch.call_args.args[2], {"2026-10-08": 1})
+            self.assertEqual(prepared["private_rows"], 1)
+
     def test_compact_gate_day_key_matches_iso_staging_day(self):
         # The generated gate and source report index daily partitions as
         # YYYYMMDD, but a stage manifest uses the ISO YYYY-MM-DD date.

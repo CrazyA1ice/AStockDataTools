@@ -70,8 +70,12 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertEqual(
                 safe["purchased_parquet_source_rows_per_purchased_bar"], 1.0)
             self.assertEqual(
-                safe["known_minimum_purchased_plus_stage_rows_decoded"], 2)
-            self.assertEqual(safe["known_minimum_rows_per_combined_returned_bar"], 1.0)
+                safe["private_stage_key_rows_decoded_during_version_verification"], 1)
+            self.assertTrue(
+                safe["private_stage_version_verification_reads_all_prepared_days"])
+            self.assertEqual(
+                safe["known_minimum_purchased_plus_stage_rows_decoded"], 3)
+            self.assertEqual(safe["known_minimum_rows_per_combined_returned_bar"], 1.5)
             self.assertTrue(safe["known_minimum_excludes_live_h5_pq_absence_recheck_io"])
             self.assertIsNone(safe["source_rows_read_per_returned_bar"])
             self.assertTrue(safe["inherited_source_rows_per_returned_bar_suppressed"])
@@ -95,8 +99,10 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertFalse(safe["source_quantity_unit_rescaling_applied"])
             self.assertIsNone(safe["source_rows_read_per_returned_bar"])
             self.assertEqual(
+                safe["private_stage_key_rows_decoded_during_version_verification"], 1)
+            self.assertEqual(
                 safe["known_minimum_purchased_plus_stage_rows_decoded"],
-                safe["purchased_parquet_source_rows_scanned"])
+                safe["purchased_parquet_source_rows_scanned"] + 1)
 
     def test_empty_unified_result_has_no_false_amplification_ratio(self):
         with prepared_synthetic() as (root, module, report, gate, original,
@@ -109,7 +115,9 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertIsNone(safe["known_minimum_rows_per_combined_returned_bar"])
             self.assertIsNone(safe["purchased_parquet_source_rows_per_purchased_bar"])
             self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"], 1)
-            self.assertEqual(safe["known_minimum_purchased_plus_stage_rows_decoded"], 1)
+            self.assertEqual(
+                safe["known_minimum_purchased_plus_stage_rows_decoded"],
+                safe["purchased_parquet_source_rows_scanned"] + 2)
 
     def test_prepared_version_not_implicitly_activated(self):
         with prepared_synthetic() as (root, module, report, gate, original,

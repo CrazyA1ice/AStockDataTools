@@ -131,8 +131,11 @@ def check_evidence(doc):
             "closed_session","time_grid_checked","same_adjustment_basis"))
         if flags:
             complete+=1
-            if all(v<=CANDIDATE_GAP_LIMIT for v in gaps):
-                low_gap+=1
+        # Numeric consistency is a distinct finding. A missing trading-day
+        # closure / adjustment proof must not produce the misleading blocker
+        # 'cross_period_aggregate_gap_not_small' when gaps are actually small.
+        if all(v<=CANDIDATE_GAP_LIMIT for v in gaps):
+            low_gap+=1
     dates={day for _,day in found}
     # 2 stocks x at least 2 dates, with actual timestamp/price/volume/amount
     # typed schemas. Even satisfying this does not prove physical units.

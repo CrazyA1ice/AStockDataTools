@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 复用已完成的真实Parquet三周期报告：自动形成脱敏单位证据（2026-10-29）
+
+- [x] Windows本次`test_audit_sanitized_parquet_h5_unit_evidence.py` **11/11全部OK（0.192秒）**，证明脱敏字段/聚合证据审核器的离线门禁工作正常，但它本身不扫描真实源，也未得到可信单位报告。
+- [x] 重新核对用户过去真实只读结果`pq-day-vs-minute-2026-08-24.json`及`pq-day-vs-minute-2026-09-30.json`：其中SH600000和SZ000001两股在两日期均有day/5min/1min三周期样本，每股5分钟48条、1分钟241条；日对分钟的OHLC及量/额容差已分别核对，金额存在细微比例差异。老报告并未提供明确Arrow字段类型、时间戳物理时区、统一复权方式或独立元/股单位证明，所以不能直接宣布真实转换单位已验证。
+- [x] 新增`tools/derive-sanitized-unit-evidence-from-existing-three-period-reports.py`，专门消费这两份此前生成、已脱敏的模块`reports/`JSON，**不再执行Parquet或H5源读取**。只提取两只股票×两个日期的4个窗口、三周期计数、分钟网格与既有金额/量汇总比值；将所缺schema类型、时区、物理单位设为unknown，将未独立证明的`closed_session`/`same_adjustment_basis`设为false。离线输出固定Schema的sanitized报告和审核报告，始终禁止生产镜像。
+- [x] 脱敏聚合审核器将`low_cross_period_gap_window_count`与`fully_aligned_window_count`拆开计数，避免旧报告缺少交易日/复权证明时把小金额差错误标作`cross_period_aggregate_gap_not_small`。
+- [x] 新增**8项只使用虚构JSON的离线单测（待Windows实测）**，覆盖两个历史日期报告适配、Decimal精度、未知类型保留、源文件原样、路径限制和重复/残缺报告拒绝。操作文档：[旧三周期报告转脱敏单位证据](2026_EXISTING_THREE_PERIOD_TO_SANITIZED_UNIT_EVIDENCE.md)。
+- [ ] 用户运行新8项测试；本地旧两份JSON若存在于模块reports/，直接转换成新脱敏材料，回传SAFE assessment。下一步以明确的缺失原因追踪源Schema/时区/供应商金额/量单位，不伪造额外字段、不启动长期全市场扫描或正式数据转换。
+
 ## ★ 合成Decimal H5二次原生读出6/6：转入真实单位证据的脱敏报告审核（2026-10-29）
 
 - [x] 用户Windows已运行第二次native H5验收**9/9项离线回归OK（1.180秒）**，并生成SAFE `synthetic-decimal-h5-native-reread-v1.json`，证实`new_native_h5_read_status=native_h5_six_synthetic_rows_matched`、`last_native_phase=finished`、`core311_loaded_in_native_worker=true`、`native_h5_get_kdata_called=true`，新生成两份完全虚构Decimal桥接H5分别3/3匹配，合成Parquet→H5→C++ native读取闭环全部通过，四份新旧虚构文件哈希被重新验证。

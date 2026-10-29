@@ -15,6 +15,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -224,7 +225,7 @@ def parse_native(stdout,returncode):
 
 
 def native_read(canary_report, output, python_exe, runner=subprocess.run,
-                timeout=45):
+                timeout=45, run_id="run001"):
     """Run isolated native read; only machine-state metadata leaves worker."""
     if python_exe is None:
         raise ValueError("--python-exe must select a pre-existing Hikyuu environment")
@@ -235,14 +236,16 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
     if (WORK.is_symlink() or MIRRORS.is_symlink()
             or canary_dir.is_symlink()):
         raise ValueError("Unsafe mirror path")
-    # No modifying the real canary tables: only a new child folder is created
-    # to hold an isolated fictional registry and any Hikyuu logs/scratch.
+    # Allow safe retries with a NEW run ID, never overwrite earlier scratch.
+    if type(run_id) is not str or not re.fullmatch(
+            r"[a-zA-Z0-9][a-zA-Z0-9_-]{2,39}",run_id):
+        raise ValueError("Use a safe --run-id such as run001")
     root=canary_dir/"_native_h5_281"
-    stage=root/"run"
-    if (root.exists() or root.is_symlink()
+    stage=root/run_id
+    if (root.is_symlink() or (root.exists() and not root.is_dir())
             or stage.exists() or stage.is_symlink()):
-        raise ValueError("Native read scratch already exists; do not reuse it")
-    root.mkdir(exist_ok=False)
+        raise ValueError("Native run ID already exists or unsafe; choose a NEW --run-id")
+    root.mkdir(exist_ok=True)
     stage.mkdir(exist_ok=False)
     runtime_status="native_subprocess_unavailable"
     result=None
@@ -313,10 +316,13 @@ def main(argv=None):
     p.add_argument("--canary-report",type=Path,required=True)
     p.add_argument("--out",type=Path,required=True)
     p.add_argument("--python-exe",type=Path,required=True)
+    p.add_argument("--run-id",default="run001",
+                   help="NEW synthetic-only scratch name; use run002 for retry")
     p.add_argument("--synthetic-native-read",action="store_true",required=True)
     args=p.parse_args(argv)
     try:
-        safe=native_read(args.canary_report,args.out,args.python_exe)
+        safe=native_read(args.canary_report,args.out,args.python_exe,
+                         run_id=args.run_id)
         print("SAFE native Hikyuu 2.8.1 verification:",args.out)
         print("Status:",safe["native_h5_read_status"])
         print("Matched synthetic records:",

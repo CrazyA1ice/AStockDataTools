@@ -24,16 +24,63 @@ REPORTS=MODULE/"reports"
 WORK=MODULE/"work"
 MIRRORS=WORK/"h5_mirror"
 CANARY_FORMAT="AStockDataTools synthetic Hikyuu native day H5 canary summary v1"
-FORMAT="AStockDataTools isolated Hikyuu native runtime capability preflight v1"
+FORMAT="AStockDataTools isolated Hikyuu native runtime capability preflight v2"
 STOCKS={"SH600000":"sh_day.h5","SZ000001":"sz_day.h5"}
 DATES=[202609300000,202610080000,202610130000]
 MARKER="ASTOCKTOOLS_SAFE_HIKYUU_RUNTIME:"
 PHASE_MARKER="ASTOCKTOOLS_SAFE_HIKYUU_PHASE:"
+IMPORT_STAGE_MARKER="ASTOCKTOOLS_SAFE_HIKYUU_IMPORT_STAGE:"
+# Strict whitelist: only these labels may appear in SAFE JSON.
+ALLOWED_IMPORT_STAGES=frozenset({
+    "package_util","package_extend","package_indicator",
+    "package_trade_manage","package_trade_sys","package_analysis",
+    "package_hub","package_draw","python_core","cpp_core311",
+    "cpp_core_other","numpy","pandas","matplotlib","bokeh",
+    "pyside6","akshare",
+})
 WORKER=r'''
+import builtins
 import importlib.metadata
 import json
 import os
 import sys
+
+# Track only hard-coded module import categories; never log paths, arbitrary
+# package names, traceback, import exceptions or market content. This hook
+# delegates to the original importer without suppressing errors.
+_preflight_real_import=builtins.__import__
+_preflight_top={
+    "util":"package_util","extend":"package_extend",
+    "indicator":"package_indicator","trade_manage":"package_trade_manage",
+    "trade_sys":"package_trade_sys","analysis":"package_analysis",
+    "hub":"package_hub","draw":"package_draw",
+}
+_preflight_external={
+    "numpy":"numpy","pandas":"pandas","matplotlib":"matplotlib",
+    "bokeh":"bokeh","PySide6":"pyside6","akshare":"akshare",
+}
+def _preflight_import(name,globals=None,locals=None,fromlist=(),level=0):
+    caller=globals.get("__name__","") if isinstance(globals,dict) else ""
+    label=None
+    if caller=="hikyuu" and level==1:
+        label=_preflight_top.get(name)
+    elif caller.startswith("hikyuu") and level>=1 and name=="core":
+        label="python_core"
+    elif caller.startswith("hikyuu") and level>=1 and name=="cpp.core311":
+        label="cpp_core311"
+    elif caller.startswith("hikyuu") and level>=1 and name.startswith("cpp.core"):
+        label="cpp_core_other"
+    elif caller.startswith("hikyuu"):
+        label=_preflight_external.get(name.split(".",1)[0])
+    if label is None:
+        return _preflight_real_import(name,globals,locals,fromlist,level)
+    print("ASTOCKTOOLS_SAFE_HIKYUU_IMPORT_STAGE:enter:"+label,flush=True)
+    try:
+        return _preflight_real_import(name,globals,locals,fromlist,level)
+    finally:
+        print("ASTOCKTOOLS_SAFE_HIKYUU_IMPORT_STAGE:leave:"+label,flush=True)
+
+builtins.__import__=_preflight_import
 print("ASTOCKTOOLS_SAFE_HIKYUU_PHASE:before_import",flush=True)
 r={"module_imported":False,"runtime_status":"unknown",
    "installed_distribution_version":None,"public_api_presence":{},
@@ -66,6 +113,7 @@ else:
 # forever for StockManager.data_ready even when we purposely did not initialize
 # StockManager. This short-lived import-only child must NOT run that hook.
 # Flush the single structured SAFE marker and terminate the child immediately.
+builtins.__import__=_preflight_real_import
 print("ASTOCKTOOLS_SAFE_HIKYUU_PHASE:after_probe",flush=True)
 print("ASTOCKTOOLS_SAFE_HIKYUU_RUNTIME:"+json.dumps(r,sort_keys=True),flush=True)
 os._exit(0)
@@ -241,6 +289,39 @@ def parse_worker(stdout,returncode):
     return data
 
 
+def inspect_import_stages(stdout):
+    """Summarize only allowlisted import names from partial child stdout."""
+    if isinstance(stdout,bytes):
+        stdout=stdout.decode("utf-8",errors="replace")
+    if not isinstance(stdout,str):
+        return {"active_import_stage":None,"last_import_stage":None,
+                "last_import_stage_event":None,"import_stage_events_seen":0}
+    stack=[]
+    last=None
+    event=None
+    count=0
+    for line in stdout.splitlines():
+        if not line.startswith(IMPORT_STAGE_MARKER):
+            continue
+        action,sep,label=line[len(IMPORT_STAGE_MARKER):].partition(":")
+        if not (sep and action in ("enter","leave")
+                and label in ALLOWED_IMPORT_STAGES):
+            continue
+        count+=1
+        last=label
+        event=action
+        if action=="enter":
+            stack.append(label)
+        elif stack and stack[-1]==label:
+            stack.pop()
+        else:
+            # Corrupted/incomplete ordering; do not invent an active stage.
+            stack.clear()
+    return {"active_import_stage":stack[-1] if stack else None,
+            "last_import_stage":last,"last_import_stage_event":event,
+            "import_stage_events_seen":min(count,500)}
+
+
 def timeout_phase(stdout):
     """Classify timeouts using ONLY hard-coded, flushed stage markers.
 
@@ -277,15 +358,18 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=45,
     sources_before=canary["source_file_details"]
     runtime_status="hikyuu_subprocess_unavailable"
     worker_result=None
+    diagnostic=inspect_import_stages(None)
     try:
         proc=runner([str(interpreter),"-I","-c",WORKER],cwd=sandbox,
                     capture_output=True,text=True,timeout=timeout,
                     env=_sandbox_env(
                         sandbox,interpreter if python_exe is not None else None),
                     check=False)
+        diagnostic=inspect_import_stages(proc.stdout)
         worker_result=parse_worker(proc.stdout,proc.returncode)
         runtime_status=worker_result["runtime_status"]
     except subprocess.TimeoutExpired as exc:
+        diagnostic=inspect_import_stages(exc.stdout)
         runtime_status=timeout_phase(exc.stdout)
     except (ValueError,OSError,TypeError):
         runtime_status="hikyuu_subprocess_failed"
@@ -306,6 +390,7 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=45,
         "no_python_executable_path_in_safe_summary":True,
         "worker_imports_hikyuu_but_never_initializes_stock_manager":True,
         "hikyuu_runtime_status":runtime_status,
+        "import_stage_diagnostics":diagnostic,
         "installed_hikyuu_version":(
             worker_result["installed_distribution_version"]
             if worker_result else None),
@@ -345,6 +430,7 @@ def main(argv=None):
             timeout=args.timeout_seconds)
         print("SAFE Hikyuu runtime probe:",args.out)
         print("Runtime status:",safe["hikyuu_runtime_status"])
+        print("Active import stage:",safe["import_stage_diagnostics"]["active_import_stage"])
         print("Native HDF5 driver executed: NO")
     except (ValueError,TypeError,KeyError,OSError,ImportError) as exc:
         p.error(str(exc))

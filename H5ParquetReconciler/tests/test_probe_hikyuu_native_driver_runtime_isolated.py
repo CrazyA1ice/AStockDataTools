@@ -272,6 +272,68 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
             P.timeout_phase(P.PHASE_MARKER+r"before_import\n"),
             "hikyuu_subprocess_startup_timeout")
 
+    def test_import_stage_diagnostics_only_expose_allowlisted_names(self):
+        marker=P.IMPORT_STAGE_MARKER
+        log=chr(10).join((
+            "arbitrary user paths must not be copied",
+            marker+"enter:package_extend",
+            marker+"enter:python_core",
+            marker+"enter:cpp_core311",
+            marker+"enter:SECRET_USER_PATH",
+        ))+chr(10)
+        result=P.inspect_import_stages(log.encode("utf-8"))
+        self.assertEqual(result,{
+            "active_import_stage":"cpp_core311",
+            "last_import_stage":"cpp_core311",
+            "last_import_stage_event":"enter",
+            "import_stage_events_seen":3,
+        })
+        self.assertEqual(
+            P.timeout_phase(P.PHASE_MARKER+"before_import"+chr(10)+log),
+            "hikyuu_import_timeout")
+        self.assertNotIn("SECRET",str(result))
+        self.assertNotIn("user paths",str(result))
+
+    def test_import_stage_tracker_handles_completed_and_truncated_calls(self):
+        marker=P.IMPORT_STAGE_MARKER
+        log=chr(10).join((
+            marker+"enter:package_extend",
+            marker+"enter:python_core",
+            marker+"leave:python_core",
+            marker+"enter:numpy",
+        ))  # timeout may end mid-line, without final newline
+        trace=P.inspect_import_stages(log)
+        self.assertEqual(trace["active_import_stage"],"numpy")
+        self.assertEqual(trace["last_import_stage"],"numpy")
+        self.assertEqual(trace["import_stage_events_seen"],4)
+        done=P.inspect_import_stages(
+            log+chr(10)+marker+"leave:numpy"+chr(10)
+            +marker+"leave:package_extend")
+        self.assertIsNone(done["active_import_stage"])
+        self.assertEqual(done["last_import_stage_event"],"leave")
+
+    def test_timeout_safe_report_contains_stage_not_child_stdout(self):
+        import subprocess
+        marker=P.IMPORT_STAGE_MARKER
+        output=(
+            P.PHASE_MARKER+"before_import"+chr(10)
+            +marker+"enter:package_extend"+chr(10)
+            +marker+"enter:cpp_core311"+chr(10)
+            +"secret path from fake import stack"+chr(10)
+        ).encode("utf-8")
+        runner=Mock(side_effect=subprocess.TimeoutExpired(
+            ["python"],45,output=output))
+        safe=P.runtime_preflight(self.canary,self.out,runner=runner)
+        self.assertEqual(safe["hikyuu_runtime_status"],
+                         "hikyuu_import_timeout")
+        self.assertEqual(
+            safe["import_stage_diagnostics"]["active_import_stage"],
+            "cpp_core311")
+        self.assertFalse(safe["native_h5_driver_read_executed"])
+        self.assertNotIn("secret path",
+                         self.out.read_text(encoding="utf-8"))
+        self.assertFalse(safe["hikyuu_h5_compatibility_certified"])
+
     def test_isolated_worker_bypasses_hanging_atexit_with_fake_hikyuu(self):
         # A synthetic hikyuu stub registers the exact type of problematic
         # atexit hook. The subprocess MUST exit rather than waiting on it.

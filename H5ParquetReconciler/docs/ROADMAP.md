@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ int64日期Footer统计时间基准候选：复用既有真实数据解析证据（2026-10-29）
+
+- [x] 用户Windows v2日期类型回归共17项，**16项ok，1项因Windows无符号链接创建权限skip（1.859秒）**；实际三份2026-09真实Parquet Footer已成功运行v2。上传`parquet-3period-arrow-schema-footer-v2.json`证实day/5min/1min三个日期字段均唯一匹配且Arrow存储类型为**int64**，所有OHLC/amount/volume为**float64**。三个周期的`date_raw_calendar_encoding_certified=false`和`binary_float_to_native_h5_precision_certified=false`，审查结果仍有闭市复权、时间编码与物理单位证据缺口；四历史窗口聚合差小但0/4全证据对齐。
+- [x] 核查已有仓库源码`tools/reconcile-local-a-share-h5-parquet.py`中`pq_stamp(epoch_ms,period)`明确把源int64**按Unix毫秒候选**解析并转换UTC+8，`tools/query-parquet-primary-readonly.py`中`day_bounds`用`timestamp()*1000`生成毫秒范围；这解释为何现有真实2026-09-30核对能够得到合理的交易日标签，**但旧代码所选规则不是供应商独立认证**。
+- [x] 本轮新增`tools/audit-parquet-int64-footer-timebase-readonly.py`：读取同一3份已确认的2026-09购买Parquet文件的**仅Footer列统计min/max**、与此前v2 SAFE的大小、Footer长度、行组数、总行数匹配；分别试验Unix秒/毫秒/微秒/纳秒及12位YYYYMMDDHHMM五种编码，仅输出每种编码的**统计行组数**，不输出真实统计极值、不读取K线行，不触碰源H5/SQLite/生产路由。
+- [x] 新增**10项合成PyArrow Footer单测（待用户Windows实测）**，覆盖5种时间基准统计、缺失stats正确降级、报告伪造/文件变化、明确月份一致性、路径及输出限制、无行级读取方法等。任何`epoch_ms`唯一匹配也只表示**所采Footer统计界限的月份一致性**，不等于源所有真实时标和分钟开始/结束标记已认证，更不等于已通过真实float64 H5量化/物理单位测试。
+- [ ] 运行新10项测试；用仅一个完整单行PowerShell命令读取3份2026-09 Footer统计，上传`parquet-3period-int64-timebase-footer-v1.json`。仅在统计证据可靠后合并旧查询时间假设与已有2026-08/09真实网格证据进一步核对。详见[真实int64日期Footer时间基准](2026_REAL_PARQUET_INT64_FOOTER_TIMEBASE.md)。
+- [ ] 后续以独立供应商单位说明及真实float64→Hikyuu integer可表示误差为主，未满足前不得启动实际Parquet→H5镜像。
+
 ## ★ 三周期真实Footer实测：OHLCVA均为float64，日期存储类型需要再定位（2026-10-29）
 
 - [x] 用户Windows新Footer只读工具**12项中11项OK、1项跳过（5.965秒）**：跳过的是Windows符号链接权限不足，原生小合成Parquet Footer真实集成已通过。随后本机三份2026-09购买Parquet均存在，成功生成`parquet-3period-arrow-schema-footer-v1.json`、补齐Schema的sanitized/assessment SAFE，程序报告原始行情行级读取NO、源Parquet/H5修改NO。

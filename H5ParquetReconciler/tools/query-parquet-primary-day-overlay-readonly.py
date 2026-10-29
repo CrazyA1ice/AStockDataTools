@@ -15,6 +15,7 @@ import argparse
 import importlib.util
 import json
 import math
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -145,11 +146,13 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
     Any newly appeared purchased bars on a private-overlay date FAIL CLOSED:
     an originally wholly absent day may not become a silent mixed-day merge.
     """
+    query_started = time.perf_counter()
     canonical, start, end = purchased.request_dates(
         symbol, "day", first, last, max_candidate_rows, max_result_bars)
     root = Path(root).resolve()
     record, evidence, stages = verified_version(
         version_sha256, max_overlay_source_rows)
+    version_verified_at = time.perf_counter()
     requested_stages = [
         item for item in stages
         if start <= date.fromisoformat(item["day"]) <= end
@@ -169,16 +172,19 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
             versioner.stage_tool.verify_live_absence(
                 root, scratch, date.fromisoformat(stage["day"]),
                 evidence["expected"][stage["day"]])
+    live_recheck_finished_at = time.perf_counter()
     base = purchased.query_bars(
         root, canonical, "day", start.isoformat(), end.isoformat(),
         max_candidate_rows=max_candidate_rows,
         max_result_bars=max_result_bars, local_cache=False)
+    purchased_query_finished_at = time.perf_counter()
     baseline_rows = []
     for bar in base["bars"]:
         baseline_rows.append({**bar, "value_source": "purchased_parquet"})
     private_rows = []
     for item in requested_stages:
         private_rows.extend(_decode_selected_stage(item, canonical))
+    private_decode_finished_at = time.perf_counter()
     baseline_dates = {row["trading_date"] for row in baseline_rows}
     if any(row["trading_date"] in baseline_dates for row in private_rows):
         raise ValueError("Purchased/private day overlap; stale overlay cannot mix")
@@ -191,6 +197,18 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
                   key=lambda r: (r["trading_date"],
                                  r["source_timestamp_ms"]))
     summary = dict(base["safe_summary"])
+    # The underlying Parquet query reports its own scan amplification and
+    # elapsed time. Those metrics exclude staged Parquet reads and the
+    # costly fresh full-day H5/PQ absence audits. A unified denominator of
+    # five returned bars must not be paired with a numerator for only one
+    # purchased bar without an explicit measurement scope. Verified stage
+    # key decoding also reads every date, even for baseline-only queries.
+    purchased_scanned = summary["source_rows_scanned"]
+    purchased_count = len(baseline_rows)
+    private_decoded = sum(item["rows"] for item in requested_stages)
+    stage_keys_verified = record["rows_in_overlay"]
+    known_read_rows = purchased_scanned + stage_keys_verified + private_decoded
+    purchased_elapsed = summary["query_elapsed_seconds_this_invocation"]
     summary.update({
         "format": FORMAT,
         "period": "day",
@@ -202,6 +220,31 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         "private_overlay_bars_returned": len(private_rows),
         "purchased_parquet_bars_returned": len(baseline_rows),
         "matching_bar_count": len(rows),
+        "source_rows_read_per_returned_bar": None,
+        "inherited_source_rows_per_returned_bar_suppressed": True,
+        "purchased_parquet_source_rows_scanned": purchased_scanned,
+        "purchased_parquet_source_rows_per_purchased_bar": (
+            round(purchased_scanned / purchased_count, 3)
+            if purchased_count else None),
+        "private_stage_key_rows_decoded_during_version_verification": (
+            stage_keys_verified),
+        "private_stage_version_verification_reads_all_prepared_days": True,
+        "known_minimum_purchased_plus_stage_rows_decoded": known_read_rows,
+        "known_minimum_rows_per_combined_returned_bar": (
+            round(known_read_rows / len(rows), 3) if rows else None),
+        "known_minimum_excludes_live_h5_pq_absence_recheck_io": True,
+        "purchased_query_elapsed_seconds_this_invocation": purchased_elapsed,
+        "private_version_verification_elapsed_seconds_this_invocation": round(
+            version_verified_at - query_started, 6),
+        "live_absence_recheck_elapsed_seconds_this_invocation": round(
+            live_recheck_finished_at - version_verified_at, 6),
+        "purchased_query_wall_seconds_in_unified_pipeline": round(
+            purchased_query_finished_at - live_recheck_finished_at, 6),
+        "private_stage_decode_elapsed_seconds_this_invocation": round(
+            private_decode_finished_at - purchased_query_finished_at, 6),
+        "query_elapsed_seconds_this_invocation": round(
+            time.perf_counter() - query_started, 6),
+        "elapsed_time_includes_version_stage_checks_and_live_audit": True,
         "first_matching_raw_beijing_label": (
             rows[0]["source_beijing_time"] if rows else None),
         "last_matching_raw_beijing_label": (
@@ -213,8 +256,7 @@ def query_private_day_overlay(root, symbol, first, last, version_sha256,
         "rescaling_applied_only_to_private_h5_stages_not_purchased": True,
         "no_h5_read": not bool(requested_stages),
         "purchased_scan_costs_do_not_include_live_h5_absence_recheck": True,
-        "private_stage_rows_decoded_for_selected_dates": sum(
-            item["rows"] for item in requested_stages),
+        "private_stage_rows_decoded_for_selected_dates": private_decoded,
         "no_raw_ohlcva_in_safe_summary": True,
         "no_source_market_truth_certification": True,
         "no_source_market_writes": True,

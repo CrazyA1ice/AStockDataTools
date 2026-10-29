@@ -6,11 +6,19 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ SH600000真实5根日线拼接已验证，修正私有查询统计口径（2026-10-29）
+
+- [x] 用户Windows新查询测试8项均逐项显示`ok`（`Ran 8 tests in 6.183s`，终端截取缺最终`OK`/退出码）；真实SAFE JSON：SH600000查询2026-09-30～10-13，购买Parquet返回1根、已准备私有stage返回4根，总计5根；四日现场缺失重核与全部私有stage SHA/键核验通过，原始源未修改、私有active未激活。
+- [x] 发现报告把购买Parquet的`source_rows_read_per_returned_bar=28191.0`及`query_elapsed_seconds_this_invocation=0.568659`误放入组合查询摘要：该比值和时长只衡量购买Parquet阶段，并非完整统一查询成本。
+- [x] 修正只读查询安全统计：分开购买Parquet源扫描、全部已准备stage的证券键校验、实际选定stage数据解码和现场来源复核计时；组合扫描比率明确标为最低已知解码量（真实此次至少28191+22191+22191=72573行级读取，不含H5/PQ重审计）；旧含混`source_rows_read_per_returned_bar`置`null`、完整查询总时间单独计算；新增两项合成回归。
+- [ ] Windows运行新10项测试并重新生成仅SAFE的`...-v2.json`，保留历史v1不覆盖；具体命令与说明见[真实证据及统计修正](2026_PRIVATE_PARQUET_DAY_READONLY_QUERY_PILOT.md)。**源价格/单位策略与版本未修改**。
+- [ ] 通过口径/时长审计后，研究从已准备四日stage建立受控只读消费接口，随后原生Hikyuu H5镜像、通达信盘后一次写入与镜像同步；不开展无关分钟差异机理研究。
+
 ## ★ 四日缺口22,191根真实私有版本已prepare，启动显式查询试点（2026-10-29）
 
 - [x] 用户Windows回传10-09=5547、10-12=5549、10-13=5549三日`STAGED verified only`及各自SHA，加上此前10-08=5546，总计22,191根；四日`--action prepare`实际返回成功，`version_sha256=46bd847de3d00c0f48ff50830fa8688547198c6db1a3cf3b10eb7d2261770c03`、`production_query_route_modified=false`。GitHub侧未重新读取商业Parquet实际内容；**版本尚未activate，非生产主库**。
 - [x] 新增独立`query-parquet-primary-day-overlay-readonly.py`：显式选择已prepare的不可变SHA，逐stage SHA及来源关联验证；涉及私有日期时重跑真实整日缺失审计并核对源文件稳定性，旧购买Parquet基线优先，遇到新到货日期/重复键fail-closed；仅写模块`reports/`安全JSON。分钟与现有Parquet-only查询不变。
-- [ ] 新增8项合成查询回归待Windows运行；通过后用SH600000/2026-09-30～10-13的有界**只读**查询验证baseline+4日缺口选择、溯源和真实I/O成本，见[完整命令与证据](2026_PRIVATE_PARQUET_DAY_READONLY_QUERY_PILOT.md)。不启用指针，不自动补H5或接入生产。
+- [x] 新增8项合成查询回归在Windows逐项显示`ok`（末尾`Ran 8 tests in 6.183s`、未提供最终`OK`行）；SH600000/2026-09-30～10-13真实**只读**查询得到购买1根+私有4根、总5根，并发现扫描统计混淆，后续统计口径与新10项回归见本页顶部及[完整命令与证据](2026_PRIVATE_PARQUET_DAY_READONLY_QUERY_PILOT.md)。不启用指针，不自动补H5或接入生产。
 - [ ] 读取试点完成后再设计独立的私有active消费策略、原生Hikyuu H5镜像以及实际存在的TDX盘后增量；不回到分钟机理细究主线。
 
 ## ★ 私有overlay日期契约修复：四日版本prepare阻塞消除（2026-10-29）

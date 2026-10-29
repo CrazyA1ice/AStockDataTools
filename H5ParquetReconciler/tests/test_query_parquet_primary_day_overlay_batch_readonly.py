@@ -185,7 +185,7 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
             self.assertEqual(reads.call_count,2)
             self.assertEqual(F.M.read_active(),sha)
 
-    def test_tampered_or_symlinked_private_pointer_rejected_before_market_read(self):
+    def test_tampered_or_locked_private_pointer_rejected_before_market_read(self):
         with prepared() as (root,module,report,gate,purchased,stage,plan):
             sha=plan["version_sha256"]
             F.M.activate(root,gate,report,sha)

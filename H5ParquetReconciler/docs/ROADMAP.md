@@ -6,6 +6,12 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Windows Hikyuu native HMAC回归误报修复（2026-10-29）
+
+- [x] 用户Windows最新测试`test_verify_real_hikyuu_h5_native_day_isolated.py`：**12项中7项ok、5项FAIL（1.538秒）**。五项失败的堆栈都停在测试`runner()`内的`self.assertNotIn("Parquet",str(kwargs))`；`kwargs["cwd"]`是合法的Windows合成测试目录`.../H5ParquetReconciler/work/h5_mirror/real_day_native/run001`，**仅模块名包含Parquet，不代表子进程读取了Parquet文件**。五个错误全是同一条断言误报，不是原生核心解码结果。
+- [x] 在`tests/test_verify_real_hikyuu_h5_native_day_isolated.py`中删去对全部`kwargs`做字符串扫描的断言，改为核对**准确进程参数**：只允许`-I -c`、恰好一个隔离运行目录`run001`、与`cwd`一致；H5文件参数仅是原合成测试root下直系`sh_day.h5`、`sz_day.h5`，后缀是`.h5`而非`.parquet`；模拟进程环境仅有已知测试键`FOO`和一次性HMAC密钥。不改变真实H5/Parquet读取代码，不放宽源文件门禁。
+- [x] 新增回归`test_native_runner_allows_h5parquetreconciler_module_name`，显式保证路径含`H5ParquetReconciler`也能通过合法H5参数核验。本轮原12项升为**13项，待Windows验收**。只有13项全部OK，才运行此前#140定义的真实两股H5 native HMAC小样本；若真实native仍失败，按SAFE`native_status`和`native_last_work_phase`排查，不触碰生产H5、Parquet、SQLite，不把候选倍率误当已认证物理单位。
+
 ## ★ 真实Hikyuu 2.8.1原生KRecord与原始H5记录：两股单日隔离HMAC比对（2026-10-29）
 
 - [x] 用户Windows **11/11项**新 Parquet↔原始H5 日线倍率合成回归OK（3.777秒）；真实2026-09-30 SH600000、SZ000001 各1条日线H5与Parquet只读比对成功。报告证实**Parquet量≈原始H5`transCount×100` 2/2**，**Parquet额≈原始H5`transAmount×1000` 2/2**，OHLC≈H5原始整数/1000四字段各2/2；所有正式映射仍未经供应商和原生驱动独立认证。

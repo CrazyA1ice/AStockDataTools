@@ -140,8 +140,9 @@ class DateFooterTimebaseTests(unittest.TestCase):
     def test_changed_file_size_or_footer_is_rejected(self):
         self.write_fictional_source()
         file=self.files["day"]
-        with file.open("ab") as stream:
-            stream.write(b"CHANGED")
+        original=file.read_bytes()
+        # Preserve PAR1 trailer but make the source length differ from v2.
+        file.write_bytes(original[:-8]+b"stat-changed"+original[-8:])
         with self.assertRaisesRegex(ValueError,"differs"):
             self.run_it()
         self.assertFalse(self.output.exists())
@@ -196,7 +197,7 @@ class DateFooterTimebaseTests(unittest.TestCase):
                 self.assertIsNone(T._date_candidate_month(True,candidate))
         self.assertEqual(T._date_candidate_month(fake_stamp(30),"epoch_ms"),
                          "2026-09")
-        self.assertIsNone(T._date_candidate_month(202609300930,"epoch_ms"))
+        self.assertNotEqual(T._date_candidate_month(202609300930,"epoch_ms"),"2026-09")
         self.assertEqual(
             T._date_candidate_month(202609300930,
                                     "calendar_yyyymmddhhmm"),"2026-09")

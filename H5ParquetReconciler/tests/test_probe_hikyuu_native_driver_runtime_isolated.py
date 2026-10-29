@@ -105,6 +105,76 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
         self.assertIn("HOME",runner.call_args.kwargs["env"])
         self.assertTrue(runner.call_args.kwargs["cwd"].is_relative_to(self.folder))
 
+    def test_explicit_alternate_python_path_without_installing_packages(self):
+        # A real user could supply a pre-existing Anaconda python.exe.
+        # This synthetic path is only invoked through a mock subprocess.
+        alternate=self.folder/"alternate"/"python.exe"
+        alternate.parent.mkdir()
+        alternate.write_bytes(b"test-only interpreter placeholder")
+        runner=Mock(return_value=self.valid_worker())
+        safe=P.runtime_preflight(
+            self.canary,self.out,runner=runner,python_exe=alternate)
+        command=runner.call_args.args[0]
+        self.assertEqual(command[0],str(alternate.resolve()))
+        self.assertEqual(command[1:3],["-I","-c"])
+        self.assertEqual(
+            safe["hikyuu_runtime_status"],
+            "hikyuu_imported_without_initializing")
+        self.assertTrue(safe["explicit_alternate_python_requested"])
+        self.assertTrue(safe["no_python_executable_path_in_safe_summary"])
+        self.assertNotIn(str(alternate),self.out.read_text(encoding="utf-8"))
+        self.assertFalse(safe["hikyuu_h5_compatibility_certified"])
+        self.assertFalse(safe["native_h5_driver_read_executed"])
+
+    def test_default_python_mode_remains_backward_compatible(self):
+        runner=Mock(return_value=self.valid_worker())
+        safe=P.runtime_preflight(self.canary,self.out,runner=runner)
+        self.assertEqual(
+            runner.call_args.args[0][0],
+            str(Path(P.sys.executable).resolve()))
+        self.assertFalse(safe["explicit_alternate_python_requested"])
+
+    def test_reject_missing_relative_symlink_and_non_python_interpreter(self):
+        nonexistent=self.folder/"missing"/"python.exe"
+        invalids=[
+            "python",nonexistent,self.folder/"other.bat",42,
+        ]
+        script=self.folder/"other.bat"
+        script.write_bytes(b"nonexecutable")
+        symlink=self.folder/"python.exe"
+        try:
+            symlink.symlink_to(script)
+            invalids.append(symlink)
+        except OSError:
+            pass
+        runner=Mock(side_effect=AssertionError("Must not spawn child"))
+        for n,alternate in enumerate(invalids):
+            with self.subTest(case=n):
+                target=self.reports/("reject"+str(n)+".json")
+                with self.assertRaisesRegex(ValueError,
+                                            "absolute path|existing"):
+                    P.runtime_preflight(
+                        self.canary,target,runner=runner,python_exe=alternate)
+                self.assertFalse(target.exists())
+        runner.assert_not_called()
+
+    def test_environment_scrubs_other_python_and_hikyuu_configuration(self):
+        target=self.folder/"_isolated"
+        with patch.dict(P.os.environ,{
+                "HIKYUU_CONFIG":"real-data-unsafe",
+                "HKU_HOME":"real-home-unsafe",
+                "PYTHONPATH":"untrusted-path",
+                "PYTHONHOME":"untrusted-python-home",
+                "VIRTUAL_ENV":"another-venv",
+                "CONDA_PREFIX":"another-conda"},clear=False):
+            env=P._sandbox_env(target)
+        for item in ("HIKYUU_CONFIG","HKU_HOME","PYTHONPATH",
+                     "PYTHONHOME","VIRTUAL_ENV","CONDA_PREFIX"):
+            self.assertNotIn(item,env)
+        self.assertEqual(env["HOME"],str(target))
+        self.assertEqual(env["USERPROFILE"],str(target))
+        self.assertEqual(env["PYTHONNOUSERSITE"],"1")
+
     def test_hikyuu_missing_reports_unknown_compatibility_not_pass(self):
         worker=self.valid_worker()
         status=json.loads(worker.stdout.split(P.MARKER)[1])

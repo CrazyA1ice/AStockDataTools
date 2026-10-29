@@ -50,7 +50,7 @@ class PrivateDayOverlayTests(unittest.TestCase):
             before = M.stage_tool.file_digest(purchased)
             prepared = M.prepare(root, gate, report, [stage_dir])
             self.assertEqual(prepared["private_rows"], 1)
-            self.assertEqual(prepared["prepared_days"], ["20261008"])
+            self.assertEqual(prepared["prepared_days"], ["2026-10-08"])
             self.assertFalse(prepared["production_query_route_modified"])
             self.assertFalse(M.ACTIVE.exists())
             h = prepared["version_sha256"]
@@ -69,6 +69,32 @@ class PrivateDayOverlayTests(unittest.TestCase):
             self.assertEqual(M.stage_tool.file_digest(purchased), before)
             self.assertTrue((M.VERSIONS / (h + ".json")).is_file())
             self.assertEqual(M.load_version(h)["version_sha256"], h)
+
+    def test_compact_gate_day_key_matches_iso_staging_day(self):
+        # The generated gate and source report index daily partitions as
+        # YYYYMMDD, but a stage manifest uses the ISO YYYY-MM-DD date.
+        with ready() as (root, module, report, gate, purchased, stage_dir, stage):
+            gate_json = json.loads(gate.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [x["date"] for x in gate_json["daily_coverage"]
+                 if x["category"] == "entire_date_h5_only_candidate"],
+                ["20261008"])
+            self.assertEqual(stage["day"], "2026-10-08")
+            evidence = M.verify_reports(gate, report)
+            self.assertEqual(evidence["expected"], {"2026-10-08": 1})
+            chosen = M.validate_stages([stage_dir], evidence)
+            self.assertEqual(chosen[0]["day"], "2026-10-08")
+            self.assertEqual(chosen[0]["rows"], 1)
+
+    def test_noncanonical_stage_date_fails_closed(self):
+        with ready() as (root, module, report, gate, purchased, stage_dir, stage):
+            manifest_path = stage_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["day"] = "20261008"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Stage is not eligible"):
+                M.prepare(root, gate, report, [stage_dir])
+            self.assertFalse(M.ACTIVE.exists())
 
     def test_stage_manifest_tamper_blocks_snapshot_prepare(self):
         with ready() as (root, module, report, gate, purchased, stage_dir, stage):

@@ -100,8 +100,12 @@ def verify_reports(gate_path, source_path):
             or gate.get("ready_for_unattended_data_fill") is not False
             or gate.get("safe_to_automatically_union") is not False):
         raise ValueError("Invalid or stale Parquet-primary daily gate")
+    # The audit/gate uses compact YYYYMMDD date keys while the staged
+    # manifest is deliberately canonical ISO YYYY-MM-DD. Normalize at the
+    # trusted boundary instead of comparing two incompatible date formats.
     expected = {
-        d["date"]: d["h5_rows"] for d in analyzed["daily_coverage"]
+        date.fromisoformat(d["date"]).isoformat(): d["h5_rows"]
+        for d in analyzed["daily_coverage"]
         if d["category"] == "entire_date_h5_only_candidate"
     }
     if not expected:

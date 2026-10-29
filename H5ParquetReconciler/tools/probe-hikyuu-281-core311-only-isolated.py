@@ -54,6 +54,7 @@ r={
  "python311_confirmed":False,
  "package_location_verified":False,
  "core_loaded":False,
+ "core311_extension_loaded":False,
  "public_core_apis":{},
  "top_level_hikyuu_initializer_executed":False,
  "stock_manager_initialized":False,
@@ -100,13 +101,23 @@ try:
         print(PHASE+phase,flush=True)
         core=importlib.import_module("hikyuu.core")
         r["core_loaded"]=True
+        native=sys.modules.get("hikyuu.cpp.core311")
+        native_file=getattr(native,"__file__",None)
+        if isinstance(native_file,str):
+            native_path=Path(native_file).resolve()
+            r["core311_extension_loaded"]=(
+                native_path.suffix.lower() in (".pyd",".so")
+                and native_path.is_relative_to(cpp.resolve()))
         phase="core_imported"
         print(PHASE+phase,flush=True)
         r["public_core_apis"]={name:bool(hasattr(core,name)) for name in API}
         r["status"]=(
             "core311_bindings_ready"
-            if all(r["public_core_apis"].values())
-            else "core311_bindings_incomplete")
+            if (r["core311_extension_loaded"]
+                and all(r["public_core_apis"].values()))
+            else ("core311_extension_not_loaded"
+                  if not r["core311_extension_loaded"]
+                  else "core311_bindings_incomplete"))
 except ModuleNotFoundError:
     r["status"]="core311_package_missing_or_dependency_error"
 except BaseException:
@@ -132,7 +143,8 @@ def parse_core_worker(stdout,returncode):
     except (ValueError,TypeError):
         return None
     fields={"status","distribution_version","python311_confirmed",
-            "package_location_verified","core_loaded","public_core_apis",
+            "package_location_verified","core_loaded",
+            "core311_extension_loaded","public_core_apis",
             "top_level_hikyuu_initializer_executed","stock_manager_initialized",
             "native_h5_driver_called"}
     if not isinstance(r,dict) or set(r)!=fields:
@@ -141,6 +153,7 @@ def parse_core_worker(stdout,returncode):
             or r["distribution_version"] not in (None,"2.8.1")
             or any(type(r[k]) is not bool for k in (
                 "python311_confirmed","package_location_verified","core_loaded",
+                "core311_extension_loaded",
                 "top_level_hikyuu_initializer_executed",
                 "stock_manager_initialized","native_h5_driver_called"))
             or r["top_level_hikyuu_initializer_executed"]
@@ -154,7 +167,7 @@ def parse_core_worker(stdout,returncode):
             r["distribution_version"]=="2.8.1"
             and r["python311_confirmed"]
             and r["package_location_verified"]
-            and r["core_loaded"]
+            and r["core_loaded"] and r["core311_extension_loaded"]
             and set(r["public_core_apis"])==set(REQUIRED_APIS)
             and all(r["public_core_apis"].values())):
         return None

@@ -6,6 +6,12 @@
 
 当前仅实现①–③的**只读基础版本**。无法直接承诺转换与合并是安全的，详情见 [完整需求文档](docs/REQUIREMENTS.md)、[当前审计规则与已知限制](docs/TECHNICAL_NOTES.md)。
 
+## ★ 正式进入日线补齐第二阶段：4个October H5独有交易日的安全Parquet暂存（2026-10-29）
+
+用户Windows 11项日线gate回归**全部通过**（0.023秒，`OK`）。真实2026-09-01～10-28日线gate：H5 138641、Parquet 116567、重叠116450、OHLC 0诊断容差冲突；H5独有22191全部在Parquet**完全没有日线**的10-08（5546）、10-09（5547）、10-12（5549）、10-13（5549），双方重叠成交量额仍有25183条不同。**H5最新记录止于10-13**，不能据此声称已更新至10-28。
+
+已新增[H5独有日线→隔离Parquet真实写出工具](tools/stage-h5-only-day-to-parquet.py)：每次仅选一个经SHA绑定的已验收H5-only日期，重新实时审计对应Parquet日线仍无键后，将H5当天实际源记录写入**新建的`work/unified_parquet/staging/<job>/day.parquet`**，读回逐字段核验，生成private manifest哈希；**不覆盖购买Parquet/H5、不自动发布正式库**。7项生成合成行情集成测试待Windows验收。先跑测试，再只做2026-10-08单日暂存，命令及验收口径见[真实4日补齐工作说明](docs/2026_H5_ONLY_DAY_PARQUET_STAGING.md)。
+
 ## ★ 2026-10-29起的正式主线：Parquet唯一主库，H5近期补齐及镜像，通达信盘后增量
 
 **用户确认不再继续研究H5/购买Parquet历史分钟K线的细微差异机理**。以购买Parquet作为主源（有值时不被H5覆盖）；优先用H5补齐2026年9月、10月实际缺失的整证券日；在`H5ParquetReconciler/work/unified_parquet/`中建立可回滚独立新Parquet库；通过验证后从统一Parquet生成Hikyuu原生H5兼容镜像；未来通达信盘后数据只接入Parquet再同步H5。原始`D:\stock`下两个来源始终保持只读。详见[新的分阶段实施路线](docs/2026_PARQUET_PRIMARY_EXECUTION_PLAN.md)。

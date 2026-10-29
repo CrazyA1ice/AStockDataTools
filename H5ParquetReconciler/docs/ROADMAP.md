@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 2026-09-01至10-28真实日线门槛验收并启动H5→Parquet安全暂存（2026-10-29）
+
+- [x] `test_plan_parquet_primary_day_bootstrap_offline.py` 11项Windows实机逐项通过（Ran 11 tests in 0.023s、OK），纯离线日线gate`parquet-primary-day-bootstrap-plan-20260901-20261028-v1.json`源扫描完整、键守恒：H5=138641、PQ=116567、重叠=116450、OHLC价差0（原容差）、量/额冲突25183、H5-only22191、PQ-only117。
+- [x] 2026年9月Parquet已包含所有H5候选股票的日线。H5-only 22191根全部集中于**10-08=5546、10-09=5547、10-12=5549、10-13=5549**四个Parquet全无日线的日期，混合日缺口0；**10-14～10-28的H5也未提供记录，禁止假称已覆盖最新**。
+- [x] 开发**真实输出独立Parquet**的`stage-h5-only-day-to-parquet.py`：仅日线、仅已验收Parquet全日无键的H5完整源日；SHA关联gate与原扫描报告；执行时再次全日扫描核对Parquet确实没有键、H5数量吻合、源文件未发生变化；逐根数值及OHLC规则校验；仅写`work/unified_parquet/staging/<job>/day.parquet`，写后读回比对并生成独立manifest；绝不覆盖原始购买Parquet及原H5，不允许自动升为生产。7项自造行情集成测试，Windows待运行。
+- [ ] 运行7项测试、真实10-08单日**5546根**暂存，回传仅私有manifest与执行日志，不上传行情Parquet；测试失败/报错不得当作已完成补库。[命令及正式工作协议](2026_H5_ONLY_DAY_PARQUET_STAGING.md)。
+- [ ] 验收后分别暂存10-09、10-12、10-13，并设计只读baseline+独立overlay的统一Parquet active版本切换与回滚；再补真实存在的通达信盘后缺口、转换生成Hikyuu原生H5镜像。分钟数据差异机理调查保持暂停。
+
 ## ★ 最新开发主线调整：Parquet优先补齐/统一格式/通达信盘后更新（2026-10-29）
 
 用户明确要求**停止继续研究H5与Parquet历史分钟线机理**，改为以购买Parquet主库覆盖完整历史、H5填补2026年9/10月真实空白、统一Parquet生成Hikyuu H5镜像、以后通达信盘后数据一次转换到Parquet再同步镜像。详见[正式实施协议](2026_PARQUET_PRIMARY_EXECUTION_PLAN.md)；以下旧的分钟研究记录仅为历史证据，不再作为下一步优先事项。

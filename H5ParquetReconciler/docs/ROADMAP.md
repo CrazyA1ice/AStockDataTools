@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 合成Decimal Parquet→H5整数往返成功：新生成H5的第二次native验收（2026-10-29）
+
+- [x] 用户在Windows运行修正后的**13/13项合成数值精度与Parquet/H5往返测试，全数OK（5.646秒）**，包括真正的`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`集成测试（没有skipped）；本机实际运行`synthetic-parquet-to-hikyuu-h5-numeric-gate.py`，SAFE `synthetic-parquet-h5-decimal-gate-v1.json`证实`all_six_synthetic_records_exactly_matched_native_baseline=true`，两只股票分别3条，与先前经Hikyuu 2.8.1 native C++读取的合成基准H5逐字段整数相同，四个新Parquet/H5文件输出哈希齐全。
+- [x] 明确报告保留`new_h5_files_tested_by_native_driver=false`和`actual_purchased_parquet_units_verified=false`、`licensed_parquet_to_h5_mapping_certified=false`、`ready_for_full_market_mirror=false`，因此下一步不是实盘转换，而是对新转换生成的两份合成H5**再次独立执行native KData读取**，建立完整合成闭环。
+- [x] 新增`tools/recheck-synthetic-decimal-h5-native-core311-isolated.py`，仅接受成功的同canary SHA、原先core311 SAFE和新Decimal桥接SAFE，且要求源目录为模块`work/h5_mirror/`既存直属子目录；四个虚构Parquet/H5文件均前后核对SHA，不接收任何真实行情路径。重用已通过Windows native读取验收的`core311` WORKER和固定6行数值校验，在新的`_native_h5_281/run001`私有目录初始化虚构SQLite，不访问用户正式行情、插件、数据库或付费Parquet。
+- [x] 新增**9项仅离线模拟回归（待Windows执行）**，覆盖新生成H5的SHA、先前SAFE证据约束、实际native输出解析、失败/超时不误认证、原/新H5运行中篡改、目录/报告重用拒绝及用户数据路径阻断。SAFE只保存成功状态、阶段和行数，绝不保存raw stdout/stderr/真实OHLCVA。说明文档：[新合成Decimal H5二次原生读取](2026_SYNTHETIC_DECIMAL_BRIDGE_NATIVE_REREAD.md)。
+- [ ] 用户运行新9项测试及真实Hikyuu Python311的`synthetic-decimal-h5-native-reread-v1.json`；如果6/6真正从**新生成的合成H5**读出，则只认证合成转换闭环，不认证商业Parquet单位或全市场写入。
+- [ ] 再进行真实购买Parquet Schema/价格/成交额/成交量**严格只读、限量、仅输出聚合证据**的物理单位核验方案；未完成前不能启动实际数据转换或覆盖任何正式H5。
+
 ## ★ 修复合成Parquet/H5集成测试的NumPy dtype元组解析错误（2026-10-29）
 
 - [x] Windows本机12项新增测试：**11项OK、1项ERROR（19.838秒）**。`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`在`dtype=np.dtype(G.LAYOUT)`失败：`TypeError: Tuple must have size 2, but has size 7`。由于7个`(name,type)`字段描述以外层**tuple**传给NumPy，误触发另一种`dtype`构造协议。生产`generate()`内部的`np.dtype(LAYOUT)`含有相同潜在错误，所以必须同步修改两处，不能只修测试。

@@ -176,6 +176,12 @@ class HeldoutSyntheticDaysTests(unittest.TestCase):
 
     def test_prior_native_must_prove_real_2_of_2_not_merely_called(self):
         doc=json.loads(self.native.read_text(encoding="utf-8"))
+        # The unmodified two-source + real-native SAFE chain must qualify.
+        # Each subtest then tampers with exactly one field and restores the
+        # original JSON, so rejection cannot be caused by a previous subtest.
+        self.assertEqual(
+            set(T.verify_chain(self.raw,self.native)),
+            {"real_raw_stock_day","real_native_stock_day"})
         for key,val in (("all_two_native_h5_real_daily_records_match",False),
                         ("native_matching_stock_day_count",1),
                         ("native_status","runtime_unavailable"),
@@ -183,9 +189,20 @@ class HeldoutSyntheticDaysTests(unittest.TestCase):
             with self.subTest(key=key):
                 altered=dict(doc);altered[key]=val
                 self.native.write_text(json.dumps(altered),encoding="utf-8")
-                with self.assertRaisesRegex(ValueError,"previous real native"):
-                    self.run_it()
-                self.assertFalse(self.output.exists())
+                try:
+                    # This rejection is intentional; check the actual
+                    # case-sensitive fail-closed contract, not an accidental
+                    # mismatch between "previous" and "Previous".
+                    with self.assertRaisesRegex(
+                            ValueError,
+                            r"^Previous real native H5 two-stock-day SAFE not qualified$"):
+                        self.run_it()
+                    self.assertFalse(self.output.exists())
+                finally:
+                    self.native.write_text(json.dumps(doc),encoding="utf-8")
+                self.assertEqual(
+                    set(T.verify_chain(self.raw,self.native)),
+                    {"real_raw_stock_day","real_native_stock_day"})
 
     def test_previous_raw_h5_factor_must_have_two_positive_hits(self):
         doc=json.loads(self.raw.read_text(encoding="utf-8"))

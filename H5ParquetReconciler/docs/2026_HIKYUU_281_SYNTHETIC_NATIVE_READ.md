@@ -1,4 +1,20 @@
 # Hikyuu 2.8.1：隔离调用原生HDF5驱动读取完全合成日线（2026-10-29）
+> **2026-10-29 Windows原生试跑失败记录与修复：** 已有13/13离线测试OK；但第一次`run001`运行时Python父进程使用GBK对Hikyuu C++混合编码输出进行解码，线程抛出`UnicodeDecodeError (byte 0xac)`，导致`proc.stdout=None`与`AttributeError`。这不是原生KData结果。现将工具改为**二进制捕获**并只解析固定ASCII SAFE JSON与阶段标记（其它日志完全丢弃），新增3项离线模拟测试，共**16项待本机验证**。第一次运行目录`run001`不可复用，也没有生成可信的`...-v1.json`结果；请使用如下新命令运行，而不是本文下面的历史`run001`命令：
+
+```powershell
+cd D:\\ChatGPT\\AStockDataTools
+git pull --ff-only origin main
+.\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_read_hikyuu_281_synthetic_h5_native_isolated.py" -v
+```
+
+**只有16项通过后**才执行：
+
+```powershell
+.\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\read-hikyuu-281-synthetic-h5-native-isolated.py --canary-report "H5ParquetReconciler\\reports\\hikyuu-native-synthetic-day-canary-v1.json" --core-proof "H5ParquetReconciler\\reports\\hikyuu-core311-only-preflight-v1.json" --python-exe "D:\\software\\Python311\\python.exe" --run-id run002 --out "H5ParquetReconciler\\reports\\hikyuu-native-read-core311-v2.json" --synthetic-native-read
+```
+
+若`run002`或SAFE`v2`已存在，使用`run003`与`v3`。只回传SAFE JSON和测试终端摘要；不上传原始H5、子进程混合编码日志、数据库或Parquet。即使现在能生成SAFE，也必须看到6条实际native匹配才可认证，不能以单独core311可导入代替。
+
 
 > **2026-10-29 core311-only路线更新：** 下文部分“完整包导入”操作背景已被新工具替代。用户已提供`hikyuu-core311-only-preflight-v1.json`真实Windows SAFE，证明Python3.11中Hikyuu2.8.1的`core311`绑定和7项API可加载；完整包导入曾卡在`package_draw`。本轮原生读取脚本不再`import hikyuu`完整包，而是用同一经过验证的`hikyuu.core`加载方法。运行原生读取时**必须**用`--core-proof`提供该v1 SAFE，且与合成H5对应同一份canary摘要SHA，否则执行前即拒绝。当前只有**core-only预检9/9测试及真实绑定证明通过**，下面的原生读取13项离线测试和真正6条合成KData仍待Windows验收。
 

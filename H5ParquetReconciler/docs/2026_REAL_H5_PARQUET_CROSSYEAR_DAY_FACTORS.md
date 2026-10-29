@@ -33,6 +33,12 @@
 - 因年度Parquet总行数可达133万，本轮严格**禁止**仅把2025文件名换成`2025.parquet`后用旧的月文件全扫描Reader，这会超出原有150000行预算。代码明确区分年度Footer剪枝与2026月度Reader，并在新SAFE记录年度Footer总数/总行组及实际目标行组数量，不输出源绝对路径/真实价量额。
 - 新增**3项纯合成年度文件回归**：2025年度12个模拟行组只读命中1组、缺ts min/max统计拒绝、目标组扫描预算超限拒绝、跨出2025的错误Footer范围拒绝。本轮总测试量从13项增加到**16项（仍待Windows复验）**。任何来源都不修改，H5写入与真实物理单位认证继续关闭。
 
+## 用户Windows第146轮回归测试反馈（2026-10-30）
+
+- 已运行16项：**15项OK、1项FAIL**。唯一失败`test_duplicate_purchased_monthly_daily_key_rejected`之前对排序的2025年度虚构Parquet复制`data.slice(0,1)`，其实际日期是1月15日，**不是目标9月30日**。Footer日期剪枝不会读取该非目标行组，故未拒绝属于正确的局部只读行为，不能简单扩大范围到全年的133万行。
+- 重写用例：精确定位9月30日一只目标股票日线并追加到末尾，虚构年度Parquet扩为13个小行组，其中2个分离行组的Footer均覆盖9月30日；年度Reader必须在实际选择的两组之间检测重复并拒绝。另新增一项证明与目标日无关的1月重复不会扩大读取范围，以及一项证明2026月度目标日重复被拒绝。**测试总数为18项，尚需Windows复验。**
+- 本轮只改虚构合成测试与文档，实际读取程序未变。此前真实跨年实验仍没有完成：必须先确认2025真正的`day/2025.parquet`路径存在，且新输出报告未占用。
+
 ## Windows PowerShell：每条命令占一整行
 
 更新仓库：
@@ -41,7 +47,7 @@
 git pull --ff-only origin main
 ```
 
-首先运行新**16项纯合成小Parquet/H5回归**（这些测试的Windows实测结果尚未知）：
+首先运行新**18项纯合成小Parquet/H5回归**（这些测试的Windows实测结果尚未知）：
 
 ```powershell
 .\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_probe_real_h5_parquet_crossyear_day_readonly.py" -v
@@ -69,13 +75,13 @@ Test-Path "H5ParquetReconciler\\reports\\real-h5-parquet-heldout-day-factors-202
 Test-Path "H5ParquetReconciler\\reports\\real-h5-parquet-crossyear-day-factors-20250930-20260824-v1.json"
 ```
 
-只有**16项全部OK、三个已知文件均True、目标新报告False**时，运行一次两月只读：
+只有**18项全部OK、三个已知文件均True、目标新报告False**时，运行一次两月只读：
 
 ```powershell
 .\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\probe-real-h5-parquet-crossyear-day-readonly.py --parquet-root "D:\\stock\\AllCycleAStockData" --h5-root "D:\\stock\\HikyuuData" --prior-raw-safe "H5ParquetReconciler\\reports\\real-parquet-h5-raw-day-unit-factor-candidates-20260930-v1.json" --prior-native-safe "H5ParquetReconciler\\reports\\real-hikyuu-native-20260930-hmac-v3.json" --prior-heldout-safe "H5ParquetReconciler\\reports\\real-h5-parquet-heldout-day-factors-20260928-29-v1.json" --out "H5ParquetReconciler\\reports\\real-h5-parquet-crossyear-day-factors-20250930-20260824-v1.json" --read-only-crossyear-days
 ```
 
-如新输出名称被占用，换`v2`并保留所有既有报告；**禁止覆盖或删除原始商业H5/Parquet文件，不需要重新读取原生Core311。** 仅上传新SAFE和16项测试日志，不要上传原始行情、原生SQLite或客户商业数据。
+如新输出名称被占用，换`v2`并保留所有既有报告；**禁止覆盖或删除原始商业H5/Parquet文件，不需要重新读取原生Core311。** 仅上传新SAFE和18项测试日志，不要上传原始行情、原生SQLite或客户商业数据。
 
 ## 后续
 

@@ -281,10 +281,65 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
             self.run_it()
         self.assertFalse(self.dest.exists())
 
-    def test_duplicate_purchased_monthly_daily_key_rejected(self):
+    def test_duplicate_selected_2025_annual_key_across_rowgroups_rejected(self):
+        # Annual 2025 Parquet is sorted by day. data.slice(0,1) would clone
+        # January rather than the held-out September 30 target and MUST NOT
+        # be treated as evidence of an invalid September target key.
         file=self.pqroot/"day"/"2025.parquet"
         data=self.pq.read_table(file)
-        self.pq.write_table(self.pa.concat_tables([data,data.slice(0,1)]),file)
+        target=int(datetime(2025,9,30,tzinfo=timezone(
+            timedelta(hours=8))).timestamp()*1000)
+        indices=[i for i,(timestamp,symbol) in enumerate(zip(
+                    data["ts"].to_pylist(),data["symbol"].to_pylist()))
+                 if timestamp==target and symbol=="600000.XSHG"]
+        self.assertEqual(len(indices),1)
+        # Append the September row AFTER December and retain two-row
+        # groups. Footer date pruning must select the original September
+        # group AND the last additional September-only group; duplicate
+        # detection must work across these two discontiguous groups.
+        altered=self.pa.concat_tables([data,data.slice(indices[0],1)])
+        self.pq.write_table(altered,file,row_group_size=2)
+        reader=self.pq.ParquetFile(file)
+        try:
+            self.assertEqual(reader.metadata.num_row_groups,13)
+            ts_index=reader.schema_arrow.names.index("ts")
+            selected=[]
+            for i in range(reader.metadata.num_row_groups):
+                stats=reader.metadata.row_group(i).column(ts_index).statistics
+                if stats.min<=target<=stats.max:
+                    selected.append(i)
+            self.assertEqual(len(selected),2)
+        finally:
+            reader.close()
+        with self.assertRaisesRegex(
+                ValueError,"Cannot safely inspect bounded annual 2025"):
+            self.run_it()
+        self.assertFalse(self.dest.exists())
+
+    def test_unrelated_2025_annual_duplicate_not_scanned_as_target(self):
+        # Out-of-window duplicate is deliberately ignored by a date-bounded
+        # probe, which must not silently expand to 1.33m annual rows.
+        file=self.pqroot/"day"/"2025.parquet"
+        data=self.pq.read_table(file)
+        self.assertEqual(
+            data["ts"][0].as_py(),
+            int(datetime(2025,1,15,tzinfo=timezone(
+                timedelta(hours=8))).timestamp()*1000))
+        self.pq.write_table(
+            self.pa.concat_tables([data,data.slice(0,1)]),
+            file,row_group_size=2)
+        report=self.run_it()
+        self.assertEqual(report["crossyear_aggregate"]["stock_days_compared"],4)
+        self.assertEqual(report["annual_2025_selected_rowgroups_scanned"],1)
+        self.assertFalse(report["ready_for_full_market_mirror"])
+
+    def test_duplicate_selected_2026_monthly_day_key_rejected(self):
+        file=self.pqroot/"day"/"2026-08.parquet"
+        data=self.pq.read_table(file)
+        self.assertEqual(data.num_rows,2)
+        self.pq.write_table(
+            self.pa.concat_tables([data,data.slice(0,1)]),
+            file,row_group_size=2)
         with self.assertRaisesRegex(ValueError,"Cannot safely inspect"):
             self.run_it()
         self.assertFalse(self.dest.exists())

@@ -277,6 +277,16 @@ atexit.register(lambda: time.sleep(15))
                          "hikyuu_imported_without_initializing")
         self.assertIn(P.PHASE_MARKER+"after_probe",proc.stdout)
 
+    def test_unbounded_timeout_rejected_before_child_process(self):
+        runner=Mock(side_effect=AssertionError("Must not spawn child"))
+        for value in (0,5,121,True,"45"):
+            with self.subTest(timeout=value):
+                with self.assertRaisesRegex(ValueError,"between 10 and 120"):
+                    P.runtime_preflight(
+                        self.canary,self.out,runner=runner,timeout=value)
+        runner.assert_not_called()
+        self.assertFalse(self.out.exists())
+
     def test_reject_worker_lying_about_native_driver_execution(self):
         worker=self.valid_worker()
         status=json.loads(worker.stdout.split(P.MARKER)[1])

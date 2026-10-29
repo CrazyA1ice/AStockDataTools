@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实H5 2/2原生验证完成：转入固定双日留出样本检验（2026-10-30）
+
+- [x] 用户Windows已运行第142轮**16/16项**隔离原生H5 HMAC合成/模拟测试全部OK（3.664秒）。真实`realday003`只读读取2026-09-30 SH600000及SZ000001的原始H5日线，生成`real-hikyuu-native-20260930-hmac-v3.json`：`native_status=native_complete`、`native_final_phase=finished`、`native_last_work_phase=native_complete`、`native_matching_stock_day_count=2`、`all_two_native_h5_real_daily_records_match=true`。本次**真正调用了Hikyuu 2.8.1原生C++驱动**，真实2条原始H5复合整数与其对应native KRecord的逆向整数值经一次性HMAC全匹配。未改变源文件（仅stat前后核查，非内容SHA），未打开Parquet或生产SQLite。Hikyuu解码价×0.001、量×1、额×0.1在上述两真实记录获实测支持。
+- [x] 与前一轮真实2026-09-30 Parquet↔raw H5两股日线2/2交叉印证，可推出**该日这两股**Parquet价≈native价1倍，成交量≈native量100倍，成交额≈native额10000倍。**不等于Parquet供应商已独立确认具体物理单位**、不能推广至所有市场、年份、分钟周期，之前2026-09-28的H5/Parquet五分钟对账仍有95/144候选残差。
+- [x] 新增`tools/probe-real-h5-parquet-heldout-day-factors-readonly.py`，在先核验两份先前真实SAFE（原始整数因子2/2、原生H5 HMAC 2/2）的前提下，只对**2026-09-28、2026-09-29**（明确排除发现/认证日2026-09-30）的两只股票各一条日线，重复受控Parquet原始float64↔H5原始整数对比。只读一个2026-09购买Parquet日线月文件两遍，累计≤300000源行、每次≤32组，仅在内存保留2×2条目标行；H5只读4条目标日线，不读取其他周期间隔、不开本机生产SQLite、不生成任何H5文件。
+- [x] 新SAFE逐日统计价(raw÷1000)的0.005误差容差匹配数、成交量(raw×100)及成交额(raw×1000)的1e-5相对误差命中数、各6种倍率参考计数，双零和单侧零不记作倍率命中。无需重复已经通过的原生C++读取，但**留出日期的native KRecord本身未重新验证**，SAFE显式写明；无供应商单位认证、无全市场转换许可。初始失败不改源数据；不存在或重复的日期记录将fail closed。
+- [x] 新增**12项纯合成Parquet/H5安全回归（尚待用户Windows实测）**，覆盖成功4条留出样本、单日异常不隐藏、全零不作匹配、历史SAFE伪认证拒绝、重复或缺失源、违规输出和只读限制。详见[真实跨日留出单位倍率验证](2026_REAL_H5_PARQUET_HELDOUT_DAY_FACTORS.md)；下一轮需用户Windows跑12项OK并上传脱敏的4条留出日SAFE，仅此后考虑更大时间跨度或供应商数据字典。
+
 ## ★ 真实core311 native两股日线故障点：显式3参数查询与只出固定原因码（2026-10-30）
 
 - [x] 用户Windows修复后原生HMAC测试输出`Ran 13 tests in 1.663s`（当前贴文缺完整`OK`行，不据此补造通过结论）；旧`realday001`已占用，按保护协议使用新`realday002`和新报告`real-hikyuu-native-20260930-hmac-v2.json`，真实原生子进程成功运行并输出SAFE。实际`native_status=runtime_unavailable`、`native_final_phase=finished`、`native_last_work_phase=before_native`、`native_get_kdata_called=true`、`native_matching_stock_day_count=0`。**这是进入了C++读取准备区却未完成，尚非原生数值不匹配，更非单位倍率错误**；源H5 stat没变，正式数据库/Parquet未打开。

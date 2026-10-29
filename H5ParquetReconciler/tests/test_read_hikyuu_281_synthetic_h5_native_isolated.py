@@ -84,6 +84,8 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.assertIn('base=p(type="sqlite3",db=str(db))',N.WORKER)
         self.assertIn('kdata=p(type="hdf5",sh_day=str(sh),sz_day=str(sz))',N.WORKER)
         self.assertIn('load_history_finance=False',N.WORKER)
+        self.assertIn("os._exit(0)",N.WORKER)
+        self.assertIn("print(PREFIX+json.dumps(out,sort_keys=True),flush=True)",N.WORKER)
 
     def test_success_requires_six_exact_synthetic_native_krecords(self):
         safe,runner=self.runmock()

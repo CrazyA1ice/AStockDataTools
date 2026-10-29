@@ -28,10 +28,13 @@ FORMAT="AStockDataTools isolated Hikyuu native runtime capability preflight v1"
 STOCKS={"SH600000":"sh_day.h5","SZ000001":"sz_day.h5"}
 DATES=[202609300000,202610080000,202610130000]
 MARKER="ASTOCKTOOLS_SAFE_HIKYUU_RUNTIME:"
+PHASE_MARKER="ASTOCKTOOLS_SAFE_HIKYUU_PHASE:"
 WORKER=r'''
 import importlib.metadata
 import json
+import os
 import sys
+print("ASTOCKTOOLS_SAFE_HIKYUU_PHASE:before_import",flush=True)
 r={"module_imported":False,"runtime_status":"unknown",
    "installed_distribution_version":None,"public_api_presence":{},
    "native_h5_driver_called":False,
@@ -47,6 +50,7 @@ except BaseException:
     r["runtime_status"]="hikyuu_import_failed"
 else:
     r["module_imported"]=True
+    print("ASTOCKTOOLS_SAFE_HIKYUU_PHASE:after_import",flush=True)
     r["runtime_status"]="hikyuu_imported_without_initializing"
     try:
         ver=importlib.metadata.version("hikyuu")
@@ -58,7 +62,13 @@ else:
            "DataDriverFactory","H5KDataDriver","hikyuu_init","KRecord"]
     r["public_api_presence"]={
         n:bool(hasattr(hikyuu,n)) for n in names}
-print("ASTOCKTOOLS_SAFE_HIKYUU_RUNTIME:"+json.dumps(r,sort_keys=True))
+# Hikyuu 2.8.1 imports register hku_cleanup via atexit. That hook may wait
+# forever for StockManager.data_ready even when we purposely did not initialize
+# StockManager. This short-lived import-only child must NOT run that hook.
+# Flush the single structured SAFE marker and terminate the child immediately.
+print("ASTOCKTOOLS_SAFE_HIKYUU_PHASE:after_probe",flush=True)
+print("ASTOCKTOOLS_SAFE_HIKYUU_RUNTIME:"+json.dumps(r,sort_keys=True),flush=True)
+os._exit(0)
 '''
 
 
@@ -231,8 +241,32 @@ def parse_worker(stdout,returncode):
     return data
 
 
-def runtime_preflight(report,out,runner=subprocess.run,timeout=20,
+def timeout_phase(stdout):
+    """Classify timeouts using ONLY hard-coded, flushed stage markers.
+
+    The child's arbitrary stdout is never persisted to SAFE reports. A timeout
+    can occur in import itself, API inspection or interpreter teardown.
+    """
+    if isinstance(stdout,bytes):
+        stdout=stdout.decode("utf-8",errors="replace")
+    if not isinstance(stdout,str):
+        return "hikyuu_subprocess_startup_timeout"
+    markers={line[len(PHASE_MARKER):].strip()
+             for line in stdout.splitlines()
+             if line.startswith(PHASE_MARKER)}
+    if "after_probe" in markers or MARKER in stdout:
+        return "hikyuu_subprocess_exit_timeout"
+    if "after_import" in markers:
+        return "hikyuu_post_import_probe_timeout"
+    if "before_import" in markers:
+        return "hikyuu_import_timeout"
+    return "hikyuu_subprocess_startup_timeout"
+
+
+def runtime_preflight(report,out,runner=subprocess.run,timeout=45,
                       python_exe=None):
+    if type(timeout) is not int or not (10 <= timeout <= 120):
+        raise ValueError("Hikyuu import timeout must be between 10 and 120 seconds")
     canary=verify_canary(report)
     output=_module_output(out)
     interpreter=_explicit_python(python_exe)
@@ -251,8 +285,8 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=20,
                     check=False)
         worker_result=parse_worker(proc.stdout,proc.returncode)
         runtime_status=worker_result["runtime_status"]
-    except subprocess.TimeoutExpired:
-        runtime_status="hikyuu_import_timeout"
+    except subprocess.TimeoutExpired as exc:
+        runtime_status=timeout_phase(exc.stdout)
     except (ValueError,OSError,TypeError):
         runtime_status="hikyuu_subprocess_failed"
     try:
@@ -301,11 +335,14 @@ def main(argv=None):
                    help="Explicit absolute path to another python.exe "
                         "(e.g. a pre-existing Anaconda environment); "
                         "never invokes shell or installs packages")
+    p.add_argument("--timeout-seconds",type=int,default=45,
+                   help="Bounded isolated import timeout (10 to 120 seconds)")
     p.add_argument("--isolated-preflight",action="store_true",required=True)
     args=p.parse_args(argv)
     try:
         safe=runtime_preflight(
-            args.canary_report,args.out,python_exe=args.python_exe)
+            args.canary_report,args.out,python_exe=args.python_exe,
+            timeout=args.timeout_seconds)
         print("SAFE Hikyuu runtime probe:",args.out)
         print("Runtime status:",safe["hikyuu_runtime_status"])
         print("Native HDF5 driver executed: NO")

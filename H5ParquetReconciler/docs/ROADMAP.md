@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu 2.8.1隔离导入超时修复：区分import与atexit（2026-10-29）
+
+- [x] 用户使用已有`D:\\software\\Python311\\python.exe`运行前一版隔离preflight，SAFE输出`hikyuu_import_timeout`，native驱动并未执行。上游Hikyuu **2.8.1** `hikyuu/__init__.py`导入时注册`atexit hku_cleanup`，它可能等待未初始化`StockManager.data_ready`；此前20秒`subprocess.run`无法分辨导入卡住还是退出等待。因此**尚未有证据说明Hikyuu 2.8.1不可导入**。
+- [x] 修复预检子进程：保留-Ｉ安全导入、私有HOME/APPDATA/TMP和固定API检查，新增导入前/后/输出前flush的固定阶段标记，成功输出结构化元数据后由短命子进程`os._exit(0)`跳过潜在死等atexit；仍由父进程验证合成H5 SHA和绝不认证native。可配置45秒默认、10–120秒的隔离超时，失败状态按阶段拆分，不保存子进程日志或真实路径。
+- [x] 对原生合成KData试点也加同类“输出SAFE并立即退出”修复，避免真实six-record读取成功却被退出清理误判超时；仅影响隔离短命子进程，不动用户正式Hikyuu实例。
+- [x] 原有12项隔离预检新增3项离线回归（模拟永不返回的atexit、导入/退出阶段分类、非法超时拒绝），**共15项待Windows验收**；原生读取原有9项合成模拟测试仍待用户Windows验收。详细步骤见[导入与退出超时问题修复](2026_HIKYUU_281_IMPORT_TIMEOUT_EXIT_FIX.md)。
+- [ ] 用`hikyuu-native-runtime-preflight-python311-v2.json`**新文件名**重跑Python311隔离preflight。只有实际报告`hikyuu_imported_without_initializing`后，再用全新run-id真正跑native KData合成读取；即使通过也不得跳过购买Parquet单位与溢出量纲确认。
+
 ## ★ Hikyuu 2.8.1原生HDF5实际读取的隔离金丝雀（2026-10-29）
 
 - [x] 下一阶段不是重复PyTables审计，新增`read-hikyuu-281-synthetic-h5-native-isolated.py`：严格核验已生成的6条虚构日线canary SHA，显式调用已安装Hikyuu 2.8.1的Python311子进程，以模块`work/h5_mirror`内全新运行目录创建**仅两只虚构证券**的SQLite注册库，并显式指定`sh_day/sz_day`为原合成H5路径，真正调用`Stock.get_kdata(Query(...DAY))`。

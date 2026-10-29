@@ -1,6 +1,6 @@
 # 开发路线与本轮交付记录
 
-更新：2026-10-25　仓库：CrazyA1ice/AStockDataTools
+更新：2026-10-29　仓库：CrazyA1ice/AStockDataTools
 
 ## 方向调整
 
@@ -10,21 +10,22 @@
 
 - [x] 修复 `daily_coverage` 的 `YYYYMMDD` 与已验收 stage `manifest.day` 的 `YYYY-MM-DD` 格式不一致，统一只在版本验收侧转成ISO日期；不触碰购买Parquet/H5、既有报告或暂存行情。
 - [x] 修改原端到端测试的ISO预期，增加2项“紧凑报告日期→ISO暂存”和“非规范清单拒绝”回归；版本测试文件共11项。
-- [ ] **Windows实跑11项尚待完成**；随后独立暂存10-09、10-12、10-13并做四日 `prepare`，合计22191根。不自动启用私有指针，也不声称生产库已补齐。详见[日期契约修复与验收命令](2026_PRIVATE_DAY_OVERLAY_DATE_CONTRACT_FIX_20261029.md)。
+- [x] **2026-10-29用户Windows实际测试已通过11/11**，`Ran 11 tests in 3.196s`、`OK`，含日期契约及版本准备/激活/回滚合成测试；另外日线暂存工具7/7（6.003秒）同样通过。
+- [ ] 下一步独立暂存10-09、10-12、10-13并做四日 `prepare`，合计22191根。不自动启用私有指针，也不声称生产库已补齐。详见[日期契约修复与验收命令](2026_PRIVATE_DAY_OVERLAY_DATE_CONTRACT_FIX_20261029.md)。
 
 ## ★ 10月8日日线5546根真实隔离Parquet已完成，推进四日版本封装（2026-10-29）
 
 - [x] 用户回传真实`manifest.json`：2026-10-08`staged_verified_not_promoted`，审计5546=实际5546；BJ339+SH2314+SZ2893=5546，Parquet及来源gate SHA-256齐备，原H5和购买Parquet未修改；上传manifest可校对计数，但云端无法直接重哈希本机实际day.parquet。
-- [x] 新增`build-parquet-primary-day-overlay.py`：验证2026-09-01～10-28完整日线gate中**恰好4个**H5-only整日候选的隔离Parquet文件，逐个SHA/Schema/数量/日期/代码/市场分布及执行时源数据仍无键；生成不可变私有日线overlay版本，只有明确`--confirm-private-pointer`才会切换模块内活动指针，可回滚且不触碰外部正式行情路径。新增9项自造H5+Parquet集成测试待Windows运行。
-- [ ] 验收9项测试，独立暂存10-09=5547、10-12=5549、10-13=5549（总待暂存16645）；四份私有manifest都一致后运行一次版本`prepare`，目标行数22191。尚未执行私有指针激活/回滚，也**未建好生产Parquet读取接口与H5镜像**。见[命令与验收依据](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。
+- [x] 新增`build-parquet-primary-day-overlay.py`：验证2026-09-01～10-28完整日线gate中**恰好4个**H5-only整日候选的隔离Parquet文件，逐个SHA/Schema/数量/日期/代码/市场分布及执行时源数据仍无键；生成不可变私有日线overlay版本，只有明确`--confirm-private-pointer`才会切换模块内活动指针，可回滚且不触碰外部正式行情路径。此前新增9项自造H5+Parquet集成测试，含本轮日期键修复后累计11项，**用户Windows已通过11/11**。
+- [ ] 独立暂存10-09=5547、10-12=5549、10-13=5549（总待暂存16645）；四份私有manifest都一致后运行一次版本`prepare`，目标行数22191。尚未执行私有指针激活/回滚，也**未建好生产Parquet读取接口与H5镜像**。见[命令与验收依据](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。
 - [ ] 下一阶段正式开发统一Parquet读取入口（购买原版优先、私有overlay只补空白天），然后通达信补到最新实有交易日、H5原生镜像；历史分钟线机理分析继续暂停。
 
 ## ★ 2026-09-01至10-28真实日线门槛验收并启动H5→Parquet安全暂存（2026-10-29）
 
 - [x] `test_plan_parquet_primary_day_bootstrap_offline.py` 11项Windows实机逐项通过（Ran 11 tests in 0.023s、OK），纯离线日线gate`parquet-primary-day-bootstrap-plan-20260901-20261028-v1.json`源扫描完整、键守恒：H5=138641、PQ=116567、重叠=116450、OHLC价差0（原容差）、量/额冲突25183、H5-only22191、PQ-only117。
 - [x] 2026年9月Parquet已包含所有H5候选股票的日线。H5-only 22191根全部集中于**10-08=5546、10-09=5547、10-12=5549、10-13=5549**四个Parquet全无日线的日期，混合日缺口0；**10-14～10-28的H5也未提供记录，禁止假称已覆盖最新**。
-- [x] 开发**真实输出独立Parquet**的`stage-h5-only-day-to-parquet.py`：仅日线、仅已验收Parquet全日无键的H5完整源日；SHA关联gate与原扫描报告；执行时再次全日扫描核对Parquet确实没有键、H5数量吻合、源文件未发生变化；逐根数值及OHLC规则校验；仅写`work/unified_parquet/staging/<job>/day.parquet`，写后读回比对并生成独立manifest；绝不覆盖原始购买Parquet及原H5，不允许自动升为生产。7项自造行情集成测试，Windows待运行。
-- [ ] 运行7项测试、真实10-08单日**5546根**暂存，回传仅私有manifest与执行日志，不上传行情Parquet；测试失败/报错不得当作已完成补库。[命令及正式工作协议](2026_H5_ONLY_DAY_PARQUET_STAGING.md)。
+- [x] 开发**真实输出独立Parquet**的`stage-h5-only-day-to-parquet.py`：仅日线、仅已验收Parquet全日无键的H5完整源日；SHA关联gate与原扫描报告；执行时再次全日扫描核对Parquet确实没有键、H5数量吻合、源文件未发生变化；逐根数值及OHLC规则校验；仅写`work/unified_parquet/staging/<job>/day.parquet`，写后读回比对并生成独立manifest；绝不覆盖原始购买Parquet及原H5，不允许自动升为生产。7项自造行情集成测试，**用户Windows已通过7/7**（6.003秒）。
+- [x] 7项暂存合成测试全部通过；真实10-08单日**5546根**暂存此前已回传私有manifest并验收计数与哈希字段（未云端重读实际Parquet内容）。[命令及正式工作协议](2026_H5_ONLY_DAY_PARQUET_STAGING.md)。
 - [ ] 验收后分别暂存10-09、10-12、10-13，并设计只读baseline+独立overlay的统一Parquet active版本切换与回滚；再补真实存在的通达信盘后缺口、转换生成Hikyuu原生H5镜像。分钟数据差异机理调查保持暂停。
 
 ## ★ 最新开发主线调整：Parquet优先补齐/统一格式/通达信盘后更新（2026-10-29）

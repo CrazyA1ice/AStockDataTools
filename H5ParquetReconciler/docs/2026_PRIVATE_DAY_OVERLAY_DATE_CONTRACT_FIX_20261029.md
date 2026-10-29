@@ -22,7 +22,7 @@
 .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_build_parquet_primary_day_overlay.py" -v
 ```
 
-预期测试文件共 11 项（旧 9 项 + 新 2 项），**当前没有用户 Windows 的实际运行记录；未宣称通过**。测试用临时构造 H5/Parquet，不读取 `D:\stock` 的用户商业行情。
+**2026-10-29 Windows 回传通过：** 此文件 `Ran 11 tests in 3.196s`、`OK`（原9项+新增2项）；另 `test_stage_h5_only_day_to_parquet.py` `Ran 7 tests in 6.003s`、`OK`。合计18项均通过，无失败或跳过。测试用临时构造 H5/Parquet，不读取 `D:\stock` 的真实商业行情，因此只能证明合成合同和拒绝机制有效，不能证明剩余3天的真实stage已经完成。
 
 在 11 项通过后，依照 [私有四日版本操作说明](2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md) 先分别暂存 2026-10-09、10-12、10-13 三日，再 `--action prepare` 组合 2026-10-08、09、12、13 四个隔离清单。成功指标：`private_rows=22191`，`prepared_days` 为四个 ISO 日期，`production_query_route_modified=false`。不能跳过其余三日，也不能把 prepare 当成生产发布。
 

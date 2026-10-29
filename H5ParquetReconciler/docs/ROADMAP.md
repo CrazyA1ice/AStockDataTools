@@ -6,6 +6,20 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Windows留出日12项单测：4处异常文案大小写误报（2026-10-30）
+
+- [x] 用户本地Windows新增`test_probe_real_h5_parquet_heldout_day_factors_readonly.py`运行**12项中11项ok、1项包含4个subTest FAIL（5.173秒）**。四个失败均是同一项`test_prior_native_must_prove_real_2_of_2_not_merely_called`：程序**正确拒绝**被人为篡改的前序原生SAFE并抛出`ValueError("Previous real native H5 two-stock-day SAFE not qualified")`，但测试`assertRaisesRegex(ValueError, "previous real native")`首字母小写且Python正则区分大小写，导致4个误报。**并未指示真实原生解码失败、真实留出日数据不一致，亦未开始下一次真实市场数据核验。**
+- [x] 仅改**测试文件**而不放宽生产SAFE验证逻辑：使用与实际拒绝契约完全一致的大小写与完整错误提示正则（`^...# 开发路线与本轮交付记录
+
+更新：2026-10-29　仓库：CrazyA1ice/AStockDataTools
+
+## 方向调整
+
+不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
+
+）；增加初始正常SAFE通过`verify_chain`的断言，且每个subTest篡改后在`finally`中恢复原始SAFE并再次核验正常资格，确保每一类异常都是独立的、不能靠前一轮遗留污染得到“绿灯”。测试数量仍为**12项**，待用户Windows重新实测。
+- [ ] 测试12项全OK后，才执行已合并的4条留出日期（2026-09-28/29 × SH600000/SZ000001）只读日线倍率工具；不得修改正式H5/Parquet，正式镜像写入与采购数据供应商物理单位认证保持false。回传`reports/real-h5-parquet-heldout-day-factors-20260928-29-v1.json`作为下一阶段证据。无需重复2026-09-30原生HMAC实验。
+
 ## ★ 真实H5 2/2原生验证完成：转入固定双日留出样本检验（2026-10-30）
 
 - [x] 用户Windows已运行第142轮**16/16项**隔离原生H5 HMAC合成/模拟测试全部OK（3.664秒）。真实`realday003`只读读取2026-09-30 SH600000及SZ000001的原始H5日线，生成`real-hikyuu-native-20260930-hmac-v3.json`：`native_status=native_complete`、`native_final_phase=finished`、`native_last_work_phase=native_complete`、`native_matching_stock_day_count=2`、`all_two_native_h5_real_daily_records_match=true`。本次**真正调用了Hikyuu 2.8.1原生C++驱动**，真实2条原始H5复合整数与其对应native KRecord的逆向整数值经一次性HMAC全匹配。未改变源文件（仅stat前后核查，非内容SHA），未打开Parquet或生产SQLite。Hikyuu解码价×0.001、量×1、额×0.1在上述两真实记录获实测支持。

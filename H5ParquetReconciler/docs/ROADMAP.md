@@ -6,12 +6,20 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu真实H5两股40字节字段布局核对，构建纯合成镜像金丝雀（2026-10-29）
+
+- [x] 用户SAFE真实探查：SH600000 H5历史6404条、SZ000001为8468条，2026-09-30～10-13两股窗口各5条；文件PyTables CLASS=TABLE、gzip与chunked结构正常。真正落盘字段按`closePrice:uint32@0`、`datetime:uint64@4`、`highPrice:uint32@12`、`lowPrice:uint32@16`、`openPrice:uint32@20`、`transAmount:uint64@24`、`transCount:uint64@32`共40字节。报告均`structural_h5record_candidate=true`，**真实Hikyuu驱动读取尚未验证**。
+- [x] 上次7项只读合成测试粘贴末尾只有`Ran 7 tests in 0.719s`，缺少完整`OK`；不得误记为7/7通过。
+- [x] 新增`build-hikyuu-native-h5-synthetic-canary.py`：仅以SAFE结构报告为schema证据，在`work/h5_mirror/<新目录>/`使用PyTables生成两只股票各3根**完全虚构**的独立原生日线H5，再使用h5py/PyTables核验40字节类型/偏移/CLASS/压缩及合成整数往返一致；无任何原始H5或购买Parquet读取，不动市场文件，不切换生产。
+- [x] 新增7项合成回归和SAFE新报告，所有工具/测试/文档集中在H5ParquetReconciler模块内；测试及真实合成canary待用户Windows运行。详见[合成H5金丝雀验收](2026_HIKYUU_SYNTHETIC_H5_CANARY.md)。
+- [ ] 用户实际通过7项新测试、上传SAFE合成canary摘要后，再实现独立Hikyuu C++原生驱动隔离加载，证实日期与价量的原生读取；此阶段**禁止**把虚构H5放入正式HikyuuData路径或把H5结构一致说成真实行情量纲已认证。
+
 ## ★ 私有指针只读消费14/14通过，开始原生Hikyuu H5格式验真（2026-10-29）
 
 - [x] Windows最新批量查询合成测试 **`Ran 14 tests in 6.643s`、`OK`**；包含显式SHA不读active、测试临时目录的active指针读取、锁/非法内容/中途切换。用户实际active仍未激活，原22,191条私有版本及所有市场来源不变。
 - [x] 核对Hikyuu历史`H5Record`公开结构：日线`datetime:uint64`、四个OHLC价格`uint32`、`transAmount/transCount:uint64`，旧PyTables常用`/data/<SYMBOL>`。既有合成H5测试使用有符号int32价格且字段顺序与历史H5Record可能不同，**不应凭字段名就声称兼容原生Hikyuu**。
 - [x] 新增严格只读`probe-hikyuu-native-day-h5-readonly.py`：1～10只股票/同年31天窗口，记录真实H5的源文件stats、数据集字段类型/偏移/顺序、PyTables标记和区间记录计数；只写模块reports/下新安全JSON，不读原商业OHLCVA或购买Parquet、不创建镜像。
-- [ ] 7项合成测试及Windows真实双股票结构报告待实机运行，见[本轮步骤](2026_HIKYUU_NATIVE_H5_FORMAT_SURVEY.md)。本轮不得自动声称`hikyuu_native_driver_load_tested=true`或`ready_for_full_h5_mirror_write=true`。
+- [x] 双股票真实结构报告已回传：共40字节，字段偏移和uint类型符合现场schema候选，两股各窗口5根；最新日志未包含只读7项测试最终`OK`，且Hikyuu原生驱动尚未验证，具体见上方合成金丝雀工作。
 - [ ] 结构验收后再做隔离小样本原生H5及实际Hikyuu驱动读取，合格后推进完整镜像、通达信盘后增量同步；不回到无关分钟线差异机理研究。
 
 ## ★ 双股票真实批量查询通过，推进可控私有版本只读消费（2026-10-29）

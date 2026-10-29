@@ -27,8 +27,17 @@ FORMAT="AStockDataTools isolated real Hikyuu 2.8.1 two-stock-day native H5 HMAC 
 MARKER=b"ASTOCK_NATIVE_REAL_DAY_HMAC:"
 STAGE_MARKER=b"ASTOCK_NATIVE_REAL_DAY_PHASE:"
 PHASES=frozenset(("before_core","core_ready","registry_ready",
-                   "stock_manager_ready","before_native","native_complete",
-                   "finished"))
+                   "stock_manager_ready","before_native",
+                   "before_stock_lookup","before_count","count_ready",
+                   "before_query","query_ready","before_get_kdata",
+                   "kdata_returned","target_found","before_hmac",
+                   "native_complete","finished"))
+FAIL_STAGES=frozenset(("before_core","before_stock_lookup","before_count",
+                       "before_query","before_get_kdata","kdata_returned",
+                       "target_found","before_hmac"))
+SAFE_NATIVE_FAILS=frozenset(("native_no_day_rows","native_day_count_exceeds_budget",
+                            "native_kdata_count_invalid","native_target_day_not_found",
+                            "native_target_day_duplicate"))
 WORK=MODULE/"work"/"h5_mirror"/"real_day_native"
 SYMBOLS=("SH600000","SZ000001")
 DAY="2026-09-30"
@@ -149,7 +158,10 @@ def decode_status(stdout,code):
             "h5_file_read_only")):
         return None
     if (type(doc["state"]) is not str or
-            doc["state"] not in ("native_complete","runtime_unavailable") or
+            doc["state"] not in (
+                {"native_complete","runtime_unavailable"}
+                | SAFE_NATIVE_FAILS
+                | {"failed_at_"+step for step in FAIL_STAGES}) or
             type(doc["records_examined_per_stock"]) is not dict or
             set(doc["records_examined_per_stock"])!=set(SYMBOLS) or
             any(type(v) is not int or not 0<=v<=MAX_NATIVE_TAIL
@@ -179,6 +191,7 @@ out={"state":"runtime_unavailable","core311":False,"registry_only_temp":False,
 def mark(phase):
     print(PHASE+phase,flush=True)
 mark("before_core")
+failure_step="before_core"
 try:
     stage=Path(sys.argv[1]).resolve()
     sh=Path(sys.argv[2]).resolve()
@@ -275,20 +288,54 @@ try:
     mark("stock_manager_ready")
     mark("before_native")
     for symbol in NAMES:
+        failure_step="before_stock_lookup"
+        mark(failure_step)
         stock=sm.get_stock(symbol)
         if stock.is_null():
             raise RuntimeError("real stock registration unavailable")
+        # An older synthetic native trial passed Query(0,3,Query.DAY).
+        # Query(-64,Query.DAY) can bind the second positional argument as
+        # the END INDEX, not the KType. Use exactly that successful
+        # three-positional-argument overload and a strict <=64 tail window.
+        failure_step="before_count"
+        mark(failure_step)
+        n=int(stock.get_count(hk.Query.DAY))
+        if n<1:
+            out["state"]="native_no_day_rows"
+            raise RuntimeError("No native day record")
+        if n>25000:
+            out["state"]="native_day_count_exceeds_budget"
+            raise RuntimeError("Unexpected native day count")
+        mark("count_ready")
+        failure_step="before_query"
+        mark(failure_step)
+        first=max(0,n-64)
+        query=hk.Query(first,n,hk.Query.DAY)
+        mark("query_ready")
+        failure_step="before_get_kdata"
+        mark(failure_step)
         out["native_get_kdata_called"]=True
-        recs=stock.get_kdata(hk.Query(-64,hk.Query.DAY))
-        out["records_examined_per_stock"][symbol]=len(recs)
-        if len(recs)>64 or len(recs)<1:
-            raise RuntimeError("native range exceeded")
+        recs=stock.get_kdata(query)
+        mark("kdata_returned")
+        failure_step="kdata_returned"
+        returned=len(recs)
+        out["records_examined_per_stock"][symbol]=returned
+        if returned!=n-first or not 1<=returned<=64:
+            out["state"]="native_kdata_count_invalid"
+            raise RuntimeError("Native count/window mismatch")
         matches=[r for r in recs if int(r.datetime.ymd)==20260930]
-        if len(matches)!=1:
-            raise RuntimeError("target day not exactly once in bounded tail")
+        if len(matches)==0:
+            out["state"]="native_target_day_not_found"
+            raise RuntimeError("Target day missing in bounded tail")
+        if len(matches)>1:
+            out["state"]="native_target_day_duplicate"
+            raise RuntimeError("Duplicate target day")
+        mark("target_found")
         r=matches[0]
-        # Quantization to the EXACT H5 raw integer scales. Never export
-        # decoded floats; child emits only a per-symbol keyed MAC.
+        failure_step="before_hmac"
+        mark(failure_step)
+        # Reverse only the well-known native H5 driver numeric scales.
+        # No user OHLCVA, decoded values or raw H5 integers leave the worker.
         raw=[202609300000,int(round(float(r.open)*1000)),
              int(round(float(r.high)*1000)),
              int(round(float(r.low)*1000)),
@@ -300,9 +347,11 @@ try:
     out["state"]="native_complete"
     mark("native_complete")
 except BaseException:
-    # Do NOT print exception strings. Native libraries often emit filesystem
-    # paths in exceptions. Failed stages are obvious from ASCII phase markers.
-    pass
+    # Never print an arbitrary exception type/message/traceback: C++ logs may
+    # include the private original H5 path or source values. SAFE reason codes
+    # are hardcoded stage names, not user or native-exception strings.
+    if out["state"]=="runtime_unavailable":
+        out["state"]="failed_at_"+failure_step
 finally:
     mark("finished")
     print(PREFIX+json.dumps(out,sort_keys=True),flush=True)

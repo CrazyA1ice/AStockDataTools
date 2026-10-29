@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 修复Windows Path解释器校验造成12项预检1项失败（2026-10-29）
+
+- [x] 用户Windows新12项测试：`Ran 12 tests in 1.446s`，11项`ok`、1项`ERROR`（`test_explicit_alternate_python_path_without_installing_packages`）。错误发生在`_explicit_python`使用`type(exe) not in (str, Path)`进行精确类型比较；argparse或测试传入`WindowsPath`，该具体类型不等于抽象`Path`，导致合法绝对路径尚未进入subprocess就被拒绝。
+- [x] 将校验改为`isinstance(exe,(str,Path))`，仍保留绝对路径、非软链接、真实文件、`python.exe`名称与无shell/不初始化StockManager等防护。不改动H5市场数据、22,191条私有stage、原已生成的合成H5或安全报告。
+- [x] 原失败测试增加 **WindowsPath/PosixPath对象及`str(path)`两种形式**的安全子进程模拟检查，测试总数仍为**12项**。修复版尚待用户Windows实际运行；在`Ran 12 tests`、`OK`之前不得宣称当前Hikyuu API探针成功。
+- [ ] 测试通过后再检查已有Python解释器是否安装Hikyuu（先`py -0p`、`where.exe python`、候选Anaconda`pip show hikyuu`）。只有确认指定解释器路径存在才进行隔离`--python-exe`预检；不能因为此类型校验通过就认证Hikyuu原生H5驱动。
+
 ## ★ Hikyuu隔离预检8/8通过；当前项目\.venv未安装Hikyuu（2026-10-29）
 
 - [x] 用户Windows隔离运行时测试`Ran 8 tests in 0.851s`、`OK`；SAFE回传双股合成文件SHA复核`true`，`hikyuu_runtime_status=hikyuu_not_installed_in_this_interpreter`，`installed_hikyuu_version=null`，API清单为空。此结果只代表执行探针的项目Python解释器缺少包，不代表HDF5镜像结构失败或电脑所有Python都未安装。

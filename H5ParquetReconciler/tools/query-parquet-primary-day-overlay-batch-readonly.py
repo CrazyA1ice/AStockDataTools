@@ -109,6 +109,14 @@ def query_private_day_overlay_batch(
     if (type(symbols) not in (tuple,list)
             or not 1 <= len(symbols) <= MAX_SYMBOLS):
         raise ValueError("Provide 1..10 explicit A-share symbols")
+    # The purchased single-stock query deliberately accepts lowercase
+    # aliases. This batch API instead requires canonical UPPERCASE symbols
+    # so every caller and safe provenance report use the same explicit keys.
+    # Reject BEFORE any version verification or live market-source audit.
+    if any(type(name) is not str or name != name.upper()
+           or name != name.strip() for name in symbols):
+        raise ValueError(
+            "Batch symbols must be canonical uppercase, e.g. SH600000")
     if (type(max_total_candidate_rows) is not int
             or not 1 <= max_total_candidate_rows <= 100000000
             or type(max_total_result_bars) is not int

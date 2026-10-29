@@ -81,9 +81,12 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
     def test_invalid_duplicate_and_noncanonical_symbol_rejected_before_live_scan(self):
         with prepared() as (root,module,report,gate,purchased,stage,plan):
             with patch.object(F.M.stage_tool,"verify_live_absence_dates",
-                              side_effect=AssertionError("must not scan")):
+                              side_effect=AssertionError("must not scan")), \
+                    patch.object(B.single,"verified_version",
+                                 side_effect=AssertionError("must not verify")):
                 for symbols in ([],["SH600000"]*2,["BAD"],
-                                ["sh600000"],["SH600000"]*11):
+                                ["sh600000"],["Sh600000"],
+                                ["SH600000 "],[None],["SH600000"]*11):
                     with self.subTest(symbols=symbols):
                         with self.assertRaises(ValueError):
                             read(root,plan["version_sha256"],symbols=symbols)

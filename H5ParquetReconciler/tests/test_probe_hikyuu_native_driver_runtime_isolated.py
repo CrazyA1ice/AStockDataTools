@@ -238,9 +238,44 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
                 event,Exception) else Mock(return_value=event)
             safe=P.runtime_preflight(self.canary,target,runner=runner)
             self.assertIn(safe["hikyuu_runtime_status"],
-                          ("hikyuu_import_timeout","hikyuu_subprocess_failed"))
+                          ("hikyuu_subprocess_startup_timeout","hikyuu_subprocess_failed"))
             self.assertFalse(safe["native_h5_driver_read_executed"])
             self.assertFalse(safe["hikyuu_h5_compatibility_certified"])
+
+    def test_timeout_phases_distinguish_import_vs_exit_wait(self):
+        self.assertEqual(
+            P.timeout_phase(None),"hikyuu_subprocess_startup_timeout")
+        before=(P.PHASE_MARKER+"before_import\\n").encode("utf-8")
+        self.assertEqual(P.timeout_phase(before),"hikyuu_import_timeout")
+        after=before+(P.PHASE_MARKER+"after_import\\n").encode("utf-8")
+        self.assertEqual(
+            P.timeout_phase(after),"hikyuu_post_import_probe_timeout")
+        complete=after+(P.PHASE_MARKER+"after_probe\\n").encode("utf-8")
+        self.assertEqual(
+            P.timeout_phase(complete),"hikyuu_subprocess_exit_timeout")
+        self.assertEqual(P.timeout_phase("random import logs"),
+                         "hikyuu_subprocess_startup_timeout")
+
+    def test_isolated_worker_bypasses_hanging_atexit_with_fake_hikyuu(self):
+        # A synthetic hikyuu stub registers the exact type of problematic
+        # atexit hook. The subprocess MUST exit rather than waiting on it.
+        import subprocess
+        import sys
+        compile(P.WORKER,"hikyuu_runtime_probe_worker","exec")
+        fake='''import atexit,sys,time,types
+fake_hk=types.ModuleType("hikyuu")
+sys.modules["hikyuu"]=fake_hk
+atexit.register(lambda: time.sleep(15))
+'''
+        proc=subprocess.run(
+            [sys.executable,"-I","-c",fake+P.WORKER],
+            capture_output=True,text=True,timeout=7,check=False)
+        self.assertEqual(proc.returncode,0)
+        result=P.parse_worker(proc.stdout,proc.returncode)
+        self.assertTrue(result["module_imported"])
+        self.assertEqual(result["runtime_status"],
+                         "hikyuu_imported_without_initializing")
+        self.assertIn(P.PHASE_MARKER+"after_probe",proc.stdout)
 
     def test_reject_worker_lying_about_native_driver_execution(self):
         worker=self.valid_worker()

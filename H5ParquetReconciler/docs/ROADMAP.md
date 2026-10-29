@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实2026-09单日日线float64量化风险：从metadata走向限量数值验证（2026-10-29）
+
+- [x] 用户Windows `test_audit_parquet_int64_footer_timebase_readonly.py` **10/10项全部OK（1.725秒）**；实际只读2026-09三周期Footer日期`int64`统计：day **2/2**、5min **47/47**、1min **233/233**符合UTC+8解释的Unix毫秒月份边界，其他四种候选均0，全部282个Row Group无缺失minmax。报告`all_three_periods_unique_epoch_ms_footer_candidate=true`，但`prior_query_code_epoch_ms_assumption_independently_proven=false`、日期来源时区/分钟标签认证仍false。这是强的元数据候选证据，不再反复做相同Footer探测。
+- [x] 下一轮转向**真实float64→Hikyuu整数存储刻度能否无损表示**，但真实购买Parquet的金额/成交量物理单位尚未确定，之前合成Decimal精度证明不能替代这一阶段。新增`tools/audit-real-parquet-day-float64-h5-tick-candidates.py`：仅选择**2026-09-30**一个日期、**SH600000/SZ000001**两只股票、2026-09**一个日线月文件**，项目内已有`day/2026-09.parquet` 2026-09 footer为118208条/2组。先完整验证先前时间基准SAFE和schema/最多**150000**源记录/32组预算，再读取单个日线文件八个指定列并内存中过滤两条目标股票日，不扫描5min/1min、不创建H5、不持久化原始OHLCVA。
+- [x] 对Hikyuu驱动**解码单位**刻度(OHLC×1000、amount×10、volume×1)分别统计`str(float)`作为最短十进制打印值能否落整数刻度、原始float64精确二进制值是否落整数刻度、可能舍入/中点/溢出计数；输出只有每字段的计数和固定假设常数，无真实价格、成交额、成交量、时间戳、源路径或真实转换整数。**绝不把该刻度误作购买Parquet的物理金额/数量单位，绝不写真实H5。**
+- [x] 新增**12项仅小型虚构Parquet和浮点算例的回归测试（待用户Windows实测）**；见[单日日线float64量化假说试验](2026_REAL_DAY_FLOAT64_H5_TICK_PRECISION_PILOT.md)。产物`reports/parquet-day-float64-h5-tick-candidates-20260930-v1.json`必须全程只读且保留所有物理单位、真实转换门禁false。
+- [ ] Windows先测12项，再对一份2026-09真实日线文件运行限定精度统计并回传SAFE JSON。若日线在假设刻度下出现潜在舍入，优先分析规则及独立数据源、供应商单位文档，不继续扩大抽样或写入实际市场H5。
+
 ## ★ int64日期Footer统计时间基准候选：复用既有真实数据解析证据（2026-10-29）
 
 - [x] 用户Windows v2日期类型回归共17项，**16项ok，1项因Windows无符号链接创建权限skip（1.859秒）**；实际三份2026-09真实Parquet Footer已成功运行v2。上传`parquet-3period-arrow-schema-footer-v2.json`证实day/5min/1min三个日期字段均唯一匹配且Arrow存储类型为**int64**，所有OHLC/amount/volume为**float64**。三个周期的`date_raw_calendar_encoding_certified=false`和`binary_float_to_native_h5_precision_certified=false`，审查结果仍有闭市复权、时间编码与物理单位证据缺口；四历史窗口聚合差小但0/4全证据对齐。

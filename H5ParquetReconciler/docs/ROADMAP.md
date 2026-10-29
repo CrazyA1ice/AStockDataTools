@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu 2.8.1 native六条合成K线首次实际读取成功 → 进入Parquet数值转换精度门禁（2026-10-29）
+
+- [x] 用户Windows本轮测试：原生H5读取工具**16/16离线回归OK（1.271秒）**。改用二进制SAFE解析及`run002`真实读取，`hikyuu-native-read-core311-v2.json`证实`native_h5_read_status=native_h5_six_synthetic_rows_matched`、`last_native_phase=finished`，`SH600000=3`、`SZ000001=3`，独立虚构SQLite注册库和Hikyuu2.8.1原生C++ `Stock.get_kdata`均实际成功；源H5 SHA复核通过，原始行情和生产指针未修改。**仅合成H5兼容认证完成**，不应误写为购买Parquet源数据单位已经匹配。
+- [x] 核对Hikyuu 2.8.1上游H5Record：OHLC无符号32位、transAmount/transCount无符号64位，原生驱动输出缩放分别为**×0.001、×0.1、×1**。新脚本`tools/synthetic-parquet-to-hikyuu-h5-numeric-gate.py`把这三组逆向编码因子封装为Decimal严格整数检查，拒绝隐含float转换、精度损失、负值、非有限数、整数溢出、不合法的日线日期和OHLC关系。
+- [x] 脚本仅使用程序内6条完全虚构的Hikyuu **KRecord解码数值单位**创建PyArrow十进制Parquet（两只股票各3条），随后用PyTables写出40字节Schema H5，并与之前真正经Hikyuu原生驱动读取的**合成基准H5**做6行全部整数逐字段相等核对；原生SAFE证明与canary SHA须一致，输出/临时文件全部限制在模块`work/h5_mirror`及`reports`，不能向用户商业文件传路径。
+- [x] 新增**12项离线/虚构样本单测（尚待Windows实测）**；如`pyarrow`不可用，合成Parquet/H5集成测试显示skipped，不能认证跨格式合成往返。生成的新H5本轮不再调用原生驱动重复读取，因此`new_h5_files_tested_by_native_driver=false`、`actual_purchased_parquet_units_verified=false`、`licensed_parquet_to_h5_mapping_certified=false`、`ready_for_full_market_mirror=false`四个门禁始终关闭。
+- [ ] 用户运行12项测试及一次仅虚构Parquet/H5数字桥接，回传`synthetic-parquet-h5-decimal-gate-v1.json`。下一阶段需单独制定真实购买Parquet字段和物理单位的**只读/聚合证明采集**方案：这一步不能根据Hikyuu内部乘数假定真实源`volume`是股还是手、`amount`是元还是千元，不能自动开启实盘转存。详见[合成Decimal→H5数值门禁](2026_SYNTHETIC_PARQUET_TO_NATIVE_H5_DECIMAL_GATE.md)。
+
 ## ★ 修复真实原生C++ H5读取的Windows GBK解码崩溃（2026-10-29）
 
 - [x] 用户Windows上一轮原生读取**13/13项离线回归全部OK（0.876秒）**，使用真实Python311、已成功的core311 SAFE、两份合成H5首次执行`--run-id run001`时，父进程`subprocess.run(capture_output=True,text=True)`读取混合编码Hikyuu C++日志触发`UnicodeDecodeError: 'gbk' codec can't decode byte 0xac`，导致`proc.stdout=None`，后续`parse_native`又对None调用`splitlines()`触发`AttributeError`。因此**没有SAFE native报告，也尚不知道真实native读取成功与否**；不能把这个异常当成H5值不匹配或初始化失败。

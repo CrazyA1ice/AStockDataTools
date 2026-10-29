@@ -66,8 +66,50 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertTrue(safe["source_quantity_unit_rescaling_applied"])
             self.assertNotIn('"open": 12.3', json.dumps(safe))
             self.assertNotIn('"volume": 15000', json.dumps(safe))
+            self.assertEqual(safe["purchased_parquet_source_rows_scanned"], 1)
+            self.assertEqual(
+                safe["purchased_parquet_source_rows_per_purchased_bar"], 1.0)
+            self.assertEqual(
+                safe["known_minimum_purchased_plus_stage_rows_decoded"], 2)
+            self.assertEqual(safe["known_minimum_rows_per_combined_returned_bar"], 1.0)
+            self.assertTrue(safe["known_minimum_excludes_live_h5_pq_absence_recheck_io"])
+            self.assertIsNone(safe["source_rows_read_per_returned_bar"])
+            self.assertTrue(safe["inherited_source_rows_per_returned_bar_suppressed"])
+            self.assertGreaterEqual(safe["query_elapsed_seconds_this_invocation"],
+                                    safe["purchased_query_elapsed_seconds_this_invocation"])
+            self.assertTrue(safe["elapsed_time_includes_version_stage_checks_and_live_audit"])
             self.assertEqual(FIXTURE.M.stage_tool.file_digest(original),
                              source_sha)
+
+    def test_baseline_only_query_does_not_claim_private_selected_day_reads(self):
+        with prepared_synthetic() as (root, module, report, gate, original,
+                                      stage_dir, plan):
+            result = self.query(root, plan["version_sha256"],
+                                start="2026-09-30", end="2026-09-30")
+            safe = result["safe_summary"]
+            self.assertEqual(len(result["bars"]), 1)
+            self.assertEqual(safe["private_overlay_dates_live_rechecked"], [])
+            self.assertEqual(safe["private_overlay_bars_returned"], 0)
+            self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"], 0)
+            self.assertTrue(safe["no_h5_read"])
+            self.assertFalse(safe["source_quantity_unit_rescaling_applied"])
+            self.assertIsNone(safe["source_rows_read_per_returned_bar"])
+            self.assertEqual(
+                safe["known_minimum_purchased_plus_stage_rows_decoded"],
+                safe["purchased_parquet_source_rows_scanned"])
+
+    def test_empty_unified_result_has_no_false_amplification_ratio(self):
+        with prepared_synthetic() as (root, module, report, gate, original,
+                                      stage_dir, plan):
+            result = self.query(root, plan["version_sha256"],
+                                start="2026-10-08", end="2026-10-08",
+                                symbol="SZ000001")
+            safe = result["safe_summary"]
+            self.assertEqual(result["bars"], [])
+            self.assertIsNone(safe["known_minimum_rows_per_combined_returned_bar"])
+            self.assertIsNone(safe["purchased_parquet_source_rows_per_purchased_bar"])
+            self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"], 1)
+            self.assertEqual(safe["known_minimum_purchased_plus_stage_rows_decoded"], 1)
 
     def test_prepared_version_not_implicitly_activated(self):
         with prepared_synthetic() as (root, module, report, gate, original,

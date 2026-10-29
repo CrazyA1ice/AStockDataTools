@@ -124,6 +124,8 @@ def query_private_day_overlay_batch(
     if len(set(canon)) != len(canon):
         raise ValueError("Duplicate symbol in private batch")
     start, end = checked[0][1:]
+    if start.year != end.year:
+        raise ValueError("Batch private day queries must stay within one year")
     if any(row[1:] != (start,end) for row in checked[1:]):
         raise ValueError("All batch symbols must share the same date window")
     root = Path(root).resolve()

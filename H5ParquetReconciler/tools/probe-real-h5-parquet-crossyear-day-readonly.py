@@ -72,7 +72,8 @@ def verified_sources(raw_safe,native_safe,heldout_safe):
                 "open":4,"high":4,"low":4,"close":4}
             or type(days) is not dict
             or set(days)!=set(HELD.DAYS)
-            or any(days[d].get("stock_days_compared")!=2
+            or any(type(days[d]) is not dict
+                   or days[d].get("stock_days_compared")!=2
                    or days[d].get("candidate_volume_raw_h5_times100_matched")!=2
                    or days[d].get("candidate_amount_raw_h5_times1000_matched")!=2
                    or days[d].get("quantity_positive_nonzero_pairs")!={

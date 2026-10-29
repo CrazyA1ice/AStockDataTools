@@ -6,6 +6,12 @@
 
 当前仅实现①–③的**只读基础版本**。无法直接承诺转换与合并是安全的，详情见 [完整需求文档](docs/REQUIREMENTS.md)、[当前审计规则与已知限制](docs/TECHNICAL_NOTES.md)。
 
+## ★ 2026-10-08首日H5→Parquet私有暂存已实机回传；下一步封装四日不可变版本（2026-10-29）
+
+用户回传`manifest.json`：2026-10-08原H5-only计数=5,546，暂存Parquet行数=5,546，BJ=339/SH=2,314/SZ=2,893，私有SHA-256、来源报告与日线gate哈希均已记录，`state=staged_verified_not_promoted`，未覆盖原始数据。当前并非正式统一主库、不是全部10月行情；10月14～28的真实日线仍未提供。
+
+新增[私有Parquet日线版本管理工具](tools/build-parquet-primary-day-overlay.py)：要求该gate的**全部**四天暂存都完成且真实源键仍然缺失，校验每份日线Parquet的SHA-256/schema/日期键/代码唯一性、真实购买Parquet实时重验，准备不可变版本，提供显式启用**仅模块私有指针**和回滚，不改变外部正式行情查询。另增[9项合成集成测试](tests/test_build_parquet_primary_day_overlay.py)（Windows待验收）。剩余10-09、10-12、10-13的暂存命令及四日`prepare`在[私有版本文档](docs/2026_PRIVATE_PARQUET_DAY_OVERLAY_VERSIONING.md)。私有指针不意味着生产数据库已更新。
+
 ## ★ 正式进入日线补齐第二阶段：4个October H5独有交易日的安全Parquet暂存（2026-10-29）
 
 用户Windows 11项日线gate回归**全部通过**（0.023秒，`OK`）。真实2026-09-01～10-28日线gate：H5 138641、Parquet 116567、重叠116450、OHLC 0诊断容差冲突；H5独有22191全部在Parquet**完全没有日线**的10-08（5546）、10-09（5547）、10-12（5549）、10-13（5549），双方重叠成交量额仍有25183条不同。**H5最新记录止于10-13**，不能据此声称已更新至10-28。

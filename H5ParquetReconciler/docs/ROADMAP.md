@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实Hikyuu 2.8.1原生KRecord与原始H5记录：两股单日隔离HMAC比对（2026-10-29）
+
+- [x] 用户Windows **11/11项**新 Parquet↔原始H5 日线倍率合成回归OK（3.777秒）；真实2026-09-30 SH600000、SZ000001 各1条日线H5与Parquet只读比对成功。报告证实**Parquet量≈原始H5`transCount×100` 2/2**，**Parquet额≈原始H5`transAmount×1000` 2/2**，OHLC≈H5原始整数/1000四字段各2/2；所有正式映射仍未经供应商和原生驱动独立认证。
+- [x] 复查前序真正已由用户Windows跑通的Hikyuu 2.8.1 **core311**合成 H5→native `Stock.get_kdata(Query(0,3,DAY))`：在原生子进程隔离StockManager和只新建虚构SQLite的方式已实际验证**6条合成KRecord成功匹配**。HDF5驱动源码中对应原始H5价格×0.001、成交额×0.1、成交量×1的解码单位仍需在**真实H5**上的同日重验；不能把合成结果写成真实认证。
+- [x] 新增`tools/verify-real-hikyuu-h5-native-day-isolated.py`：只接受此前真实两股票日倍率成功的SAFE和已存在的`D:\\stock\\HikyuuData\\{sh,sz}_day.h5`，父进程以现成只读`_read_single_h5`各抽1条原始H5，在内存中构造带**随机一次性32字节密钥**的HMAC-SHA256；子进程复用隔离Python311/core311运行技术，临时虚构StockManager SQLite在模块`work/h5_mirror/real_day_native/<新run-id>`，明确HDF5真实源路径，只取各股票native最近64根日KRecord、在内存里逆向刻度并输出摘要。父进程只比较HMAC，最终SAFE仅记录0/1/2配对成功数量、阶段和未认证布尔值，**不输出原始证券代码/价格/量/额、H5整数、密钥、摘要或源绝对路径**。
+- [x] 父进程验证真实H5原始文件前后**stat大小与mtime不变**（不是内容SHA256）；若原生C++崩溃、超时、缺日期、摘要不符则安全失败且绝不自动开启真实H5镜像。报告`original_h5_full_content_sha256_checked=false`，所有购买Parquet供应商单位、`ready_for_full_market_mirror`仍false。
+- [x] 新增**12项仅虚构H5+模拟native子进程的离线回归测试（待用户Windows实测）**，涵盖成功HMAC、恶意改摘要、前序SAFE伪认证、真实源缺失、文件变化、超时、输出/运行目录不覆盖和完全不泄露原始值。Windows命令全部单行，参见[真实native H5双股HMAC](2026_REAL_HIKYUU_NATIVE_H5_DAY_HMAC_PILOT.md)。
+- [ ] 若用户Python311仍安装2.8.1，在本机跑12项合成测试及**一次两股单日真实H5只读native**。回传`real-hikyuu-native-20260930-hmac-v1.json`；任何失败先按`native_last_work_phase`诊断而非修改原始H5或将Query放宽到全市场。完成后仍需供应商金额量单位字段定义及更多年份样本验证。
+
 ## ★ 真实Parquet与原始Hikyuu H5双股票日倍率小样本（2026-10-29）
 
 - [x] 用户Windows纯离线SAFE证据合并门禁**10/10项通过（0.493秒）**，真实`real-precision-crosssource-evidence-bridge-v1.json`生成成功。报告完整保留2026-09-30两股Parquet日线float64精度2/2、SH600000 TDX↔Parquet 5min 48/48旧容差匹配及另一日2026-09-28 H5↔Parquet三股144根5min中仍有95根残差的事实；各物理单位与全市场转换许可明确false。用户本机三份历史SAFE均存在，不再重复真实分钟线巨量扫描。

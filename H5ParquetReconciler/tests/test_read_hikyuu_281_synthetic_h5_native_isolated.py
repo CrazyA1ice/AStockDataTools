@@ -19,7 +19,8 @@ SPEC.loader.exec_module(N)
 def result(state="native_h5_six_synthetic_rows_matched"):
     passed=state=="native_h5_six_synthetic_rows_matched"
     data={
-        "state":state,"hikyuu_imported":True,
+        "state":state,"core311_loaded":True,
+        "full_hikyuu_package_imported":False,
         "hikyuu_281_version_confirmed":True,
         "synthetic_registry_initialized":True,
         "stock_manager_initialized":True,
@@ -48,6 +49,31 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.manifest=self.reports/"synthetic-canary.json"
         self.manifest.write_text("{}",encoding="utf-8")
         self.out=self.reports/"hikyuu-native-test-safe.json"
+        self.core_proof=self.reports/"verified-core311-safe.json"
+        self.core_proof.write_text(json.dumps({
+            "format":N.CORE_PROOF_FORMAT,
+            "canary_safe_summary_sha256":"a"*64,
+            "canary_file_hashes_reverified":True,
+            "isolated_core311_only":True,
+            "explicit_python_executable_used":True,
+            "hikyuu_core311_status":"core311_bindings_ready",
+            "last_core311_phase":"finished",
+            "hikyuu_distribution_version":"2.8.1",
+            "public_core_api_presence":{
+                name:True for name in N.REQUIRED_CORE_APIS},
+            "core311_bindings_ready":True,
+            "hikyuu_full_package_imported":False,
+            "stock_manager_initialized":False,
+            "native_h5_driver_read_executed":False,
+            "hikyuu_h5_compatibility_certified":False,
+            "licensed_parquet_to_h5_mapping_certified":False,
+            "full_market_mirror_allowed":False,
+            "no_licensed_market_data_read":True,
+            "original_market_files_modified":False,
+            "original_hikyuu_config_modified":False,
+            "private_overlay_activated":False,
+            "no_raw_ohlcva_or_worker_logs_in_safe_summary":True,
+        }),encoding="utf-8")
         self.alt=self.root/"python311"/"python.exe"
         self.alt.parent.mkdir()
         self.alt.write_bytes(b"offline mock interpreter")
@@ -73,7 +99,8 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
     def runmock(self,process=None,**kwargs):
         runner=Mock(return_value=process or result())
         report=N.native_read(
-            self.manifest,self.out,self.alt,runner=runner,**kwargs)
+            self.manifest,self.out,self.alt,runner=runner,
+            core_proof=self.core_proof,**kwargs)
         return report,runner
 
     def test_native_worker_is_valid_python_and_has_no_default_initializer(self):
@@ -81,6 +108,10 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.assertNotIn("hikyuu_init(",N.WORKER)
         self.assertNotIn("\nimport hikyuu.interactive\n",N.WORKER)
         self.assertIn('stock.get_kdata(hk.Query(0,3,hk.Query.DAY))',N.WORKER)
+        self.assertIn('hk=importlib.import_module("hikyuu.core")',N.WORKER)
+        self.assertIn('sys.modules["hikyuu"]=package',N.WORKER)
+        self.assertNotIn(chr(10)+"    import hikyuu as hk"+chr(10),N.WORKER)
+        self.assertIn("hikyuu.cpp.core311",N.WORKER)
         self.assertIn('base=p(type="sqlite3",db=str(db))',N.WORKER)
         self.assertIn('kdata=p(type="hdf5",sh_day=str(sh),sz_day=str(sz))',N.WORKER)
         self.assertIn('load_history_finance=False',N.WORKER)
@@ -90,6 +121,9 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
     def test_success_requires_six_exact_synthetic_native_krecords(self):
         safe,runner=self.runmock()
         self.assertTrue(safe["native_h5_compatibility_certified_for_synthetic_v1"])
+        self.assertTrue(safe["verified_prior_core311_only_safe_proof"])
+        self.assertTrue(safe["native_core311_loaded"])
+        self.assertFalse(safe["full_hikyuu_package_imported"])
         self.assertTrue(safe["native_h5_synthetic_six_records_matched"])
         self.assertFalse(safe["licensed_parquet_to_h5_mapping_certified"])
         self.assertFalse(safe["ready_for_full_market_mirror"])
@@ -135,7 +169,8 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         import shutil
         shutil.rmtree(self.folder/"_native_h5_281")
         runner=Mock(side_effect=subprocess.TimeoutExpired(["python"],1))
-        safe=N.native_read(self.manifest,self.out,self.alt,runner=runner)
+        safe=N.native_read(self.manifest,self.out,self.alt,runner=runner,
+                      core_proof=self.core_proof)
         self.assertEqual(safe["native_h5_read_status"],"native_subprocess_timeout")
         self.assertFalse(safe["native_h5_compatibility_certified_for_synthetic_v1"])
 
@@ -143,12 +178,14 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.out.write_text("existing",encoding="utf-8")
         runner=Mock(side_effect=AssertionError("must not run"))
         with self.assertRaisesRegex(ValueError,"NEW SAFE"):
-            N.native_read(self.manifest,self.out,self.alt,runner=runner)
+            N.native_read(self.manifest,self.out,self.alt,runner=runner,
+                      core_proof=self.core_proof)
         self.out.unlink()
         folder=self.folder/"_native_h5_281"/"run001"
         folder.mkdir(parents=True)
         with self.assertRaisesRegex(ValueError,"already exists"):
-            N.native_read(self.manifest,self.out,self.alt,runner=runner)
+            N.native_read(self.manifest,self.out,self.alt,runner=runner,
+                      core_proof=self.core_proof)
         runner.assert_not_called()
 
     def test_separate_run_id_allows_retry_without_reusing_scratch(self):
@@ -157,7 +194,8 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.out.unlink()
         retry=N.native_read(
             self.manifest,self.out,self.alt,
-            runner=Mock(return_value=result()),run_id="run002")
+            runner=Mock(return_value=result()),run_id="run002",
+            core_proof=self.core_proof)
         self.assertTrue(retry["native_h5_synthetic_six_records_matched"])
         self.assertTrue((self.folder/"_native_h5_281"/"run001").is_dir())
         self.assertTrue((self.folder/"_native_h5_281"/"run002").is_dir())
@@ -168,18 +206,55 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
                     N.native_read(
                         self.manifest,self.out,self.alt,
                         runner=Mock(side_effect=AssertionError("must not run")),
-                        run_id=bad)
+                        run_id=bad,core_proof=self.core_proof)
                 self.assertFalse(self.out.exists())
 
     def test_cannot_run_without_explicit_valid_python(self):
         runner=Mock(side_effect=AssertionError("never run"))
         with self.assertRaisesRegex(ValueError,"--python-exe"):
-            N.native_read(self.manifest,self.out,None,runner=runner)
+            N.native_read(self.manifest,self.out,None,runner=runner,
+                          core_proof=self.core_proof)
         for value in ("python",self.root/"missing"/"python.exe"):
             with self.assertRaisesRegex(ValueError,"absolute path|existing"):
-                N.native_read(self.manifest,self.out,value,runner=runner)
+                N.native_read(self.manifest,self.out,value,runner=runner,
+                              core_proof=self.core_proof)
         runner.assert_not_called()
         self.assertFalse(self.out.exists())
+
+    def test_only_matching_successful_core311_proof_can_allow_trial(self):
+        runner=Mock(side_effect=AssertionError("must not execute child"))
+        with self.assertRaisesRegex(ValueError,"--core-proof"):
+            N.native_read(self.manifest,self.out,self.alt,runner=runner)
+        baseline=json.loads(self.core_proof.read_text(encoding="utf-8"))
+        edits=(
+            {"hikyuu_core311_status":"core311_import_timeout"},
+            {"canary_safe_summary_sha256":"0"*64},
+            {"hikyuu_full_package_imported":True},
+            {"native_h5_driver_read_executed":True},
+            {"public_core_api_presence":dict(
+                baseline["public_core_api_presence"],Query=False)},
+            {"full_market_mirror_allowed":True},
+            {"hikyuu_distribution_version":"2.8.0"},
+        )
+        for edit in edits:
+            with self.subTest(edit=edit):
+                self.core_proof.write_text(
+                    json.dumps(dict(baseline,**edit)),encoding="utf-8")
+                with self.assertRaisesRegex(
+                        ValueError,"core311 SAFE proof|required APIs"):
+                    N.native_read(self.manifest,self.out,self.alt,
+                                  runner=runner,core_proof=self.core_proof)
+                self.assertFalse(self.out.exists())
+        self.core_proof.write_text(json.dumps(baseline),encoding="utf-8")
+        runner.assert_not_called()
+
+    def test_native_success_forged_without_core311_rejected(self):
+        payload=json.loads(result().stdout.split(N.MARKER,1)[1])
+        payload["core311_loaded"]=False
+        self.assertIsNone(N.parse_native(N.MARKER+json.dumps(payload),0))
+        payload["core311_loaded"]=True
+        payload["full_hikyuu_package_imported"]=True
+        self.assertIsNone(N.parse_native(N.MARKER+json.dumps(payload),0))
 
     def test_source_tamper_during_child_rejected_without_report(self):
         good=dict(self.file_check)
@@ -190,7 +265,8 @@ class Hikyuu281NativeIsolatedTests(unittest.TestCase):
         self.verifier.side_effect=[good,changed]
         runner=Mock(return_value=result())
         with self.assertRaisesRegex(ValueError,"changed during"):
-            N.native_read(self.manifest,self.out,self.alt,runner=runner)
+            N.native_read(self.manifest,self.out,self.alt,runner=runner,
+                      core_proof=self.core_proof)
         self.assertFalse(self.out.exists())
 
 

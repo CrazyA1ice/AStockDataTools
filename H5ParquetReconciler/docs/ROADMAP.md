@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实core311 native两股日线故障点：显式3参数查询与只出固定原因码（2026-10-30）
+
+- [x] 用户Windows修复后原生HMAC测试输出`Ran 13 tests in 1.663s`（当前贴文缺完整`OK`行，不据此补造通过结论）；旧`realday001`已占用，按保护协议使用新`realday002`和新报告`real-hikyuu-native-20260930-hmac-v2.json`，真实原生子进程成功运行并输出SAFE。实际`native_status=runtime_unavailable`、`native_final_phase=finished`、`native_last_work_phase=before_native`、`native_get_kdata_called=true`、`native_matching_stock_day_count=0`。**这是进入了C++读取准备区却未完成，尚非原生数值不匹配，更非单位倍率错误**；源H5 stat没变，正式数据库/Parquet未打开。
+- [x] 发现真实worker使用`stock.get_kdata(hk.Query(-64,hk.Query.DAY))`，与此前用户Windows实测合成H5原生读取6/6使用`stock.get_kdata(hk.Query(0,3,hk.Query.DAY))`不一致；Hikyuu Query常见签名为`start,end,ktype`，此前2个位置参数可能把DAY按`end`解释。**不能根据v2直接认定它是根因**。
+- [x] 修正真实worker仅在隔离子进程里先`n=stock.get_count(hk.Query.DAY)`，要求`1<=n<=25000`，然后`hk.Query(max(0,n-64),n,hk.Query.DAY)`，只访问末尾≤64条日线，完全沿用已在合成native里真正通过的3参数构造。所有原始H5仍只读；无需读取、修改或重扫Parquet源。
+- [x] 在子进程增加固定白名单`native_status`与`native_last_work_phase`：分别标明股票查找、原生日线计数、查询构造、`get_kdata`调用、返回数检查、目标日缺失/重复、HMAC量化。**不保存任何源H5路径、原始整数、价格金额量、HMAC密钥/摘要、C++异常消息或stdout/stderr**，只把既定`failed_at_...`/日期命中类别带出；fail-closed保留。
+- [x] 新增3项模拟回归，原有13项升为**16项，待用户Windows实际复验**。见[真实H5 native查询故障诊断](2026_REAL_NATIVE_H5_QUERY_FAILURE_CLASSIFICATION.md)。下一次选择全新的`realday003`与`real-hikyuu-native-20260930-hmac-v3.json`，先16项OK再做真实两股H5只读原生验证。即便2/2通过，商业Parquet物理单位和正式全市场H5镜像仍关闭。
+
 ## ★ Windows Hikyuu native HMAC回归误报修复（2026-10-29）
 
 - [x] 用户Windows最新测试`test_verify_real_hikyuu_h5_native_day_isolated.py`：**12项中7项ok、5项FAIL（1.538秒）**。五项失败的堆栈都停在测试`runner()`内的`self.assertNotIn("Parquet",str(kwargs))`；`kwargs["cwd"]`是合法的Windows合成测试目录`.../H5ParquetReconciler/work/h5_mirror/real_day_native/run001`，**仅模块名包含Parquet，不代表子进程读取了Parquet文件**。五个错误全是同一条断言误报，不是原生核心解码结果。

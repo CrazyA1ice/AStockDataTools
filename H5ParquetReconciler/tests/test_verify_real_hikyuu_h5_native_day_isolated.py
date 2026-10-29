@@ -313,9 +313,9 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
                 "records_examined_per_stock":{"SH600000":0,"SZ000001":0},
                 "hmac_by_stock":{"SH600000":"","SZ000001":""},
             }
-            out=(G.STAGE_MARKER+b"before_get_kdata\\n"+
-                 G.STAGE_MARKER+b"finished\\n"+
-                 G.MARKER+json.dumps(body).encode("ascii")+b"\\n")
+            out=(G.STAGE_MARKER+b"before_get_kdata\n"+
+                 G.STAGE_MARKER+b"finished\n"+
+                 G.MARKER+json.dumps(body).encode("ascii")+b"\n")
             return SimpleNamespace(returncode=0,stdout=out,stderr=b"PRIVATE Native failure info")
         result=G.run(self.h5root,self.proof,self.out,Path("/fake/python311"),
                      runner=controlled_failure)

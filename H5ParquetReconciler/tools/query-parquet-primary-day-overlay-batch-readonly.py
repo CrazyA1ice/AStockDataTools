@@ -34,6 +34,21 @@ FORMAT = "AStockDataTools private day overlay multi-symbol safe query summary v1
 MAX_SYMBOLS = 10
 
 
+def private_active_version():
+    """Explicit private-pointer read, never a production routing decision."""
+    v = single.versioner
+    v.safe_private()
+    lock = v.WORK / ".day-overlay.lock"
+    if lock.exists() or lock.is_symlink():
+        raise ValueError("Private active pointer update in progress")
+    h = v.read_active()
+    if h is None:
+        raise ValueError(
+            "No private active day overlay; explicitly activate a private "
+            "pointer before choosing --use-private-active")
+    return h
+
+
 def selected_private_rows(stages, symbols):
     """Decode each selected staged date ONCE and route validated rows by stock.
 
@@ -99,8 +114,9 @@ def query_private_day_overlay_batch(
         max_total_candidate_rows=3000000,
         max_result_bars_per_symbol=500,
         max_total_result_bars=5000,
-        max_overlay_source_rows=30000):
-    """Local in-memory multi-symbol daily query; explicit immutable version only.
+        max_overlay_source_rows=30000,
+        use_private_active=False):
+    """Local in-memory multi-symbol daily query; explicit version or opt-in active pointer.
 
     Per-symbol Parquet read budgets and an aggregate source-row budget are
     enforced. An invalid/stale source aborts the ENTIRE batch; no partial safe
@@ -136,10 +152,22 @@ def query_private_day_overlay_batch(
         raise ValueError("Batch private day queries must stay within one year")
     if any(row[1:] != (start,end) for row in checked[1:]):
         raise ValueError("All batch symbols must share the same date window")
+    if type(use_private_active) is not bool:
+        raise ValueError("Private active pointer mode must be boolean")
+    if use_private_active:
+        if version_sha256 is not None:
+            raise ValueError("Choose explicit SHA or private active pointer, not both")
+    elif version_sha256 is None:
+        raise ValueError("Explicit version SHA required unless active mode is selected")
     root = Path(root).resolve()
     started = time.perf_counter()
+    # Active mode is an explicit private research convenience. It does not
+    # activate or modify any pointer. The pointer must remain unchanged for
+    # the entire bounded read, even if the data are otherwise valid.
+    active_before = private_active_version() if use_private_active else None
+    resolved_sha = active_before if use_private_active else version_sha256
     record, evidence, stages = single.verified_version(
-        version_sha256, max_overlay_source_rows)
+        resolved_sha, max_overlay_source_rows)
     verification_done = time.perf_counter()
     selected = [
         item for item in stages
@@ -215,6 +243,8 @@ def query_private_day_overlay_batch(
     if before is not None and (
             before != single.versioner.stage_tool.source_file_states(root,year)):
         raise ValueError("Market sources changed during batched query")
+    if use_private_active and private_active_version() != active_before:
+        raise ValueError("Private active pointer changed during batch query")
     summary = {
         "format":FORMAT,
         "period":"day",
@@ -248,11 +278,18 @@ def query_private_day_overlay_batch(
             decode_done-purchase_done,6),
         "purchased_parquet_priority":True,
         "only_prepared_version_explicit_opt_in":True,
+        "private_version_selection_mode":(
+            "explicit_private_active_pointer" if use_private_active
+            else "explicit_immutable_version_sha256"),
+        "private_active_pointer_read_only":True,
+        "private_active_pointer_sha_stable_during_query":(
+            True if use_private_active else None),
         "h5_daily_units_are_unverified_candidate":True,
         "no_raw_ohlcva_in_safe_summary":True,
         "no_source_market_writes":True,
         "no_production_query_switch":True,
-        "no_active_pointer_read_or_change":True,
+        "no_active_pointer_read_or_change":not use_private_active,
+        "no_active_pointer_change":True,
         "no_automatic_gap_fills":True,
         "local_cache_used":False,
     }
@@ -265,7 +302,12 @@ def main(argv=None):
     parser.add_argument("--symbols",nargs="+",required=True)
     parser.add_argument("--from-date",required=True)
     parser.add_argument("--to-date",required=True)
-    parser.add_argument("--version-sha256",required=True)
+    mode=parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--version-sha256")
+    mode.add_argument("--use-private-active",action="store_true",
+                      help="Explicitly read module-private active pointer")
+    parser.add_argument("--confirm-private-active-read",action="store_true",
+                        help="Required only with --use-private-active")
     parser.add_argument("--max-candidate-rows-per-symbol",type=int,default=300000)
     parser.add_argument("--max-total-candidate-rows",type=int,default=3000000)
     parser.add_argument("--max-result-bars-per-symbol",type=int,default=500)
@@ -276,6 +318,10 @@ def main(argv=None):
     parser.add_argument("--read-only",action="store_true",required=True)
     args=parser.parse_args(argv)
     try:
+        if (args.use_private_active != args.confirm_private_active_read):
+            raise ValueError(
+                "Private active mode requires --use-private-active AND "
+                "--confirm-private-active-read; explicit SHA forbids confirmation")
         out,scratch=single.purchased.core.resolve_module_artifact_paths(args.out)
         root,_,_=single.purchased.core.resolve_safe_paths(
             args.root,out,scratch)
@@ -287,7 +333,8 @@ def main(argv=None):
             root,args.symbols,args.from_date,args.to_date,
             args.version_sha256,args.max_candidate_rows_per_symbol,
             args.max_total_candidate_rows,args.max_result_bars_per_symbol,
-            args.max_total_result_bars,args.max_overlay_source_rows)
+            args.max_total_result_bars,args.max_overlay_source_rows,
+            use_private_active=args.use_private_active)
         out.parent.mkdir(parents=True,exist_ok=True)
         with out.open("x",encoding="utf-8") as stream:
             json.dump(result["safe_summary"],stream,

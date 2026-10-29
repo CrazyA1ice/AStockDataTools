@@ -39,6 +39,7 @@ SPEC.loader.exec_module(CHECK)
 WORKER=r'''
 import importlib.metadata
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -185,7 +186,13 @@ except BaseException as ex:
     if out["state"]=="not_started":
         out["state"]="native_runtime_failed_at_"+stage
 finally:
+    # hikyuu==2.8.1 registers an atexit hku_cleanup callback that can
+    # wait indefinitely if StockManager never becomes data_ready. This
+    # one-shot child owns ONLY newly-created fictional SQLite and read-only
+    # synthetic H5: emit a complete SAFE result and bypass that callback.
+    # A native crash or deadlock BEFORE this point remains a failure/timeout.
     print(PREFIX+json.dumps(out,sort_keys=True),flush=True)
+    os._exit(0)
 '''
 
 

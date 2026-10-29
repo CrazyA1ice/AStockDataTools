@@ -62,6 +62,8 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
             self.assertTrue(safe["no_production_query_switch"])
             self.assertTrue(safe["no_raw_ohlcva_in_safe_summary"])
             self.assertFalse(safe["local_cache_used"])
+            self.assertFalse(safe["no_h5_read"])
+            self.assertTrue(safe["source_quantity_unit_rescaling_applied"])
             self.assertNotIn('"open": 12.3', json.dumps(safe))
             self.assertNotIn('"volume": 15000', json.dumps(safe))
             self.assertEqual(FIXTURE.M.stage_tool.file_digest(original),
@@ -92,7 +94,7 @@ class ExplicitPrivateDayQueryTests(unittest.TestCase):
                                       stage_dir, plan):
             with self.assertRaisesRegex(ValueError, "Missing private immutable version"):
                 self.query(root, "f" * 64)
-            with self.assertRaisesRegex(ValueError, "bounded prepared version"):
+            with self.assertRaisesRegex(ValueError, "bounded private overlay source-row budget"):
                 Q.query_private_day_overlay(
                     root, "SH600000", "2026-10-08", "2026-10-08",
                     plan["version_sha256"], max_overlay_source_rows=0)

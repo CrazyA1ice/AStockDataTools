@@ -90,7 +90,26 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
     def runner(self,bad="none",phase=True):
         def call(args,**kwargs):
             self.assertEqual(args[1:3],["-I","-c"])
-            self.assertNotIn("Parquet",str(kwargs))
+            # The module is legitimately named H5ParquetReconciler.
+            # Checking arbitrary path text for "Parquet" wrongly rejects
+            # every Windows sandbox path. Inspect the actual child argv:
+            # precisely one isolated stage and two direct H5 source files.
+            self.assertEqual(len(args),7)
+            stage=Path(args[4])
+            self.assertEqual(stage.resolve(),Path(kwargs["cwd"]).resolve())
+            self.assertEqual(stage.name,"run001")
+            self.assertEqual(stage.parent.resolve(),self.work.resolve())
+            self.assertEqual(
+                tuple(Path(arg).resolve() for arg in args[5:7]),
+                (self.h5root.joinpath("sh_day.h5").resolve(),
+                 self.h5root.joinpath("sz_day.h5").resolve()))
+            self.assertTrue(all(Path(arg).suffix.lower()==".h5"
+                                for arg in args[5:7]))
+            self.assertFalse(any(Path(arg).suffix.lower()==".parquet"
+                                 for arg in args[4:7]))
+            self.assertEqual(
+                set(kwargs["env"]),
+                {"FOO","ASTOCK_NATIVE_REAL_HMAC_SECRET"})
             self.assertEqual(kwargs["text"],False)
             self.assertEqual(kwargs["capture_output"],True)
             self.assertEqual(kwargs["env"].get("ASTOCK_NATIVE_REAL_HMAC_SECRET") is not None,
@@ -139,6 +158,16 @@ class RealNativeProofSyntheticTests(unittest.TestCase):
                     "HikyuuData"):
             self.assertNotIn(val,payload)
         self.assertEqual(len(list(self.work.glob("run001"))),1)
+
+    def test_native_runner_allows_h5parquetreconciler_module_name(self):
+        # Regression for Windows temp paths like
+        # .../H5ParquetReconciler/work/h5_mirror/real_day_native/run001.
+        # Only actual argv path suffixes / identities are checked, not
+        # whether their *directory name* contains a word like Parquet.
+        self.assertIn("Parquet",str(self.work))
+        out=self.run_it()
+        self.assertEqual(out["native_matching_stock_day_count"],2)
+        self.assertTrue(out["all_two_native_h5_real_daily_records_match"])
 
     def test_hmac_digest_rejects_tampering_of_one_source_value(self):
         key=b"q"*32

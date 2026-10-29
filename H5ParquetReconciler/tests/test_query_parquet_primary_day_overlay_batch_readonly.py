@@ -141,6 +141,91 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
             self.assertEqual(safe["private_overlay_bars_returned"],0)
             self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"],0)
 
+    def test_explicit_private_active_pointer_yields_same_verified_bars(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            sha=plan["version_sha256"]
+            expected=read(root,sha)
+            F.M.activate(root,gate,report,sha)
+            self.assertEqual(F.M.read_active(),sha)
+            with patch.object(F.M,"atomic_active",
+                              side_effect=AssertionError(
+                                  "Query must never update a pointer")):
+                actual=read(root,None,use_private_active=True)
+            self.assertEqual(actual["bars_by_symbol"],expected["bars_by_symbol"])
+            safe=actual["safe_summary"]
+            self.assertEqual(safe["private_version_sha256"],sha)
+            self.assertEqual(safe["private_version_selection_mode"],
+                             "explicit_private_active_pointer")
+            self.assertEqual(safe["live_absence_recheck_scan_count"],1)
+            self.assertFalse(safe["no_active_pointer_read_or_change"])
+            self.assertTrue(safe["no_active_pointer_change"])
+            self.assertTrue(safe["private_active_pointer_sha_stable_during_query"])
+            self.assertEqual(F.M.read_active(),sha)
+            self.assertTrue(safe["no_production_query_switch"])
+
+    def test_unconfigured_private_pointer_fails_before_verify_or_source_scan(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            with patch.object(B.single,"verified_version",
+                              side_effect=AssertionError("No stage scan")), \
+                    patch.object(F.M.stage_tool,"verify_live_absence_dates",
+                                 side_effect=AssertionError("No market scan")):
+                with self.assertRaisesRegex(
+                        ValueError,"No private active day overlay"):
+                    read(root,None,use_private_active=True)
+
+    def test_private_pointer_change_during_query_rejects_all_results(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            sha=plan["version_sha256"]
+            F.M.activate(root,gate,report,sha)
+            with patch.object(F.M,"read_active",
+                              side_effect=[sha,"f"*64]) as reads:
+                with self.assertRaisesRegex(
+                        ValueError,"Private active pointer changed"):
+                    read(root,None,use_private_active=True)
+            self.assertEqual(reads.call_count,2)
+            self.assertEqual(F.M.read_active(),sha)
+
+    def test_tampered_or_locked_private_pointer_rejected_before_market_read(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            sha=plan["version_sha256"]
+            F.M.activate(root,gate,report,sha)
+            F.M.ACTIVE.write_text('{"format":"invalid"}',encoding="utf-8")
+            with patch.object(B.single,"verified_version",
+                              side_effect=AssertionError("No stage scan")):
+                with self.assertRaisesRegex(ValueError,"Invalid private active"):
+                    read(root,None,use_private_active=True)
+            # A stale private update lock must also prohibit pointer reads.
+            F.M.ACTIVE.unlink()
+            lock=F.M.WORK/".day-overlay.lock"
+            lock.write_text("stale",encoding="utf-8")
+            with self.assertRaisesRegex(ValueError,"update in progress"):
+                read(root,None,use_private_active=True)
+
+    def test_cannot_combine_explicit_sha_with_private_pointer_mode(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            with patch.object(B.single,"verified_version",
+                              side_effect=AssertionError("No stage scan")):
+                with self.assertRaisesRegex(ValueError,"not both"):
+                    read(root,plan["version_sha256"],use_private_active=True)
+                with self.assertRaisesRegex(ValueError,"Explicit version SHA"):
+                    read(root,None)
+
+    def test_explicit_version_mode_never_reads_private_pointer(self):
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            with patch.object(F.M,"read_active",
+                              side_effect=AssertionError(
+                                  "Explicit version mode must not read active")):
+                response=read(root,plan["version_sha256"])
+            safe=response["safe_summary"]
+            self.assertEqual(safe["matching_bar_count"],2)
+            self.assertEqual(
+                safe["private_version_selection_mode"],
+                "explicit_immutable_version_sha256")
+            self.assertTrue(safe["no_active_pointer_read_or_change"])
+            self.assertTrue(safe["no_active_pointer_change"])
+            self.assertIsNone(
+                safe["private_active_pointer_sha_stable_during_query"])
+
     def test_missing_immutable_version_rejected(self):
         with prepared() as (root,module,report,gate,purchased,stage,plan):
             with self.assertRaisesRegex(ValueError,

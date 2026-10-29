@@ -6,6 +6,12 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 修复15项预检中超时阶段模拟测试换行错误（2026-10-29）
+
+- [x] 用户Windows执行15项离线预检：**14项ok、1项FAIL**（`test_timeout_phases_distinguish_import_vs_exit_wait`，2.414秒）。前一版模拟`TimeoutExpired.stdout`错误地使用`"before_import\\\\n"`，产生反斜杠+n的文字而非真实换行；实际`print(..., flush=True)`输出真实换行。
+- [x] 只修改该测试的模拟stdout，以`chr(10)`构造真实LF，并增加超时发生在最后一行无换行以及字面反斜杠+n应拒绝的断言。**不修改生产`timeout_phase`、`os._exit`或原有H5/SQLite/Parquet文件。** 已用等价解析函数对8组样例做本地逻辑验证，尚需用户完整Windows15项测试验收。
+- [ ] 重新运行15项隔离预检测试及9项原生读取离线模拟测试；两组全部OK后，用新的`hikyuu-native-runtime-preflight-python311-v2.json`运行实际Python311隔离预检。该次真实Hikyuu运行尚未执行，不能据此认定atexit根因已经实际验证。
+
 ## ★ Hikyuu 2.8.1隔离导入超时修复：区分import与atexit（2026-10-29）
 
 - [x] 用户使用已有`D:\\software\\Python311\\python.exe`运行前一版隔离preflight，SAFE输出`hikyuu_import_timeout`，native驱动并未执行。上游Hikyuu **2.8.1** `hikyuu/__init__.py`导入时注册`atexit hku_cleanup`，它可能等待未初始化`StockManager.data_ready`；此前20秒`subprocess.run`无法分辨导入卡住还是退出等待。因此**尚未有证据说明Hikyuu 2.8.1不可导入**。

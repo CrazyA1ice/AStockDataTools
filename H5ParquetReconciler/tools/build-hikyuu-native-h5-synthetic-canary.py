@@ -139,6 +139,7 @@ def build_canary(survey_path,target,safe_report):
     MIRRORS.mkdir(parents=True,exist_ok=True)
     target.mkdir(exist_ok=False)
     completed=False
+    report_created=False
     try:
         file_info=[]
         for venue,stock,seed in (("sh","SH600000",1),("sz","SZ000001",2)):
@@ -208,12 +209,15 @@ def build_canary(survey_path,target,safe_report):
         }
         REPORTS.mkdir(parents=True,exist_ok=True)
         with safe_report.open("x",encoding="utf-8") as fp:
+            report_created=True
             json.dump(summary,fp,ensure_ascii=False,indent=2)
             fp.write("\n")
         completed=True
         return summary
     finally:
         if not completed:
+            if report_created:
+                safe_report.unlink(missing_ok=True)
             # The target was created by this invocation and did not exist
             # beforehand; safe to clean *this* failed temporary canary only.
             shutil.rmtree(target)

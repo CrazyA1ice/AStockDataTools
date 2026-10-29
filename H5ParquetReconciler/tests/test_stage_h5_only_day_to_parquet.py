@@ -165,9 +165,9 @@ class H5DailyStageTests(unittest.TestCase):
                 M.stage(stock, gate, report, date(2026, 10, 8),
                         module / "work" / "unified_parquet" / "staging" / "missing", 200)
         with small_sources() as (stock, module, report, gate, pq_file):
-            with self.assertRaisesRegex(ValueError, "Audited number"):
+            with self.assertRaisesRegex(ValueError, "Reports must exist"):
                 M.stage(stock, gate, report, date(2026, 10, 8),
-                        module / "work" / "unified_parquet" / "staging" / "too_small", 0)
+                        module / "work" / "unified_parquet" / "staging" / "invalid_limit", 0)
 
     def test_stage_path_must_stay_in_module(self):
         with small_sources() as (stock, module, report, gate, pq_file):

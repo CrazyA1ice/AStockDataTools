@@ -6,6 +6,15 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实float64精度与旧TDX/H5跨源报告：离线证据合流，防止错认统一单位（2026-10-29）
+
+- [x] 用户Windows**12/12项新增单日精度试验全通过（10.332秒）**；实际只读2026-09日线月文件，2个Row Group共118208条扫描，定位SH600000/SZ000001在2026-09-30两条日线。SAFE`parquet-day-float64-h5-tick-candidates-20260930-v1.json`：四个OHLC价格字段各2/2满足`Decimal(str(float))×1000`最短十进制可整数量化，但各**0/2**满足原始二进制float64严格整数刻度；amount、volume在假设Hikyuu驱动解码刻度下两条均满足最短十进制/原二进制刻度；无短十进制舍入和整数溢出。用户报告仍确证**实际购买Parquet物理单位、H5转换精度策略均未认证**，H5未写入。
+- [x] 复核此前已保存的2026-09-30`tdx-vs-pq-sh600000-20260930-day5min.json`：仅SH600000的TDX/Parquet**48/48条5分钟六字段在已有诊断容差内**、1/1日线六字段落容差；TDX报告`h5_accessed=false`，不能当成Hikyuu H5物理单位证明。
+- [x] 复核此前的2026-09-28`h5-parquet-5min-x100-2026-09-28-top3-sessions.json`：另三只SH688629、SH688017、SH688172的H5/PQ比较共144条5min，仍有**95条候选任一字段冲突**；即使内部量额总量接近、H5成交量×100假说在部分样本有效，仍不能宣称所有证券日逐根统一映射。
+- [x] 新增`tools/audit-real-precision-crosssource-evidence-offline.py`：只接受3份上述**已经脱敏且存在于模块reports的JSON**，以格式/日期/范围/只读未认证旗标/48根与144根残差mask精确一致性审查，输出源报告SHA256及固定Safe结论。**不读取任何商业Parquet、H5/TDX/SQLite和行情行、不触碰原源、不包含任何源绝对路径或原始OHLCVA**。避免把“两根日线恰好落整数刻度”和TDX单日容差内对齐误推出全部H5与Parquet转换已经认证。
+- [x] 新增**10项全虚构SAFE报告的离线回归（待用户Windows实测）**，文档见[真实精度与已有TDX/H5跨源证据离线合流](2026_REAL_PRECISION_CROSSSOURCE_OFFLINE_GATE.md)。所有物理量纲/生产镜像认证强制false。
+- [ ] 若用户本地已保存两份先前已脱敏TDX/H5跨源JSON，核查路径并执行纯离线合并产物`reports/real-precision-crosssource-evidence-bridge-v1.json`；未有两报告则不需要重新扫描几百万条真实分钟数据。下一轮优先从独立供应商字段文档和Hikyuu驱动解码基准解决单位，设计有明确舍入和异常拒绝的极小窗口试验，保持生产写入关闭。
+
 ## ★ 真实2026-09单日日线float64量化风险：从metadata走向限量数值验证（2026-10-29）
 
 - [x] 用户Windows `test_audit_parquet_int64_footer_timebase_readonly.py` **10/10项全部OK（1.725秒）**；实际只读2026-09三周期Footer日期`int64`统计：day **2/2**、5min **47/47**、1min **233/233**符合UTC+8解释的Unix毫秒月份边界，其他四种候选均0，全部282个Row Group无缺失minmax。报告`all_three_periods_unique_epoch_ms_footer_candidate=true`，但`prior_query_code_epoch_ms_assumption_independently_proven=false`、日期来源时区/分钟标签认证仍false。这是强的元数据候选证据，不再反复做相同Footer探测。

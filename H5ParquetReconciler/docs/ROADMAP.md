@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 修复真实原生C++ H5读取的Windows GBK解码崩溃（2026-10-29）
+
+- [x] 用户Windows上一轮原生读取**13/13项离线回归全部OK（0.876秒）**，使用真实Python311、已成功的core311 SAFE、两份合成H5首次执行`--run-id run001`时，父进程`subprocess.run(capture_output=True,text=True)`读取混合编码Hikyuu C++日志触发`UnicodeDecodeError: 'gbk' codec can't decode byte 0xac`，导致`proc.stdout=None`，后续`parse_native`又对None调用`splitlines()`触发`AttributeError`。因此**没有SAFE native报告，也尚不知道真实native读取成功与否**；不能把这个异常当成H5值不匹配或初始化失败。
+- [x] 生产工具改为`capture_output=True,text=False`，由父进程保留子进程输出的**原始bytes，仅识别固定的ASCII阶段标记及JSON行**；不依赖系统GBK、CP936或UTF-8解码普通C++日志。`parse_native`和`last_native_phase`都显式允许`bytes`、`str`（旧测试）和`None`；缺标记、重复标记、无法解析JSON、非零返回码都fail closed，仍只输出脱敏SAFE状态。
+- [x] 添加3项离线回归，合计**16项待Windows执行**：混合UTF-8/GBK非法字节并含有效SAFE标记、进程`stdout=None`和错误JSON均无法认证、重复/损坏标记及非零退出拒绝；强调所有子进程`stdout/stderr`均不落SAFE文件，源H5 SHA前后检查不变。
+- [ ] `run001`目录已由上次尝试创建，**绝不覆盖或删除**。用户应在拉取主分支、16项测试全部OK后，用新`--run-id run002`及`reports/hikyuu-native-read-core311-v2.json`再尝试原生6行合成读取。若仍失败，根据`native_h5_read_status`和`last_native_phase`诊断；在原生成功前不得进入实际购买Parquet数值缩放/真实镜像写入。
+
 ## ★ 已实测core311可用：正式进入仅6条虚构K线的原生C++ H5读取试点（2026-10-29）
 
 - [x] 用户Windows新core311-only离线测试**9/9 OK（0.387秒）**；真实`D:\\software\\Python311\\python.exe`执行后SAFE `hikyuu-core311-only-preflight-v1.json`得到`core311_bindings_ready=true`，`last_core311_phase=finished`，版本2.8.1，`StockManager`/`Stock`/`Query`/`Parameter`/`KDataDriver`/`DataDriverFactory`/`KRecord`均为True，且没有完整包初始化、没有读取native H5/用户行情。这证实无需继续追究绘图模块即可访问核心C++绑定。

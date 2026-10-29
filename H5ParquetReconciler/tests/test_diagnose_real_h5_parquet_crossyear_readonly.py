@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from unittest import TestCase,main
 from unittest.mock import patch
@@ -90,12 +91,10 @@ class CrossyearDiagnosticSyntheticTests(TestCase):
     def test_annual_selected_day_duplicate_fails_read_stage(self):
         file=self.fixture.pqroot/"day"/"2025.parquet"
         table=self.fixture.pq.read_table(file)
-        target_index=next(i for i,ts in enumerate(
-            table["ts"].to_pylist())
-            if ts==int(__import__("datetime").datetime(
-                2025,9,30,tzinfo=__import__("datetime").timezone(
-                    __import__("datetime").timedelta(hours=8))
-            ).timestamp()*1000))
+        target=int(datetime(2025,9,30,tzinfo=timezone(
+            timedelta(hours=8))).timestamp()*1000)
+        target_index=next(i for i,ts in enumerate(table["ts"].to_pylist())
+                          if ts==target)
         self.fixture.pq.write_table(
             self.fixture.pa.concat_tables([
                 table,table.slice(target_index,1)]),

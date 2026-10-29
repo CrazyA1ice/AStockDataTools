@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 18/18 Windows测试OK，但真实2025/2026跨年日线被安全拒绝：只读阶段诊断（2026-10-30）
+
+- [x] 用户已在Windows本机完成第147轮年度Footer日期剪枝与跨行组重复键防护的**18项合成回归全部OK（3.810秒）**；真实`D:\\stock\\AllCycleAStockData\\day\\2025.parquet`和`day\\2026-08.parquet`均存在，未创建过目标`real-h5-parquet-crossyear-day-factors-20250930-20260824-v1.json`。真实执行仍因统一错误`Cross-year sampled real H5/Parquet verification refused; sources or SAFE incomplete`停止，**尚无跨年4个股票日的真实倍率结果**，也没有证据表明数据不匹配或2025历史源不存在。
+- [x] 重审主工具`probe-real-h5-parquet-crossyear-day-readonly.py`：该错误同时覆盖三份旧SAFE证据链、2025年度Parquet的Arrow schema/12组时间Footer、9/30候选RowGroup≤2且总行数≤15万、目标Parquet日线、原始H5指定日期查找、2026-08月度查找和四股日候选评估。当前尚不能从单条统一报错确定真实阻断阶段，**不能自行扩大2025年度1333385行读取上限或降低原始H5与Parquet字段检查**。
+- [x] 新增独立`tools/diagnose-real-h5-parquet-crossyear-readonly.py`，保留原只读两股票日、两日期、2组/15万行年度预算和数据源白名单；先验证先前3份真实SAFE，然后仅使用Parquet Footer汇总2025年**目标日期对应的候选行组数及这些行组行数**，最后在原严格范围内执行读数和聚合的阶段检查；新建SAFE仅返回固定`last_stage`码（如`prior_safe_chain`、`annual_footer_timestamp_statistics`、`annual_target_rowgroup_selection`、`annual_target_row_budget`、`annual_bounded_day_read`、`annual_target_original_h5_read`、`monthly_bounded_day_read`等），不输出真实行情、原始时间戳、行情路径、源异常文本或私有单位/HMAC。仍不执行原生C++、不写市场源、不授权镜像转换。
+- [x] 新增**7项纯合成Parquet/H5阶段诊断测试（等待用户Windows复验）**：完整虚构数据到达`ready_to_rerun_original_proof`、前序真实原生SAFE被篡改、2025年度源缺失、年度Footer时间统计缺失、命中组读数超预算、跨行组重复日线拒绝、模块报告不可覆盖。操作说明：[跨年真实阶段诊断](2026_CROSSYEAR_READONLY_STAGE_DIAGNOSTIC.md)。下一步先跑7项OK，然后只需上传一个新诊断SAFE；根据明确阶段再判断是否需要进一步完善Footer剪枝或查H5历史覆盖，勿盲目反复执行失败的主跨年命令。
+
 ## ★ Windows 2025年度重复键回归修正：只对目标日期判重（2026-10-30）
 
 - [x] 用户Windows对年度2025 Parquet Footer剪枝版执行**16项合成回归，15项ok、1项FAIL（3.475秒）**。失败是`test_duplicate_purchased_monthly_daily_key_rejected`期待抛出`ValueError`但未抛；实际原测试向排序的年度数据表末尾追加`data.slice(0,1)`，**复制的是2025年1月15日首条，而不是要验证的2025年9月30日目标股票日键**。原生年度只读算法依Footer跳过无关月份，所以忽略这条与目标日期无关的重复记录是设计预期，并非已证明生产目标日重复键检查失效。

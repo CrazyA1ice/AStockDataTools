@@ -6,13 +6,21 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ PyTables合成金丝雀7/7通过，Hikyuu原生驱动隔离环境预检（2026-10-29）
+
+- [x] Windows真实合成金丝雀构造7项测试`Ran 7 tests in 0.716s`、`OK`，用户上传SAFE报告：SH600000、SZ000001各3根虚构K线，40字节记录，PyTables+h5py整数数值往返完全一致，合计6根；两份输出SHA均记录、真实源未读未写、私有版本未激活，Hikyuu原生驱动`hikyuu_native_driver_tested=false`。
+- [x] 新增隔离运行时能力探针`probe-hikyuu-native-driver-runtime-isolated.py`：先复核合成文件SHA，再通过`-I`独立子进程和私有HOME/APPDATA/TMP只`import hikyuu`与收集安装版本、固定公开API存在性。绝不调用默认`hikyuu_init`、导入`hikyuu.interactive`或初始化证券管理器，避免用户正式StockManager/config与真实数据库进入实验。
+- [x] 新增8项模拟/离线测试覆盖Hikyuu存在/缺失、文件变化、报告非法路径、超时/崩溃、子进程伪造原生执行状态；无原始市场数据输入。生成结果仍强制`native_h5_driver_read_executed=false`，不会因Python包可导入就认证HDF5驱动兼容。
+- [ ] 等待用户Windows运行8项新测试并上传`hikyuu-native-runtime-preflight-v1.json`（仅安全能力摘要），届时按用户**实际安装**Hikyuu版本及公开API实现真正隔离原生HDF5读取，禁止直接加载其默认正式行情数据。操作见[隔离运行时验收说明](2026_HIKYUU_NATIVE_RUNTIME_PREFLIGHT.md)。
+- [ ] Hikyuu真实native KData驱动读取三根虚构数据并精确校验日期和缩放，之后继续Parquet→原生H5实际价量映射及增量同步。当前生产切换/历史原件覆盖仍关闭。
+
 ## ★ Hikyuu真实H5两股40字节字段布局核对，构建纯合成镜像金丝雀（2026-10-29）
 
 - [x] 用户SAFE真实探查：SH600000 H5历史6404条、SZ000001为8468条，2026-09-30～10-13两股窗口各5条；文件PyTables CLASS=TABLE、gzip与chunked结构正常。真正落盘字段按`closePrice:uint32@0`、`datetime:uint64@4`、`highPrice:uint32@12`、`lowPrice:uint32@16`、`openPrice:uint32@20`、`transAmount:uint64@24`、`transCount:uint64@32`共40字节。报告均`structural_h5record_candidate=true`，**真实Hikyuu驱动读取尚未验证**。
 - [x] 上次7项只读合成测试粘贴末尾只有`Ran 7 tests in 0.719s`，缺少完整`OK`；不得误记为7/7通过。
 - [x] 新增`build-hikyuu-native-h5-synthetic-canary.py`：仅以SAFE结构报告为schema证据，在`work/h5_mirror/<新目录>/`使用PyTables生成两只股票各3根**完全虚构**的独立原生日线H5，再使用h5py/PyTables核验40字节类型/偏移/CLASS/压缩及合成整数往返一致；无任何原始H5或购买Parquet读取，不动市场文件，不切换生产。
 - [x] 新增7项合成回归和SAFE新报告，所有工具/测试/文档集中在H5ParquetReconciler模块内；测试及真实合成canary待用户Windows运行。详见[合成H5金丝雀验收](2026_HIKYUU_SYNTHETIC_H5_CANARY.md)。
-- [ ] 用户实际通过7项新测试、上传SAFE合成canary摘要后，再实现独立Hikyuu C++原生驱动隔离加载，证实日期与价量的原生读取；此阶段**禁止**把虚构H5放入正式HikyuuData路径或把H5结构一致说成真实行情量纲已认证。
+- [x] 用户Windows7项合成canary测试完整OK（0.716秒），上传SAFE报告确认两份合成H5数值往返6根一致，详情见本页顶部；下一阶段先收集其Hikyuu运行时接口证据，再做原生驱动隔离加载。
 
 ## ★ 私有指针只读消费14/14通过，开始原生Hikyuu H5格式验真（2026-10-29）
 

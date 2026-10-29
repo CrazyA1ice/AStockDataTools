@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Windows 2025年度重复键回归修正：只对目标日期判重（2026-10-30）
+
+- [x] 用户Windows对年度2025 Parquet Footer剪枝版执行**16项合成回归，15项ok、1项FAIL（3.475秒）**。失败是`test_duplicate_purchased_monthly_daily_key_rejected`期待抛出`ValueError`但未抛；实际原测试向排序的年度数据表末尾追加`data.slice(0,1)`，**复制的是2025年1月15日首条，而不是要验证的2025年9月30日目标股票日键**。原生年度只读算法依Footer跳过无关月份，所以忽略这条与目标日期无关的重复记录是设计预期，并非已证明生产目标日重复键检查失效。
+- [x] 只更改合成测试，不动真实2025年度Parquet读数预算、原始H5数据、源写保护或证据门禁。将失败用例重命名为`test_duplicate_selected_2025_annual_key_across_rowgroups_rejected`：显式定位合成2025-09-30 SH600000那条，复制到年度表末尾并以2行/组重写**仅测试目录中的虚构Parquet**。先检查行组数由12变13、9月30日在**两个分散行组**的Footer min/max中可见，再要求真实生产Reader因为同一目标股票日键重复而fail-closed；绝不为了通过而扫描全部年度1,333,385行。
+- [x] 另外新增两个回归：`test_unrelated_2025_annual_duplicate_not_scanned_as_target`要求1月重复但9月查询仍只读取1个目标行组且通过，证明旧用例确属选错日期；`test_duplicate_selected_2026_monthly_day_key_rejected`要求月度2026-08的目标股票日重复仍然被拒绝。**总计18项，等待用户Windows复验。**
+- [ ] 用户先`git pull --ff-only origin main`再跑`test_probe_real_h5_parquet_crossyear_day_readonly.py`的18项；只有完全OK、正确的`D:\\stock\\AllCycleAStockData\\day\\2025.parquet`实际存在且输出SAFE未占用，才再次执行原来不变的2025-09-30与2026-08-24只读跨年小样本。此前真实跨年未完成，不能宣称跨年单位已验证。
+
 ## ★ 修复2025历史日线按年存储而非按月：Footer只选目标行组（2026-10-30）
 
 - [x] 用户Windows跨年模拟测试**13/13 OK（3.074秒）**，真实执行却因`D:\\stock\\AllCycleAStockData\\day\\2025-09.parquet`路径不存在而安全拒绝；`day\\2026-08.parquet`为True。没有真实跨年数据对比结果，也没有生成新的SAFE，不得宣称候选倍率已经跨年验证。

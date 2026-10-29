@@ -164,7 +164,9 @@ def _explicit_python(exe=None):
     """
     if exe is None:
         return Path(sys.executable).resolve()
-    if type(exe) not in (str, Path):
+    # Path(...) is WindowsPath on Windows (PosixPath elsewhere), so an
+    # exact type comparison rejects valid pathlib arguments from argparse.
+    if not isinstance(exe, (str, Path)):
         raise ValueError("Explicit Python interpreter must be an absolute path")
     p=Path(exe)
     if (not p.is_absolute() or p.is_symlink() or not p.is_file()

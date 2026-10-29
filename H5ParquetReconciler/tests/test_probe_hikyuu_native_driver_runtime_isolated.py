@@ -125,6 +125,17 @@ class IsolatedRuntimePreflightTests(unittest.TestCase):
         self.assertNotIn(str(alternate),self.out.read_text(encoding="utf-8"))
         self.assertFalse(safe["hikyuu_h5_compatibility_certified"])
         self.assertFalse(safe["native_h5_driver_read_executed"])
+        # Argparse produces a concrete WindowsPath/PosixPath. A plain str
+        # supplied by a Python API caller must remain supported too.
+        string_out=self.reports/"native-runtime-string-path-v1.json"
+        str_runner=Mock(return_value=self.valid_worker())
+        string_result=P.runtime_preflight(
+            self.canary,string_out,runner=str_runner,
+            python_exe=str(alternate))
+        self.assertEqual(
+            str_runner.call_args.args[0][0],str(alternate.resolve()))
+        self.assertTrue(string_result["explicit_alternate_python_requested"])
+        self.assertFalse(string_result["native_h5_driver_read_executed"])
 
     def test_default_python_mode_remains_backward_compatible(self):
         runner=Mock(return_value=self.valid_worker())

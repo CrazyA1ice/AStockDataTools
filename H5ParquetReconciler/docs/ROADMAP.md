@@ -6,6 +6,16 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 三周期真实购买Parquet：实现只读Arrow Footer Schema脱敏取证（2026-10-29）
+
+- [x] 用户Windows本轮已执行旧三周期JSON脱敏适配器**8/8项离线测试OK（0.356秒）**，历史`pq-day-vs-minute-2026-08-24.json`/`2026-09-30.json`两份均存在，真实聚合报告→严格脱敏4窗口转换成功，SAFE `parquet-h5-unit-evidence-from-existing-assessment-v1.json`记录`observed_window_count=4`、`low_cross_period_gap_window_count=4`、`fully_aligned_window_count=0`、`ready_to_plan_independent_unit_check=false`；缺少真实Arrow Schema、独立时段/复权证明、供应商金额/量物理单位文档。原始报告从未被改写。
+- [x] 重新核对曾上传的`parquet-primary-footer-inventory-2011-2026.json`，2026年9月三周期各有`AllCycleAStockData/day/2026-09.parquet`、`5min/2026-09.parquet`、`1min/2026-09.parquet`。这仅是历史footer记录，运行前仍须用户在本机确认三份真实文件存在；当前不应臆测用户Parquet购买目录的绝对路径。
+- [x] 新增`tools/probe-parquet-arrow-footer-schema-readonly.py`，用户明确传入一个现有Parquet源绝对根目录以及**3个周期下各1个指定相对文件名**，不枚举其余文件、不扫描任何行级价格数据。对每份仅验证头尾Parquet magic、footer≤16MiB，使用PyArrow`ParquetFile.schema_arrow`、`metadata`提取字段role对应的Arrow逻辑类型/受限时区、row groups/总行数/大小，绝不调用`read_table`/`read_row_group`/`iter_batches`；`finally`显式关闭文件句柄并复核大小与mtime。
+- [x] 新工具从上轮`sanitized-parquet-h5-unit-evidence-from-existing-v1.json`继承四个窗口，保持原`closed_session=false`、`same_adjustment_basis=false`、物理量纲`unknown`，只以真实footer支持的Arrow Schema填补未知类型，不把金额/量单位、timestamp真实时间标签规则或转换倍率宣称已认证；输出三个新脱敏SAFE均只放在模块`reports`且不包含来源根目录、文件名、用户自定义字段名、行情行级数据。
+- [x] 新增**12项小合成Parquet与无行情读操作安全单测（待Windows实测）**，覆盖Arrow Schema/大小、no-row-read、time zone未知与别名冲突、损坏/超限footer、符号链接/越界/覆盖拒绝、实际文件stat不可变、真实单位始终未通过。
+- [ ] 用户先运行新12项测试，随后把Parquet根路径仅在本机传给脚本，读取**三份2026-09文件footer**，回传`parquet-3period-arrow-schema-footer-v1.json`及`parquet-h5-unit-evidence-with-footer-assessment-v1.json`。如果本机路径与旧清单不符先核对，不运行全市场或长耗时数据检索。详细步骤见[三周期Arrow Footer只读取证](2026_REAL_PARQUET_FOOTER_ARROW_SCHEMA_ONLY.md)。
+- [ ] Schema结果确认后，下一轮重点补充供应商字段物理单位定义及独立原始H5配对小窗口；在此之前真实商业Parquet→H5镜像/生产查询切换始终禁止。
+
 ## ★ 复用已完成的真实Parquet三周期报告：自动形成脱敏单位证据（2026-10-29）
 
 - [x] Windows本次`test_audit_sanitized_parquet_h5_unit_evidence.py` **11/11全部OK（0.192秒）**，证明脱敏字段/聚合证据审核器的离线门禁工作正常，但它本身不扫描真实源，也未得到可信单位报告。

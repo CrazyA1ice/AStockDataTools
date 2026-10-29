@@ -157,11 +157,39 @@ def verify_canary(canary_report):
                 for f in found}}
 
 
-def _sandbox_env(target):
+def _explicit_python(exe=None):
+    """Use the project Python unless a real, absolute interpreter is opted in.
+
+    Never resolve executable names via PATH or invoke a shell.
+    """
+    if exe is None:
+        return Path(sys.executable).resolve()
+    if type(exe) not in (str, Path):
+        raise ValueError("Explicit Python interpreter must be an absolute path")
+    p=Path(exe)
+    if (not p.is_absolute() or p.is_symlink() or not p.is_file()
+            or p.name.lower() not in ("python.exe","python3.exe","python")):
+        raise ValueError(
+            "Provide an existing, regular python.exe absolute path "
+            "using --python-exe; not a shell command or PATH alias")
+    return p.resolve()
+
+
+def _sandbox_env(target,python_exe=None):
     env=dict(os.environ)
     for k in list(env):
-        if k.upper().startswith(("HIKYUU_","HKU_")):
+        if (k.upper().startswith(("HIKYUU_","HKU_"))
+                or k.upper() in (
+                    "PYTHONPATH","PYTHONHOME","VIRTUAL_ENV",
+                    "CONDA_PREFIX","CONDA_DEFAULT_ENV","CONDA_SHLVL")):
             del env[k]
+    if python_exe is not None and os.name=="nt":
+        home=Path(python_exe).parent
+        # A non-activated Conda environment may need its own DLL directories.
+        # Never add other Python environments ahead of this explicit one.
+        bins=(home,home/"Library"/"bin",home/"Scripts")
+        env["PATH"]=os.pathsep.join(str(d) for d in bins if d.is_dir()) + (
+            os.pathsep+env.get("PATH","") if env.get("PATH") else "")
     # The worker is a child process and uses a private config/home root.
     # No hikyuu_init / interactive import is called even in this sandbox.
     for name in ("HOME","USERPROFILE","APPDATA","LOCALAPPDATA",
@@ -201,9 +229,11 @@ def parse_worker(stdout,returncode):
     return data
 
 
-def runtime_preflight(report,out,runner=subprocess.run,timeout=20):
+def runtime_preflight(report,out,runner=subprocess.run,timeout=20,
+                      python_exe=None):
     canary=verify_canary(report)
     output=_module_output(out)
+    interpreter=_explicit_python(python_exe)
     sandbox=canary["isolated_canary_dir"]/"_runtime_preflight"
     if sandbox.is_symlink() or WORK.is_symlink() or MIRRORS.is_symlink():
         raise ValueError("Runtime isolation sandbox must not be symlinked")
@@ -212,9 +242,11 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=20):
     runtime_status="hikyuu_subprocess_unavailable"
     worker_result=None
     try:
-        proc=runner([sys.executable,"-I","-c",WORKER],cwd=sandbox,
+        proc=runner([str(interpreter),"-I","-c",WORKER],cwd=sandbox,
                     capture_output=True,text=True,timeout=timeout,
-                    env=_sandbox_env(sandbox),check=False)
+                    env=_sandbox_env(
+                        sandbox,interpreter if python_exe is not None else None),
+                    check=False)
         worker_result=parse_worker(proc.stdout,proc.returncode)
         runtime_status=worker_result["runtime_status"]
     except subprocess.TimeoutExpired:
@@ -234,6 +266,8 @@ def runtime_preflight(report,out,runner=subprocess.run,timeout=20):
         "canary_file_hashes_reverified":True,
         "synthetic_canary_stocks":sorted(STOCKS),
         "isolation_environment_used":True,
+        "explicit_alternate_python_requested":python_exe is not None,
+        "no_python_executable_path_in_safe_summary":True,
         "worker_imports_hikyuu_but_never_initializes_stock_manager":True,
         "hikyuu_runtime_status":runtime_status,
         "installed_hikyuu_version":(
@@ -261,10 +295,15 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--canary-report",type=Path,required=True)
     p.add_argument("--out",type=Path,required=True)
+    p.add_argument("--python-exe",type=Path,
+                   help="Explicit absolute path to another python.exe "
+                        "(e.g. a pre-existing Anaconda environment); "
+                        "never invokes shell or installs packages")
     p.add_argument("--isolated-preflight",action="store_true",required=True)
     args=p.parse_args(argv)
     try:
-        safe=runtime_preflight(args.canary_report,args.out)
+        safe=runtime_preflight(
+            args.canary_report,args.out,python_exe=args.python_exe)
         print("SAFE Hikyuu runtime probe:",args.out)
         print("Runtime status:",safe["hikyuu_runtime_status"])
         print("Native HDF5 driver executed: NO")

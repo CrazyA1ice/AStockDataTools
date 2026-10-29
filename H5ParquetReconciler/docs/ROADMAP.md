@@ -6,12 +6,20 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ Hikyuu隔离预检8/8通过；当前项目\.venv未安装Hikyuu（2026-10-29）
+
+- [x] 用户Windows隔离运行时测试`Ran 8 tests in 0.851s`、`OK`；SAFE回传双股合成文件SHA复核`true`，`hikyuu_runtime_status=hikyuu_not_installed_in_this_interpreter`，`installed_hikyuu_version=null`，API清单为空。此结果只代表执行探针的项目Python解释器缺少包，不代表HDF5镜像结构失败或电脑所有Python都未安装。
+- [x] 既有运行时预检增加`--python-exe <ABSOLUTE_PATH_TO_python.exe>`：仅在用户明确指定时由隔离子进程选择其他已存在环境，仍在原项目venv验原canary SHA，保持`-I`、独立HOME/APPDATA/TMP、剥离Hikyuu/Python/Conda环境标记、无任何StockManager初始化或原生H5读取；SAFE不记录用户外部Python路径。
+- [x] 新增4项合成测试，原隔离探针测试总数**12项，尚待用户本机运行**。对应操作：[已有Hikyuu Python解释器安全定位与替代隔离预检](2026_HIKYUU_ALTERNATE_PYTHON_PREFLIGHT.md)；候选`D:\\software\\anaconda\\python.exe`仅基于过往运行环境日志，必须用`Test-Path`和`pip show hikyuu`核对。
+- [ ] 取得真实可用的Hikyuu版本及Python API信息后，开发真正独立H5驱动读取合成3条K线的安全试点，不污染项目venv、不修改HikyuuData、商业Parquet及私有版本。若任何既有环境都无Hikyuu，再讨论独立新测试环境安装。
+- [ ] 当前仍**不允许**生产日线合并、真实H5镜像批量生成或直接切换用户正式hikyuu配置。
+
 ## ★ PyTables合成金丝雀7/7通过，Hikyuu原生驱动隔离环境预检（2026-10-29）
 
 - [x] Windows真实合成金丝雀构造7项测试`Ran 7 tests in 0.716s`、`OK`，用户上传SAFE报告：SH600000、SZ000001各3根虚构K线，40字节记录，PyTables+h5py整数数值往返完全一致，合计6根；两份输出SHA均记录、真实源未读未写、私有版本未激活，Hikyuu原生驱动`hikyuu_native_driver_tested=false`。
 - [x] 新增隔离运行时能力探针`probe-hikyuu-native-driver-runtime-isolated.py`：先复核合成文件SHA，再通过`-I`独立子进程和私有HOME/APPDATA/TMP只`import hikyuu`与收集安装版本、固定公开API存在性。绝不调用默认`hikyuu_init`、导入`hikyuu.interactive`或初始化证券管理器，避免用户正式StockManager/config与真实数据库进入实验。
 - [x] 新增8项模拟/离线测试覆盖Hikyuu存在/缺失、文件变化、报告非法路径、超时/崩溃、子进程伪造原生执行状态；无原始市场数据输入。生成结果仍强制`native_h5_driver_read_executed=false`，不会因Python包可导入就认证HDF5驱动兼容。
-- [ ] 等待用户Windows运行8项新测试并上传`hikyuu-native-runtime-preflight-v1.json`（仅安全能力摘要），届时按用户**实际安装**Hikyuu版本及公开API实现真正隔离原生HDF5读取，禁止直接加载其默认正式行情数据。操作见[隔离运行时验收说明](2026_HIKYUU_NATIVE_RUNTIME_PREFLIGHT.md)。
+- [x] 用户Windows8项测试全部通过，SAFE确认当前项目解释器缺Hikyuu；转为可指定已有解释器的隔离预检，下一步详见本页顶部。
 - [ ] Hikyuu真实native KData驱动读取三根虚构数据并精确校验日期和缩放，之后继续Parquet→原生H5实际价量映射及增量同步。当前生产切换/历史原件覆盖仍关闭。
 
 ## ★ Hikyuu真实H5两股40字节字段布局核对，构建纯合成镜像金丝雀（2026-10-29）

@@ -29,6 +29,10 @@ CORE_PROOF_FORMAT="AStockDataTools Hikyuu 2.8.1 isolated core311-only import pre
 REQUIRED_CORE_APIS=frozenset(("StockManager","Stock","Query","Parameter",
                              "KDataDriver","DataDriverFactory","KRecord"))
 MARKER="ASTOCKTOOLS_NATIVE_H5_281_RESULT:"
+PHASE_MARKER="ASTOCKTOOLS_NATIVE_H5_281_PHASE:"
+PHASES=frozenset(("before_core311","core311_loaded","registry_ready",
+                  "before_stock_manager","stock_manager_ready",
+                  "before_native_read","native_read_complete","finished"))
 
 SPEC=importlib.util.spec_from_file_location(
     "synthetic_native_preflight_verifier",
@@ -51,6 +55,8 @@ import types
 from pathlib import Path
 
 PREFIX="ASTOCKTOOLS_NATIVE_H5_281_RESULT:"
+PHASE="ASTOCKTOOLS_NATIVE_H5_281_PHASE:"
+print(PHASE+"before_core311",flush=True)
 out={
  "state":"not_started",
  "core311_loaded":False,
@@ -111,6 +117,7 @@ try:
         if not hasattr(hk,name):
             raise RuntimeError("missing core311 required native API")
     out["core311_loaded"]=True
+    print(PHASE+"core311_loaded",flush=True)
     stage="registry"
     # argv is only: private run dir, verified synthetic sh_day, verified
     # synthetic sz_day. No paths to original market sources are supplied.
@@ -169,6 +176,7 @@ try:
            (2,2,"000001","Synthetic SZ",1,1,20260930,20261014)])
         cx.commit()
     out["synthetic_registry_initialized"]=True
+    print(PHASE+"registry_ready",flush=True)
     stage="stock_manager"
     def p(**kwargs):
         obj=hk.Parameter()
@@ -190,10 +198,13 @@ try:
     empty_plugin_dir=root/"empty_plugins"
     empty_plugin_dir.mkdir(exist_ok=False)
     sm.set_plugin_path(str(empty_plugin_dir))
+    print(PHASE+"before_stock_manager",flush=True)
     sm.init(base,block,kdata,preload,extras)
     sm.wait_data_ready()
     out["stock_manager_initialized"]=True
+    print(PHASE+"stock_manager_ready",flush=True)
     stage="native_read"
+    print(PHASE+"before_native_read",flush=True)
     days=[20260930,20261008,20261013]
     for venue,code,seed in (("SH","600000",1),("SZ","000001",2)):
         symbol=venue+code
@@ -226,6 +237,7 @@ try:
                 raise RuntimeError("Hikyuu decoded a synthetic field incorrectly")
             out["per_symbol_matching_rows"][symbol]+=1
     out["native_h5_values_matched"]=True
+    print(PHASE+"native_read_complete",flush=True)
     out["state"]="native_h5_six_synthetic_rows_matched"
 except BaseException as ex:
     if out["state"]=="not_started":
@@ -236,6 +248,7 @@ finally:
     # one-shot child owns ONLY newly-created fictional SQLite and read-only
     # synthetic H5: emit a complete SAFE result and bypass that callback.
     # A native crash or deadlock BEFORE this point remains a failure/timeout.
+    print(PHASE+"finished",flush=True)
     print(PREFIX+json.dumps(out,sort_keys=True),flush=True)
     os._exit(0)
 '''
@@ -318,6 +331,20 @@ def verify_core_proof(proof_path, canary):
     return True
 
 
+def last_native_phase(stdout):
+    if isinstance(stdout,bytes):
+        stdout=stdout.decode("utf-8",errors="replace")
+    if not isinstance(stdout,str):
+        return None
+    final=None
+    for line in stdout.splitlines():
+        if line.startswith(PHASE_MARKER):
+            label=line[len(PHASE_MARKER):]
+            if label in PHASES:
+                final=label
+    return final
+
+
 def native_read(canary_report, output, python_exe, runner=subprocess.run,
                 timeout=45, run_id="run001", core_proof=None):
     """Run isolated native read; only machine-state metadata leaves worker."""
@@ -345,6 +372,7 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
     root.mkdir(exist_ok=True)
     stage.mkdir(exist_ok=False)
     runtime_status="native_subprocess_unavailable"
+    last_phase=None
     result=None
     try:
         try:
@@ -355,10 +383,12 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
                 cwd=stage,capture_output=True,text=True,
                 timeout=timeout,check=False,
                 env=CHECK._sandbox_env(stage,interpreter))
+            last_phase=last_native_phase(proc.stdout)
             result=parse_native(proc.stdout,proc.returncode)
             runtime_status=(
                 result["state"] if result else "native_subprocess_invalid_or_crashed")
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            last_phase=last_native_phase(exc.stdout)
             runtime_status="native_subprocess_timeout"
         except (ValueError,OSError,TypeError):
             runtime_status="native_subprocess_spawn_failed"
@@ -380,6 +410,7 @@ def native_read(canary_report, output, python_exe, runner=subprocess.run,
             "native_core311_loaded":bool(result["core311_loaded"] if result else False),
             "native_hikyuu_runtime_version_expected":"2.8.1",
             "native_h5_read_status":runtime_status,
+            "last_native_phase":last_phase,
             "native_stock_manager_initialized":bool(
                 result["stock_manager_initialized"] if result else False),
             "native_h5_get_kdata_called":bool(
@@ -427,6 +458,7 @@ def main(argv=None):
                          run_id=args.run_id,core_proof=args.core_proof)
         print("SAFE native Hikyuu 2.8.1 verification:",args.out)
         print("Status:",safe["native_h5_read_status"])
+        print("Last native phase:",safe["last_native_phase"])
         print("Matched synthetic records:",
               safe["per_symbol_matching_rows"])
         print("Real market H5/Parquet read: NO")

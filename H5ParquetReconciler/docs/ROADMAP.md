@@ -6,6 +6,16 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 三周期真实Footer实测：OHLCVA均为float64，日期存储类型需要再定位（2026-10-29）
+
+- [x] 用户Windows新Footer只读工具**12项中11项OK、1项跳过（5.965秒）**：跳过的是Windows符号链接权限不足，原生小合成Parquet Footer真实集成已通过。随后本机三份2026-09购买Parquet均存在，成功生成`parquet-3period-arrow-schema-footer-v1.json`、补齐Schema的sanitized/assessment SAFE，程序报告原始行情行级读取NO、源Parquet/H5修改NO。
+- [x] 已上传真实Footer SAFE：日/5分钟/1分钟三个周期的`open/high/low/close`、`amount`、`volume`**全部为Arrow float64**，三个日期角色均被列名别名识别，但`date_type=unknown`、`timezone=unknown`；对应rowgroups/文件行数为日线2组118208、5min47组5685792、1min233组28547414（仅2026年9月）。量纲仍未知，float64后续不允许直接充当精确Decimal原始值。
+- [x] 单独核对新assessment：四个历史股票-日期窗口的聚合差值均低于阈值，但`fully_aligned_window_count=0`，缺闭市/复权、真实日期编码、供应商金额/量物理单位。不能因此推断真实H5转换倍率或开启生产写入。
+- [x] 本轮在同一`tools/probe-parquet-arrow-footer-schema-readonly.py`增加日期Arrow**存储族安全诊断**：`date_role_match_status`区分matched/missing/ambiguous；`date_arrow_storage_family`白名单识别utf8/int/date32/timestamp等类型，严格不从任意字符串/整型假定YYYYMMDD、Unix时间或北京时间；`date_time_label_semantics_certified`和`date_raw_calendar_encoding_certified`仍false。
+- [x] 增加`numeric_binary_float_roles`和`binary_float_to_native_h5_precision_certified=false`，防止真实float64 OHLCVA在未来被误作为无需验证即可精确存入40字节H5的Decimal。新结果保持原有核心`audit_schema`不变，仅扩展诊断metadata，版本v2，输出SAFE仍保留源路径/行情原始行禁令。
+- [x] 原12项测试增加**5项小合成Arrow类型/float64风险回归，共17项待Windows实测**；符号链接test可能仍跳过。具体单行PowerShell操作：[真实Parquet日期Arrow存储族v2](2026_REAL_PARQUET_DATE_ARROW_STORAGE_FOOTER.md)。
+- [ ] 用户按文档复跑17项、仅三份真实2026-09 Footer的只读v2工具，回传`parquet-3period-arrow-schema-footer-v2.json`及`parquet-h5-unit-evidence-with-footer-assessment-v2.json`；具体日期编码与浮点精度的下一阶段由真实存储族与独立来源确定，绝不开放实盘写入。
+
 ## ★ 三周期真实购买Parquet：实现只读Arrow Footer Schema脱敏取证（2026-10-29）
 
 - [x] 用户Windows本轮已执行旧三周期JSON脱敏适配器**8/8项离线测试OK（0.356秒）**，历史`pq-day-vs-minute-2026-08-24.json`/`2026-09-30.json`两份均存在，真实聚合报告→严格脱敏4窗口转换成功，SAFE `parquet-h5-unit-evidence-from-existing-assessment-v1.json`记录`observed_window_count=4`、`low_cross_period_gap_window_count=4`、`fully_aligned_window_count=0`、`ready_to_plan_independent_unit_check=false`；缺少真实Arrow Schema、独立时段/复权证明、供应商金额/量物理单位文档。原始报告从未被改写。

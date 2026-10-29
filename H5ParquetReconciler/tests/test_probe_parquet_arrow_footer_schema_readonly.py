@@ -113,6 +113,14 @@ class FooterSchemaOnlyTests(unittest.TestCase):
             self.assertEqual(details["row_group_count"],1)
             self.assertEqual(details["total_source_rows_from_footer"],2)
             self.assertTrue(all(details["recognized_alias_presence"].values()))
+            self.assertEqual(details["date_role_match_status"],"matched")
+            self.assertEqual(details["date_arrow_storage_family"],"timestamp_ns")
+            self.assertEqual(details["numeric_binary_float_roles"],
+                             ["close","high","low","open"])
+            self.assertFalse(details["date_time_label_semantics_certified"])
+            self.assertFalse(details["date_raw_calendar_encoding_certified"])
+            self.assertFalse(
+                details["binary_float_to_native_h5_precision_certified"])
             self.assertEqual(details["audit_schema"],{
                 "date_type":"timestamp_ns","price_type":"float64",
                 "amount_type":"decimal128","volume_type":"int64",
@@ -240,6 +248,95 @@ class FooterSchemaOnlyTests(unittest.TestCase):
         src["schemas"]["day"]["date_type"]="timestamp_ns"
         with self.assertRaisesRegex(ValueError,"original unknown"):
             P.enrich_existing_sanitized(src,{})
+
+    def test_date_storage_families_are_observed_without_guessing_encoding(self):
+        import pyarrow as pa
+        candidate_types=[
+            (pa.string(),"utf8"),(pa.large_string(),"large_utf8"),
+            (pa.int64(),"int64"),(pa.int32(),"int32"),
+            (pa.uint64(),"uint64"),(pa.binary(),"binary"),
+            (pa.timestamp("us"),"timestamp_us"),
+            (pa.timestamp("ns",tz="UTC"),"timestamp_ns"),
+            (pa.date32(),"date32"),(pa.date64(),"date64"),
+            (pa.float64(),"float64"),
+        ]
+        for dtype,family in candidate_types:
+            with self.subTest(type=family):
+                schema=pa.schema([("date",dtype)])
+                detail=P.canonical_schema(schema,pa)
+                self.assertEqual(detail["date_arrow_storage_family"],family)
+                self.assertEqual(detail["date_role_match_status"],"matched")
+                self.assertFalse(detail["date_time_label_semantics_certified"])
+                self.assertFalse(detail["date_raw_calendar_encoding_certified"])
+                if family in ("int64","int32","uint64","utf8",
+                              "large_utf8","binary","float64"):
+                    self.assertEqual(
+                        detail["audit_schema"]["date_type"],"unknown")
+                    self.assertEqual(
+                        detail["audit_schema"]["timezone"],"unknown")
+
+    def test_date_role_missing_and_ambiguous_are_distinguished(self):
+        import pyarrow as pa
+        missing=P.canonical_schema(pa.schema([("open",pa.float64())]),pa)
+        self.assertEqual(missing["date_role_match_status"],"missing")
+        self.assertEqual(missing["date_arrow_storage_family"],"unresolved")
+        ambiguous=P.canonical_schema(pa.schema([
+            ("date",pa.int64()),("datetime",pa.string())]),pa)
+        self.assertEqual(ambiguous["date_role_match_status"],"ambiguous")
+        self.assertEqual(ambiguous["date_arrow_storage_family"],"unresolved")
+        self.assertEqual(ambiguous["ambiguous_alias_roles"],["date"])
+
+    def test_float64_date_amount_and_volume_are_precision_unproven(self):
+        import pyarrow as pa
+        names=("datetime","open","high","low","close","amount","volume")
+        schema=pa.schema([(name,pa.float64()) for name in names])
+        out=P.canonical_schema(schema,pa)
+        self.assertEqual(out["date_arrow_storage_family"],"float64")
+        self.assertEqual(out["numeric_binary_float_roles"],
+                         ["amount","close","high","low","open","volume"])
+        self.assertEqual(out["audit_schema"]["amount_type"],"float64")
+        self.assertEqual(out["audit_schema"]["volume_type"],"float64")
+        self.assertFalse(out["binary_float_to_native_h5_precision_certified"])
+        self.assertEqual(out["audit_schema"]["amount_unit_declared"],"unknown")
+        self.assertEqual(out["audit_schema"]["volume_unit_declared"],"unknown")
+
+    def test_unsupported_date_type_does_not_emit_raw_arrow_schema(self):
+        import pyarrow as pa
+        schema=pa.schema([
+            ("date",pa.list_(pa.string())),
+            ("amount",pa.struct([pa.field("private_source_path",pa.string())])),
+        ],metadata={b"raw_source":b"PRIVATE_MARKET_PATH"})
+        out=P.canonical_schema(schema,pa)
+        self.assertEqual(out["date_arrow_storage_family"],"unsupported")
+        self.assertEqual(out["audit_schema"]["date_type"],"unknown")
+        self.assertNotIn("PRIVATE_MARKET_PATH",str(out))
+        self.assertNotIn("private_source_path",str(out))
+
+    def test_all_float_realistic_footer_storage_diagnostics_only(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        # All three synthetic files mimic the actual float64 OHLCVA
+        # footer finding, while a string date column has no proven timezone.
+        table=pa.table({
+            "datetime":pa.array(["2026-08-24","2026-09-30"]),
+            "open":pa.array([10.1,10.2]),"high":pa.array([10.3,10.4]),
+            "low":pa.array([10.0,10.0]),"close":pa.array([10.2,10.3]),
+            "amount":pa.array([102.1,120.1]),
+            "volume":pa.array([100.0,110.0]),
+        })
+        for file in self.files.values():
+            pq.write_table(table,file)
+        schema,assessment=self._run()
+        for period in P.PERIODS:
+            entry=schema["periods"][period]
+            self.assertEqual(entry["date_arrow_storage_family"],"utf8")
+            self.assertEqual(entry["audit_schema"]["date_type"],"unknown")
+            self.assertEqual(entry["numeric_binary_float_roles"],
+                             ["amount","close","high","low","open","volume"])
+            self.assertFalse(
+                entry["binary_float_to_native_h5_precision_certified"])
+        self.assertFalse(assessment["ready_for_full_market_mirror"])
+        self.assertFalse(assessment["ready_to_plan_independent_unit_check"])
 
     def test_reports_cannot_be_overwritten_or_written_outside_module(self):
         self._write_parquet()

@@ -160,6 +160,22 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
             with h5py.File(path,"w") as handle:
                 handle.create_group("data").create_dataset(symbol,data=h5)
         for month,rows in monthly.items():
+            if month=="day/2025.parquet":
+                # Historic paid year is ONE 12-rowgroup annual file, not a
+                # nonexistent day/2025-09.parquet monthly file. One small
+                # synthetic rowgroup per calendar month tests footer pruning.
+                for m in range(1,13):
+                    if m==9:
+                        continue
+                    for alias in ("600000.XSHG","000001.XSHE"):
+                        rows.append({
+                            "ts":int(datetime(2025,m,15,tzinfo=timezone(
+                                timedelta(hours=8))).timestamp()*1000),
+                            "symbol":alias,
+                            "open":10.0,"high":10.1,"low":9.9,
+                            "close":10.05,"volume":200.0,"amount":5000.0
+                        })
+                rows.sort(key=lambda r:r["ts"])
             data={
                 "ts":pa.array([row["ts"] for row in rows],type=pa.int64()),
                 "symbol":pa.array([row["symbol"] for row in rows],type=pa.string())
@@ -167,7 +183,8 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
             for field in ("open","high","low","close","volume","amount"):
                 data[field]=pa.array([row[field] for row in rows],
                                      type=pa.float64())
-            pq.write_table(pa.table(data),self.pqroot/month)
+            pq.write_table(pa.table(data),self.pqroot/month,
+                           row_group_size=2)
 
     def run_it(self):
         return T.run(self.pqroot,self.h5root,self.raw,
@@ -183,7 +200,13 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
         self.assertEqual(agg["amount_candidate_raw_h5_times1000_matched"],4)
         self.assertEqual(agg["per_field_price_tolerance_matches"],
                          {"open":4,"high":4,"low":4,"close":4})
-        self.assertEqual(result["source_parquet_month_files_read"],2)
+        self.assertEqual(result["source_parquet_files_read"],2)
+        self.assertEqual(result["source_parquet_layouts"],
+                         {"2025":"annual_footer_pruned","2026":"monthly"})
+        self.assertEqual(result["annual_2025_source_total_rows_from_footer"],24)
+        self.assertEqual(result["annual_2025_source_rowgroups_from_footer"],12)
+        self.assertEqual(result["annual_2025_selected_rowgroups_scanned"],1)
+        self.assertEqual(result["source_parquet_total_rows_scanned"],4)
         self.assertEqual(result["raw_h5_day_records_read"],4)
         self.assertFalse(result["native_cpp_h5_decoding_on_crossyear_samples_executed"])
         self.assertFalse(result["universal_factor_across_time_or_periods_certified"])
@@ -259,7 +282,7 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
         self.assertFalse(self.dest.exists())
 
     def test_duplicate_purchased_monthly_daily_key_rejected(self):
-        file=self.pqroot/"day"/"2025-09.parquet"
+        file=self.pqroot/"day"/"2025.parquet"
         data=self.pq.read_table(file)
         self.pq.write_table(self.pa.concat_tables([data,data.slice(0,1)]),file)
         with self.assertRaisesRegex(ValueError,"Cannot safely inspect"):
@@ -267,7 +290,7 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
         self.assertFalse(self.dest.exists())
 
     def test_missing_parquet_month_and_missing_h5_never_skipped(self):
-        (self.pqroot/"day"/"2025-09.parquet").unlink()
+        (self.pqroot/"day"/"2025.parquet").unlink()
         with self.assertRaises(ValueError):
             self.run_it()
         self.assertFalse(self.dest.exists())
@@ -275,6 +298,37 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
     def test_original_h5_missing_rejected(self):
         (self.h5root/"sz_day.h5").unlink()
         with self.assertRaises(ValueError):
+            self.run_it()
+        self.assertFalse(self.dest.exists())
+
+    def test_annual_2025_footer_missing_ts_stats_fails_without_scanning(self):
+        file=self.pqroot/"day"/"2025.parquet"
+        table=self.pq.read_table(file)
+        self.pq.write_table(table,file,row_group_size=2,write_statistics=False)
+        with self.assertRaisesRegex(
+                ValueError,"Cannot safely inspect bounded annual 2025"):
+            self.run_it()
+        self.assertFalse(self.dest.exists())
+
+    def test_annual_2025_selected_group_budget_rejects_unprunable(self):
+        with patch.object(T,"MAX_YEAR_READ_ROWS",1):
+            with self.assertRaisesRegex(
+                    ValueError,"Cannot safely inspect bounded annual 2025"):
+                self.run_it()
+        self.assertFalse(self.dest.exists())
+
+    def test_annual_2025_wrong_year_footer_ts_range_rejected(self):
+        file=self.pqroot/"day"/"2025.parquet"
+        table=self.pq.read_table(file)
+        idx=table.schema.get_field_index("ts")
+        values=table["ts"].to_pylist()
+        values[0]=int(datetime(2027,1,15,tzinfo=timezone(
+            timedelta(hours=8))).timestamp()*1000)
+        table=table.set_column(
+            idx,"ts",self.pa.array(values,type=self.pa.int64()))
+        self.pq.write_table(table,file,row_group_size=2)
+        with self.assertRaisesRegex(
+                ValueError,"Cannot safely inspect bounded annual 2025"):
             self.run_it()
         self.assertFalse(self.dest.exists())
 
@@ -289,7 +343,7 @@ class CrossyearSyntheticStockDayTests(unittest.TestCase):
 
     def test_crossyear_sample_scope_cannot_include_discovery(self):
         with patch.object(T,"SAMPLES",(
-                ("2025-09-30","day/2025-09.parquet"),
+                ("2025-09-30","day/2025.parquet"),
                 ("2026-09-30","day/2026-09.parquet"))):
             with self.assertRaisesRegex(ValueError,"dates or months"):
                 self.run_it()

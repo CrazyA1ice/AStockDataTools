@@ -163,7 +163,7 @@ class DateFooterTimebaseTests(unittest.TestCase):
             edit(fake)
             self.previous.write_text(json.dumps(fake),encoding="utf-8")
             with self.subTest(change=edit):
-                with self.assertRaisesRegex(ValueError,"existing|Requires"):
+                with self.assertRaisesRegex(ValueError,"(?i)existing|requires"):
                     self.run_it()
                 self.assertFalse(self.output.exists())
 

@@ -14,7 +14,7 @@ Windows `test_audit_post_snapshot_h5_stockdays_readonly.py` **14/14 OK（18.930�
 ## 新增只读工具：`inspect-day-source-freshness-frontier-readonly.py`
 
 1. 对1～10只明确选择的A股、单个年份（首轮2026），读取`D:\\stock\\HikyuuData/{sh,sz}_day.h5`中各股票复合日线表的**最后8个日期键（不足8条读取全部）**。先验证日线字段集合/整数位宽，再验证这8个键能转换为合法YYYYMMDD0000日期、严格升序。返回每只股票**最后一个物理存储位置的日期**、该表行数，以及所选股票观察到的最大尾部日期。只检查尾部升序，**不能认证整个H5历史完全有序**；也不是原生Hikyuu C++驱动可用性认证。
-2. 对现有购买`D:\\stock\\AllCycleAStockData\\day`下匹配2026的Parquet文件，只检查每个row group的元数据footer `ts.min/ts.max`，计算**所有股票总体**的时间戳候选上下界。不会扫描任何真实购买OHLCVA行。若有未提供统计值的row group，单独计数并保留`latest_source_date_certified=false`，不伪称已经知道确切最新日期。
+2. 对现有购买`D:\\stock\\AllCycleAStockData\\day`下匹配2026的Parquet文件，只检查每个row group的元数据footer `ts.min/ts.max`，计算**所有股票总体**的时间戳候选上下界。不会扫描任何真实购买OHLCVA行。若有未提供统计值的row group，单独计数。无论页脚统计是否完整，始终设置`latest_source_date_certified=false`，仅以`all_nonempty_rowgroups_have_ts_minmax`说明行组上下界是否完整；不能凭文件名及元数据推定供应商确切最新交易日期。
 3. **严格区分对象：** 原H5尾部是指定股票真实记录位置的日期；购买Parquet上界是所有股票RowGroup的**全局统计区间**，并非SH600000/SZ000001/SH600519任一股票的已证最新交易日。两者不能当成同等精度的交易所日历证明；尤其Parquet footer只代表当前命名年份文件内的统计范围，而不是供应商所有存储位置。
 4. 检查原始H5及购买Parquet文件大小/mtime前后稳定，摘要仅做文件stat元数据指纹，不是数据内容哈希。最多128个购买文件和20,000个rowgroup元数据，最多10只H5股票，每只只读8个尾部键；超限拒绝。只读原文件、不访问任何private/production指针，不改变原H5或购买Parquet，无自动数据填充、不生成空日线。
 5. 只在模块`reports/`生成新脱敏JSON，按请求顺序用slot 1..N标识股票，**不输出真实股票代码、原始整数OHLCVA、付费价格/成交量、市场数据的绝对路径**。真实原H5数据会被打开以读取尾部键，但不会写入或修改；只打开购买Parquet元数据，不读取付费行情列。

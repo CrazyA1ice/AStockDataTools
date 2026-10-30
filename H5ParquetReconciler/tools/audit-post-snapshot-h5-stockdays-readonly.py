@@ -57,8 +57,10 @@ def h5_selected_keys(root,symbols,start,end):
                 layout=H5._schema(ds)
                 if (not layout["one_dimensional_compound_dataset"]
                         or not layout["expected_field_set"]
-                        or not layout["integer_width_sign_compatible_with_h5record"]
-                        or not layout["field_order_matches_legacy_h5record"]):
+                        or not layout["integer_width_sign_compatible_with_h5record"]):
+                    # Read by verified field NAME; differing field order is
+                    # not evidence that selected stock-day keys are absent.
+                    # This is NOT certification of a native Hikyuu driver.
                     raise ValueError("Original H5 stock dataset field contract invalid")
                 lower=int(start.strftime("%Y%m%d"))*10000
                 upper=int((end+timedelta(days=1)).strftime("%Y%m%d"))*10000

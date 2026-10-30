@@ -112,6 +112,14 @@ def schema(pa):
                       *(pa.field(x,pa.uint64()) for x in REQUIRED_NUMERIC)])
 
 
+def hash_file(path):
+    value=hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda:stream.read(1024*1024),b""):
+            value.update(block)
+    return value.hexdigest()
+
+
 def row_bytes(row):
     return (json.dumps([row[k] for k in FIELDS],ensure_ascii=True,
                        separators=(",",":"),allow_nan=False)+"\n").encode()
@@ -217,8 +225,7 @@ def stage_year(root,year,target,expected):
         return {"year":year,"raw_h5_stockday_rows":n,
                 "per_market_rows":dict(sorted(markets.items())),
                 "raw_row_stream_sha256":initial.hexdigest(),
-                "full_private_parquet_sha256":AUDIT.hashlib.sha256(
-                    file.read_bytes()).hexdigest(),
+                "full_private_parquet_sha256":hash_file(file),
                 "private_parquet_schema":"native_uint64_all_ohlcva_no_renormalization"}
     finally:
         if writer is not None:

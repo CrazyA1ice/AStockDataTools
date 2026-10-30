@@ -104,8 +104,11 @@ def inspect_h5(root):
                     continue
                 ds=group.get(symbol)
                 if (not isinstance(ds,h5py.Dataset) or ds.ndim!=1
-                        or "datetime" not in (ds.dtype.names or ())):
+                        or not set(CORE.H5_FIELDS).issubset(ds.dtype.names or ())):
                     raise ValueError("Invalid original H5 day dataset")
+                dtype=ds.dtype.fields["datetime"][0]
+                if dtype.kind!="u" or dtype.itemsize!=8:
+                    raise ValueError("Original H5 day key must be unsigned uint64")
                 # Prefix filter is deliberately NOT a security master.
                 if not CORE.is_a_share_candidate(symbol,2010):
                     excluded+=1

@@ -500,7 +500,7 @@ def run(root,full21_safe,qualification_safe,python_exe,run_id,out,timeout=60,
             "native_get_kdata_called":bool(parsed and parsed[
                 "native_get_kdata_called"]),
             "native_query_expected_day_rows_per_target":1,
-            "isolated_fictional_registry_only":True,
+            "isolated_fictional_registry_only":bool(parsed and parsed["registry_only_temp"]),
             "original_h5_source_stat_unchanged":True,
             "original_h5_full_file_sha256_rechecked":False,
             "purchased_parquet_or_production_market_sqlite_accessed":False,

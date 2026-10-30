@@ -1,5 +1,14 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：合成Parquet→Hikyuu原生镜像闭环通过，进入真实日线整数候选精度验证
+
+- [x] 用户Windows对三份SAFE证明字节快照保护的新增回归 **11/11项OK（1.970秒）**；真正Hikyuu 2.8.1 `core311`原生驱动已读取由虚构Decimal Parquet转成的全新H5，SH600000/SZ000001各3根、合计6/6完全匹配，SAFE `synthetic-decimal-h5-native-reread-runec409feb8683.json`确认 `last_native_phase=finished`、`new_generated_h5_native_driver_certified=true`、输入三SAFE SHA前后不变。PR #154合并至`main`，**仅合成镜像技术闭环达标，不授权商业数据转换**。
+- [x] 跨2025/2026的10股票日SAFE已由用户8/8离线测试通过并正式归档，真实C++ KRecord验证仅2根，供应商amount/volume物理单位、复权、分钟时标与全市场生产镜像认证仍均false。
+- [x] 新增`audit-real-pq-to-native-h5-raw-exactness-readonly.py`：**不写真实H5**，复用既有有界读取器，只核对原2026-09-30两股的Parquet原值若按候选(OHLC×1000、amount÷1000、volume÷100)转原生`u32/u64`，能否按最短十进制整数量化、严格float64整数、与原始H5整数完全匹配；每字段只出安全计数，不将过去0.005容差匹配误当整数精确等价。配套10项完全虚构回归与执行指南（Windows待实测）。见[真实日线整数精度预检](2026_REAL_PARQUET_TO_NATIVE_H5_INTEGER_EXACTNESS_PREVIEW.md)。
+- [ ] 仅当回归10/10通过，再由本机运行一轮指定日线月文件≤150000条源行、固定2股日的真实只读预检；按字段结果决定是否研究**隔离且可丢弃**的真实样本镜像，原商业H5/Parquet绝不修改。主线仍为Parquet优先、只补H5真正缺失整股票日、可回滚统一Parquet、Hikyuu原生镜像与通达信日终单通道增量；不再研究历史分钟细微残差。
+
+
+
 更新：2026-10-29　仓库：CrazyA1ice/AStockDataTools
 
 ## 方向调整

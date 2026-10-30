@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：真实15条不可变逻辑版本登记成功，新增只需SHA的版本查询
+
+- [x] Windows `test_register_private_joined_day_logical_version.py` **14/14 OK（16.928秒）**。实际父10+增量5根，共3只股、15根日线（购买Parquet3/H5整日缺口候选12）正式登记为**私有不可变逻辑版SHA** `bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14`。用户`status`确认`active_joined_version_sha256=null`、`original_market_files_accessed=false`、`production_query_route_modified=false`，从未激活逻辑指针/覆盖原始行情。PR #162合并（`071fec877`）。
+- [x] 新`query-private-joined-day-by-version-sha-readonly.py`：直接提供**显式不可变逻辑SHA**+股代码+日期范围，自动从不可变登记元数据定位已存在的父Parquet及增量Parquet，复用完整SHA/manifest/SAFE/全行来源验证、在内存联查，避免发布中间SAFE及再复制Parquet；查询前后查版本内容哈希，不使用私有active pointer，不接触原市场H5或购买Parquet，不改生产。只生成不含商业行情值/股票代码的脱敏SAFE；H5候选量纲仍不认证。新增16项虚构PyArrow测试和已登记15根本机SHA查询**待Windows验收**。详见[2026_PRIVATE_JOINED_DAY_VERSION_SHA_DIRECT_QUERY.md](2026_PRIVATE_JOINED_DAY_VERSION_SHA_DIRECT_QUERY.md)。
+- [ ] 本次真实SHA查询通过后，转向**独立新交易日增量数据的来源发现与边界验证**，不再绕相同3股15行快照反复堆诊断代码。首先在本机真实可读购买Parquet和H5日历中找明确新增交易日；然后用新日期分区和版本元数据引用的方式物化，保留原有旧日线Parquet不动。
+
+
+
 ## ★ 2026-10-30：父10+增量5根真实Parquet联合读取验收，建设私有逻辑v2登记与回退
 
 - [x] Windows `test_read_private_day_snapshot_with_symbol_delta.py` **15/15项OK（11.313秒）**，现场私有父快照10根 + 独立SH600519新增5根全部联读：3股票、15根日线、购买Parquet3/H5完整整日补缺候选12。用户SAFE `reports/private-joined-day-view-89a0473ec5ad.json` 核对父版本/父Parquet/增量manifest/增量Parquet SHA及全行schema、来源计数；原市场未访问，生产路由/三个私有指针未更动，声明`no_live_market_source_freshness_recheck=true`且`ready_for_full_market_mirror=false`。PR #161 已合并（`8217572`）。

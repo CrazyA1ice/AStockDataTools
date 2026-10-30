@@ -157,8 +157,8 @@ def run(full21,profile,out):
         file,count,sha=got[year]
         state=(file.stat().st_size,file.stat().st_mtime_ns)
         row=inspect_year(file,year,count)
-        if (file.stat().st_size,file.stat().st_mtime_ns)!=state
-                or SINGLE.hash_file(file)!=sha):
+        state_after=(file.stat().st_size,file.stat().st_mtime_ns)
+        if state_after!=state or SINGLE.hash_file(file)!=sha:
             raise ValueError("Original private early-year RAW changed during read")
         summary=prior[year]
         for key,prev in (

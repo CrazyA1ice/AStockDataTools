@@ -1,5 +1,12 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：结束同2股日线金额残差反复研究，交付真正可落盘的私有Parquet联合快照
+
+- [x] 用户Windows金额诊断**10/10项OK（1.345秒）**，真实`real-day-h5-amount-residual-20260930-c721ea5bafbf.json`：2026-09-30两股，Parquet amount÷1000候选值均低于原H5整数，残差都在(0.01,0.1]刻度内，half-even/ceil各2/2、floor 0/2；仍然严格无损0/2，正式物理单位与原生H5舍入政策**未认证**。PR #156合并（`e1c3386`）。后续不再围绕相同两股重复建立微观数值证据。
+- [x] 新`materialize-private-unified-day-parquet-snapshot.py`：复用已验收购买Parquet优先/H5真缺整日补齐的私有**prepared overlay批量查询**，固定版本SHA、明确股票与时间窗口，将合并的原值日线写为全新的**独立私有实际Parquet文件**与SHA256清单、SAFE统计。任何重复股日、原始来源不一致、无权限目录、Parquet往返差异都拒绝；不会修改原H5/原Parquet/激活私有pointer/切换生产。详见[2026_PRIVATE_UNIFIED_DAY_PARQUET_MATERIALIZED_SNAPSHOT.md](2026_PRIVATE_UNIFIED_DAY_PARQUET_MATERIALIZED_SNAPSHOT.md)。新增10项合成回归，**尚待Windows验收**。
+- [ ] Windows用两股10根规模的已备4日overlay版本 `46bd847de3d00c0f48ff50830fa8688547198c6db1a3cf3b10eb7d2261770c03` 做一次实际本地**私有Parquet物化**、再用仅聚合SAFE/manifest核验。下一轮优先新增私有快照只读加载与校验，加快日常查询，然后规模化与原生H5镜像。在对真实成交额量纲未认证前**不启用正式H5镜像金额写入**。
+
+
 ## ★ 2026-10-30：真实日线精度发现成交额2/2无法无损转原生整数
 
 - [x] PR #155 Windows **10/10合成回归OK（6.874秒）**，两股2026-09-30真实只读检测118208条Parquet/2行组、原H5日线2条完成。**OHLC四项各2/2、volume 2/2严格原H5整数相等；amount 0/2相等、2/2需要舍入**。上传SAFE为`real-pq-native-h5-raw-integer-exactness-20260930-6f7127713c96.json`。PR #155已于2026-10-30合并至`main` (`f6e7c0a`)。**禁止将旧10股票日容差倍率证据升级为“金额无损转换已获证”。**

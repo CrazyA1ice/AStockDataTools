@@ -205,10 +205,13 @@ class PrivateVersionPointerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 V.status()
             active.unlink()
-            active.symlink_to(f.safe_file)
-            with self.assertRaises(ValueError):
-                V.read_pointer()
-            active.unlink()
+            # Creating a real symlink needs SeCreateSymbolicLinkPrivilege on
+            # standard Windows accounts (WinError 1314). Simulate the OS
+            # symlink flag instead of skipping the security check.
+            with patch.object(Path,"is_symlink",autospec=True,
+                              side_effect=lambda path: path==active):
+                with self.assertRaisesRegex(ValueError,"symlink"):
+                    V.read_pointer()
 
     def test_version_rebind_after_source_safe_mutation_rejected(self):
         with fresh() as (f,versions,active,lock):

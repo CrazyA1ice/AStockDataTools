@@ -157,6 +157,7 @@ class JoinedPrivateSnapshotAndDeltaTests(unittest.TestCase):
             import pyarrow.parquet as pq
             rows=pq.read_table(folder/"day.parquet").to_pylist()
             rows[1]["trading_date"]=rows[0]["trading_date"]
+            rows[1]["ts"]=rows[0]["ts"]
             resign_delta(folder,safe,source=rows)
             with self.assertRaisesRegex(ValueError,"Duplicate"):
                 join(parent,safe,out)
@@ -200,16 +201,16 @@ class JoinedPrivateSnapshotAndDeltaTests(unittest.TestCase):
 
     def test_delta_source_changed_after_decode_fails_closed(self):
         with ready() as (b,parent,folder,safe,out,batch,created):
-            original=J.READER.inspect_rows
+            original=J.decode
             calls=[0]
-            def alter_after(rows,manifest):
-                info=original(rows,manifest)
+            def alter_after(path,expected_rows):
+                rows=original(path,expected_rows)
                 calls[0]+=1
                 if calls[0]==2:
                     with (folder/"day.parquet").open("ab") as stream:
                         stream.write(b"changed-after-read")
-                return info
-            with patch.object(J.READER,"inspect_rows",side_effect=alter_after):
+                return rows
+            with patch.object(J,"decode",side_effect=alter_after):
                 with self.assertRaisesRegex(ValueError,"SHA mismatch"):
                     join(parent,safe,out)
             self.assertEqual(calls[0],2)

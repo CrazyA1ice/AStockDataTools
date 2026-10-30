@@ -157,12 +157,15 @@ def inventory(roots,symbols,baseline,out):
             selected=[]
             for stock_slot,symbol in enumerate(symbols,1):
                 venue=symbol[:2].lower()
-                subfolder=vipdoc/venue/"lday"
-                if subfolder.is_symlink():
-                    raise ValueError("Linked native TDX market directory")
+                market_folder=vipdoc/venue
+                subfolder=market_folder/"lday"
+                if (market_folder.is_symlink() or subfolder.is_symlink()
+                        or not subfolder.resolve().is_relative_to(vipdoc.resolve())):
+                    raise ValueError("Linked or escaping native TDX market directory")
                 file=subfolder/(symbol.lower()+".day")
-                if file.is_symlink():
-                    raise ValueError("Linked selected TDX native file")
+                if (file.is_symlink()
+                        or not file.resolve().is_relative_to(vipdoc.resolve())):
+                    raise ValueError("Linked or escaping selected TDX native file")
                 if not file.is_file():
                     selected.append({"requested_stock_slot":stock_slot,
                                      "native_day_file_present":False,

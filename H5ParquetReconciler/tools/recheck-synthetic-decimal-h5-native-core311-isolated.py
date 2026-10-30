@@ -26,6 +26,28 @@ SPEC2.loader.exec_module(BRIDGE)
 CHECK=NATIVE.CHECK
 FORMAT="AStockDataTools core311 native re-read of synthetic Decimal-generated H5 v1"
 STOCKS={"SH600000":"sh_day.h5","SZ000001":"sz_day.h5"}
+MAX_PROOF_BYTES=200000
+
+
+def proof_sha_snapshot(canary_report,decimal_report,core_proof):
+    """Pin the three module-local SAFE documents before and after native read.
+
+    Valid JSON structure alone is insufficient when a worker can run while
+    another process rewrites a proof file. Hash exact bytes, not parsed JSON;
+    never return raw source content or accept paths outside reports/.
+    """
+    sources={
+        "synthetic_canary":canary_report,
+        "synthetic_decimal_bridge":decimal_report,
+        "isolated_core311":core_proof,
+    }
+    digest={}
+    for label,path in sources.items():
+        source=CHECK._module_input(path)
+        if not 0 < source.stat().st_size <= MAX_PROOF_BYTES:
+            raise ValueError("Invalid bounded synthetic SAFE proof file")
+        digest[label]=BRIDGE.sha256(source)
+    return digest
 
 
 def _guard_synthetic_dir(folder):
@@ -104,6 +126,7 @@ def native_recheck(canary_report,decimal_report,core_proof,synthetic_dir,
             r"[A-Za-z0-9][A-Za-z0-9_-]{2,39}",run_id):
         raise ValueError("Use a NEW safe --run-id")
     interpreter=CHECK._explicit_python(python_exe)
+    initial_proofs=proof_sha_snapshot(canary_report,decimal_report,core_proof)
     canary=CHECK.verify_canary(canary_report)
     NATIVE.verify_core_proof(core_proof,canary)
     path=_guard_synthetic_dir(synthetic_dir)
@@ -143,13 +166,16 @@ def native_recheck(canary_report,decimal_report,core_proof,synthetic_dir,
         updated=CHECK.verify_canary(canary_report)
         if updated["source_file_details"]!=canary["source_file_details"]:
             raise ValueError("Original synthetic canary changed during native reread")
+        if proof_sha_snapshot(canary_report,decimal_report,core_proof)!=initial_proofs:
+            raise ValueError("SAFE proof bytes changed during native reread")
         matched=(result is not None and phase=="finished"
                  and result["state"]=="native_h5_six_synthetic_rows_matched")
         safe={
             "format":FORMAT,
             "original_canary_safe_summary_sha256":canary["report_sha256"],
-            "synthetic_decimal_report_sha256":BRIDGE.sha256(
-                CHECK._module_input(decimal_report)),
+            "synthetic_decimal_report_sha256":initial_proofs["synthetic_decimal_bridge"],
+            "input_safe_proofs_sha256":initial_proofs,
+            "input_safe_proof_bytes_unchanged_during_native_reread":True,
             "core311_only_native_worker_used":True,
             "original_and_decimal_h5_hashes_reverified":True,
             "new_native_h5_read_status":status,

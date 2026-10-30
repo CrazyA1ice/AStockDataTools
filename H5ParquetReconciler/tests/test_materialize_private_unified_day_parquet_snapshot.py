@@ -42,6 +42,8 @@ def baseline():
     summary={
         "format":M.BATCH.FORMAT,
         "private_version_sha256":SHA,
+        "from_date":"2026-09-30",
+        "to_date":"2026-10-08",
         "purchased_parquet_priority":True,
         "private_overlay_stages_sha_and_keys_verified":True,
         "selected_private_stages_final_snapshot_reverified":True,
@@ -185,7 +187,7 @@ class PrivateMaterializedSnapshotTests(unittest.TestCase):
                 cloned=baseline()
                 cloned["safe_summary"][field]=value
                 with self.assertRaises(ValueError):
-                    M.normalize_rows(cloned,SHA)
+                    M.normalize_rows(cloned,SHA,["SH600000","SZ000001"],"2026-09-30","2026-10-08")
         self.assertFalse(self.folder.exists())
 
     def test_invalid_schema_roundtrip_prevents_safe_report(self):
@@ -200,6 +202,15 @@ class PrivateMaterializedSnapshotTests(unittest.TestCase):
         self.assertTrue((self.folder/"day.parquet").is_file())
         self.assertFalse(self.safe.exists())
 
+    def test_out_of_window_bar_and_wrong_requested_symbol_list_rejected(self):
+        cloned=baseline()
+        cloned["bars_by_symbol"]["SH600000"][1]["trading_date"]="2026-10-09"
+        with self.assertRaisesRegex(ValueError,"out-of-window"):
+            M.normalize_rows(cloned,SHA,["SH600000","SZ000001"],"2026-09-30","2026-10-08")
+        cloned=baseline()
+        with self.assertRaises(ValueError):
+            M.normalize_rows(cloned,SHA,["SZ000001","SH600000"],"2026-09-30","2026-10-08")
+
     def test_zero_rows_refused_and_no_untrusted_bool_numeric(self):
         s=baseline()
         s["bars_by_symbol"]={"SH600000":[],"SZ000001":[]}
@@ -210,7 +221,7 @@ class PrivateMaterializedSnapshotTests(unittest.TestCase):
             k:{"purchased_bars":0,"private_bars":0,"returned_bars":0}
             for k in ("SH600000","SZ000001")}
         with self.assertRaisesRegex(ValueError,"Bounded row accounting"):
-            M.normalize_rows(s,SHA)
+            M.normalize_rows(s,SHA,["SH600000","SZ000001"],"2026-09-30","2026-10-08")
         self.source["bars_by_symbol"]["SH600000"][0]["volume"]=True
         with self.assertRaisesRegex(ValueError,"nonfinite"):
             self.run_it()

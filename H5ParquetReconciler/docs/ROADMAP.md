@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：1990年原生RAW H5→独立Parquet试点通过，新增三年份一批次可续跑流程
+
+- [x] 用户Windows `test_stage_pre2011_native_h5_year_to_private_parquet.py` **17/17 OK（10.345秒）**；真实1990年24条H5原生整数日线成功写入独立私有Parquet，SHA `224b6d6f597775c2266df919c58fe18113de44598953b89bd8106b9ba6ca19e1`，原行流SHA `06b17e412b0a92c06bc16b0f269c302a7fa2a89e15551c938cf535f9bbe47223`，原始H5/购买Parquet/指针/生产查询均未改变。PR #171 已合并main（`c1049e3`）。
+- [x] 新`batch-pre2011-native-h5-years-to-private-parquet.py`：**一批最多3年**，只执行**一次全原H5历史日期键/全部购买日线Parquet Footer 重验**，不用每年再次完整扫描1600万条H5日期键；先检查所有选定年份已有私有RAW H5中间Parquet的manifest、原始报告SHA、Parquet整文件SHA、完整uint64字段、逐股票日唯一键和全行流SHA。需要显式`--action stage --allow-private-raw-parquet --job-id HEX`才对真正缺的年份创建新私有分区，已有通过核验的年份复用、不覆盖；批次失败前已成功的年份保留，下一批不同job-id重新核验后续做。新增12项合成H5/PyArrow回归与[1990～2010年年度RAW Parquet可续跑文档](2026_PRE2011_BATCH_NATIVE_H5_ANNUAL_PRIVATE_PARQUET.md)，**尚待Windows验收，PR保持Draft**。
+- [ ] 首轮真实1990、1991、1992三年只读计划：预计24+2043+5892=**7959条**，验证1990的24条现有raw stage自动复用；成功后可显式创建1991/1992两份私有raw文件。之后按批次推进1993～2010原值中间层；**不能将RAW当成与购买Parquet标准ts/OHLCVA兼容**。量额/股种/复权认证及2011～2026其他年份、1min/5min仍是下一主线；待统一Parquet全部通过再从其创建新独立Hikyuu H5镜像。所有原购买Parquet/原H5始终只读，TDX暂停。
+
+
+
 ## ★ 2026-10-30：2011年前历史H5日线覆盖已实测确认，新增逐年原生整数无损私有Parquet试点
 
 - [x] PR #170通过Windows **16项单测OK（跳过1项需symlink权限，6.274秒）**，真实用户`pre2011-h5-purchased-day-inventory-d555bf7a707a.json`确认1990-12-20～2010-12-31，H5保守A股代码候选**3,682,327条**（SH2,056,452、SZ1,625,875），实扫4,621个证券dataset/16,041,861日期键；原购买`AllCycleAStockData/day`全部24个Parquet/139行组Footer统计完整，最早2011-01-04，**已检查day目录无任何2011前ts**。原始H5/PQ及所有pointer不动，PR #170合并`ffb3edb`。

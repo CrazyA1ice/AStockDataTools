@@ -540,6 +540,13 @@ def main(argv=None):
     print("Cross-year stock-days:",stats["stock_days_compared"])
     print("Volume raw H5 x100 matches:",stats["volume_candidate_raw_h5_times100_matched"])
     print("Amount raw H5 x1000 matches:",stats["amount_candidate_raw_h5_times1000_matched"])
+    if args.prior_annual_key_only_safe is not None:
+        print("2025 annual two-column keys rechecked:",
+              result["annual_2025_key_only_rows_rechecked"])
+        print("2025 annual OHLCVA rowgroup rows read:",
+              result["annual_2025_ohlcva_rows_scanned"])
+        print("Total annual+monthly OHLCVA rowgroup rows read:",
+              result["source_parquet_total_rows_scanned"])
     print("Original sources modified: NO")
     print("Vendor units or production conversion certified: NO")
 

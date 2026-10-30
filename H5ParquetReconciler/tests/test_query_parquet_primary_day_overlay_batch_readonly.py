@@ -70,6 +70,8 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
             self.assertEqual(safe["private_overlay_bars_returned"],1)
             self.assertEqual(safe["private_stage_verification_row_count"],1)
             self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"],1)
+            self.assertTrue(safe["selected_private_stages_final_snapshot_reverified"])
+            self.assertEqual(safe["selected_private_stages_final_rehash_count"],1)
             self.assertEqual(safe["live_absence_recheck_scan_count"],1)
             self.assertTrue(safe["no_raw_ohlcva_in_safe_summary"])
             self.assertTrue(safe["no_production_query_switch"])
@@ -115,6 +117,38 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"bytes changed"):
                     read(root,plan["version_sha256"])
 
+    def test_final_snapshot_rejects_stage_mutation_after_decode(self):
+        # Only change the synthetic private stage. The earlier successful
+        # post-decode check is not enough to protect the final batch result.
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            original=B.selected_private_rows
+            def mutate_after_decode(stages,symbols):
+                bars=original(stages,symbols)
+                with (stage/"day.parquet").open("ab") as stream:
+                    stream.write(b"changed-after-verified-decode")
+                return bars
+
+            with patch.object(B,"selected_private_rows",
+                              side_effect=mutate_after_decode):
+                with self.assertRaisesRegex(
+                        ValueError,"stage snapshot changed after batched decode"):
+                    read(root,plan["version_sha256"])
+
+    def test_final_snapshot_rejects_stage_deletion_after_decode(self):
+        # A missing stage must not be treated as a successful partial query.
+        with prepared() as (root,module,report,gate,purchased,stage,plan):
+            original=B.selected_private_rows
+            def remove_after_decode(stages,symbols):
+                bars=original(stages,symbols)
+                (stage/"day.parquet").unlink()
+                return bars
+
+            with patch.object(B,"selected_private_rows",
+                              side_effect=remove_after_decode):
+                with self.assertRaisesRegex(
+                        ValueError,"stage snapshot changed after batched decode"):
+                    read(root,plan["version_sha256"])
+
     def test_total_source_scan_budget_is_checked_per_stock(self):
         with prepared() as (root,module,report,gate,purchased,stage,plan):
             with self.assertRaisesRegex(ValueError,"budget exhausted"):
@@ -140,6 +174,7 @@ class BatchDayOverlayReadOnlyTests(unittest.TestCase):
             self.assertEqual(safe["matching_bar_count"],1)
             self.assertEqual(safe["private_overlay_bars_returned"],0)
             self.assertEqual(safe["private_stage_rows_decoded_for_selected_dates"],0)
+            self.assertEqual(safe["selected_private_stages_final_rehash_count"],0)
 
     def test_explicit_private_active_pointer_yields_same_verified_bars(self):
         with prepared() as (root,module,report,gate,purchased,stage,plan):

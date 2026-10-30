@@ -140,6 +140,18 @@ def precheck(version_sha,symbols,first,last):
     entry=REG.load_version(version_sha)
     REG.check_version_files(entry)
     a,b=validate_dates(entry,symbols,first,last)
+    # New DATE partition is only for stocks in the registered prior view.
+    # Prevent accidentally smuggling a brand-new stock into a date extension.
+    _,_,_,_,parent_meta=REG.J.ADD.trusted_parent(
+        entry["parent_private_version_sha256"])
+    delta_safe=READER.REPORTS/entry["delta_safe_basename"]
+    _,_,delta_manifest,_=REG.J.get_delta_safe(
+        delta_safe,entry["parent_private_version_sha256"])
+    additional=json.loads(delta_manifest.read_text(encoding="utf-8"))
+    universe=set(parent_meta["per_symbol_counts"])|set(additional["new_symbols"])
+    if (len(universe)!=entry["joined_stocks"]
+            or any(s not in universe for s in symbols)):
+        raise ValueError("New-date stocks must exist in registered logical parent")
     entry_file=REG.VERSIONS/(version_sha+".json")
     file_sha=READER.sha256_file(entry_file)
     return entry,file_sha,a,b

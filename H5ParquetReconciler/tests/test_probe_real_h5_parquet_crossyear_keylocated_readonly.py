@@ -157,11 +157,35 @@ class KeyLocatedAnnualAndMonthlyTests(TestCase):
             self.run_it()
         self.assertFalse(self.out.exists())
 
-    def test_annual_150k_ohlcva_budget_remains_hard(self):
+    def test_reduced_ohlcva_budget_blocks_prior_key_safe_before_market_reads(self):
+        # The earlier key-only SAFE legitimately records a two-row target
+        # group. Lowering the current budget to one row MUST reject that
+        # SAFE during qualification, before annual OHLCVA is opened.
+        qualified,original_sha=T.qualified_annual_key_only_safe(self.key)
+        self.assertEqual(qualified["selected_target_rowgroup_total_rows"],2)
+        self.assertEqual(len(original_sha),64)
         with patch.object(T,"MAX_YEAR_READ_ROWS",1):
             with self.assertRaisesRegex(
-                    ValueError,"Cannot safely inspect key-located annual"):
+                    ValueError,r"^2025 annual key-only prior SAFE not qualified$"):
                 self.run_it()
+        self.assertFalse(self.out.exists())
+        # A failed budget test must not modify the prior key-only proof.
+        again,again_sha=T.qualified_annual_key_only_safe(self.key)
+        self.assertEqual(again_sha,original_sha)
+        self.assertEqual(again,qualified)
+
+    def test_annual_keylocated_reader_checks_ohlcva_budget_independently(self):
+        # Isolate the reader's own rowgroup budget check from the preceding
+        # SAFE qualification. With a two-row fictional group and a one-row
+        # limit, the reader must fail closed before loading OHLCVA columns.
+        import pyarrow.compute as pc
+        qualified,_=T.qualified_annual_key_only_safe(self.key)
+        annual=self.f.pqroot/"day"/"2025.parquet"
+        with patch.object(T,"MAX_YEAR_READ_ROWS",1):
+            with self.assertRaisesRegex(
+                    ValueError,r"^Cannot safely inspect key-located annual daily rows$"):
+                T.read_annual_2025_keylocated_day(
+                    annual,"2025-09-30",self.f.pa,self.f.pq,pc,qualified)
         self.assertFalse(self.out.exists())
 
     def test_2026_monthly_amount_discrepancy_is_still_reported(self):

@@ -76,6 +76,7 @@ class OriginalH5NativeYearPrivateParquetTests(unittest.TestCase):
             self.assertTrue(all(r["transAmount"]==1000 for r in rows))
             self.assertTrue(all(r["transCount"]==100 for r in rows))
             self.assertEqual(tuple(pf.schema_arrow.names),M.FIELDS)
+            pf.close()
             manifest=json.loads((stage/"manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["raw_h5_stockday_rows"],2)
             self.assertEqual(manifest["full_private_parquet_sha256"],

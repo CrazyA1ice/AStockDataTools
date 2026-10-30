@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：父10+增量5根真实Parquet联合读取验收，建设私有逻辑v2登记与回退
+
+- [x] Windows `test_read_private_day_snapshot_with_symbol_delta.py` **15/15项OK（11.313秒）**，现场私有父快照10根 + 独立SH600519新增5根全部联读：3股票、15根日线、购买Parquet3/H5完整整日补缺候选12。用户SAFE `reports/private-joined-day-view-89a0473ec5ad.json` 核对父版本/父Parquet/增量manifest/增量Parquet SHA及全行schema、来源计数；原市场未访问，生产路由/三个私有指针未更动，声明`no_live_market_source_freshness_recheck=true`且`ready_for_full_market_mirror=false`。PR #161 已合并（`8217572`）。
+- [x] 新`register-private-joined-day-logical-version.py`引用**既有两份私人Parquet**而不复制行情，验证完整父与delta SHA/全行唯一股日/来源统计并内容寻址存档`work/unified_parquet/joined_day_versions/<sha>.json`；提供`prepare`、独立指针显式`activate/rollback`、`status`，与旧snapshot pointer及overlay pointer彻底隔离；正式市场文件/路由不改，H5候选量纲未认证。新14项全虚构合成测试及实际**prepare-only**核验尚待Windows执行。详见[2026_PRIVATE_JOINED_DAY_LOGICAL_V2_REGISTRY.md](2026_PRIVATE_JOINED_DAY_LOGICAL_V2_REGISTRY.md)。
+- [ ] 逻辑版本登记后，优先做“显式逻辑版本SHA直读”接口及可扩展真实新日期数据来源的下一日增量分区：新日线必须来自真实新增购买数据或通过独立的日线补缺证据确认，避免拿旧10月14日以后空日期冒充已到货；生产原生H5成交额转换仍未获认证，正式H5镜像继续关闭。
+
+
+
 ## ★ 2026-10-30：新增SH600519五根日线物理增量已验收，开始父10+delta5的统一只读视图
 
 - [x] Windows `test_append_private_unified_day_symbol_delta.py` **12/12 OK（5.314秒）**。`SH600519` 真正新增私有Parquet物理delta 5根（日线，购买Parquet1/H5仅补已验证整日期缺口候选4），目录`work/unified_parquet/snapshot_deltas/delta_964332fc7055`。已上传SAFE确认新Parquet/manifest SHA、原10根父快照未改写、原市场文件及生产路由未改、私有pointer仍未激活。PR #160 已合并（`945db724`）。

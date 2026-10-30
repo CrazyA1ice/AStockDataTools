@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：原TDX日线同样过期，优先调查盘后下载写入位置
+
+- [x] Windows `test_intake_tdx_native_day_to_private_postclose_json.py` **11/11 OK（0.446秒）**。既有通达信`D:\\software\\TDX\\vipdoc\\sh\\lday\\sh600000.day`源内容SHA已复核，1999-11-10→**2026-10-13**共6404条；2026-10-29 **0条**、未生成真实规范化JSON。SAFE`reports/tdx-native-day-intake-readonly-95551cbe6206.json`源文件及生产/私有指针保持不动；PR #167已合并（`86fdd074`）。现在原TDX单股与原H5三股均至10/13，购买2026日线Parquet全股票Footer上界9/30。没有证据允许创建10/14之后新K线。
+- [x] 新`inventory-tdx-vipdoc-day-update-landing-readonly.py`仅在用户明确指定的**最多4个安装/数据根目录**中检查`vipdoc`及子目录第一层`*/vipdoc`（512项/根、64处候选），不对整盘递归搜索。每个候选只读取1～10只股票`.day`最后8条原生32字节日线记录、验证末尾时间键/几何及时点、比较2026-10-13旧源尾部，输出**无行情/无股票代码/无绝对路径**的脱敏SAFE，以根目录序号及相对目录定位实际新落点。尾部不是全文件认证；如有新候选须再用既有`probe-tdx-native-readonly.py`跑完整源后才允许独立进一步适配。**13项虚构原生TDX测试及真实有限根源核查尚待Windows实测**，见[2026_TDX_MULTIPLE_VIPDOC_UPDATE_LANDING_INVENTORY.md](2026_TDX_MULTIPLE_VIPDOC_UPDATE_LANDING_INVENTORY.md)。
+- [ ] 若确有更新的TDX新落点，执行原生全文件SHA/严格历史时键/日线金额与分钟聚合的独立校验，用户明确授权才可私有拷贝。若这些已知根源均没更新，下一步是查通达信盘后下载执行情况、客户端数据目录设置或不同实例，**不能仅靠历史统一库优化获得新行情**。生产原H5/购买Parquet/指针继续不修改。
+
+
+
 ## ★ 2026-10-30：真实双来源日线时效边界已证，优先打通通达信原生日线安全接入
 
 - [x] Windows`test_inspect_day_source_freshness_frontier_readonly.py` **14/14 OK（6.988秒）**。实际3只股原H5最后物理记录均止于**2026-10-13**；购买2026年的`day` Parquet 9个文件17个行组全部有ts页脚，上界**2026-09-30**（全股票元数据上界，不是每股时效或供应商新鲜度认证），SAFE`reports/private-day-source-frontier-c1fee86b0cc1.json`确认源/私有活动指针/生产路线均未修改。PR #166已合并（`2b1ab65`）。

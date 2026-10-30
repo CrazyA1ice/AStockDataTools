@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 2025年度目标行组精确定位成功：进入真正跨年OHLCVA两源只读对比（2026-10-30）
+
+- [x] 用户Windows已运行第149轮**12/12项**虚构2025年度键列回归全部OK（3.005秒），真实`real-2025-annual-parquet-day-keyonly-20250930-v1.json`表明从2025年度`day/2025.parquet`的1,333,385行、12组中**仅投影ts/symbol两列**实扫1,333,385条键/88批，固定2025-09-30 SH600000与SZ000001精确命中**2条**，分布在**1个目标RowGroup**、该组**123,139行**。这小于既有≤2组/≤150,000 OHLCVA行预算；该轮`ohlcva_rows_scanned=0`，**尚未有真实跨年倍率结论**，不允许将键列扫描视作已检查真实价量额。
+- [x] 改造既有`tools/probe-real-h5-parquet-crossyear-day-readonly.py`，增加可选但必须显式传入的`--prior-annual-key-only-safe`（旧无此参数的严格Footer-only路径保留）。先验证2026-09真实发现2/2/原生C++ HMAC 2/2及同月留出4/4的3份SAFE链，再校验前序2025键列SAFE的固定日期、状态、全部布尔证据和安全预算。**前序SAFE不存储RowGroup序号，不能作为读取授权**；正式跨年进程**重新**对2025年度完整1,333,385行`ts/symbol`键执行≤160万键/16组/16384键每批的有界扫描，再次确认两股各一条、所处组和组内总行数与前序SAFE一致后，才选中**最多2组、合计≤150,000行**读目标RowGroup的8列OHLCVA。2026-08仍用经测试的月度≤150000行Reader；H5两份源只读共4条日线、实际日期和数量严格核对。
+- [x] 新`keylocated-v2` SAFE分别计数`annual_2025_key_only_rows_rechecked`、`annual_2025_ohlcva_rows_scanned`及2026月度全部OHLCVA的合计扫描数，保留2025-09-30/2026-08-24每日期2只股票OHLC价(raw÷1000)、量(raw×100)、额(raw×1000)候选倍率统计，历史3份SAFE与新增2025键列SAFE全部SHA256文档链；源Footer/stat前后不变，无原始行情、时标、证券代码、绝对路径或异常文本出SAFE，正式SQLite/H5写入与物理单位认证仍false。
+- [x] 新增**9项合成Parquet/H5回归（待Windows验收）**，验证12/12 Footer时间范围重叠但只实际选一个目标组成功、前序键SAFE篡改拒绝、源键在两次扫描间发生变化/出现跨组重复时拒绝、15万OHLCVA预算、2026月度单日成交额不匹配不能隐藏、不可覆盖SAFE及禁止扩大读取。参见[2025年度键定位跨年正式对比](2026_CROSSYEAR_2025_KEYLOCATED_BOUNDED_OHLCVA_PROOF.md)。
+- [ ] Windows先跑9项纯合成测试OK；确保`reports/real-2025-annual-parquet-day-keyonly-20250930-v1.json`存在和目标`reports/real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json`不存在，才运行一次正式的2025年度键定位→≤123139行情行目标组＋2026年8月月度只读对比。只有返回新SAFE及实际按日期匹配数后才可谈跨年10个股票日候选倍率通过，不能直接扩大到五分钟/全市场。
+
 ## ★ 2025年度全部12组Footer均覆盖9/30：键列有界扫描定位两股日线（2026-10-30）
 
 - [x] 用户Windows已对前轮独立安全诊断执行**7/7项合成测试OK（13.579秒）**；新真实`real-h5-parquet-crossyear-2025-2026-diagnostic-v1.json`显示`status=blocked`、`last_stage=annual_target_rowgroup_selection`、2025年度日线Footer记录**1333385行、12组**，**12/12个RowGroup的`ts` min/max时间包络都与2025-09-30重叠**。此前仅允许≤2组的时间剪枝策略因而自动拒绝；并非值不同、非2025缺日线的证据。文件Footer/stat前后未变；前序3份SAFE门禁已通过。

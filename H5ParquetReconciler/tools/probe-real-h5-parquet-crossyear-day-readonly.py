@@ -231,10 +231,187 @@ def read_annual_2025_selected_day(path,day,pa,pq,pc):
             raise ValueError("Source annual Parquet file changed during read")
 
 
-def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
+KEY_ONLY_FORMAT="AStockDataTools 2025 annual daily two-column key-only rowgroup probe v1"
+MAX_YEAR_KEY_ROWS=1600000
+MAX_YEAR_KEY_BATCH=16384
+
+
+def qualified_annual_key_only_safe(path):
+    """Prior SAFE is a *gate*, never a rowgroup locator or source authority.
+
+    The last evidence intentionally did not store raw source bytes or group
+    indexes. Always re-read all 2025 keys before opening any OHLCVA columns.
+    """
+    input_path=AUDIT._path(path,True)
+    blob=input_path.read_bytes()
+    if not 0<len(blob)<=200000:
+        raise ValueError("2025 key-only SAFE missing/excessive")
+    try:
+        doc=json.loads(blob)
+    except (ValueError,UnicodeError):
+        raise ValueError("2025 key-only SAFE malformed") from None
+    if (type(doc) is not dict or doc.get("format")!=KEY_ONLY_FORMAT
+            or doc.get("target_day")!="2025-09-30"
+            or doc.get("source_period")!="day"
+            or doc.get("status")!="ready_for_bounded_price_group_read"
+            or doc.get("last_phase")!="finished"
+            or doc.get("matching_target_key_count")!=2
+            or doc.get("possible_ohlcva_rowgroup_budget")!=2
+            or doc.get("possible_ohlcva_row_budget")!=150000
+            or doc.get("key_scan_budget_rows")!=MAX_YEAR_KEY_ROWS
+            or type(doc.get("source_year_footer_rowgroups")) is not int
+            or not 1<=doc["source_year_footer_rowgroups"]<=MAX_YEAR_ROW_GROUPS
+            or type(doc.get("source_year_footer_rows")) is not int
+            or not 1<=doc["source_year_footer_rows"]<=MAX_YEAR_KEY_ROWS
+            or type(doc.get("key_only_rows_scanned")) is not int
+            or doc["key_only_rows_scanned"]!=doc["source_year_footer_rows"]
+            or type(doc.get("key_only_batches_scanned")) is not int
+            or doc["key_only_batches_scanned"]<1
+            or type(doc.get("selected_target_rowgroups")) is not int
+            or not 1<=doc["selected_target_rowgroups"]<=MAX_YEAR_SELECTED_ROW_GROUPS
+            or type(doc.get("selected_target_rowgroup_total_rows")) is not int
+            or not 1<=doc["selected_target_rowgroup_total_rows"]<=MAX_YEAR_READ_ROWS
+            or doc.get("ohlcva_rows_scanned")!=0
+            or doc.get("ohlcva_columns_opened") is not False
+            or doc.get("raw_h5_or_market_sqlite_opened") is not False
+            or doc.get("real_native_cpp_invoked") is not False
+            or doc.get("original_parquet_modified") is not False
+            or doc.get("original_source_footer_unchanged") is not True
+            or doc.get("raw_symbols_timestamps_ohlcva_or_paths_emitted") is not False
+            or doc.get("licensed_parquet_to_h5_mapping_certified") is not False
+            or doc.get("vendor_physical_units_certified") is not False
+            or doc.get("ready_for_full_market_mirror") is not False):
+        raise ValueError("2025 annual key-only prior SAFE not qualified")
+    return doc,hashlib.sha256(blob).hexdigest()
+
+
+def read_annual_2025_keylocated_day(path,day,pa,pq,pc,prior_key_safe):
+    """Re-scan ONLY the annual ts/symbol keys before any 8-column K-line read.
+
+    First scan <=1.6m two-column keys across <=16 groups, prove both fixed
+    stock-day keys unique and reconstruct the exact selected group indexes.
+    After independent comparison to the earlier SAFE, read <=2 selected
+    groups / <=150k OHLCVA rows. Never trust rowgroup ids from prior output.
+    """
+    if day!="2025-09-30" or path.name!="2025.parquet":
+        raise ValueError("Unexpected fixed annual stock-day")
+    stamp=DAY.FOOTER.footer_guard(path)
+    pf=None
+    try:
+        pf=pq.ParquetFile(str(path),memory_map=False,pre_buffer=False)
+        schema=pf.schema_arrow
+        if (len(schema.names)>512
+                or not set(DAY.NEEDED).issubset(schema.names)
+                or not pa.types.is_int64(schema.field("ts").type)
+                or not pa.types.is_string(schema.field("symbol").type)
+                or any(not pa.types.is_float64(schema.field(x).type)
+                       for x in DAY.FIELDS)):
+            raise ValueError("Unsupported exact annual OHLCVA schema")
+        group_count=pf.metadata.num_row_groups
+        if not 1<=group_count<=MAX_YEAR_ROW_GROUPS:
+            raise ValueError("Annual group budget exceeded")
+        footer_rows=sum(pf.metadata.row_group(i).num_rows
+                        for i in range(group_count))
+        if (not 1<=footer_rows<=MAX_YEAR_KEY_ROWS
+                or any(pf.metadata.row_group(i).num_rows<=0
+                       for i in range(group_count))):
+            raise ValueError("Annual key-only row count budget exceeded")
+        if (group_count!=prior_key_safe["source_year_footer_rowgroups"]
+                or footer_rows!=prior_key_safe["source_year_footer_rows"]):
+            raise ValueError("Annual key-only prior footer changed")
+        low,high=DAY._range_ms(day)
+        aliases={alias:symbol
+                 for symbol,names in DAY.ALIASES.items()
+                 for alias in names}
+        needle=pa.array(sorted(aliases),type=pa.string())
+        seen={symbol:0 for symbol in DAY.SYMBOLS}
+        selected=set()
+        key_rows=0
+        key_batches=0
+        for group in range(group_count):
+            for batch in pf.iter_batches(
+                    row_groups=[group],columns=["ts","symbol"],
+                    batch_size=MAX_YEAR_KEY_BATCH,use_threads=False):
+                key_rows+=batch.num_rows
+                key_batches+=1
+                if (not 0<batch.num_rows<=MAX_YEAR_KEY_BATCH
+                        or key_rows>MAX_YEAR_KEY_ROWS
+                        or batch.column(0).null_count
+                        or batch.column(1).null_count):
+                    raise ValueError("Annual key-only batch invalid")
+                ts=batch.column(0)
+                names=batch.column(1)
+                wanted=pc.and_(
+                    pc.and_(pc.greater_equal(ts,low),pc.less(ts,high)),
+                    pc.is_in(names,value_set=needle))
+                for item in batch.filter(wanted).to_pylist():
+                    symbol=aliases.get(item["symbol"])
+                    if symbol not in seen:
+                        raise ValueError("Unexpected annual stock-day alias")
+                    seen[symbol]+=1
+                    selected.add(group)
+        if (key_rows!=footer_rows
+                or key_rows!=prior_key_safe["key_only_rows_scanned"]
+                or key_batches!=prior_key_safe["key_only_batches_scanned"]
+                or any(seen[s]!=1 for s in DAY.SYMBOLS)):
+            raise ValueError("Annual key-only source or unique keys changed")
+        selected=sorted(selected)
+        selected_rows=sum(pf.metadata.row_group(i).num_rows
+                          for i in selected)
+        if (not 1<=len(selected)<=MAX_YEAR_SELECTED_ROW_GROUPS
+                or not 1<=selected_rows<=MAX_YEAR_READ_ROWS
+                or len(selected)!=prior_key_safe["selected_target_rowgroups"]
+                or selected_rows!=prior_key_safe["selected_target_rowgroup_total_rows"]):
+            raise ValueError("Annual selected price groups exceed or differ from prior SAFE")
+
+        found={}
+        price_rows=0
+        for batch in pf.iter_batches(
+                row_groups=selected,columns=list(DAY.NEEDED),
+                batch_size=MAX_YEAR_KEY_BATCH,use_threads=False):
+            price_rows+=batch.num_rows
+            if price_rows>MAX_YEAR_READ_ROWS:
+                raise ValueError("Actual OHLCVA scan exceeded 150k budget")
+            fields={name:batch.column(i)
+                    for i,name in enumerate(DAY.NEEDED)}
+            wanted=pc.and_(
+                pc.and_(pc.greater_equal(fields["ts"],low),
+                        pc.less(fields["ts"],high)),
+                pc.is_in(fields["symbol"],value_set=needle))
+            for row in batch.filter(wanted).to_pylist():
+                symbol=aliases.get(row["symbol"])
+                if (symbol is None or symbol in found
+                        or type(row["ts"]) is not int):
+                    raise ValueError("Annual selected OHLCVA key mismatch")
+                values={field:row[field] for field in DAY.FIELDS}
+                import math
+                if any(type(v) is not float or not math.isfinite(v)
+                       for v in values.values()):
+                    raise ValueError("Annual selected OHLCVA non-finite/invalid")
+                found[symbol]=values
+        if set(found)!=set(DAY.SYMBOLS) or price_rows!=selected_rows:
+            raise ValueError("Annual OHLCVA keys or selected rows inconsistent")
+        return found,price_rows,len(selected),footer_rows,group_count,key_rows,key_batches
+    except Exception:
+        # PyArrow exceptions can disclose paid-source paths or values.
+        raise ValueError("Cannot safely inspect key-located annual daily rows") from None
+    finally:
+        if pf is not None:
+            pf.close()
+        if DAY.FOOTER.footer_guard(path)!=stamp:
+            raise ValueError("Annual source file changed during key/price verification")
+
+
+def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out,
+        annual_key_only_safe=None):
     target=AUDIT._path(out,False)
     check_calendar()
     prior=verified_sources(raw_safe,native_safe,heldout_safe)
+    previous_annual_key=None
+    if annual_key_only_safe is not None:
+        previous_annual_key,prior_key_sha=qualified_annual_key_only_safe(
+            annual_key_only_safe)
+        prior["annual_2025_key_only"]=prior_key_sha
     month_files={day:DAY.FOOTER.selected_file(
         parquet_root,path,"day") for day,path in SAMPLES}
     if len({p.resolve() for p in month_files.values()})!=len(SAMPLES):
@@ -255,13 +432,24 @@ def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
     annual_source_total_rows_from_footer=0
     annual_source_rowgroups_from_footer=0
     annual_selected_rowgroups=0
+    rechecked_annual_key_rows=0
+    rechecked_annual_key_batches=0
+    annual_2025_ohlcva_rows_scanned=0
     paired={}
     try:
         for day,path in month_files.items():
             if day=="2025-09-30":
-                vals,n,g,annual_source_total_rows_from_footer,annual_source_rowgroups_from_footer=(
-                    read_annual_2025_selected_day(path,day,pa,pq,pc))
+                if previous_annual_key is not None:
+                    (vals,n,g,annual_source_total_rows_from_footer,
+                     annual_source_rowgroups_from_footer,
+                     rechecked_annual_key_rows,rechecked_annual_key_batches)=(
+                        read_annual_2025_keylocated_day(
+                            path,day,pa,pq,pc,previous_annual_key))
+                else:
+                    vals,n,g,annual_source_total_rows_from_footer,annual_source_rowgroups_from_footer=(
+                        read_annual_2025_selected_day(path,day,pa,pq,pc))
                 annual_selected_rowgroups=g
+                annual_2025_ohlcva_rows_scanned=n
             else:
                 vals,n,g=DAY._read_bounded_daily(path,day,pa,pq,pc)
             scanned+=n
@@ -286,8 +474,15 @@ def run(parquet_root,h5_root,raw_safe,native_safe,heldout_safe,out):
         "symbols_sampled_count":2,
         "source_period":"day",
         "source_parquet_files_read":2,
-        "source_parquet_layouts":{"2025":"annual_footer_pruned",
-                                  "2026":"monthly"},
+        "source_parquet_layouts":{
+            "2025":("annual_two_column_key_revalidated"
+                    if previous_annual_key is not None
+                    else "annual_footer_pruned"),
+            "2026":"monthly"},
+        "annual_2025_prior_key_only_safe_revalidated":previous_annual_key is not None,
+        "annual_2025_key_only_rows_rechecked":rechecked_annual_key_rows,
+        "annual_2025_key_only_batches_rechecked":rechecked_annual_key_batches,
+        "annual_2025_ohlcva_rows_scanned":annual_2025_ohlcva_rows_scanned,
         "annual_2025_source_total_rows_from_footer":annual_source_total_rows_from_footer,
         "annual_2025_source_rowgroups_from_footer":annual_source_rowgroups_from_footer,
         "annual_2025_selected_rowgroups_scanned":annual_selected_rowgroups,
@@ -328,12 +523,15 @@ def main(argv=None):
     p.add_argument("--prior-raw-safe",type=Path,required=True)
     p.add_argument("--prior-native-safe",type=Path,required=True)
     p.add_argument("--prior-heldout-safe",type=Path,required=True)
+    p.add_argument("--prior-annual-key-only-safe",type=Path,
+                   help="Pre-verified 2025 annual key-only SAFE; independently re-scan keys")
     p.add_argument("--out",type=Path,required=True)
     p.add_argument("--read-only-crossyear-days",required=True,action="store_true")
     args=p.parse_args(argv)
     try:
         result=run(args.parquet_root,args.h5_root,args.prior_raw_safe,
-                   args.prior_native_safe,args.prior_heldout_safe,args.out)
+                   args.prior_native_safe,args.prior_heldout_safe,args.out,
+                   annual_key_only_safe=args.prior_annual_key_only_safe)
     except (ValueError,TypeError,KeyError,OSError,ImportError,
             OverflowError,json.JSONDecodeError):
         p.error("Cross-year sampled real H5/Parquet verification refused; sources or SAFE incomplete")
@@ -342,6 +540,13 @@ def main(argv=None):
     print("Cross-year stock-days:",stats["stock_days_compared"])
     print("Volume raw H5 x100 matches:",stats["volume_candidate_raw_h5_times100_matched"])
     print("Amount raw H5 x1000 matches:",stats["amount_candidate_raw_h5_times1000_matched"])
+    if args.prior_annual_key_only_safe is not None:
+        print("2025 annual two-column keys rechecked:",
+              result["annual_2025_key_only_rows_rechecked"])
+        print("2025 annual OHLCVA rowgroup rows read:",
+              result["annual_2025_ohlcva_rows_scanned"])
+        print("Total annual+monthly OHLCVA rowgroup rows read:",
+              result["source_parquet_total_rows_scanned"])
     print("Original sources modified: NO")
     print("Vendor units or production conversion certified: NO")
 

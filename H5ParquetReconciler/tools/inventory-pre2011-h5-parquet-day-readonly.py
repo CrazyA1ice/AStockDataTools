@@ -115,8 +115,10 @@ def inspect_h5(root):
                     raise ValueError("H5 selected dataset budget exceeded")
                 prev=None
                 for begin in range(0,len(ds),H5_CHUNK_ROWS):
+                    # h5py .fields("datetime") returns a plain 1-D
+                    # uint64 ndarray, not a structured record array.
                     projected=ds.fields("datetime")[begin:begin+H5_CHUNK_ROWS]
-                    keys=np.asarray(projected["datetime"])
+                    keys=np.asarray(projected,dtype=np.uint64)
                     if not len(keys):
                         continue
                     if prev is not None and int(keys[0])<=prev:
@@ -189,14 +191,20 @@ def purchased_paths(root):
     # Inspect ALL filenames regardless of year convention, including 2011+
     # files that might accidentally contain data from 2010.
     paths=[]
-    for file in folder.rglob("*.parquet"):
-        if (file.is_symlink() or not file.is_file()
+    examined=0
+    for file in folder.rglob("*"):
+        examined+=1
+        if examined>MAX_PQ_FILES*12:
+            raise ValueError("Purchased day directory entry budget exceeded")
+        # Do not silently skip a linked directory potentially hiding older
+        # purchased dates. Evidence must cover the entire selected tree.
+        if file.is_symlink():
+            raise ValueError("Linked purchased day file or directory")
+        if file.is_dir() or file.suffix.lower()!=".parquet":
+            continue
+        if (not file.is_file()
                 or not file.resolve().is_relative_to(folder.resolve())):
             raise ValueError("Unsafe purchased day Parquet path")
-        # A symlinked ancestor must never silently hide a second data store.
-        if any(p.is_symlink() for p in file.relative_to(folder).parents
-               if p!=Path(".")):
-            raise ValueError("Purchased day Parquet path has linked ancestor")
         paths.append(file)
         if len(paths)>MAX_PQ_FILES:
             raise ValueError("Purchased Parquet file budget exceeded")

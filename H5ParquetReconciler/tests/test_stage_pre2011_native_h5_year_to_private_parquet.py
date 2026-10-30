@@ -170,6 +170,21 @@ class OriginalH5NativeYearPrivateParquetTests(unittest.TestCase):
             # The private staging folder is removed because source changed.
             self.assertFalse(stage.exists())
 
+    def test_concurrent_private_job_name_collision_never_deletes_foreign_job(self):
+        with ready() as (root,inv,pq,stage,out,_):
+            original=M.private_folder
+            def concurrent_creator(*args):
+                path=original(*args)
+                path.mkdir(parents=True,exist_ok=False)
+                (path/"protected.txt").write_text("another job",encoding="utf-8")
+                return path
+            with patch.object(M,"private_folder",side_effect=concurrent_creator):
+                with self.assertRaises(FileExistsError):
+                    run(root,inv,2001,out,"stage",stage,True)
+            self.assertEqual((stage/"protected.txt").read_text(encoding="utf-8"),
+                             "another job")
+            self.assertFalse(out.exists())
+
     def test_new_purchased_day_file_arrives_during_stage_refuses_publish(self):
         with ready() as (root,inv,pq,stage,out,_):
             original=M.stage_year

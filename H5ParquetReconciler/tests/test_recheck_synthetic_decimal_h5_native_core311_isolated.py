@@ -220,7 +220,7 @@ class SyntheticDecimalNativeRereadTests(unittest.TestCase):
             with self.subTest(source=source.name):
                 original=source.read_bytes()
                 def tamper_proof(*args,**kwargs):
-                    source.write_bytes(original+b"\\n")
+                    source.write_bytes(original+b"\n")
                     return fake_worker_result()
                 try:
                     with self.assertRaisesRegex(

@@ -157,6 +157,24 @@ class PostSnapshotSelectedStockdayAuditTests(unittest.TestCase):
                 audit(root,sha,safe)
             self.assertFalse(safe.exists())
 
+    def test_raw_h5_field_order_variation_read_by_verified_column_names(self):
+        with ready() as (b,root,sha,safe,bought,purchased,stat):
+            import h5py,numpy as np
+            path=root/"HikyuuData"/"sz_day.h5"
+            with h5py.File(path,"r+") as f:
+                ds=f["data"]["SZ000001"]
+                old=ds[:]
+                reordered=np.dtype([(name,old.dtype.fields[name][0])
+                                    for name in reversed(old.dtype.names)])
+                recs=np.empty(len(old),dtype=reordered)
+                for name in old.dtype.names:
+                    recs[name]=old[name]
+                del f["data"]["SZ000001"]
+                f["data"].create_dataset("SZ000001",data=recs,dtype=reordered)
+            result=audit(root,sha,safe)
+            self.assertEqual(result["observed_h5_stock_days"],6)
+            self.assertFalse(result["whole_market_h5_date_completeness_certified"])
+
     def test_original_h5_timestamp_outside_or_invalid_key_refused(self):
         with ready() as (b,root,sha,safe,bought,purchased,stat):
             import h5py

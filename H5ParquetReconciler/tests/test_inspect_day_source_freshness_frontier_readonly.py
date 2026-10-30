@@ -31,7 +31,7 @@ def stamp(day):
 def make_h5(root,last_dates=None):
     import h5py,numpy as np
     root=root/"HikyuuData"
-    root.mkdir(parents=True)
+    root.mkdir(parents=True,exist_ok=True)
     dtype=np.dtype([("datetime","<u8"),("openPrice","<u4"),
                     ("highPrice","<u4"),("lowPrice","<u4"),
                     ("closePrice","<u4"),("transAmount","<u8"),
@@ -57,7 +57,7 @@ def make_h5(root,last_dates=None):
 def make_parquet(root,days=None,write_stats=True):
     import pyarrow as pa,pyarrow.parquet as pq
     path=root/"AllCycleAStockData"/"day"
-    path.mkdir(parents=True)
+    path.mkdir(parents=True,exist_ok=True)
     rows=[{"ts":stamp(day),"symbol":sym,
            "open":10.0,"high":10.2,"low":9.8,"close":10.1,
            "volume":1000.0,"amount":150000.25}

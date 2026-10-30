@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：10月14～29日购买Parquet真实查询0条，转向独立H5股票日候选核查
+
+- [x] Windows `test_append_private_purchased_day_date_delta.py` **14/14 OK（21.029秒）**，真实3股票`2026-10-14..29`购买Parquet读取无匹配新日线，SAFE`reports/private-purchased-new-day-01eb448e2c25.json`明确`new_purchased_rows=0`、`new_date_parquet_created=false`、`purchased_new_date_not_available_no_partition`、购买源文件stat清单9个，未访问H5、未改私有/生产指针或历史15行。PR #164已合并（`7fb4453`）。没有购买记录不等于交易所休市、不能自动认为H5整日补缺有效。
+- [x] 新`audit-post-snapshot-h5-stockdays-readonly.py`：不复用前一个0数据报告作为事实，而是独立限定新日期和老3股票，读取真实原`HikyuuData/{sh,sz}_day.h5`的**有界股票日H5Record日期键/结构/原始整数价格合理性**，并重新独立扫描购买Parquet `day`，逐日脱敏统计双方均有、仅H5有（**未经认证候选**）、仅购买有、双方均无。前后核对文件stat（非内容SHA）及已登记逻辑父版本完整性。明确不做全市场源差集/不认证H5补缺日完整性、不换算量额写行情、不生成Parquet或生产H5。13项合成测试与真实H5检查**待Windows运行**，参见[2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md](2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md)。
+- [ ] 根据真实H5结果决定下一步：若有限股票有新H5记录，再使用已有全市场read-only reconcile+offline gate+live重验独立审核对应**完整交易日**后方可分区私有补缺；若H5也没有，则首先追查供应商更新落点而非伪造日期。即使审核通过，H5整数金额单位仍不允许直接转写生产原生H5。
+
+
+
 ## ★ 2026-10-30：逻辑SHA直接查询真实15条已验收；开始真实**新增交易日期**增量物化
 
 - [x] Windows `test_query_private_joined_day_by_version_sha_readonly.py` **16/16 OK（21.229秒）**，显式不可变逻辑SHA `bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14`直接返回3只股、15条私有统一日线（购买Parquet3、H5整日缺口候选12），SAFE`reports/private-logical-sha-read-423975e70449.json`记录SHA/manifest/行键完整核验成功、生产/私有指针不访问、不改原市场文件，明确不重验实时数据源。PR #163合并main（`81706893`）。

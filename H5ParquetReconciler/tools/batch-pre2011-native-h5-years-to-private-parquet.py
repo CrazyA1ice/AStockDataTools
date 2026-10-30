@@ -119,7 +119,28 @@ def digest_private_rows(file,year):
         pf.close()
 
 
-def checked_existing(known,selected,inventory_sha):
+def source_year_native_digest(root,year,max_rows):
+    """Independently compare staged private content with current original H5.
+
+    Stat fingerprints alone cannot detect a same-size/same-mtime replacement.
+    Only the requested year is reread; the 1990-2010 key scan remains once
+    per batch, not per year.
+    """
+    digest=hashlib.sha256()
+    count=0
+    markets=Counter()
+    for row in SINGLE.iterate_native_year(root,year):
+        digest.update(SINGLE.row_bytes(row))
+        count+=1
+        markets[row["symbol"][:2]]+=1
+        if count>max_rows:
+            raise ValueError("Current source H5 year exceeds audited keys")
+    if count!=max_rows:
+        raise ValueError("Current H5 year differs from source inventory count")
+    return digest.hexdigest(),dict(sorted(markets.items()))
+
+
+def checked_existing(root,known,selected,inventory_sha):
     matches={}
     for folder in list_jobs():
         if not re.fullmatch(r"native_pre2011_(?:199[0-9]|200[0-9]|2010)_[a-f0-9]{12,32}",
@@ -155,6 +176,10 @@ def checked_existing(known,selected,inventory_sha):
         if (count!=expected or stream_hash!=m.get("raw_row_stream_sha256")
                 or markets!=m.get("per_market_rows")):
             raise ValueError("Historical private year full decoding/checksum mismatches")
+        # Exact original raw H5 row-value source recheck, not just mtime.
+        current_hash,current_markets=source_year_native_digest(root,year,expected)
+        if current_hash!=stream_hash or current_markets!=markets:
+            raise ValueError("Historical private year differs from live original H5 values")
         if year in matches:
             raise ValueError("Multiple verified private raw stages for same year")
         matches[year]={
@@ -211,7 +236,7 @@ def run(root,inventory_report,years,out,action="plan",job_id=None,allow_stage=Fa
         raise ValueError("Historical annual key count outside stage budget")
     if sum(expected.values())>MAX_BATCH_ROWS:
         raise ValueError("Historical batch key count outside stage budget")
-    existing=checked_existing(h5,selected,inventory_sha)
+    existing=checked_existing(market,h5,selected,inventory_sha)
     needed=[year for year in selected if expected[year]>0 and year not in existing]
     newly=[]
     if action=="stage":
@@ -222,7 +247,7 @@ def run(root,inventory_report,years,out,action="plan",job_id=None,allow_stage=Fa
             newly.append(year)
             SINGLE.sources_unchanged(market,h5files,pqfiles)
         # Verify ALL versions, including newly generated jobs, before SAFE.
-        existing=checked_existing(h5,selected,inventory_sha)
+        existing=checked_existing(market,h5,selected,inventory_sha)
         if any(year not in existing for year in selected if expected[year]):
             raise ValueError("Not all nonempty historical annual partitions are verified")
     SINGLE.sources_unchanged(market,h5files,pqfiles)

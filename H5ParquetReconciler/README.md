@@ -6,6 +6,14 @@
 
 当前仅实现①–③的**只读基础版本**。无法直接承诺转换与合并是安全的，详情见 [完整需求文档](docs/REQUIREMENTS.md)、[当前审计规则与已知限制](docs/TECHNICAL_NOTES.md)。
 
+## ★ 2026-10-30跨年份日线倍率数值样本10/10已验收；坚持Parquet主库实施主线
+
+用户Windows新跨年键定位回归**10/10全部OK（4.655秒）**；真实`real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json`证实2025-09-30及2026-08-24双股票4个日线样本的OHLC raw/1000、volume raw×100、amount raw×1000候选各**4/4**正非零匹配。加此前2026-09-28/29/30同两股6条样本，合计**10/10股票日、2025/2026两个年份、三个不同月份**符合相同H5原始整数↔Parquet候选数值倍率。仅发现日2026-09-30的2条另经Hikyuu 2.8.1真实native C++ KRecord HMAC验证；不将全部10条表述为原生解码验证。
+
+2025年度因12/12行组Footer时间范围交叠，实际先只读1,333,385行`ts/symbol`键定位，然后只读1个目标行组**123,139行OHLCVA**；跨年合计读取OHLCVA **241,108行/3组**。没有改动购买Parquet、原始H5或正式SQLite，尚**未认证**供应商“股/手/元/万元”、价格复权与全部周期单位，也不批准真实H5镜像转换。
+
+新增[仅依赖五份脱敏SAFE的跨年份日线候选证据归档工具](tools/audit-parquet-primary-day-crossyear-factor-evidence-offline.py)，配套8项纯JSON测试和[操作说明](docs/2026_DAY_CROSSYEAR_SAMPLE_EVIDENCE_GATE.md)。下一步按用户既定要求推进**购买Parquet主库优先、已暂存4日22,191行私有overlay安全消费、Hikyuu原生H5镜像、通达信盘后增量**，不继续研究历史五分钟线细微差异成因。
+
 ## ★ 2026-10-08首日H5→Parquet私有暂存已实机回传；下一步封装四日不可变版本（2026-10-29）
 
 用户回传`manifest.json`：2026-10-08原H5-only计数=5,546，暂存Parquet行数=5,546，BJ=339/SH=2,314/SZ=2,893，私有SHA-256、来源报告与日线gate哈希均已记录，`state=staged_verified_not_promoted`，未覆盖原始数据。当前并非正式统一主库、不是全部10月行情；10月14～28的真实日线仍未提供。

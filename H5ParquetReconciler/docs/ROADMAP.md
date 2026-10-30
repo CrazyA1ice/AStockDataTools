@@ -6,6 +6,14 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 真实日线跨年10/10候选倍率通过：归档证据，继续Parquet主源/Hikyuu镜像路线（2026-10-30）
+
+- [x] 用户Windows第151轮修复后的**10/10项**键定位跨年合成测试全部OK（4.655秒）；实际`real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json`已生成并上传。2025-09-30与2026-08-24固定两股各2条真实日线（新增4股票日），Parquet价≈H5 raw整数÷1000四字段各4/4、量≈raw transCount×100为4/4、额≈raw transAmount×1000为4/4，量额均为4/4正数非零，六倍率网格未见其他候选命中。加此前2026-09-28/29四条及2026-09-30两条，合计**10/10股票日、三个不同月份、跨2025与2026**支持相同候选数值倍率。
+- [x] 2025年度1,333,385条`ts/symbol`键**重新扫描88批**，仅定位1个RowGroup并实际解码**123,139行OHLCVA**；2025+2026合计OHLCVA **241,108行/3组**，未放宽2025年度≤2组/≤150,000行情预算。跨年SAFE证明源Footer/stat前后未变、无市场H5/SQLite写入，**不是整份源文件内容SHA256**。
+- [x] 仅2026-09-30发现日两条raw H5↔Hikyuu2.8.1真正native C++ KRecord的HMAC实测**2/2**，其它8条是raw H5整数↔Parquet候选倍率，不得误称10条都经native C++；Parquet供应商价格复权、时标及成交量额物理单位仍未独立认证，任何生产H5镜像/主库改写资格继续false。**用户此前明确停止历史分钟线差异机理研究**，后续沿既定Parquet优先、H5只补真实缺失、Hikyuu原生镜像、通达信盘后增量实施主线。
+- [x] 新增`tools/audit-parquet-primary-day-crossyear-factor-evidence-offline.py`：只审核**五份已生成的脱敏SAFE**（2026-09发现日原始跨源2/2、真实原生HMAC2/2、9月留出4/4、2025年度键定位、跨年4/4），核对SHA链、分日期2股非零倍率网格、四价格字段及读取预算，输出10股票日候选证据SAFE。**完全不再读取市场源、不运行原生C++、不写生产镜像**。新增**8项纯JSON离线合成测试（Windows待实测）**，始终不认证物理单位或全市场生产转换，详见[日线10样本归档](2026_DAY_CROSSYEAR_SAMPLE_EVIDENCE_GATE.md)。
+- [ ] 用户先跑8项离线测试与五SAFE聚合，再沿已完成2026-10四日**22,191行私有日线overlay**的安全消费、Hikyuu原生H5隔离镜像流程推进，不再无意义重复五分钟机理实验。正式单位认证和全市场镜像仍禁止。
+
 ## ★ 跨年键定位验证测试：预算缩小后的提前拒绝与独立读取保护（2026-10-30）
 
 - [x] 用户Windows对第150轮新增的`test_probe_real_h5_parquet_crossyear_keylocated_readonly.py`执行**9项测试，8项ok、1项FAIL（4.302秒）**，唯一失败`test_annual_150k_ohlcva_budget_remains_hard`的测试期望错误消息`Cannot safely inspect key-located annual`，而实际错误为`2025 annual key-only prior SAFE not qualified`。

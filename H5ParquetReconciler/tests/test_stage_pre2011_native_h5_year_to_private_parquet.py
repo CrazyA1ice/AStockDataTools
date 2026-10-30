@@ -170,6 +170,24 @@ class OriginalH5NativeYearPrivateParquetTests(unittest.TestCase):
             # The private staging folder is removed because source changed.
             self.assertFalse(stage.exists())
 
+    def test_new_purchased_day_file_arrives_during_stage_refuses_publish(self):
+        with ready() as (root,inv,pq,stage,out,_):
+            original=M.stage_year
+            def source_arrival(*args):
+                result=original(*args)
+                # This file was NOT present in the validated footer inventory.
+                # Its older timestamp could overlap the H5-only year, so
+                # the current private staging must fail closed.
+                F.make_pq(root,days=("2001-01-02",),
+                          name="unexpected-older-day.parquet")
+                return result
+            with patch.object(M,"stage_year",side_effect=source_arrival):
+                with self.assertRaisesRegex(
+                        ValueError,"source file set changed"):
+                    run(root,inv,2001,out,"stage",stage,True)
+            self.assertFalse(stage.exists())
+            self.assertFalse(out.exists())
+
     def test_bad_h5_native_datetime_or_unexpected_count_refuses_stage(self):
         with ready() as (root,inv,pq,stage,out,_):
             old=M.iterate_native_year

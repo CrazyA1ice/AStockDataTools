@@ -27,6 +27,8 @@
 
 **这些新增14项测试尚待Windows实际运行；正式原生H5金额映射和生产自动写入仍明确禁止。**
 
+> **Windows回归修复（2026-10-30）：** 首轮14项测试中13项`ok`，仅`test_forged_or_symlink_private_pointer_rejected`因测试程序自行创建符号链接时遇到`WinError 1314`而报错。这是非管理员Windows账户的文件系统创建权限，不是私有指针校验器允许了符号链接。PR分支提交`4ed93f1`已改为用`unittest.mock.patch.object(Path, "is_symlink", ...)`确定性模拟指针指向符号链接，依然要求`read_pointer()`拒绝并报出`symlink`，**没有跳过验证**。首轮命令自动中止，真实`prepare`及`status`均未运行；新14项通过情况待Windows复测。
+
 ## Windows本次建议只运行“prepare”和status，不触及指针
 
 在仓库根路径（PowerShell一整行）：

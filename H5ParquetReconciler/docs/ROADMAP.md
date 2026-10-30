@@ -3,7 +3,7 @@
 ## ★ 2026-10-30：10月14～29日购买Parquet真实查询0条，转向独立H5股票日候选核查
 
 - [x] Windows `test_append_private_purchased_day_date_delta.py` **14/14 OK（21.029秒）**，真实3股票`2026-10-14..29`购买Parquet读取无匹配新日线，SAFE`reports/private-purchased-new-day-01eb448e2c25.json`明确`new_purchased_rows=0`、`new_date_parquet_created=false`、`purchased_new_date_not_available_no_partition`、购买源文件stat清单9个，未访问H5、未改私有/生产指针或历史15行。PR #164已合并（`7fb4453`）。没有购买记录不等于交易所休市、不能自动认为H5整日补缺有效。
-- [x] 新`audit-post-snapshot-h5-stockdays-readonly.py`：不复用前一个0数据报告作为事实，而是独立限定新日期和老3股票，读取真实原`HikyuuData/{sh,sz}_day.h5`的**有界股票日H5Record日期键/结构/原始整数价格合理性**，并重新独立扫描购买Parquet `day`，逐日脱敏统计双方均有、仅H5有（**未经认证候选**）、仅购买有、双方均无。前后核对文件stat（非内容SHA）及已登记逻辑父版本完整性。明确不做全市场源差集/不认证H5补缺日完整性、不换算量额写行情、不生成Parquet或生产H5。13项合成测试与真实H5检查**待Windows运行**，参见[2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md](2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md)。
+- [x] 新`audit-post-snapshot-h5-stockdays-readonly.py`：不复用前一个0数据报告作为事实，而是独立限定新日期和老3股票，读取真实原`HikyuuData/{sh,sz}_day.h5`的**有界股票日H5Record日期键/结构/原始整数价格合理性**，并重新独立扫描购买Parquet `day`，逐日脱敏统计双方均有、仅H5有（**未经认证候选**）、仅购买有、双方均无。前后核对文件stat（非内容SHA）及已登记逻辑父版本完整性。明确不做全市场源差集/不认证H5补缺日完整性、不换算量额写行情、不生成Parquet或生产H5。14项合成测试与真实H5检查**待Windows运行**，参见[2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md](2026_POST_SNAPSHOT_H5_SELECTED_STOCKDAY_AUDIT.md)。
 - [ ] 根据真实H5结果决定下一步：若有限股票有新H5记录，再使用已有全市场read-only reconcile+offline gate+live重验独立审核对应**完整交易日**后方可分区私有补缺；若H5也没有，则首先追查供应商更新落点而非伪造日期。即使审核通过，H5整数金额单位仍不允许直接转写生产原生H5。
 
 
@@ -145,14 +145,14 @@
 - [x] 回查用户此前实际上传`parquet-primary-footer-inventory-2011-2026.json`：2025年日线**年度单文件**`AllCycleAStockData/day/2025.parquet`，**1333385个footer行、12组**，时间包络覆盖2025年；2026-08是**月文件**`day/2026-08.parquet`，**117969行、2组**。旧工具假设2025-09也是月文件，属源码路径选择错误，不能误报“2025历史源不存在”。
 - [x] 改造既有跨年工具`tools/probe-real-h5-parquet-crossyear-day-readonly.py`：固定2025-09-30从`day/2025.parquet`只读，先验证所有年度rowgroups int64-ts min/max位于该年、年度Footer≤160万行/≤16组；仅选择时间包络覆盖9/30的**最多2组**，且选中组总行数≤15万才真正解码。2026-08-24仍调用已实测的原月度Reader≤15万行/32组；跨年累计实际读取≤30万行/64组。**不能**把133万行年度源交给旧月度Reader全扫描；遇到无统计、超预算、缺数据/重复，严禁自动重试全部年度或绕过。
 - [x] 新SAFE只记录年度Footer总行数/组数、实际被解压行组数、两个固定日期倍率与零值对照，不输出原始OHLCVA/时间戳/证券代码/源路径；全部物理单位、历史月份通用性、全市场H5镜像认证仍false。未读写用户真实市场文件。
-- [x] 扩展原13项合成测试至**16项，待Windows实测**，含2025年12组synthetic yearly数据、年度ts Footer统计缺失/时间越界、目标行组超预算与单个年份倍率冲突，保证只读剪枝。参见[2025年度Parquet格式兼容修复](2026_REAL_H5_PARQUET_CROSSYEAR_DAY_FACTORS.md)。下一步先确认新`day/2025.parquet`确实存在、16项测试全部OK，再执行同一只读跨年试验使用原先未生成的v1 SAFE名称。
+- [x] 扩展原14项合成测试至**16项，待Windows实测**，含2025年12组synthetic yearly数据、年度ts Footer统计缺失/时间越界、目标行组超预算与单个年份倍率冲突，保证只读剪枝。参见[2025年度Parquet格式兼容修复](2026_REAL_H5_PARQUET_CROSSYEAR_DAY_FACTORS.md)。下一步先确认新`day/2025.parquet`确实存在、16项测试全部OK，再执行同一只读跨年试验使用原先未生成的v1 SAFE名称。
 
 ## ★ 九月份6/6真实日线比对已通过：进入2025/2026跨月日线小样本（2026-10-30）
 
 - [x] 用户Windows运行第144轮修复后的12项合成Parquet/H5测试**全部OK（2.241秒）**；成功只读生成`real-h5-parquet-heldout-day-factors-20260928-29-v1.json`，证实2026-09-28、29 SH600000和SZ000001各1根共4条真实日线：原始H5量×100候选**4/4**、原始H5成交额×1000候选**4/4**、开高低收raw÷1000各**4/4**，成交量和成交额共4/4均正数非零，不是全零凑出的伪命中。使用一个已审核2026-09 Parquet月文件，原始行扫描236416、4个行组（同一月文件按两天两次受控读取）。源H5/Parquet未改；当日未重复运行native C++。加上之前2026-09-30原生真实H5样本2/2，该月份**共6个股票日**支持上述倍率，仅一个月尚不足以证实跨年通用。
 - [x] 增加`tools/probe-real-h5-parquet-crossyear-day-readonly.py`，不重复9月样本，固定选择**2025-09-30**与**2026-08-24**，两只股票各1根，共4个跨年两个月新股票日；必须先完整验证已有真实2026-09-30原始H5↔Parquet SAFE、同日Hikyuu native C++ 2/2 HMAC SAFE、2026-09-28/29留出日4/4 SAFE及三份文档的互相SHA256对应。每个Parquet月文件分别≤150000行/32组，总扫描预算≤300000/64组；仅两份原始H5文件以只读二分提取四条日线，不执行新原生C++、不打开正式SQLite或分钟线、绝不写市场H5。
 - [x] SAFE只保留两个新日期各自候选倍率和价格容差的计数、正非零/双零/单零数量、输入脱敏报告SHA256、总扫描预算、安全拒绝标记，禁止商业行情OHLCVA、原始H5整数、时间戳值、源路径导出。若某个历史日线缺文件、欠行、重复或schema不符，直接拒绝，不自行换股票、补日期或进入宽范围扫描。即使跨年4/4，供应商物理单位和全市场H5镜像资格仍false。
-- [x] 新增**13项仅合成小Parquet/H5回归（尚待用户Windows实测）**，验证成功4条配对、跨年单日冲突不隐藏、零值不能产生倍率支持、历史证据链、路径拒绝、缺月文件、重复键及源扫描预算。参见[跨年日线小样本倍率试验](2026_REAL_H5_PARQUET_CROSSYEAR_DAY_FACTORS.md)。下一步先13项测试，并确认`D:\\stock\\AllCycleAStockData\\day\\2025-09.parquet`与`2026-08.parquet`存在，再运行一次只读小样本并上传SAFE；新样本上的native KRecord仍未重验。
+- [x] 新增**14项仅合成小Parquet/H5回归（尚待用户Windows实测）**，验证成功4条配对、跨年单日冲突不隐藏、零值不能产生倍率支持、历史证据链、路径拒绝、缺月文件、重复键及源扫描预算。参见[跨年日线小样本倍率试验](2026_REAL_H5_PARQUET_CROSSYEAR_DAY_FACTORS.md)。下一步先14项测试，并确认`D:\\stock\\AllCycleAStockData\\day\\2025-09.parquet`与`2026-08.parquet`存在，再运行一次只读小样本并上传SAFE；新样本上的native KRecord仍未重验。
 
 ## ★ Windows留出日12项单测：4处异常文案大小写误报（2026-10-30）
 
@@ -182,13 +182,13 @@
 - [x] 发现真实worker使用`stock.get_kdata(hk.Query(-64,hk.Query.DAY))`，与此前用户Windows实测合成H5原生读取6/6使用`stock.get_kdata(hk.Query(0,3,hk.Query.DAY))`不一致；Hikyuu Query常见签名为`start,end,ktype`，此前2个位置参数可能把DAY按`end`解释。**不能根据v2直接认定它是根因**。
 - [x] 修正真实worker仅在隔离子进程里先`n=stock.get_count(hk.Query.DAY)`，要求`1<=n<=25000`，然后`hk.Query(max(0,n-64),n,hk.Query.DAY)`，只访问末尾≤64条日线，完全沿用已在合成native里真正通过的3参数构造。所有原始H5仍只读；无需读取、修改或重扫Parquet源。
 - [x] 在子进程增加固定白名单`native_status`与`native_last_work_phase`：分别标明股票查找、原生日线计数、查询构造、`get_kdata`调用、返回数检查、目标日缺失/重复、HMAC量化。**不保存任何源H5路径、原始整数、价格金额量、HMAC密钥/摘要、C++异常消息或stdout/stderr**，只把既定`failed_at_...`/日期命中类别带出；fail-closed保留。
-- [x] 新增3项模拟回归，原有13项升为**16项，待用户Windows实际复验**。见[真实H5 native查询故障诊断](2026_REAL_NATIVE_H5_QUERY_FAILURE_CLASSIFICATION.md)。下一次选择全新的`realday003`与`real-hikyuu-native-20260930-hmac-v3.json`，先16项OK再做真实两股H5只读原生验证。即便2/2通过，商业Parquet物理单位和正式全市场H5镜像仍关闭。
+- [x] 新增3项模拟回归，原有14项升为**16项，待用户Windows实际复验**。见[真实H5 native查询故障诊断](2026_REAL_NATIVE_H5_QUERY_FAILURE_CLASSIFICATION.md)。下一次选择全新的`realday003`与`real-hikyuu-native-20260930-hmac-v3.json`，先16项OK再做真实两股H5只读原生验证。即便2/2通过，商业Parquet物理单位和正式全市场H5镜像仍关闭。
 
 ## ★ Windows Hikyuu native HMAC回归误报修复（2026-10-29）
 
 - [x] 用户Windows最新测试`test_verify_real_hikyuu_h5_native_day_isolated.py`：**12项中7项ok、5项FAIL（1.538秒）**。五项失败的堆栈都停在测试`runner()`内的`self.assertNotIn("Parquet",str(kwargs))`；`kwargs["cwd"]`是合法的Windows合成测试目录`.../H5ParquetReconciler/work/h5_mirror/real_day_native/run001`，**仅模块名包含Parquet，不代表子进程读取了Parquet文件**。五个错误全是同一条断言误报，不是原生核心解码结果。
 - [x] 在`tests/test_verify_real_hikyuu_h5_native_day_isolated.py`中删去对全部`kwargs`做字符串扫描的断言，改为核对**准确进程参数**：只允许`-I -c`、恰好一个隔离运行目录`run001`、与`cwd`一致；H5文件参数仅是原合成测试root下直系`sh_day.h5`、`sz_day.h5`，后缀是`.h5`而非`.parquet`；模拟进程环境仅有已知测试键`FOO`和一次性HMAC密钥。不改变真实H5/Parquet读取代码，不放宽源文件门禁。
-- [x] 新增回归`test_native_runner_allows_h5parquetreconciler_module_name`，显式保证路径含`H5ParquetReconciler`也能通过合法H5参数核验。本轮原12项升为**13项，待Windows验收**。只有13项全部OK，才运行此前#140定义的真实两股H5 native HMAC小样本；若真实native仍失败，按SAFE`native_status`和`native_last_work_phase`排查，不触碰生产H5、Parquet、SQLite，不把候选倍率误当已认证物理单位。
+- [x] 新增回归`test_native_runner_allows_h5parquetreconciler_module_name`，显式保证路径含`H5ParquetReconciler`也能通过合法H5参数核验。本轮原12项升为**14项，待Windows验收**。只有14项全部OK，才运行此前#140定义的真实两股H5 native HMAC小样本；若真实native仍失败，按SAFE`native_status`和`native_last_work_phase`排查，不触碰生产H5、Parquet、SQLite，不把候选倍率误当已认证物理单位。
 
 ## ★ 真实Hikyuu 2.8.1原生KRecord与原始H5记录：两股单日隔离HMAC比对（2026-10-29）
 
@@ -273,7 +273,7 @@
 
 ## ★ 合成Decimal Parquet→H5整数往返成功：新生成H5的第二次native验收（2026-10-29）
 
-- [x] 用户在Windows运行修正后的**13/13项合成数值精度与Parquet/H5往返测试，全数OK（5.646秒）**，包括真正的`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`集成测试（没有skipped）；本机实际运行`synthetic-parquet-to-hikyuu-h5-numeric-gate.py`，SAFE `synthetic-parquet-h5-decimal-gate-v1.json`证实`all_six_synthetic_records_exactly_matched_native_baseline=true`，两只股票分别3条，与先前经Hikyuu 2.8.1 native C++读取的合成基准H5逐字段整数相同，四个新Parquet/H5文件输出哈希齐全。
+- [x] 用户在Windows运行修正后的**13/14项合成数值精度与Parquet/H5往返测试，全数OK（5.646秒）**，包括真正的`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`集成测试（没有skipped）；本机实际运行`synthetic-parquet-to-hikyuu-h5-numeric-gate.py`，SAFE `synthetic-parquet-h5-decimal-gate-v1.json`证实`all_six_synthetic_records_exactly_matched_native_baseline=true`，两只股票分别3条，与先前经Hikyuu 2.8.1 native C++读取的合成基准H5逐字段整数相同，四个新Parquet/H5文件输出哈希齐全。
 - [x] 明确报告保留`new_h5_files_tested_by_native_driver=false`和`actual_purchased_parquet_units_verified=false`、`licensed_parquet_to_h5_mapping_certified=false`、`ready_for_full_market_mirror=false`，因此下一步不是实盘转换，而是对新转换生成的两份合成H5**再次独立执行native KData读取**，建立完整合成闭环。
 - [x] 新增`tools/recheck-synthetic-decimal-h5-native-core311-isolated.py`，仅接受成功的同canary SHA、原先core311 SAFE和新Decimal桥接SAFE，且要求源目录为模块`work/h5_mirror/`既存直属子目录；四个虚构Parquet/H5文件均前后核对SHA，不接收任何真实行情路径。重用已通过Windows native读取验收的`core311` WORKER和固定6行数值校验，在新的`_native_h5_281/run001`私有目录初始化虚构SQLite，不访问用户正式行情、插件、数据库或付费Parquet。
 - [x] 新增**9项仅离线模拟回归（待Windows执行）**，覆盖新生成H5的SHA、先前SAFE证据约束、实际native输出解析、失败/超时不误认证、原/新H5运行中篡改、目录/报告重用拒绝及用户数据路径阻断。SAFE只保存成功状态、阶段和行数，绝不保存raw stdout/stderr/真实OHLCVA。说明文档：[新合成Decimal H5二次原生读取](2026_SYNTHETIC_DECIMAL_BRIDGE_NATIVE_REREAD.md)。
@@ -284,8 +284,8 @@
 
 - [x] Windows本机12项新增测试：**11项OK、1项ERROR（19.838秒）**。`test_synthetic_parquet_to_h5_roundtrip_matches_real_native_read_baseline`在`dtype=np.dtype(G.LAYOUT)`失败：`TypeError: Tuple must have size 2, but has size 7`。由于7个`(name,type)`字段描述以外层**tuple**传给NumPy，误触发另一种`dtype`构造协议。生产`generate()`内部的`np.dtype(LAYOUT)`含有相同潜在错误，所以必须同步修改两处，不能只修测试。
 - [x] 新增`native_h5_dtype(np)`专用构造函数，将7项字段描述转换为**list**后传入`np.dtype(list(LAYOUT))`，强制核对字段名/偏移0、4、12、16、20、24、32和固定40字节。`generate()`和测试fixture均使用该函数。
-- [x] 新增1项不依赖PyArrow的NumPy回归测试，目前**共13项（待Windows本机复验）**；仅纯合成数据路径，不改真实行情、商业Parquet、已证实core311原生读取基准或生产查询。
-- [ ] 拉取修复后运行13项，重点检查PyArrow集成测试必须`ok`且不能`skipped`；然后再执行首次合成Decimal桥接`synthetic_decimal_bridge_v1`，输出全新SAFE。真实商业Parquet单位映射及全市场镜像始终禁止。
+- [x] 新增1项不依赖PyArrow的NumPy回归测试，目前**共14项（待Windows本机复验）**；仅纯合成数据路径，不改真实行情、商业Parquet、已证实core311原生读取基准或生产查询。
+- [ ] 拉取修复后运行14项，重点检查PyArrow集成测试必须`ok`且不能`skipped`；然后再执行首次合成Decimal桥接`synthetic_decimal_bridge_v1`，输出全新SAFE。真实商业Parquet单位映射及全市场镜像始终禁止。
 
 ## ★ Hikyuu 2.8.1 native六条合成K线首次实际读取成功 → 进入Parquet数值转换精度门禁（2026-10-29）
 
@@ -297,7 +297,7 @@
 
 ## ★ 修复真实原生C++ H5读取的Windows GBK解码崩溃（2026-10-29）
 
-- [x] 用户Windows上一轮原生读取**13/13项离线回归全部OK（0.876秒）**，使用真实Python311、已成功的core311 SAFE、两份合成H5首次执行`--run-id run001`时，父进程`subprocess.run(capture_output=True,text=True)`读取混合编码Hikyuu C++日志触发`UnicodeDecodeError: 'gbk' codec can't decode byte 0xac`，导致`proc.stdout=None`，后续`parse_native`又对None调用`splitlines()`触发`AttributeError`。因此**没有SAFE native报告，也尚不知道真实native读取成功与否**；不能把这个异常当成H5值不匹配或初始化失败。
+- [x] 用户Windows上一轮原生读取**13/14项离线回归全部OK（0.876秒）**，使用真实Python311、已成功的core311 SAFE、两份合成H5首次执行`--run-id run001`时，父进程`subprocess.run(capture_output=True,text=True)`读取混合编码Hikyuu C++日志触发`UnicodeDecodeError: 'gbk' codec can't decode byte 0xac`，导致`proc.stdout=None`，后续`parse_native`又对None调用`splitlines()`触发`AttributeError`。因此**没有SAFE native报告，也尚不知道真实native读取成功与否**；不能把这个异常当成H5值不匹配或初始化失败。
 - [x] 生产工具改为`capture_output=True,text=False`，由父进程保留子进程输出的**原始bytes，仅识别固定的ASCII阶段标记及JSON行**；不依赖系统GBK、CP936或UTF-8解码普通C++日志。`parse_native`和`last_native_phase`都显式允许`bytes`、`str`（旧测试）和`None`；缺标记、重复标记、无法解析JSON、非零返回码都fail closed，仍只输出脱敏SAFE状态。
 - [x] 添加3项离线回归，合计**16项待Windows执行**：混合UTF-8/GBK非法字节并含有效SAFE标记、进程`stdout=None`和错误JSON均无法认证、重复/损坏标记及非零退出拒绝；强调所有子进程`stdout/stderr`均不落SAFE文件，源H5 SHA前后检查不变。
 - [ ] `run001`目录已由上次尝试创建，**绝不覆盖或删除**。用户应在拉取主分支、16项测试全部OK后，用新`--run-id run002`及`reports/hikyuu-native-read-core311-v2.json`再尝试原生6行合成读取。若仍失败，根据`native_h5_read_status`和`last_native_phase`诊断；在原生成功前不得进入实际购买Parquet数值缩放/真实镜像写入。
@@ -307,8 +307,8 @@
 - [x] 用户Windows新core311-only离线测试**9/9 OK（0.387秒）**；真实`D:\\software\\Python311\\python.exe`执行后SAFE `hikyuu-core311-only-preflight-v1.json`得到`core311_bindings_ready=true`，`last_core311_phase=finished`，版本2.8.1，`StockManager`/`Stock`/`Query`/`Parameter`/`KDataDriver`/`DataDriverFactory`/`KRecord`均为True，且没有完整包初始化、没有读取native H5/用户行情。这证实无需继续追究绘图模块即可访问核心C++绑定。
 - [x] 将先前原生6条合成H5读取工具改为仅导入`hikyuu.core`及已验证的编译扩展`cpp.core311`，不再执行卡住的顶层`hikyuu/__init__.py`；原有SHA哈希复核、`-I`外部Python311子进程、仅2只虚构股票SQLite注册库、仅2份已验证合成H5、空插件目录、无原始行情/付费Parquet写入安全界限保留。
 - [x] `--core-proof`设为必须提供的**真实、先前成功的同canary SAFE凭据**，同时检验版本、7项API、合成SHA相同、从未初始化StockManager/原生数据驱动/正式路由；不匹配直接拒绝启动native。每次子进程尝试仅到`Stock.get_kdata(Query(0,3,DAY))`读取2×3条虚构日线，核对日期及所有OHLCVA整数缩放。
-- [x] Native SAFE新增`last_native_phase`固定标签，用于区分core311、虚构SQLite、StockManager初始化、KData读取阶段；不会保存用户路径、stdout/stderr或原始行情数据。新增原生读取离线验证至**13项（待Windows实测）**，含缺失/伪造core proof、core331导入和native测试误认证、半路超时进度脱敏。
-- [ ] 用户实际运行13项离线测试，再用新`hikyuu-native-read-core311-v1.json`首次真正执行6条虚构KData读取。**当前尚无原生H5读出这6条的真实结果**，不能将`core311_bindings_ready`替代为原生H5兼容认证；真实H5/付费Parquet单位转换研究仍未开始。Windows命令及run-id规则详见[原生H5试点更新](2026_HIKYUU_281_SYNTHETIC_NATIVE_READ.md)。
+- [x] Native SAFE新增`last_native_phase`固定标签，用于区分core311、虚构SQLite、StockManager初始化、KData读取阶段；不会保存用户路径、stdout/stderr或原始行情数据。新增原生读取离线验证至**14项（待Windows实测）**，含缺失/伪造core proof、core331导入和native测试误认证、半路超时进度脱敏。
+- [ ] 用户实际运行14项离线测试，再用新`hikyuu-native-read-core311-v1.json`首次真正执行6条虚构KData读取。**当前尚无原生H5读出这6条的真实结果**，不能将`core311_bindings_ready`替代为原生H5兼容认证；真实H5/付费Parquet单位转换研究仍未开始。Windows命令及run-id规则详见[原生H5试点更新](2026_HIKYUU_281_SYNTHETIC_NATIVE_READ.md)。
 
 ## ★ 绕过绘图模块的Hikyuu 2.8.1 core311隔离预检（2026-10-29）
 
@@ -805,14 +805,14 @@ Parquet原始记录全部在内存候选240 END条中参与一次；四类6字�
 ## 最新节点：Parquet独立1min→5min真实核验141/144严格一致，验证09:30额外开盘分钟（2026-10-27）
 
 - [x] 用户2026-09-28的真实Parquet-only报告显示SH688629、SH688017、SH688172各有241根一分钟及48根五分钟，两周期所选源记录无重复键/无非有限值/无非法时间标签，最优普通窗口均为`five_start_minute_end`：五分钟起始标签T，对应一分钟结束标签T+1..T+5。各股票完整48/48，严格OHLC+量+额**47/48**，合计141/144严格通过；每只仅**上午一根**开盘、量、额不符，其他OHLC及下午三股各24/24根、合计72/72根六字段严格吻合。
-- [x] 3股统一多出一分钟记录(241 vs常规240)，且唯一异常字段结构相同；09:30的独立开盘/集合竞价一分钟单独归属首根五分钟，是有力但尚未验证的候选解释。工具新增第五种假说`five_start_minute_end_plus_opening_0930`，仅第一根使用额外09:30分钟，保留其余47根普通规则；输出具体未对齐5min时间标签、异常字段与09:30一分钟存在性。新增3项合成测试，旧13项保留，共16项。详见[09:30特殊分钟验证](2026_09_28_PARQUET_OPENING_0930_SPECIAL_MINUTE_AUDIT.md)。
+- [x] 3股统一多出一分钟记录(241 vs常规240)，且唯一异常字段结构相同；09:30的独立开盘/集合竞价一分钟单独归属首根五分钟，是有力但尚未验证的候选解释。工具新增第五种假说`five_start_minute_end_plus_opening_0930`，仅第一根使用额外09:30分钟，保留其余47根普通规则；输出具体未对齐5min时间标签、异常字段与09:30一分钟存在性。新增3项合成测试，旧14项保留，共16项。详见[09:30特殊分钟验证](2026_09_28_PARQUET_OPENING_0930_SPECIAL_MINUTE_AUDIT.md)。
 - [ ] 用户Windows运行更新后的独立Parquet报告`pq-only-2026-09-28-1min-to-5min-opening0930.json`和完整unittest，查看新假说是否真实恢复3只股票**144/144严格一致**；先前报告没有直接证明具体出错根是09:30，不得擅自把猜想写成已证实。
 - [ ] 若第一日通过，再扩展不同日/交易所，严格检查日线/1min/5min交易日总额量、前后分钟衔接及不完整证券日，再考虑Parquet历史主源+通达信盘后增量同步。所有付费原始数据只读。
 
 ## 最新节点：用户倾向Parquet作历史主源，先核验Parquet自身1min→5min（2026-10-27）
 
 - [x] 统一主库规划改为购买Parquet作历史主线（2011～2026-09），H5保留只读对照及源数据缺口候选，未来使用通达信盘后分别补录day/1min/5min。**不能把此前H5一分到五分144/144一致、H5/PQ重叠总一致率约99.677%误写成Parquet两个周期已认证**。
-- [x] 新增`tools/validate-parquet-1min-to-5min.py`：只读Parquet 1min与5min同交易日、单股票区间；五分/一分起止标签共4个解释逐一验证，必须有完整5根一分钟才计算OHLC（开第一/高最高/低最低/收最后）与量额和；输出严格及原容差层次、成交量同源×1/×100/×0.01、上午/下午完整性、缺源/缺一分钟/重复键/异常时标和源读取成本。30M/周期上限默认保守，报告不含原始付费行情。新增13项合成测试待本机验收；详见[Parquet内部合成研究](2026_PARQUET_1MIN_5MIN_PRIMARY_SOURCE_AUDIT_20261027.md)。
+- [x] 新增`tools/validate-parquet-1min-to-5min.py`：只读Parquet 1min与5min同交易日、单股票区间；五分/一分起止标签共4个解释逐一验证，必须有完整5根一分钟才计算OHLC（开第一/高最高/低最低/收最后）与量额和；输出严格及原容差层次、成交量同源×1/×100/×0.01、上午/下午完整性、缺源/缺一分钟/重复键/异常时标和源读取成本。30M/周期上限默认保守，报告不含原始付费行情。新增14项合成测试待本机验收；详见[Parquet内部合成研究](2026_PARQUET_1MIN_5MIN_PRIMARY_SOURCE_AUDIT_20261027.md)。
 - [ ] 用户先运行2026-09-28 Parquet三只股票核验，上传`pq-only-2026-09-28-1min-to-5min-top3.json`及测试结果。根据真实Parquet内部一致性，再决定是否追加2026-08-24、09-10、09-30的不同市场代表股票抽检。**本阶段不转换任何数据，也不默认Parquet中的1min和5min必然同单位或可信**。
 
 ## 用户目标更新：两源取可信主源+旧分钟补全，通达信盘后统一增量；同花顺人工核验（2026-10-27）
@@ -982,7 +982,7 @@ Parquet原始记录全部在内存候选240 END条中参与一次；四类6字�
 - [ ] 先在主索引52组暂停并运行新的独立full只读审计（核对唯一键和重复键）；测试通过且磁盘有余量后，从同一52组V3快照建立两份**不同副本**，仅在第53—57组比较source与pk-sorted，随后运行严格A/B只读比较；不推进主索引，不自动下结论或生成并集。
 - [x] 主V3索引52组独立只读full审计通过：有效唯一五分钟键6,394,912、候选源行6,394,912、重复键0、1,302,021个证券日分区、3,224,048条行组定位关系；没有新增RowGroup、修改SQLite或读取Parquet行情行。此结论只适用已处理52组。
 - [x] 从同一52组快照建立source/pk-sorted两个副本，各新增第53—57组后运行严格A/B核验：两者57/522组，候选源键7,009,197=唯一键、重复0，逐行比对groups_done 57行、daily_coverage与row_group_locator各1,308,088行完全一致。source总耗时40.687秒/SQL写入25.156秒；pk-sorted总耗时40.859秒/写入26.233秒，第二轮排序并未加速（总耗时慢0.42%、写入慢4.28%）。第一轮排序快8.2%，第二轮未复现；继续保留source默认，主索引仍52组。
-- [x] 针对写入占大部分耗时、但排序优化不稳定的证据，新增SQLite准备/daily UPSERT/locator UPSERT/groups_done写入/事务提交与余量的子阶段计时；只在成功提交后发布，保留已有`sqlite_group_commit`总计时，不对嵌套分项双重累加。新增3项离线合成测试，预计113项待本机核验，详见[第二轮A/B证据与SQL分项计时](PARQUET_5MIN_V3_AB_ROUND2_SQLITE_BREAKDOWN_20261026.md)。
+- [x] 针对写入占大部分耗时、但排序优化不稳定的证据，新增SQLite准备/daily UPSERT/locator UPSERT/groups_done写入/事务提交与余量的子阶段计时；只在成功提交后发布，保留已有`sqlite_group_commit`总计时，不对嵌套分项双重累加。新增3项离线合成测试，预计114项待本机核验，详见[第二轮A/B证据与SQL分项计时](PARQUET_5MIN_V3_AB_ROUND2_SQLITE_BREAKDOWN_20261026.md)。
 - [x] 用户本机主V3索引已从52→57/522组，本轮新增5组614,400行、耗时40.828秒；SQLite写入25.923秒中`commit_and_other=15.156`秒（58.47%）、`row_group_locator_upsert=8.376`秒（32.31%）、`daily_coverage_upsert=2.047`秒（7.90%），计时子项守恒；主库+WAL约137.11MiB、无时间/容量预算触发。主库本轮progress未独立复核57组重复键，仍不得自动并集。
 - [x] 为区分事务提交和其他开销，新增原SQLite连接`__enter__/__exit__`精确计时，汇总在`sqlite_transaction_boundary_seconds`，作为`commit_and_other`子项不重复计时；未修改SQL、WAL、`synchronous=FULL`、schema或事务行为。新增2项合成测试、调整既有断言，预计115项待本机验证。详见[57组主库与事务退出诊断](PARQUET_5MIN_V3_57GROUP_TRANSACTION_PROFILE_20261026.md)。
 - [ ] Windows验证预计115项合成测试，从主库57组最多resume再增5组至62组（90秒/192MiB软预算、source/WAL/FULL），据真实`context_exit_seconds`占比决定后续严格隔离的持久化性能试验；不改变主库数据安全配置。

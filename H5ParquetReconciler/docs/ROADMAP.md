@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：新增SH600519五根日线物理增量已验收，开始父10+delta5的统一只读视图
+
+- [x] Windows `test_append_private_unified_day_symbol_delta.py` **12/12 OK（5.314秒）**。`SH600519` 真正新增私有Parquet物理delta 5根（日线，购买Parquet1/H5仅补已验证整日期缺口候选4），目录`work/unified_parquet/snapshot_deltas/delta_964332fc7055`。已上传SAFE确认新Parquet/manifest SHA、原10根父快照未改写、原市场文件及生产路由未改、私有pointer仍未激活。PR #160 已合并（`945db724`）。
+- [x] 新`read-private-day-snapshot-with-symbol-delta.py`：从**SHA已登记的父快照版本**及独立delta SAFE中，完整校验父10根和新分区5根真实Parquet/manifest/SAFE/版本文件的前后哈希、schema、行键/来源/时间戳、日期窗口与互不重复股票集合，以**原文件不重编码**的方式创建内存联合逻辑查询（最多10只股），只输出脱敏SAFE。不重新扫描原购买行情/H5、不升级H5候选金额单位认证、不修改生产路由/私有活动指针。15项合成测试及真实父+delta联读**待Windows验收**。详见[2026_PRIVATE_DAY_SNAPSHOT_AND_STOCK_DELTA_JOINED_READ.md](2026_PRIVATE_DAY_SNAPSHOT_AND_STOCK_DELTA_JOINED_READ.md)。
+- [ ] 真实联读验收通过后，登记不可变的父版本+delta SHA逻辑v2视图，并支持显式选择/回滚；随后才推进**有真实新增源证据的交易日增量**和统一Parquet扩大覆盖。原生H5金额保留单位/舍入门禁。
+
+
+
 ## ★ 2026-10-30：私有版本登记完成，真实数据增量由“增加股票分区”开始
 
 - [x] Windows `test_version_private_unified_day_parquet_snapshot.py` **14/14 OK（3.523秒）**，此前10条Parquet私有快照已真实登记为不可变版本`d625c323406ca92cb05c98e731a6920cbeeb14128e2175cc9f7b46e44946f207`，`previous_version_sha256=null`且`active_version_sha256=null`。用户未激活任何私有指针、没有读/改原市场文件或正式查询路由。PR #159 已合并至main（`999fb615`）。

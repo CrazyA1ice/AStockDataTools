@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：私有版本登记完成，真实数据增量由“增加股票分区”开始
+
+- [x] Windows `test_version_private_unified_day_parquet_snapshot.py` **14/14 OK（3.523秒）**，此前10条Parquet私有快照已真实登记为不可变版本`d625c323406ca92cb05c98e731a6920cbeeb14128e2175cc9f7b46e44946f207`，`previous_version_sha256=null`且`active_version_sha256=null`。用户未激活任何私有指针、没有读/改原市场文件或正式查询路由。PR #159 已合并至main（`999fb615`）。
+- [x] 新增`append-private-unified-day-symbol-delta.py`：在同一2026-09-30～10-13小窗口，通过已SHA登记的真实父快照版本+已验证H5整日补缺overlay的batch实时源审计，**只读取新增新股票**（与父原股票互斥）的购买优先日线，将增量行单独写入`work/unified_parquet/snapshot_deltas/delta_<hex>/day.parquet`。父真实10根文件不复制、不覆盖。增量manifest绑定父版本/父源SHA和本次Parquet SHA，聚合SAFE不含商业行情；正式指针仍为空，不会自动激活、改生产查询、写H5镜像。见[2026_PRIVATE_DAY_NEW_SYMBOL_INCREMENT_DELTA.md](2026_PRIVATE_DAY_NEW_SYMBOL_INCREMENT_DELTA.md)。**12项合成测试/首个SH600519真实增量试点仍待Windows验证**。
+- [ ] 完成首个真实新股票物理增量后，再开发绑定父版本与增量SHA的**联合只读加载**和可回滚的v2版本递进；随后支持新交易日分区增量（不能凭已有源外推2026-10-14以后未到货日线），再推进受限原生H5镜像及通达信盘后数据整合。真实成交额物理量纲依然未获认证，生产H5/购买源绝不覆盖。
+
+
+
 ## ★ 2026-10-30：真实10条私有快照快速读取已经验收，推进快照不可变版本登记与明确回滚
 
 - [x] Windows `test_read_private_unified_day_parquet_snapshot.py` **12/12项OK（5.361秒）**；真实已物化的`snapshot_ffc5c35e7e00`已通过全行schema、来源、唯一证券日和Parquet/manifest/SAFE SHA验证，从本机文件读取10条日线（购买Parquet2、H5整日缺口候选8）而不再扫描原始市场源。SAFE`private-snapshot-verified-read-e4ea16e0e26a.json`核对旧SHA一致，声明`no_live_market_source_freshness_recheck=true`、未激活pointer/更改生产路由。PR #158合并（`d0d76eb`）。

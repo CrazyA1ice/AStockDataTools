@@ -18,15 +18,15 @@
 6. 保留严格边界：`whole_market_date_purchased_absence_certified=false`、`whole_market_h5_date_completeness_certified=false`、`selected_stockday_candidates_authorized_for_staging=false`、`h5_volume_amount_physical_units_certified=false`、`ready_for_full_market_mirror=false`。即便H5返回大量真实股票日，也不能未经独立全市场审计直接建立新Parquet分区、替换原H5、纳入生产查询。
 7. 输出只在`H5ParquetReconciler/reports/`新建脱敏JSON，不生成任何Parquet/H5，不改三个不同的私有活动指针。测试输出/临时工作均留在模块工作区，绝不能上传原真实H5或购买Parquet到GitHub。
 
-新增**13项合成测试**，使用临时真实HDF5文件模拟3股不同日期的H5原始整数和购买Parquet来源，并覆盖日期四分类、购买源0条仍只报候选、H5结构错、重复日键、错误日期时钟、无效价格、文件被修改、购买源stat变化、父逻辑版本损坏、禁止超范围股票/日期、报告不可覆盖及越界路径。不需要Windows管理员符号链接权限。
+新增**14项合成测试**，使用临时真实HDF5文件模拟3股不同日期的H5原始整数和购买Parquet来源，并覆盖日期四分类、购买源0条仍只报候选、H5结构错、重复日键、错误日期时钟、无效价格、文件被修改、购买源stat变化、父逻辑版本损坏、禁止超范围股票/日期、报告不可覆盖及越界路径。不需要Windows管理员符号链接权限。
 
 ## 本轮Windows受控验收（单物理行）
 
 ```powershell
-cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-h5-post13-stockday-candidate-audit-20261030; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/private-h5-post13-stockday-candidate-audit-20261030; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_post_snapshot_h5_stockdays_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "13项合成测试失败，停止真实H5查询" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\post-snapshot-h5-stockdays-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-post-snapshot-h5-stockdays-readonly.py --source-root "D:\stock" --parent-joined-version "bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14" --symbols SH600000 SZ000001 SH600519 --from-date 2026-10-14 --to-date 2026-10-29 --out $out --explicit-source-readonly-audit; if ($LASTEXITCODE -ne 0) { throw "真实H5/购买股票日核查失败" }; Write-Host "脱敏SAFE：$out"
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-h5-post13-stockday-candidate-audit-20261030; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/private-h5-post13-stockday-candidate-audit-20261030; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_post_snapshot_h5_stockdays_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "14项合成测试失败，停止真实H5查询" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\post-snapshot-h5-stockdays-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-post-snapshot-h5-stockdays-readonly.py --source-root "D:\stock" --parent-joined-version "bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14" --symbols SH600000 SZ000001 SH600519 --from-date 2026-10-14 --to-date 2026-10-29 --out $out --explicit-source-readonly-audit; if ($LASTEXITCODE -ne 0) { throw "真实H5/购买股票日核查失败" }; Write-Host "脱敏SAFE：$out"
 ```
 
-**新的13项及真实源H5查询均尚未在Windows执行，PR仍为Draft。**
+**新的14项及真实源H5查询均尚未在Windows执行，PR仍为Draft。**
 
 如果结果确实存在H5候选，只证明**这3只股票**相应日期有H5记录且购买源当时没有这些股票的匹配日线；若下一阶段要填整日，仍必须运行仓库现有`reconcile_section`严格审计整个市场全交易日的购买源缺失、H5全日数量和差集，写新的源报告及离线gate，并让stager在物化前对LIVE源重核，而不是直接把股票日候选变成有效历史库。
 

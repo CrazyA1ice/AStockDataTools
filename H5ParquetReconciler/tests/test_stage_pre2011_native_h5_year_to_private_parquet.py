@@ -139,8 +139,7 @@ class OriginalH5NativeYearPrivateParquetTests(unittest.TestCase):
 
     def test_source_parquet_change_after_inventory_refuses_before_stage(self):
         with ready() as (root,inv,pq,stage,out,_):
-            with pq.open("ab") as f:
-                f.write(b"changed")
+            F.make_pq(root,days=("2011-03-01",))
             with self.assertRaisesRegex(ValueError,"no longer matches"):
                 run(root,inv,2001,out)
             self.assertFalse(stage.exists())
@@ -203,28 +202,20 @@ class OriginalH5NativeYearPrivateParquetTests(unittest.TestCase):
                 run(root,root/"foreign.json",2001,out)
             self.assertFalse(out.exists())
 
-    def test_stage_rejects_corrupt_raw_parquet_on_readback(self):
+    def test_stage_too_many_historical_rows_fail_closed(self):
         with ready() as (root,inv,pq,stage,out,_):
-            # Deliberately spoof a different complete decoded row stream.
-            import pyarrow.parquet as pqmod
-            real=M.stage_year
-            def changed(*args):
-                result=real(*args)
-                file=stage/"h5-native-day.parquet"
-                pf=pqmod.read_table(file)
-                rows=pf.to_pylist()
-                rows[0]["openPrice"]=777
-                pqmod.write_table(MakeTable(rows,pf.schema),file)
-                return result
-            # Post-stage deliberate mutations are detected by manifest only
-            # with an extra hash validation in the wrapper, not the current
-            # stage output, so test source write guard instead.
+            with patch.object(M,"MAX_YEAR_ROWS",1):
+                with self.assertRaisesRegex(ValueError,"budget"):
+                    run(root,inv,2001,out,"stage",stage,True)
             self.assertFalse(stage.exists())
+            self.assertFalse(out.exists())
 
-
-def MakeTable(rows,schema):
-    import pyarrow as pa
-    return pa.Table.from_pylist(rows,schema=schema)
+    def test_stage_directory_year_must_match_requested_year(self):
+        with ready() as (root,inv,pq,stage,out,_):
+            folder=stage.parent/"native_pre2011_1999_012345abcdef"
+            with self.assertRaises(ValueError):
+                run(root,inv,2001,out,"stage",folder,True)
+            self.assertFalse(folder.exists())
 
 
 if __name__=="__main__":

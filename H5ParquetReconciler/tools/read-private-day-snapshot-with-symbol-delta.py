@@ -176,7 +176,7 @@ def decode(path,expected_rows):
             pf.close()
 
 
-def read_joined(parent_sha,delta_safe,symbols,first,last,out):
+def read_joined(parent_sha,delta_safe,symbols,first,last,out,emit_safe=True):
     """Verify complete base and complete delta before returning any selected bars."""
     if (type(symbols) not in (list,tuple)
             or not 1<=len(symbols)<=10
@@ -191,7 +191,9 @@ def read_joined(parent_sha,delta_safe,symbols,first,last,out):
             raise ValueError("Bad date window")
     except (TypeError,ValueError):
         raise ValueError("Bad date window") from None
-    target=READER.direct_report(out,for_output=True)
+    if type(emit_safe) is not bool:
+        raise ValueError("Invalid private SAFE publication mode")
+    target=READER.direct_report(out,for_output=True) if emit_safe else None
     parent,parent_file_sha,parent_safe,parent_safe_sha,meta=ADD.trusted_parent(
         parent_sha)
     delta,delta_proof,delta_manifest,delta_pq=get_delta_safe(delta_safe,parent_sha)
@@ -268,9 +270,10 @@ def read_joined(parent_sha,delta_safe,symbols,first,last,out):
         "ready_for_full_market_mirror":False,
         "no_raw_ohlcva_or_symbols_in_safe":True,
     }
-    with target.open("x",encoding="utf-8") as stream:
-        json.dump(summary,stream,sort_keys=True,ensure_ascii=False,indent=2)
-        stream.write("\n")
+    if emit_safe:
+        with target.open("x",encoding="utf-8") as stream:
+            json.dump(summary,stream,sort_keys=True,ensure_ascii=False,indent=2)
+            stream.write("\n")
     return {"bars_by_symbol":result,"safe_summary":summary}
 
 

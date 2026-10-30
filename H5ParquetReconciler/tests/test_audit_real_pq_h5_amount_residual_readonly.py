@@ -233,12 +233,12 @@ class SyntheticRealReadersTests(unittest.TestCase):
                   self.ten,self.exact,self.output)
         self.assertFalse(self.output.exists())
 
-    def test_amount_count_changes_between_runs_rejected(self):
+    def test_other_field_exactness_change_between_runs_rejected(self):
         original=M.PAIR._read_single_h5
         def mutate_count(root,sym,day,h5py,np):
             result=original(root,sym,day,h5py,np)
             if sym=="SH600000":
-                return dict(result,transAmount=result["transAmount"]+1)
+                return dict(result,transCount=result["transCount"]+1)
             return result
         with patch.object(M.PAIR,"_read_single_h5",side_effect=mutate_count):
             with self.assertRaisesRegex(ValueError,"no longer match"):

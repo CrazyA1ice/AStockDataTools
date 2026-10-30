@@ -19,6 +19,12 @@
 5. 新SAFE不仅存4股票日分日期固定候选统计，还额外存`annual_2025_key_only_rows_rechecked`、`annual_2025_key_only_batches_rechecked`、`annual_2025_ohlcva_rows_scanned`、`source_parquet_total_rows_scanned`（**只计算年度选中组的OHLCVA加2026月度全部扫描行，不含键列**）、2/3月份源文件只读证据及前序2025键列SAFE的SHA256；不会输出真实OHLCVA、H5整数、股票代码、原始时间戳、用户文件路径、密钥或HMAC值。报告文件写入项目模块`reports/`全新位置，不允许覆盖。
 6. 源Parquet/Footer及H5文件stat前后校验不变（**不是整份大文件SHA256**），不启动原生Hikyuu C++、不写Parquet/H5/正式SQLite。即使新4/4结果全部匹配，也只能表明加上2026-09的6个样本，在**2025-09、2026-08、2026-09三个不同月份共10个股票日**支持一组原始数值倍率，不能验证供应商“股/手/元/万元”等具体物理单位、全市场或分钟线。
 
+## 第150轮Windows测试反馈与修复（2026-10-30）
+
+- 用户Windows跑第150轮原新增9项测试：**8项ok、1项FAIL**。失败`test_annual_150k_ohlcva_budget_remains_hard`误以为将运行时价格读取预算暂时缩小到1行，就一定会进入年度读取器才拒绝。实际`qualified_annual_key_only_safe()`发现前序SAFE承诺2行目标组，**在读取价格之前已正确失败关闭**，异常为`2025 annual key-only prior SAFE not qualified`。这是测试期待错误阶段的问题，不应为了通过而降低生产保护。
+- 只修改虚构数据测试：分为**前置SAFE提前拒绝**和**独立直接调用key-located年度读取器做预算拒绝**两项；检查1行预算对2行目标组分别在两道门禁都起效、原合成SAFE内容不变。原主工具及2025年实际≤150000行OHLCVA、≤2组预算均**完全不变**，也没有运行或修改真实商业数据。
+- 回归从9项变成**10项，待Windows复验**。仍必须在10项全部OK后运行本页原来那条携带`--prior-annual-key-only-safe`的2025/2026真实跨年只读命令。
+
 ## Windows PowerShell操作（每块一条完整单行）
 
 更新仓库：
@@ -27,7 +33,7 @@
 git pull --ff-only origin main
 ```
 
-先跑本轮新增**9项纯合成Parquet/H5回归**（Windows结果仍未知）：
+先跑本轮新增**10项纯合成Parquet/H5回归**（Windows结果仍未知）：
 
 ```powershell
 .\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_probe_real_h5_parquet_crossyear_keylocated_readonly.py" -v
@@ -45,13 +51,13 @@ Test-Path "H5ParquetReconciler\\reports\\real-2025-annual-parquet-day-keyonly-20
 Test-Path "H5ParquetReconciler\\reports\\real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json"
 ```
 
-只有9项全部OK、第一项True、第二项False时执行，仍使用原来的两份历史源Parquet和原H5目录：
+只有10项全部OK、第一项True、第二项False时执行，仍使用原来的两份历史源Parquet和原H5目录：
 
 ```powershell
 .\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\probe-real-h5-parquet-crossyear-day-readonly.py --parquet-root "D:\\stock\\AllCycleAStockData" --h5-root "D:\\stock\\HikyuuData" --prior-raw-safe "H5ParquetReconciler\\reports\\real-parquet-h5-raw-day-unit-factor-candidates-20260930-v1.json" --prior-native-safe "H5ParquetReconciler\\reports\\real-hikyuu-native-20260930-hmac-v3.json" --prior-heldout-safe "H5ParquetReconciler\\reports\\real-h5-parquet-heldout-day-factors-20260928-29-v1.json" --prior-annual-key-only-safe "H5ParquetReconciler\\reports\\real-2025-annual-parquet-day-keyonly-20250930-v1.json" --out "H5ParquetReconciler\\reports\\real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json" --read-only-crossyear-days
 ```
 
-若仍被安全拒绝，保留当前本地旧源与全部前序SAFE，不删除、不覆盖、不绕过两个预算；记录完整终端最后错误并先分析失败时处于2025 H5历史日线、2026月度源或前序证明哪一步。不要上传任何付费Parquet、原始H5、实际价量额或源文件路径；只上传本轮生成的SAFE与9项测试日志。
+若仍被安全拒绝，保留当前本地旧源与全部前序SAFE，不删除、不覆盖、不绕过两个预算；记录完整终端最后错误并先分析失败时处于2025 H5历史日线、2026月度源或前序证明哪一步。不要上传任何付费Parquet、原始H5、实际价量额或源文件路径；只上传本轮生成的SAFE与10项测试日志。
 
 ## 保护后的下一步
 

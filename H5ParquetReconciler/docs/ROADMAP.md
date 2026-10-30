@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 跨年键定位验证测试：预算缩小后的提前拒绝与独立读取保护（2026-10-30）
+
+- [x] 用户Windows对第150轮新增的`test_probe_real_h5_parquet_crossyear_keylocated_readonly.py`执行**9项测试，8项ok、1项FAIL（4.302秒）**，唯一失败`test_annual_150k_ohlcva_budget_remains_hard`的测试期望错误消息`Cannot safely inspect key-located annual`，而实际错误为`2025 annual key-only prior SAFE not qualified`。
+- [x] 经源码核查，测试临时把`MAX_YEAR_READ_ROWS`从150000改为**1行**，前序虚构键列SAFE记录目标行组**2行**。`qualified_annual_key_only_safe`在打开真实OHLCVA之前就验证`selected_target_rowgroup_total_rows <= MAX_YEAR_READ_ROWS`，因而**正确提前拒绝**；不能为了旧用例进入更深阶段而弱化这道保护。这既不是实际2025年123139行不合格，也不是原始H5或购买Parquet变动。
+- [x] 修复测试时将该用例分为两项：①调用完整`T.run()`，要求一行预算下由前序SAFE资格门禁明确拒绝，且检查既有SAFE SHA256/内容没有变化；②直接调用`T.read_annual_2025_keylocated_day()`，使用仍然合法的合成SAFE字典，要求**读取器自身**也因2行超过1行预算拒绝，不写新SAFE。仍只操作测试构造的虚构Parquet/H5，**没有修改生产读取器、没有放宽15万行OHLCVA限制**。
+- [x] 因拆分测试，本模块的纯合成回归由9项增至**10项，尚需用户Windows重新验证**。只有10项全部OK、真实2025键列SAFE存在且新跨年v2输出不存在，才能继续第150轮既定的2025-09-30/2026-08-24两股共4股票日只读数值实验。真正跨年4条样本倍率仍未经证实；5min对账、供应商物理单位与正式H5写入许可始终未解决。
+
 ## ★ 2025年度目标行组精确定位成功：进入真正跨年OHLCVA两源只读对比（2026-10-30）
 
 - [x] 用户Windows已运行第149轮**12/12项**虚构2025年度键列回归全部OK（3.005秒），真实`real-2025-annual-parquet-day-keyonly-20250930-v1.json`表明从2025年度`day/2025.parquet`的1,333,385行、12组中**仅投影ts/symbol两列**实扫1,333,385条键/88批，固定2025-09-30 SH600000与SZ000001精确命中**2条**，分布在**1个目标RowGroup**、该组**123,139行**。这小于既有≤2组/≤150,000 OHLCVA行预算；该轮`ohlcva_rows_scanned=0`，**尚未有真实跨年倍率结论**，不允许将键列扫描视作已检查真实价量额。

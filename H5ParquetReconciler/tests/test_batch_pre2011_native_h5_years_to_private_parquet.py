@@ -69,8 +69,8 @@ class BoundedMultiYearOriginalH5RawStageTests(unittest.TestCase):
             self.assertEqual(result["selected_year_source_native_rows"],3)
             self.assertFalse(result["remaining_nonempty_missing_years"])
             self.assertEqual(purchased.read_bytes(),original)
-            f=stage.parent/"native_pre2011_2001_"+JOB
-            g=stage.parent/"native_pre2011_1991_"+JOB
+            f=stage.parent/("native_pre2011_2001_"+JOB)
+            g=stage.parent/("native_pre2011_1991_"+JOB)
             self.assertEqual(pq.read_metadata(f/"h5-native-day.parquet").num_rows,2)
             self.assertEqual(pq.read_metadata(g/"h5-native-day.parquet").num_rows,1)
             self.assertFalse((stage.parent/"active-day-overlay.json").exists())
@@ -108,7 +108,7 @@ class BoundedMultiYearOriginalH5RawStageTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"synthetic failure"):
                     run(root,inv,safe,[1991,2001],"stage",JOB,True)
             self.assertFalse(safe.exists())
-            self.assertTrue((stage.parent/"native_pre2011_1991_"+JOB).exists())
+            self.assertTrue((stage.parent/("native_pre2011_1991_"+JOB)).exists())
             result=run(root,inv,safe,[1991,2001],"stage","fedcba987654",True)
             self.assertEqual(result["newly_staged_years_this_action"],[2001])
             self.assertEqual(result["existing_verified_years_before_action"],[1991])
@@ -120,7 +120,7 @@ class BoundedMultiYearOriginalH5RawStageTests(unittest.TestCase):
             self.assertEqual(result["newly_staged_years_this_action"],[2001])
             self.assertTrue(result["yearly_status"][0][
                 "has_no_original_h5_stockday_rows"])
-            self.assertFalse((stage.parent/"native_pre2011_1990_"+JOB).exists())
+            self.assertFalse((stage.parent/("native_pre2011_1990_"+JOB)).exists())
 
     def test_resuming_private_stage_rechecks_original_h5_raw_values(self):
         with fresh() as (root,inv,purchased,stage,safe,_):
@@ -169,11 +169,11 @@ class BoundedMultiYearOriginalH5RawStageTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"source file set changed"):
                     run(root,inv,safe,[2001],"stage",JOB,True)
             self.assertFalse(safe.exists())
-            self.assertFalse((stage.parent/"native_pre2011_2001_"+JOB).exists())
+            self.assertFalse((stage.parent/("native_pre2011_2001_"+JOB)).exists())
 
     def test_private_job_name_collision_does_not_delete_foreign_content(self):
         with fresh() as (root,inv,purchased,stage,safe,_):
-            file=stage.parent/"native_pre2011_2001_"+JOB
+            file=stage.parent/("native_pre2011_2001_"+JOB)
             original=B.stage_missing
             def collision(*args):
                 file.mkdir(parents=True)

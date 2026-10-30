@@ -89,10 +89,22 @@ def private_folder(path,year):
     return p.resolve()
 
 
-def sources_unchanged(before_h5,before_pq):
+def sources_unchanged(root,before_h5,before_pq):
+    """Check original files AND input file-set membership, not only old stats.
+
+    A newly delivered purchased day file after preflight could contain early
+    dates. It is forbidden to ignore it while staging original H5 records.
+    """
     if (any(AUDIT.state(p)!=v for p,v in before_h5.items())
             or any(AUDIT.state(p)!=v for p,v in before_pq.items())):
         raise ValueError("Original H5/PQ changed during year stage")
+    current_h5={root/"HikyuuData"/(market+"_day.h5")
+                for market in ("sh","sz","bj")
+                if (root/"HikyuuData"/(market+"_day.h5")).exists()
+                or (root/"HikyuuData"/(market+"_day.h5")).is_symlink()}
+    _,purchased=AUDIT.purchased_paths(root)
+    if set(before_h5)!=current_h5 or set(before_pq)!=set(purchased):
+        raise ValueError("Original H5/PQ source file set changed during year stage")
 
 
 def requalify(root,reference):
@@ -103,7 +115,7 @@ def requalify(root,reference):
             or pq["no_pre2011_parquet_rows_proven_by_complete_footer_bounds"] is not True
             or pq["nonempty_row_groups_without_ts_stats"]!=0):
         raise ValueError("Historical source report no longer matches real H5/PQ keys and footers")
-    sources_unchanged(hfiles,pfiles)
+    sources_unchanged(root,hfiles,pfiles)
     return h5,pq,hfiles,pfiles
 
 
@@ -253,7 +265,7 @@ def run(root,inventory_report,year,out,action,folder=None,allow_stage=False):
             raise ValueError("Selected historical year contains zero native H5 rows")
         try:
             result=stage_year(root,year,private,exp)
-            sources_unchanged(hfiles,pfiles)
+            sources_unchanged(root,hfiles,pfiles)
             with (private/"manifest.json").open("x",encoding="utf-8") as stream:
                 json.dump({"format":PRIVATE_FORMAT,**result,
                            "inventory_report_sha256":sha,
@@ -271,7 +283,7 @@ def run(root,inventory_report,year,out,action,folder=None,allow_stage=False):
             if private.exists():
                 shutil.rmtree(private)
             raise
-    sources_unchanged(hfiles,pfiles)
+    sources_unchanged(root,hfiles,pfiles)
     summary={
         "format":FORMAT,"action":action,
         "status":("source_native_h5_year_parquet_staged_not_normalized_not_activated"

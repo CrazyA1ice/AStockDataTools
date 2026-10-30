@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：10条真实统一Parquet私有快照已落盘，进入快照只读加载与复用
+
+- [x] Windows `test_materialize_private_unified_day_parquet_snapshot.py` **10/10项OK（3.372秒）**。真实私有快照 `work/unified_parquet/snapshots/snapshot_ffc5c35e7e00` 共10条日线，其中购买Parquet2条、H5完整日期补缺候选8条，2股票，私有Parquet文件及manifest的SHA已由上传SAFE绑定，`all_written_values_roundtrip_exactly=true`，不修改原始Parquet/H5或正式查询路由。PR #157已合并至main（`af3ec3e`）。
+- [x] 新`read-private-unified-day-parquet-snapshot.py`：只读取模块内已物化私有Parquet，严格查验SAFE+manifest+day.parquet三方SHA、全行Arrow Schema、完整来源计数、股日唯一键、时间戳和请求子集，最多5000行，**不重新访问D:\\stock市场源**；CLI仅输出脱敏统计SAFE，Python API可局部读取到内存；原购买数据优先与H5候选来源标签保持，未认证金额仍不批准生产H5镜像。12项合成测试及真实已有10条快照只读验收**待Windows实测**。参见[2026_PRIVATE_UNIFIED_DAY_SNAPSHOT_VERIFIED_READER.md](2026_PRIVATE_UNIFIED_DAY_SNAPSHOT_VERIFIED_READER.md)。
+- [ ] 下一阶段依据私有只读接口实际验收结果，设计按证券/交易日快速查询与版本升级/增量物化，继续使用私有可回滚版本，不引入生产源路由切换或未批准的真实金额取整规则。暂停反复历史分钟残差研究。
+
+
+
 ## ★ 2026-10-30：结束同2股日线金额残差反复研究，交付真正可落盘的私有Parquet联合快照
 
 - [x] 用户Windows金额诊断**10/10项OK（1.345秒）**，真实`real-day-h5-amount-residual-20260930-c721ea5bafbf.json`：2026-09-30两股，Parquet amount÷1000候选值均低于原H5整数，残差都在(0.01,0.1]刻度内，half-even/ceil各2/2、floor 0/2；仍然严格无损0/2，正式物理单位与原生H5舍入政策**未认证**。PR #156合并（`e1c3386`）。后续不再围绕相同两股重复建立微观数值证据。

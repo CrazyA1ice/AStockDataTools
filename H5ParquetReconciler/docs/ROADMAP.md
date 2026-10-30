@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：真实H5与购买Parquet后续日期均无新增股票日，转向数据源更新边界核对
+
+- [x] Windows `test_audit_post_snapshot_h5_stockdays_readonly.py` **14/14 OK（18.930秒）**。对3只股票2026-10-14～29的原H5和购买日Parquet只读复核均0条；`selected_stockdays_neither_source=48`仅代表3股×16日历日的组合，不表示交易日数量。真实SAFE `reports/post-snapshot-h5-stockdays-4bfc07dc7afc.json`确认无候选、有2个H5市场文件、9个2026购买日源文件、未改原数据/生产路线/私有pointer。PR #165 已合并main（`fbb32eb`）。**停止对不存在新日线的日期反复做补缺及虚构物化**。
+- [x] 新`inspect-day-source-freshness-frontier-readonly.py`实际读取**原H5选定股票每表最后8个日键**（本机实际最后位置日期，局部升序且不认证全历史）与**购买Parquet指定年份仅footer rowgroup的所有股票日期范围上界**（不是选中股票真实尾日、不是供应商确切更新时间），前后核对源大小/mtime，仅生成模块脱敏SAFE，无真实价格/金额/股票代码，原H5/PQ不修改。新增14项纯虚构HDF5+PyArrow测试和真实2026源边界定位**待Windows验收**；见[2026_DAY_SOURCE_FRONTIER_AFTER_NO_NEW_BARS.md](2026_DAY_SOURCE_FRONTIER_AFTER_NO_NEW_BARS.md)。
+- [ ] 若实际H5/购买Parquet日线停在2026-10-13左右，则调查购买文件到货机制、Hikyuu数据更新与通达信盘后转换**真正存储路径**，优先解决数据源新鲜度；若购买Parquet的全局footer存在后续日线，需通过按股有界查询进一步核实，不将全市场页脚范围当作3股实际行情。真实源没有新增数据时不做新日期分区/自动生产镜像。H5量额物理单位仍待认证。
+
+
+
 ## ★ 2026-10-30：10月14～29日购买Parquet真实查询0条，转向独立H5股票日候选核查
 
 - [x] Windows `test_append_private_purchased_day_date_delta.py` **14/14 OK（21.029秒）**，真实3股票`2026-10-14..29`购买Parquet读取无匹配新日线，SAFE`reports/private-purchased-new-day-01eb448e2c25.json`明确`new_purchased_rows=0`、`new_date_parquet_created=false`、`purchased_new_date_not_available_no_partition`、购买源文件stat清单9个，未访问H5、未改私有/生产指针或历史15行。PR #164已合并（`7fb4453`）。没有购买记录不等于交易所休市、不能自动认为H5整日补缺有效。

@@ -12,7 +12,8 @@
 - [x] 2025年度1,333,385条`ts/symbol`键**重新扫描88批**，仅定位1个RowGroup并实际解码**123,139行OHLCVA**；2025+2026合计OHLCVA **241,108行/3组**，未放宽2025年度≤2组/≤150,000行情预算。跨年SAFE证明源Footer/stat前后未变、无市场H5/SQLite写入，**不是整份源文件内容SHA256**。
 - [x] 仅2026-09-30发现日两条raw H5↔Hikyuu2.8.1真正native C++ KRecord的HMAC实测**2/2**，其它8条是raw H5整数↔Parquet候选倍率，不得误称10条都经native C++；Parquet供应商价格复权、时标及成交量额物理单位仍未独立认证，任何生产H5镜像/主库改写资格继续false。**用户此前明确停止历史分钟线差异机理研究**，后续沿既定Parquet优先、H5只补真实缺失、Hikyuu原生镜像、通达信盘后增量实施主线。
 - [x] 新增`tools/audit-parquet-primary-day-crossyear-factor-evidence-offline.py`：只审核**五份已生成的脱敏SAFE**（2026-09发现日原始跨源2/2、真实原生HMAC2/2、9月留出4/4、2025年度键定位、跨年4/4），核对SHA链、分日期2股非零倍率网格、四价格字段及读取预算，输出10股票日候选证据SAFE。**完全不再读取市场源、不运行原生C++、不写生产镜像**。新增**8项纯JSON离线合成测试（Windows待实测）**，始终不认证物理单位或全市场生产转换，详见[日线10样本归档](2026_DAY_CROSSYEAR_SAMPLE_EVIDENCE_GATE.md)。
-- [ ] 用户先跑8项离线测试与五SAFE聚合，再沿已完成2026-10四日**22,191行私有日线overlay**的安全消费、Hikyuu原生H5隔离镜像流程推进，不再无意义重复五分钟机理实验。正式单位认证和全市场镜像仍禁止。
+- [x] 用户Windows **8/8项纯离线测试OK（0.686s）**，五SAFE聚合成功生成`parquet-primary-day-crossyear-10-stockday-factor-evidence-v1.json`。报告确认10/10跨年日线候选数值证据、真实原生C++仅2股票日、2025年度键列1,333,385行及跨年OHLCVA读取241,108行；`ready_for_full_market_mirror=false`。这项证据归档已完成，**不再重复跑长时间真实历史行情**。
+- [ ] 现阶段围绕已准备22,191条私有日线overlay，推进**合成Decimal Parquet→Hikyuu H5→隔离core311原生C++再次回读**。原生回读新增3份SAFE输入前后哈希快照与2项离线回归（预计11项Windows待验收），详情见[2026_NATIVE_DECIMAL_REREAD_SAFE_PROOF_SNAPSHOT_20261030.md](2026_NATIVE_DECIMAL_REREAD_SAFE_PROOF_SNAPSHOT_20261030.md)。生产量纲认证与原件写入继续禁止。
 
 ## ★ 跨年键定位验证测试：预算缩小后的提前拒绝与独立读取保护（2026-10-30）
 

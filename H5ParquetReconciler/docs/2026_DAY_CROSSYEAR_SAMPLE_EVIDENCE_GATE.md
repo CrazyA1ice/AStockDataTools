@@ -1,5 +1,18 @@
 # 2026-10-30：跨年份10个股票日的候选数值倍率，进入Parquet主源证据门禁
 
+> **2026-10-30 Windows 验收完成：** 用户在 `main` 分支运行
+> `test_audit_parquet_primary_day_crossyear_factor_evidence_offline.py`，
+> **8/8 项全部 `OK`（0.686秒）**；随后五SAFE离线聚合成功，生成
+> `reports/parquet-primary-day-crossyear-10-stockday-factor-evidence-v1.json`。
+> 新SAFE确认日线10/10候选数值匹配、2025年度两列键读取1,333,385行、
+> 2025目标OHLCVA解码123,139行、跨年合计OHLCVA 241,108行，
+> 以及真实Hikyuu 2.8.1 C++仅2条原生日线验证。
+> `licensed_parquet_to_native_h5_mapping_certified=false`、
+> `ready_for_full_market_mirror=false`、
+> `ready_to_modify_parquet_primary_source=false` 均保持不变。
+> **这项归档已完成，无须再次扫描原始市场文件或重复执行五SAFE聚合。**
+
+
 ## 本轮Windows真实验收与结论边界
 
 用户已在Windows运行第151轮修复后的**10项合成键定位+跨年读取回归，全部OK（4.655秒）**。实际只读的`real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json`显示：

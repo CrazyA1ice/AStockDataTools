@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：真实双来源日线时效边界已证，优先打通通达信原生日线安全接入
+
+- [x] Windows`test_inspect_day_source_freshness_frontier_readonly.py` **14/14 OK（6.988秒）**。实际3只股原H5最后物理记录均止于**2026-10-13**；购买2026年的`day` Parquet 9个文件17个行组全部有ts页脚，上界**2026-09-30**（全股票元数据上界，不是每股时效或供应商新鲜度认证），SAFE`reports/private-day-source-frontier-c1fee86b0cc1.json`确认源/私有活动指针/生产路线均未修改。PR #166已合并（`2b1ab65`）。
+- [x] 仓库已有真实通达信本机路径`D:\\software\\TDX\\vipdoc\\sh\\lday\\sh600000.day`及已实现的原生32字节日线`probe-tdx-native-readonly.py`、标准化单股票日私有中间层`tdx-postclose-private-overlay.py`。新`intake-tdx-native-day-to-private-postclose-json.py`直接连接两者，**默认只读原文件只发布脱敏SAFE**（源首/尾日期+指定日期真实存在与否、内容SHA），显式用户许可且真实存在后才在模块私有`work/tdx_postclose_native_intake/`写规范化单日JSON；不进行stage/activate、Parquet/H5镜像或自动并集、不认证TDX volume/amount口径。11项全合成回归及真实10月29日通达信检查**待Windows验收**，详见[2026_TDX_NATIVE_DAY_AFTER_SOURCE_FRONTIER_PRIVATE_INTAKE.md](2026_TDX_NATIVE_DAY_AFTER_SOURCE_FRONTIER_PRIVATE_INTAKE.md)。
+- [ ] 若TDX同样只到10月13日，下一步直接调查通达信数据下载与vipdoc多实例/更新落点（不靠空日期伪造交易日）；若TDX有10/14之后的真实日线，再显式批准仅私有规范化复制并审计与既有Parquet/H5及原分钟口径的兼容性，只有独立证据齐全后才考虑下一物理Parquet增量；正式H5镜像继续关闭。
+
+
+
 ## ★ 2026-10-30：真实H5与购买Parquet后续日期均无新增股票日，转向数据源更新边界核对
 
 - [x] Windows `test_audit_post_snapshot_h5_stockdays_readonly.py` **14/14 OK（18.930秒）**。对3只股票2026-10-14～29的原H5和购买日Parquet只读复核均0条；`selected_stockdays_neither_source=48`仅代表3股×16日历日的组合，不表示交易日数量。真实SAFE `reports/post-snapshot-h5-stockdays-4bfc07dc7afc.json`确认无候选、有2个H5市场文件、9个2026购买日源文件、未改原数据/生产路线/私有pointer。PR #165 已合并main（`fbb32eb`）。**停止对不存在新日线的日期反复做补缺及虚构物化**。

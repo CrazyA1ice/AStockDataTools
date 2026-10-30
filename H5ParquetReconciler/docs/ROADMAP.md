@@ -6,6 +6,13 @@
 
 不再延续对旧GLSSTKGM随机抽样查缺的小轮迭代。这里直接以**全量覆盖报告和可追溯并集构建**为目标。当前属于Phase 1初版，先用本地大数据验证差集和冲突报告是否可靠，再启动格式互转。H5是手动下载的，早期缺小周期、尾部可能新增盘后数据；Parquet购买包整体覆盖时间长但截止2026-09。两者互补是需要实测而非预设永远成立。
 
+## ★ 2025年度全部12组Footer均覆盖9/30：键列有界扫描定位两股日线（2026-10-30）
+
+- [x] 用户Windows已对前轮独立安全诊断执行**7/7项合成测试OK（13.579秒）**；新真实`real-h5-parquet-crossyear-2025-2026-diagnostic-v1.json`显示`status=blocked`、`last_stage=annual_target_rowgroup_selection`、2025年度日线Footer记录**1333385行、12组**，**12/12个RowGroup的`ts` min/max时间包络都与2025-09-30重叠**。此前仅允许≤2组的时间剪枝策略因而自动拒绝；并非值不同、非2025缺日线的证据。文件Footer/stat前后未变；前序3份SAFE门禁已通过。
+- [x] 据此不能只放宽12组/133万条OHLCVA全读取。新建`tools/probe-real-2025-annual-day-keyonly-readonly.py`，固定只对2025年度`day/2025.parquet`执行**两字段`ts`+`symbol`的流式有界扫描**：年元数据≤160万行、≤16个RowGroup，实际逐批≤16384条键、总≤160万条键；内存只保存两个选定证券在2025-09-30的匹配次数和命中行组集合。不读真实OHLCVA、不读H5或生产SQLite、不运行原生C++、绝不写市场源、只在模块`reports/`创建新的脱敏SAFE。
+- [x] 新SAFE只报告真正命中的目标日股票键数量、目标RowGroup个数、这些组若读取OHLCVA的Footer总行数、键列已读行数及固定失败状态。若出现0/重复匹配、目标行组>2或对应目标OHLCVA总行数>150000，分别保留阻断结果，**不绕过原150000行价量额预算**；只读键列133万不等于130多万OHLCVA授权。只有`ready_for_bounded_price_group_read`才说明可进入下一轮受控字段比对，**本轮不宣称已经跨年4/4验证**。
+- [x] 新增**12项纯合成Parquet回归（等待Windows实测）**：人工让12/12组Footer都覆盖9月30日却实际只一组含目标股票、跨目标组、安全重复键/缺失键、键列预算、目标OHLCVA预算、过往SAFE篡改/源缺失、新报告独占及不泄露行情。详见[2025年度键列定位](2026_ANNUAL_PARQUET_KEYONLY_ROWGROUP_LOCATOR.md)。用户运行后回传仅SAFE，依据真实命中行组数和候选行数决定是否实现只读两阶段OHLCVA查找。
+
 ## ★ 18/18 Windows测试OK，但真实2025/2026跨年日线被安全拒绝：只读阶段诊断（2026-10-30）
 
 - [x] 用户已在Windows本机完成第147轮年度Footer日期剪枝与跨行组重复键防护的**18项合成回归全部OK（3.810秒）**；真实`D:\\stock\\AllCycleAStockData\\day\\2025.parquet`和`day\\2026-08.parquet`均存在，未创建过目标`real-h5-parquet-crossyear-day-factors-20250930-20260824-v1.json`。真实执行仍因统一错误`Cross-year sampled real H5/Parquet verification refused; sources or SAFE incomplete`停止，**尚无跨年4个股票日的真实倍率结果**，也没有证据表明数据不匹配或2025历史源不存在。

@@ -147,9 +147,15 @@ class EarlyYearVwapRegimeCohortTests(unittest.TestCase):
             self.assertFalse(out.exists())
         with synthetic() as (private,full,profile,factor,out):
             change_record(private,full,1992,lowPrice=2000,highPrice=1000)
-            prepare(full,profile,factor)
-            with self.assertRaisesRegex(ValueError,"OHLC"):
-                R.run(full,profile,factor,out)
+            # The prerequisite 21-year reader must fail closed before the
+            # early-regime audit can run. This is the expected behavior.
+            with self.assertRaisesRegex(ValueError,"Bad native H5 RAW numeric structure"):
+                prepare(full,profile,factor)
+            # Independently verify the new early-regime reader also rejects
+            # the malformed OHLC row, without bypassing prerequisite guards.
+            raw=private/"native_pre2011_1992_012345abcdef"/"h5-native-day.parquet"
+            with self.assertRaisesRegex(ValueError,"Early RAW OHLC bounds"):
+                R.inspect_year(raw,1992,1)
             self.assertFalse(out.exists())
 
     def test_never_overwrite_existing_safe(self):

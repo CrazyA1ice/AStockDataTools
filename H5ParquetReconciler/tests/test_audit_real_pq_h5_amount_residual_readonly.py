@@ -55,7 +55,7 @@ class AmountResidualPureTests(unittest.TestCase):
         self.assertTrue(result["existing_relative_tolerance_1e_minus_5"] is False)
         self.assertFalse(result["nearest_half_even_matches_raw"])
         self.assertTrue(result["floor_matches_raw"])
-        self.assertFalse(result["ceil_matches_raw"])
+        self.assertFalse(result["ceiling_matches_raw"])
 
     def test_residual_partition_and_sign_do_not_export_values(self):
         for value,raw,bucket,above in (

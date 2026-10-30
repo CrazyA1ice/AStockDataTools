@@ -71,8 +71,8 @@ def ready():
         with patch.object(A,"DATE",F.A), \
              patch.object(A,"READER",F.A.READER), \
              patch.object(A,"MODULE",base.module), \
-             patch.object(F.A.PURCHASED,"query_bars",side_effect=fake):
-            yield base,root,parent_sha,safe,bought,purchased,stat
+             patch.object(F.A.PURCHASED,"query_bars",side_effect=fake) as selected:
+            yield base,root,parent_sha,safe,bought,selected,stat
 
 
 def audit(root,parent_sha,safe,symbols=SYMS,

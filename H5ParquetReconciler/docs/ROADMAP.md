@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：真实10条私有快照快速读取已经验收，推进快照不可变版本登记与明确回滚
+
+- [x] Windows `test_read_private_unified_day_parquet_snapshot.py` **12/12项OK（5.361秒）**；真实已物化的`snapshot_ffc5c35e7e00`已通过全行schema、来源、唯一证券日和Parquet/manifest/SAFE SHA验证，从本机文件读取10条日线（购买Parquet2、H5整日缺口候选8）而不再扫描原始市场源。SAFE`private-snapshot-verified-read-e4ea16e0e26a.json`核对旧SHA一致，声明`no_live_market_source_freshness_recheck=true`、未激活pointer/更改生产路由。PR #158合并（`d0d76eb`）。
+- [x] 新`version-private-unified-day-parquet-snapshot.py`为**已物化快照**创建独立、SHA内容寻址、幂等的私有版本登记；显式`activate`需验证快照文件及前驱指针，原子更新**不同于旧overlay指针**的`active-private-snapshot.json`；`rollback`保留不可变版本及历史文件，回退前验证目标快照完整性；`status`快速报告已激活版本。全部都不访问/修改`D:\\stock`原市场、正式查询路径和真实Hikyuu镜像。14项合成测试及Windows真实快照**prepare-only**尚待执行，参见[2026_PRIVATE_UNIFIED_DAY_SNAPSHOT_VERSION_REGISTRY.md](2026_PRIVATE_UNIFIED_DAY_SNAPSHOT_VERSION_REGISTRY.md)。
+- [ ] 此阶段仅验证私有版本登记及状态、不擅自启用任何指针；下阶段才着手以新日线/股票日期构建真正**增量数据分区**，用版本前驱串联并验证购买优先/H5补缺，与原有合成金额技术链明确分开。全市场H5金额无损写入仍无认证，不可自动启用。
+
+
+
 ## ★ 2026-10-30：10条真实统一Parquet私有快照已落盘，进入快照只读加载与复用
 
 - [x] Windows `test_materialize_private_unified_day_parquet_snapshot.py` **10/10项OK（3.372秒）**。真实私有快照 `work/unified_parquet/snapshots/snapshot_ffc5c35e7e00` 共10条日线，其中购买Parquet2条、H5完整日期补缺候选8条，2股票，私有Parquet文件及manifest的SHA已由上传SAFE绑定，`all_written_values_roundtrip_exactly=true`，不修改原始Parquet/H5或正式查询路由。PR #157已合并至main（`af3ec3e`）。

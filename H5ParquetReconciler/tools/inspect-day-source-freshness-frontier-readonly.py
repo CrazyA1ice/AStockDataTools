@@ -181,7 +181,8 @@ def inspect_purchased(root,year):
         "purchased_footer_earliest_candidate_date":min_day,
         "purchased_footer_latest_candidate_date":max_day,
         "latest_is_row_group_all_stock_envelope_not_selected_stock_key":True,
-        "latest_source_date_certified":False if unknown else bool(usable),
+        "all_nonempty_rowgroups_have_ts_minmax":bool(usable) and unknown==0,
+        "latest_source_date_certified":False,
         "raw_purchased_parquet_ohlcva_rows_opened":False,
     },before
 

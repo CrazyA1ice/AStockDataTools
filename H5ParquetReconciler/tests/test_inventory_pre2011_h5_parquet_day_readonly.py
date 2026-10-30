@@ -220,7 +220,7 @@ class FullPre2011DaySourceEvidenceTests(unittest.TestCase):
             import shutil
             shutil.rmtree(root/"AllCycleAStockData"/"day")
             with self.assertRaisesRegex(ValueError,
-                                        "Purchased day Parquet directory unavailable"):
+                                        "purchased day Parquet directory unavailable"):
                 A.inventory(root,safe)
             self.assertFalse(safe.exists())
 
@@ -239,6 +239,17 @@ class FullPre2011DaySourceEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"module reports JSON"):
                 A.inventory(root,safe)
             self.assertEqual(safe.read_text(encoding="utf-8"),"protected")
+
+    def test_symlinked_purchased_dir_cannot_hide_historical_partitions(self):
+        with fresh() as (root,safe,pq):
+            path=root/"AllCycleAStockData"/"day"/"linked"
+            try:
+                path.symlink_to(root/"AllCycleAStockData"/"day",target_is_directory=True)
+            except (OSError,NotImplementedError):
+                self.skipTest("Local OS does not allow synthetic symlinks")
+            with self.assertRaisesRegex(ValueError,"Linked purchased day"):
+                A.inventory(root,safe)
+            self.assertFalse(safe.exists())
 
     def test_total_year_count_and_zero_years_are_explicit(self):
         with fresh() as (root,safe,pq):

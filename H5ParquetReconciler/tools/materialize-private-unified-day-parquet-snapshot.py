@@ -59,12 +59,15 @@ def safe_paths(snapshot_dir,report_path):
     return proposed.resolve(),safe.resolve()
 
 
-def normalize_rows(result,version_sha):
+def normalize_rows(result,version_sha,expected_symbols,first,last):
     summary=result.get("safe_summary")
     by_symbol=result.get("bars_by_symbol")
     if (type(summary) is not dict or type(by_symbol) is not dict
             or summary.get("format")!=BATCH.FORMAT
             or summary.get("private_version_sha256")!=version_sha
+            or summary.get("from_date")!=first
+            or summary.get("to_date")!=last
+            or summary.get("symbols")!=list(expected_symbols)
             or summary.get("purchased_parquet_priority") is not True
             or summary.get("private_overlay_stages_sha_and_keys_verified") is not True
             or summary.get("selected_private_stages_final_snapshot_reverified") is not True
@@ -98,8 +101,8 @@ def normalize_rows(result,version_sha):
                 d=date.fromisoformat(bar["trading_date"])
             except (KeyError,ValueError,TypeError):
                 raise ValueError("Bad private query trading date") from None
-            if d.isoformat()!=bar["trading_date"]:
-                raise ValueError("Noncanonical trading date")
+            if d.isoformat()!=bar["trading_date"] or not first<=d.isoformat()<=last:
+                raise ValueError("Noncanonical or out-of-window trading date")
             key=(sym,d.isoformat())
             if key in seen:
                 raise ValueError("Purchased/private duplicate stock-day blocked")
@@ -181,7 +184,8 @@ def materialize(root,symbols,first,last,version_sha,snapshot_dir,safe_report,
         max_total_result_bars=MAX_ROWS,
         max_overlay_source_rows=max_overlay_source_rows,
         use_private_active=False)
-    rows,by_source,per_symbol=normalize_rows(result,version_sha)
+    rows,by_source,per_symbol=normalize_rows(
+        result,version_sha,symbols,first,last)
     import pyarrow as pa
     import pyarrow.parquet as pq
     target_schema=schema(pa)

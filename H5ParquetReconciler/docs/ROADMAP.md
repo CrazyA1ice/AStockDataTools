@@ -1,5 +1,14 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：回到用户最终目标——原购买Parquet不改，H5独有全市场日线补到新私有Parquet，再单独转换H5
+
+- [x] 用户明确暂停通达信接入/更新研究，后续通达信由用户盘后更新后再统一增量对接。**不允许修改购买Parquet原始任何字节；统一Parquet主线对有键Parquet永远优先**，仅将逐股/逐日严格审核的真实H5独有记录写成独立模块私有Parquet新分区。H5转换排在统一Parquet实际完整/数值门禁之后，必须创建独立新H5镜像，先不覆盖原H5/默认生产路径。
+- [x] 新`complete-private-parquet-primary-day-gap-set.py`把现有**全市场**2026-09-01～10-28审核通过的4个H5独有整日、合计**22191条**实际Parquet暂存和不可变统一逻辑版本`prepare`串成一条收口流程，而不是继续仅3只股票/15条样本。先`--action plan`核验原审计report/gate SHA、所有完整日期的原始数据差集和既有私有Parquet日期数量/hash/所有股票日键；`--action complete --allow-new-private-parquet-stages`复用已验收分区，只对其余缺失整日生成新的`work/unified_parquet/staging/`私有Parquet，现场重验原购买完全无键/H5完整，再生成SHA不可变**未激活**的prepared overlay；禁止原市场写入/覆盖/指针启用/H5镜像。原已验收四日计数：10-08 5546、10-09 5547、10-12 5549、10-13 5549。
+- [x] 新增12项纯合成集成测试与[全市场私有日线补齐、原购买Parquet保护及双格式后续路线](2026_FULL_MARKET_PRIVATE_PARQUET_PRIMARY_DAY_GAP_COMPLETION.md)；**Windows本机尚未测试/尚未正式完成4日私有Parquet**，PR保持Draft，不能宣称已达到22191行实际物化或全面2011～2026完备。
+- [ ] 真正全4日私有分区及prepared SHA通过后，继续按**2011～2026逐年日线**审核更广覆盖/混合日逐股票键差集，再做1min/5min各自缺口与时间标签和量额核对；不以样本抽检代替全部数据。目标Parquet范围完整且金额、成交量量纲与Hikyuu整数舍入通过正式门禁，才在独立新文件生成原生H5镜像和双向覆盖对账；不得自动覆盖旧H5。
+
+
+
 ## ★ 2026-10-30：真实双来源日线时效边界已证，优先打通通达信原生日线安全接入
 
 - [x] Windows`test_inspect_day_source_freshness_frontier_readonly.py` **14/14 OK（6.988秒）**。实际3只股原H5最后物理记录均止于**2026-10-13**；购买2026年的`day` Parquet 9个文件17个行组全部有ts页脚，上界**2026-09-30**（全股票元数据上界，不是每股时效或供应商新鲜度认证），SAFE`reports/private-day-source-frontier-c1fee86b0cc1.json`确认源/私有活动指针/生产路线均未修改。PR #166已合并（`2b1ab65`）。

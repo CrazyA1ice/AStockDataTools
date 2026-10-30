@@ -260,7 +260,7 @@ def query_private_day_overlay_batch(
             "private_bars":len(supplement),
             "returned_bars":len(combined)}
     # The first stage hash was checked immediately after decode, but another
-    # process could replace that staged file while purchased stocks are read.
+    # process could replace that staged file after decode, before the result.
     # Recheck every selected stage immediately before final source/pointer
     # stability checks and returning any commercial OHLCVA to the caller.
     recheck_selected_stage_snapshot(selected)

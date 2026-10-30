@@ -143,7 +143,7 @@ class PrivateTDXLandingInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"32-byte budget"):
                 scan([one],safe)
             self.assertFalse(safe.exists())
-            file.write_bytes(native(20261013)[:-4]+b"xxxx")
+            file.write_bytes(struct.pack("<IIIIIfII",20261013,1000,500,900,1050,1025.0,100,0))
             with self.assertRaises(ValueError):
                 scan([one],safe)
             self.assertFalse(safe.exists())

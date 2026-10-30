@@ -78,12 +78,12 @@ def new_safe(out):
     return target.resolve()
 
 
-def private_folder(path):
+def private_folder(path,year):
     p=Path(path)
     if (any(x.is_symlink() for x in
             (MODULE/"work",MODULE/"work"/"unified_parquet",PRIVATE))
             or p.is_symlink() or p.exists()
-            or not re.fullmatch(r"native_pre2011_[0-9]{4}_[a-f0-9]{12,32}",p.name)
+            or not re.fullmatch(r"native_pre2011_"+str(year)+r"_[a-f0-9]{12,32}",p.name)
             or p.resolve().parent!=PRIVATE.resolve()):
         raise ValueError("Private output must be unused native_pre2011_<year>_<hex> direct child")
     return p.resolve()
@@ -241,7 +241,7 @@ def run(root,inventory_report,year,out,action,folder=None,allow_stage=False):
             or (action=="stage" and not allow_stage)
             or (action=="plan" and (allow_stage or folder is not None))):
         raise ValueError("Historical year/safe source/action authorization rejected")
-    private=private_folder(folder) if action=="stage" else None
+    private=private_folder(folder,year) if action=="stage" else None
     reference,sha=audit_file(inventory_report)
     h5,pq,hfiles,pfiles=requalify(root,reference)
     exp=h5["yearly_source_key_inventory"][str(year)]["H5_candidate_stockday_rows"]

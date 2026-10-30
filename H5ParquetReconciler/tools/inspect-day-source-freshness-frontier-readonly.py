@@ -259,7 +259,8 @@ def main(argv=None):
             "observed_latest_selected_h5_tail_day"])
         print("Purchased year global footer latest candidate:",result[
             "purchased_day_year_footer"]["purchased_footer_latest_candidate_date"])
-        print("Original market files / production/private pointers touched: NO")
+        print("Original H5 keys / purchased Parquet footers read: YES (read-only)")
+        print("Original market files modified, production/private pointers touched: NO")
         print("No newer alternate supplier paths discovered by this inspection.")
     except (ValueError,TypeError,KeyError,OSError,OverflowError,
             ImportError,ModuleNotFoundError):

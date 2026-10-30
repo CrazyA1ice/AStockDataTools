@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：真实日线精度发现成交额2/2无法无损转原生整数
+
+- [x] PR #155 Windows **10/10合成回归OK（6.874秒）**，两股2026-09-30真实只读检测118208条Parquet/2行组、原H5日线2条完成。**OHLC四项各2/2、volume 2/2严格原H5整数相等；amount 0/2相等、2/2需要舍入**。上传SAFE为`real-pq-native-h5-raw-integer-exactness-20260930-6f7127713c96.json`。PR #155已于2026-10-30合并至`main` (`f6e7c0a`)。**禁止将旧10股票日容差倍率证据升级为“金额无损转换已获证”。**
+- [x] 新增聚焦`amount`的**有界同两股同一日只读候选偏差分类**及10项合成测试，分组统计成交额按候选÷1000后相对H5原始整数的刻度差距、方向、最近/向下/向上取整吻合数、旧1e-5容差。即使舍入结果吻合仍禁止写实盘H5或宣称供应商货币物理单位认证。见[2026_REAL_DAY_H5_AMOUNT_RESIDUAL_READONLY_TRIAGE.md](2026_REAL_DAY_H5_AMOUNT_RESIDUAL_READONLY_TRIAGE.md)；**本轮Windows尚未执行**。
+- [ ] 若合成测试通过并重新检查当时市场源同版本，才读取已知2026-09日线限定2个股票日生成新SAFE；按真实计数决定调查供应商成交额数据字典还是原H5整数来源。并行维持已准备22191根日线overlay及Parquet主源优先路线，继续暂停5min历史微差实验。
+
+
+
 ## ★ 2026-10-30：合成Parquet→Hikyuu原生镜像闭环通过，进入真实日线整数候选精度验证
 
 - [x] 用户Windows对三份SAFE证明字节快照保护的新增回归 **11/11项OK（1.970秒）**；真正Hikyuu 2.8.1 `core311`原生驱动已读取由虚构Decimal Parquet转成的全新H5，SH600000/SZ000001各3根、合计6/6完全匹配，SAFE `synthetic-decimal-h5-native-reread-runec409feb8683.json`确认 `last_native_phase=finished`、`new_generated_h5_native_driver_certified=true`、输入三SAFE SHA前后不变。PR #154合并至`main`，**仅合成镜像技术闭环达标，不授权商业数据转换**。

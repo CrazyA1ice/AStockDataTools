@@ -108,6 +108,25 @@ def selected_private_rows(stages, symbols):
     return grouped
 
 
+def recheck_selected_stage_snapshot(stages):
+    """Rehash every selected immutable stage at the end of the whole query.
+
+    The initial version verification and per-stage post-decode hash prevent
+    reading unverified data. A concurrent stage replacement AFTER its decode
+    must also fail closed before any combined result is returned. This
+    narrows a TOCTOU window; it is not a cross-process atomic snapshot.
+    """
+    for stage in stages:
+        stage_dir = single.versioner.safe_stage_path(
+            single.versioner.MODULE / stage["stage_dir"])
+        file = stage_dir / "day.parquet"
+        if (file.is_symlink() or not file.is_file()
+                or single.versioner.stage_tool.file_digest(file)
+                != stage["parquet_sha256"]):
+            raise ValueError(
+                "Private stage snapshot changed after batched decode")
+
+
 def query_private_day_overlay_batch(
         root, symbols, first, last, version_sha256,
         max_candidate_rows_per_symbol=300000,
@@ -240,6 +259,11 @@ def query_private_day_overlay_batch(
             "purchased_bars":len(base),
             "private_bars":len(supplement),
             "returned_bars":len(combined)}
+    # The first stage hash was checked immediately after decode, but another
+    # process could replace that staged file while purchased stocks are read.
+    # Recheck every selected stage immediately before final source/pointer
+    # stability checks and returning any commercial OHLCVA to the caller.
+    recheck_selected_stage_snapshot(selected)
     if before is not None and (
             before != single.versioner.stage_tool.source_file_states(root,year)):
         raise ValueError("Market sources changed during batched query")
@@ -257,6 +281,8 @@ def query_private_day_overlay_batch(
         "private_overlay_bars_returned":total_private,
         "private_version_sha256":record["version_sha256"],
         "private_overlay_stages_sha_and_keys_verified":True,
+        "selected_private_stages_final_snapshot_reverified":True,
+        "selected_private_stages_final_rehash_count":len(selected),
         "private_overlay_dates_live_rechecked":[s["day"] for s in selected],
         "live_absence_recheck_scan_count":1 if selected else 0,
         "live_absence_recheck_h5_in_window_rows":(

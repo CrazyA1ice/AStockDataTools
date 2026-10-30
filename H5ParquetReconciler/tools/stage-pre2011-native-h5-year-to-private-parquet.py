@@ -185,8 +185,9 @@ def iterate_native_year(root,year):
 def stage_year(root,year,target,expected):
     import pyarrow as pa
     import pyarrow.parquet as pq
-    target.parent.mkdir(parents=True,exist_ok=True)
-    target.mkdir(exist_ok=False)
+    # Only run() may create this directory, exclusively and before cleanup.
+    if target.is_symlink() or not target.is_dir():
+        raise ValueError("Private stage directory not exclusively created")
     file=target/"h5-native-day.parquet"
     writer=None
     n=0
@@ -263,6 +264,10 @@ def run(root,inventory_report,year,out,action,folder=None,allow_stage=False):
     if action=="stage":
         if not exp:
             raise ValueError("Selected historical year contains zero native H5 rows")
+        # Fail a name collision BEFORE entering cleanup: never delete someone
+        # else\'s private job directory after a concurrent mkdir race.
+        private.parent.mkdir(parents=True,exist_ok=True)
+        private.mkdir(exist_ok=False)
         try:
             result=stage_year(root,year,private,exp)
             sources_unchanged(root,hfiles,pfiles)

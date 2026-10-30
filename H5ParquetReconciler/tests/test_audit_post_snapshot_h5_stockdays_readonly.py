@@ -102,7 +102,9 @@ class PostSnapshotSelectedStockdayAuditTests(unittest.TestCase):
             self.assertEqual(original,{p:A.READER.sha256_file(p) for p in original})
             self.assertTrue(safe.is_file())
             self.assertEqual(purchased.call_count,3)
-            self.assertEqual(stat.call_count,2)
+            # Three independent purchased-source stat checks are deliberate:
+            # before stock scans, after stock scans, and before SAFE publish.
+            self.assertEqual(stat.call_count,3)
             for forbidden in ("SH600000","SZ000001","SH600519","150000",
                               "synthetic_market_readonly","150000.25"):
                 self.assertNotIn(forbidden,safe.read_text(encoding="utf-8"))

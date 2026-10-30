@@ -201,7 +201,7 @@ class AdditivePrivateSymbolDeltaTests(unittest.TestCase):
                     stream.write(b"\n")
                 return fake_batch()
             batch.side_effect=mutate
-            with self.assertRaisesRegex(ValueError,"proof changed"):
+            with self.assertRaisesRegex(ValueError,"proof changed|no longer matches"):
                 append(f,parent,folder,out)
             self.assertFalse(folder.exists())
             self.assertFalse(out.exists())

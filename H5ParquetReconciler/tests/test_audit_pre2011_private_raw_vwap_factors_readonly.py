@@ -79,7 +79,7 @@ class HistoricalPrivateRawVwapFactorTests(unittest.TestCase):
         self.assertFalse(V.vwap_candidate_matches(
             big,big,10000,10000,1000))
         self.assertTrue(V.vwap_candidate_matches(
-            10,100,995,995,10000))
+            10,100,996,996,10000))
         self.assertFalse(V.vwap_candidate_matches(
             10,100,994,994,10000))
 

@@ -1,5 +1,13 @@
 # 开发路线与本轮交付记录
 
+## ★ 2026-10-30：逻辑SHA直接查询真实15条已验收；开始真实**新增交易日期**增量物化
+
+- [x] Windows `test_query_private_joined_day_by_version_sha_readonly.py` **16/16 OK（21.229秒）**，显式不可变逻辑SHA `bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14`直接返回3只股、15条私有统一日线（购买Parquet3、H5整日缺口候选12），SAFE`reports/private-logical-sha-read-423975e70449.json`记录SHA/manifest/行键完整核验成功、生产/私有指针不访问、不改原市场文件，明确不重验实时数据源。PR #163合并main（`81706893`）。
+- [x] 新`append-private-purchased-day-date-delta.py`：首次**不再重复3股票15条老日期**，直接对2026-10-14～10-29更晚日期、已登记逻辑版内股票，采用本机购买Parquet日线实时只读查询；H5不得从旧4缺日认证擅自延伸。新购买日线物理写入模块私有`work/unified_parquet/date_deltas/date_delta_<hex>/day.parquet`，父10+增量5分区不复制、不覆盖；完整PyArrow往返SHA、源文件stat清单前后变动拒绝、脱敏SAFE。若购买源确无新日期数据，安全生成`purchased_new_date_not_available_no_partition`报告且**不生成空Parquet**，不声称缺失等于节假日或获准H5补缺。14项纯虚构合成测试及Windows真实购买数据试点尚待验收，见[2026_PRIVATE_PURCHASED_DAY_NEW_DATE_INCREMENT.md](2026_PRIVATE_PURCHASED_DAY_NEW_DATE_INCREMENT.md)。
+- [ ] 成功获取真实新日期Parquet后，新增父逻辑v2+新日期delta可回滚v3只读视图；若购买源未到货，则先独立审计后续日期原H5“完整股票日确实购买缺失”的证据，禁止未经验证自动H5填缺。量纲确认前任何版本不能直接写生产Hikyuu H5。
+
+
+
 ## ★ 2026-10-30：真实15条不可变逻辑版本登记成功，新增只需SHA的版本查询
 
 - [x] Windows `test_register_private_joined_day_logical_version.py` **14/14 OK（16.928秒）**。实际父10+增量5根，共3只股、15根日线（购买Parquet3/H5整日缺口候选12）正式登记为**私有不可变逻辑版SHA** `bfedbb6b1f538a2a1ec73bb2bc02233290ebdccfc734ba33caa4ff42e2acdf14`。用户`status`确认`active_joined_version_sha256=null`、`original_market_files_accessed=false`、`production_query_route_modified=false`，从未激活逻辑指针/覆盖原始行情。PR #162合并（`071fec877`）。

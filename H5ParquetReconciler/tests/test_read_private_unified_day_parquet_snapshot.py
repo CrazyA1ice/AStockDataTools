@@ -198,8 +198,13 @@ class VerifiedPrivateSnapshotTests(unittest.TestCase):
             self.run_it()
 
     def test_wrong_arrow_column_type_refused_with_valid_hash(self):
-        self.rows[0]["amount"]=100
-        self.pq.write_table(self.pa.Table.from_pylist(self.rows),self.pqfile)
+        data=self.pa.Table.from_pylist(
+            self.rows,schema=R.expected_schema(self.pa))
+        index=data.schema.get_field_index("volume")
+        bad=self.pa.array([int(row["volume"]) for row in self.rows],
+                          type=self.pa.int64())
+        data=data.set_column(index,"volume",bad)
+        self.pq.write_table(data,self.pqfile)
         self.manifest["private_parquet_sha256"]=R.sha256_file(self.pqfile)
         self._resign()
         with self.assertRaisesRegex(ValueError,"schema or bounded decode"):

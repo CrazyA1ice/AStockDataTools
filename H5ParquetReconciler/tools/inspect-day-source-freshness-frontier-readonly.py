@@ -186,9 +186,12 @@ def inspect_purchased(root,year):
     },before
 
 
-def state_digest(files):
-    # Metadata-only digest across basenames and stat tuples. Not content SHA.
-    rows=sorted((p.name,*stat) for p,stat in files.items())
+def state_digest(files, purchased_root):
+    # Metadata-only digest across relative paths AND stat tuples: different
+    # directories may have identical filenames. Still NOT a file-content hash.
+    base=Path(purchased_root).resolve()
+    rows=sorted((p.resolve().relative_to(base).as_posix(),*stat)
+                for p,stat in files.items())
     return hashlib.sha256(json.dumps(rows,separators=(",",":")).encode()).hexdigest()
 
 
@@ -225,7 +228,8 @@ def inspect(root,symbols,year,out):
         "original_h5_source_stat_only_sha256":hashlib.sha256(
             json.dumps(sorted((m,*v) for m,v in hs.items()),
                        separators=(",",":")).encode()).hexdigest(),
-        "purchased_source_stat_only_sha256":state_digest(ps),
+        "purchased_source_stat_only_sha256":state_digest(
+            ps,Path(root).resolve()/"AllCycleAStockData"),
         "stat_checks_not_content_hashes":True,
         "selected_h5_tails_not_proof_of_full_history_sortedness":True,
         "purchased_footer_global_bound_not_stock_specific":True,

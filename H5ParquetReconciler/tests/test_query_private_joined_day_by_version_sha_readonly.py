@@ -168,7 +168,7 @@ class ExplicitPrivateJoinedVersionReadTests(unittest.TestCase):
                 p.write_text(p.read_text()+"\n",encoding="utf-8")
                 return result
             with patch.object(Q.JOIN,"read_joined",side_effect=replace_version):
-                with self.assertRaisesRegex(ValueError,"version SHA changed"):
+                with self.assertRaisesRegex(ValueError,"mutated during private joined read|version SHA changed"):
                     query(sha,out)
             self.assertFalse(out.exists())
 

@@ -141,6 +141,11 @@ class SyntheticDecimalNativeRereadTests(unittest.TestCase):
         self.assertEqual(result["last_native_phase"],"finished")
         self.assertFalse(result["licensed_parquet_units_verified"])
         self.assertFalse(result["ready_for_full_market_mirror"])
+        self.assertTrue(result["input_safe_proof_bytes_unchanged_during_native_reread"])
+        self.assertEqual(set(result["input_safe_proofs_sha256"]),
+                         {"synthetic_canary","synthetic_decimal_bridge","isolated_core311"})
+        self.assertEqual(result["input_safe_proofs_sha256"]["synthetic_decimal_bridge"],
+                         R.BRIDGE.sha256(self.decimal))
         self.assertNotIn("mixed native log",self.out.read_text(encoding="utf-8"))
         args=runner.call_args.args[0]
         self.assertEqual(args[:3],[str(self.python.resolve()),"-I","-c"])
@@ -208,6 +213,24 @@ class SyntheticDecimalNativeRereadTests(unittest.TestCase):
             self.run_it(runner=Mock(side_effect=tamper))
         self.assertFalse(self.out.exists())
 
+    def test_proof_bytes_changed_during_worker_rejected_even_if_semantically_same(self):
+        # Newline-only changes remain parseable and may preserve all JSON flags;
+        # exact SHA provenance must still fail closed for all THREE proof files.
+        for ix,source in enumerate((self.canary,self.decimal,self.core),1):
+            with self.subTest(source=source.name):
+                original=source.read_bytes()
+                def tamper_proof(*args,**kwargs):
+                    source.write_bytes(original+b"\\n")
+                    return fake_worker_result()
+                try:
+                    with self.assertRaisesRegex(
+                            ValueError,"SAFE proof bytes changed during native reread"):
+                        self.run_it(runner=Mock(side_effect=tamper_proof),
+                                    run_id=f"run00{ix}")
+                    self.assertFalse(self.out.exists())
+                finally:
+                    source.write_bytes(original)
+
     def test_original_canary_changed_during_worker_fails_closed(self):
         changed={
             **self.check,
@@ -231,6 +254,14 @@ class SyntheticDecimalNativeRereadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"already exists"):
             self.run_it(runner=runner)
         runner.assert_not_called()
+
+    def test_oversized_proof_rejected_before_native_spawn(self):
+        self.core.write_bytes(b"x"*(R.MAX_PROOF_BYTES+1))
+        runner=Mock(side_effect=AssertionError("must never spawn native worker"))
+        with self.assertRaisesRegex(ValueError,"bounded synthetic SAFE proof"):
+            self.run_it(runner=runner)
+        runner.assert_not_called()
+        self.assertFalse((self.synthetic/"_native_h5_281").exists())
 
     def test_never_allow_real_market_input_path_or_unbounded_timeout(self):
         runner=Mock(side_effect=AssertionError("must not access other source"))

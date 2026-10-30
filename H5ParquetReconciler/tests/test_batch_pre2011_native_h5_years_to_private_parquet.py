@@ -122,6 +122,19 @@ class BoundedMultiYearOriginalH5RawStageTests(unittest.TestCase):
                 "has_no_original_h5_stockday_rows"])
             self.assertFalse((stage.parent/"native_pre2011_1990_"+JOB).exists())
 
+    def test_resuming_private_stage_rechecks_original_h5_raw_values(self):
+        with fresh() as (root,inv,purchased,stage,safe,_):
+            run(root,inv,safe,[2001],"stage",JOB,True)
+            safe.unlink()
+            # Existing Parquet matches its manifest, but the *live* H5
+            # row stream digest disagrees. Stat-only checks are insufficient.
+            with patch.object(B,"source_year_native_digest",
+                              return_value=("0"*64,{"SH":1,"SZ":1})):
+                with self.assertRaisesRegex(
+                        ValueError,"differs from live original H5 values"):
+                    run(root,inv,safe,[2001])
+            self.assertFalse(safe.exists())
+
     def test_tampered_existing_private_parquet_or_manifest_refused(self):
         with fresh() as (root,inv,purchased,stage,safe,_):
             run(root,inv,safe,[2001],"stage",JOB,True)

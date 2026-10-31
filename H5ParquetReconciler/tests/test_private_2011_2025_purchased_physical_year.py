@@ -180,6 +180,7 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.assertEqual(shadow.read_bytes(),src.read_bytes())
         receipt=self.check(2016)
         self.assertTrue(receipt["private_verbatim_original_purchased_shadow_sha_verified"])
+        self.assertTrue(receipt["private_byte_shadow_source_float64_rows_recompared"])
         self.assertEqual(receipt["private_unclassified_purchased_extra_field_count_verified"],1)
         self.assertEqual(receipt["private_total_rows_verified"],3)
         self.assertNotIn("synthetic_vendor_extension_0",self.safes[2016].read_text())
@@ -380,13 +381,26 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.record[2016]["sha"]=M.ST.sha(self.sources[2016])
         self.record[2016]["size"]=self.sources[2016].stat().st_size
         result=self.diagnose()
-        self.assertEqual(result["failure_code"],"PURCHASED_ADDITIONAL_FIELDS_PRESENT")
-        self.assertEqual(result["failure_stage"],"purchased_footer")
+        self.assertIsNone(result["failure_code"])
+        self.assertIsNone(result["failure_stage"])
+        self.assertEqual(result["status"],"readonly_2016_historical_preflight_pass")
+        self.assertEqual(result["purchased_rows_checked_before_refusal"],2)
+        self.assertEqual(result["h5_candidate_rows_checked_before_refusal"],1)
+        self.assertTrue(result["purchased_extra_field_requires_byte_identical_private_original_shadow"])
+        self.assertFalse(result["purchased_extra_field_business_semantics_certified"])
         self.assertTrue(result["purchased_footer_row_count_matches_received_manifest"])
         self.assertTrue(result["purchased_required_fields_present"])
         self.assertTrue(result["purchased_required_arrow_types_match"])
         self.assertEqual(result["purchased_additional_field_count"],1)
         self.assertEqual(result["purchased_missing_required_field_count"],0)
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_two_extra_fields_still_rejected(self):
+        self.install_purchased_extension(2016,2)
+        result=self.diagnose()
+        self.assertEqual(result["failure_code"],"PURCHASED_ADDITIONAL_FIELDS_PRESENT")
+        self.assertEqual(result["failure_stage"],"purchased_footer")
+        self.assertEqual(result["purchased_additional_field_count"],2)
         self.assertFalse(self.private_root.exists())
 
     def test_2016_readonly_diagnostic_reports_missing_required_arrow_field(self):

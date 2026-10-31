@@ -1,0 +1,28 @@
+# 2026-10-31：一次真实来源校验服务多个股票的22,274候选日线只读批量查询
+
+## 背景和已通过的实机验收
+
+PR#195显式有界H5扫描在Windows通过六组回归、真实查询SH600000 2026-09-30~10-13仍返回购买Parquet1条、整日候选4条，混合日0条、合计5条；原始source SAFE字节SHA `50e7f3e50e3b43f408eb565242acc6fe1d6c44197f8514fa8a79bc770a610b06`完全不变。388.452260s历史阶段性查询降到136.438710s；不是受控A/B。剩余支出在两个年份H5精确键扫描~71s、完整缺日复核~55s。不可变版本为 `e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23`。
+
+## 新增纯只读API
+
+`tools/query-private-combined-day-22274-batch-readonly.py` 批次显式选择1–10只股票、同一年≤31天、指定不可变版本SHA，**整个批次只运行一次**原先已通过验收的`PRE.verify`真实全市场H5/PQ精确键缺失、全部22,274来源候选与四整日缺口校验。默认H5仍用原旧扫描；选`--fast-bounded-h5-scan`才启用已经初步实机验证的有界H5模式。随后逐股票执行原来的购买Parquet只读查询（无本地缓存），重用完整验证的独立私有整日与混合日候选，按`(股票,日期)`唯一键合并。任何股票出现异常、重叠、源漂移或超预算则整个批次fail closed；提交SAFE前再校验H5/PQ来源stat、私有stage SHA、前次校验SAFE和不可变版本。
+仅在当前进程内返回 `bars_by_symbol`（不会持久写OHLCVA）；CLI只打印返回数量及无敏感信息的SAFE，**不会写出股票代码、商业OHLCVA或私有83-key manifest**。没有生产路由或活动指针的读取/修改，没有原始行情写入，没有H5镜像。数据量纲仍未认证，五条2026-07-16的记录继续隔离。当前是研究接口，不可作为无人值守生产数据补齐。
+
+## 新增12项合成测试和Windows验收
+
+纯虚构数据验证：两股票共同共享一轮源核验，购买2+整日8+混合1=11，来源SHA一致且SAFE无证券代码、重复股票拒绝、非规范符号拒绝、超10股票拒绝、来源证明伪造拒绝、购买/私有同键冲突拒绝、查询中原始来源变化拒绝、报告不能覆盖、总返回条数预算、默认旧H5路径。新增12项测试与上游9+11+15项安全测试需在Windows先全通过。测试夹具修正Windows文本写入SAFE可能发生的LF→CRLF转换，SHA根据实际文件字节计算，并新增CRLF模拟回归；**真实查询来源SHA安全门禁未修改**。
+
+### PowerShell单行1：拉分支并运行47项测试
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "切换批量查询分支失败" }; git pull --ff-only origin feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\query-private-combined-day-22274-batch-readonly.py H5ParquetReconciler\tests\test_query_private_combined_day_22274_batch_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; $patterns=@("test_query_private_combined_day_22274_batch_readonly.py","test_optin_bounded_h5_mixed_day_scan.py","test_verify_private_combined_day_22274_readonly.py","test_query_private_combined_day_22274_readonly.py"); foreach ($p in $patterns) { .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p $p -v; if ($LASTEXITCODE -ne 0) { throw "批量读取或来源安全回归失败：$p；禁止实盘批量调用" } }; Write-Host "PASS：批量单轮校验12项新增+9+11+15项安全回归通过"
+```
+
+### PowerShell单行2：两只股票、单轮full-gate的真实试点
+```powershell
+cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $fresh="H5ParquetReconciler\reports\private-day-22274-batch2-recheck-$rid.json"; $out="H5ParquetReconciler\reports\private-day-22274-batch2-query-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\query-private-combined-day-22274-batch-readonly.py --source-root "D:\stock" --symbols SH600000 SH600519 --from-date 2026-09-30 --to-date 2026-10-13 --version-sha256 "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" --live-safe "H5ParquetReconciler\reports\live-mixed-day-83-keys-c8bf8ababde4.json" --private-keys "H5ParquetReconciler\work\unified_parquet\mixed_day_key_manifests\keys_c8bf8ababde4\keys.json" --history-ledger "H5ParquetReconciler\reports\history-day-ledger-full-91fae9458806.json" --source-2016 "H5ParquetReconciler\reports\historical-day-exact-2016-asof20261031-v1.json" --source-2026 "H5ParquetReconciler\reports\historical-day-exact-2026-asof20261031-v1.json" --mixed-plan "H5ParquetReconciler\reports\mixed-day-88-candidates-92274029928f.json" --fresh-recheck-out $fresh --out $out --max-candidate-rows-per-symbol 30000000 --max-total-candidate-rows 30000000 --max-result-bars-per-symbol 50 --max-total-result-bars 100 --max-overlay-source-rows 30000 --fast-bounded-h5-scan --read-only; if ($LASTEXITCODE -ne 0) { throw "两股票单轮来源验证只读批量查询失败" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; $expected="50e7f3e50e3b43f408eb565242acc6fe1d6c44197f8514fa8a79bc770a610b06"; $actual=(Get-FileHash -LiteralPath $fresh -Algorithm SHA256).Hash.ToLowerInvariant(); if ($r.state -ne "explicit_private_combined_day_batch_one_live_gate_passed" -or $r.private_combined_version_sha256 -ne "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" -or $r.full_live_market_keyset_audit_count -ne 1 -or $r.requested_stock_count -ne 2 -or $r.bounded_h5_scan_explicit_opt_in -ne $true -or $r.full_live_recheck_safe_sha256 -ne $expected -or $actual -ne $expected -or $r.query_result_stockday_bars -lt 5 -or $r.purchased_parquet_bars -lt 1 -or $r.whole_h5_only_candidate_bars -lt 4 -or $r.query_result_stockday_bars -ne ($r.purchased_parquet_bars+$r.whole_h5_only_candidate_bars+$r.mixed_h5_only_candidate_bars) -or $r.candidate_total_new_stockday_rows_in_immutable_version -ne 22274 -or $r.quarantined_2026_07_16_stockday_bars_not_included -ne 5 -or $r.no_raw_ohlcva_or_symbols_in_safe -ne $true -or $r.source_market_files_written -ne $false -or $r.purchased_parquet_replaced -ne $false -or $r.private_or_production_active_pointer_modified -ne $false -or $r.h5_mirror_created -ne $false -or $r.candidate_source_units_certified -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_automatic_market_merge -ne $false) { throw "两股票安全门禁不符，禁止生产启用" }; Write-Host "PASS：两股票单轮全市场来源校验后的日线只读查询通过；只输出脱敏SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+第一次仅使用SH600000与SH600519验证功能，不依赖第二只股票一定返回特定条数；整体来源SAFE SHA必须与历史相同。新报告固定输出在模块 `H5ParquetReconciler/reports`，不复制任何本机商业行情。
+
+**注意：** 单批次只扫描一次全市场，不等于“所有批次共享认证”。不同调用之间默认仍然重新扫描，既不能把来源stat当成内容哈希，也不能随意跳过精确股票日键校验。若需要真正低延迟的日常读取，应另行制定有边界的本地认证快照与失效机制，不能由当前试点直接升级生产。

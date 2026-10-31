@@ -197,8 +197,15 @@ class UnifiedPrivateCandidateTests(unittest.TestCase):
         self.assertFalse(self.out.exists())
 
     def test_purchased_cumulative_source_budget_is_fail_closed(self):
-        with self.assertRaisesRegex(ValueError,"budget exhausted"):
-            self.run_it(max_candidate_rows_per_symbol=100,max_total_candidate_rows=100)
+        def exact_budget(root,sym,period,first,last,**kw):
+            return {"bars":[bar(sym,START)],
+                    "safe_summary":{"source_rows_scanned":100,
+                        "source_market_files_modified":False,
+                        "no_h5_read":True,"no_automatic_gaps_fill":True}}
+        with patch.object(M.P,"query_bars",side_effect=exact_budget):
+            with self.assertRaisesRegex(ValueError,"budget exhausted"):
+                self.run_it(max_candidate_rows_per_symbol=100,
+                            max_total_candidate_rows=100)
         self.assertFalse(self.out.exists())
 
     def test_private_parquet_query_handles_purchased_only_empty_year(self):

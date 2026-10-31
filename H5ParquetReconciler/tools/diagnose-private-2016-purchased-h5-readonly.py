@@ -41,6 +41,7 @@ M=load("hist_2016_refusal_original_source_reader",
 # Only static, generic errors can appear in the SAFE. Never expose raw
 # error strings returned by Arrow/SQLite/third-party files.
 SAFE_CODES={
+    "Expected 64-character SHA256 evidence pin":"INPUT_SHA256_PIN_FORMAT_INVALID",
     "Invalid purchased/H5 input stockday schema":"SOURCE_FIELD_TYPE",
     "Original market stock symbol cannot be mapped conservatively":"SYMBOL_NOT_CANONICALIZABLE",
     "Original stockday timestamp is not valid":"SOURCE_TIMESTAMP_INVALID",

@@ -108,17 +108,11 @@ class BoundedH5ScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tester=PROOF.CombinedPrivateUnionTests()
             ref,report_ref=tester.run_fake(Path(tmp)/"reference")
-            # Patch only the explicit scanner selector. No source OHLCVA
-            # or key counts may appear in the emitted aggregate SAFE.
-            fake=patch.object(PRE.MIXED,"verify_all_live_absence")
-            with fake as scanner:
-                actual,report_new=tester.run_fake(Path(tmp)/"bounded")
-                # fixture above mocks its own module; verify PRE's opt-in
-                # integration independently rather than falsely assuming
-                # the two imported module objects are identical.
-                self.assertEqual(ref,actual)
-                self.assertEqual(report_ref.read_bytes(),report_new.read_bytes())
-                scanner.assert_not_called()
+            actual,report_new=tester.run_fake(
+                Path(tmp)/"bounded",bounded_h5_scan=True)
+            self.assertEqual(ref,actual)
+            self.assertEqual(report_ref.read_bytes(),report_new.read_bytes())
+            self.assertNotIn("fast_bounded_h5_scan",report_new.read_text())
 
     def test_scanner_avoids_date_by_date_h5_binary_search(self):
         with tempfile.TemporaryDirectory() as tmp:

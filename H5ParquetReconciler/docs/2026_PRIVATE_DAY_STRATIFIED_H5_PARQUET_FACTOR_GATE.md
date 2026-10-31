@@ -1,0 +1,22 @@
+# 2026-10-31：2016/2020/2024/2026跨年份真实重叠股票日量纲候选诊断（只读）
+
+## 不替代现有历史证据
+`audit-parquet-primary-day-crossyear-factor-evidence-offline.py`已有2025/2026年的10个不同日股票样本：H5原始价格×0.001、成交量×100、成交额×1000的数值比例在该有限样本内表现一致；报告明确：不是全年普遍适用认证，不是交易商物理单位、复权或原生Hikyuu映射证明。本轮是预先固定年份的**新增独立样本**，不能用来直接把历史候选量纲认证改为`true`。
+
+## 实施范围及安全性
+`tools/probe-private-day-overlap-stratified-factors-readonly.py`使用2016-08-17/18、2020-08-17/18、2024-08-19/20、2026-08-17/18，每个日期仅两只预先固定的股票（SH600000和SZ000001），**全部16个真实重叠股票日**都要求原始购买Parquet的精确 `(symbol, date)` 唯一键与Hikyuu原始H5同键记录真实存在，缺失/重复/源模式错误立即拒绝、不替换日期、不编造结果。
+购买Parquet原始 `ts=int64`、`symbol=string`、六个OHLCVA字段必须为Arrow `float64`，否则拒绝，避免错误地把float32舍入样本当作独立原始证据。购买Parquet只读、同一年两日期一次有界Parquet行组扫描，最多24个文件/年、512个行组/年、5,000,000行/年；H5只做已验证的原生raw整数键精确读取，不启动hikyuu C++、不写H5/SQLite。比较价格四字段绝对误差≤0.005、成交量×100及成交额×1000的相对误差≤0.00001；零值不作为量纲系数支持证据，异常数值/错误OHLC拒绝。16个样本的正反结论都聚合为按年份计数；不在SAFE输出股票代码、真实OHLCVA、原始数值、源文件绝对路径或私有83条键。
+源码变更、SHA版、元数据stat检查只用于发现运行时漂移，不证明源内容的加密完整性。就算16/16匹配，报告仍强制`candidate_source_units_certified=false`、`universal_conversion_rules_across_all_stockdays_certified=false`、`source_adjustment_and_timestamp_semantics_certified=false`、`ready_for_automatic_market_merge=false`、`ready_for_production_query=false`。2026-07-16五条继续隔离；不激活私有版本、不合并原购买Parquet、不生成H5镜像。
+
+## Windows验收单行PowerShell
+### 1. 拉取实验分支，先执行18项纯合成单测
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-day-overlap-stratified-factor-probe-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分层量纲诊断分支失败" }; git pull --ff-only origin feat/private-day-overlap-stratified-factor-probe-20261031; if ($LASTEXITCODE -ne 0) { throw "拉取代码失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\probe-private-day-overlap-stratified-factors-readonly.py H5ParquetReconciler\tests\test_probe_private_day_overlap_stratified_factors_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败，禁止扫描真实数据" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_probe_private_day_overlap_stratified_factors_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "18项分层量纲安全测试失败，禁止实盘读取" }; Write-Host "PASS：17项跨年份量纲因子测试通过；仅可继续只读原始重叠样本诊断"
+```
+### 2. 只有18项测试通过后，读取16个固定真实重叠样本
+```powershell
+cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\private-day-stratified-factor-16-stockdays-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\probe-private-day-overlap-stratified-factors-readonly.py --source-root "D:\stock" --version-sha256 "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" --out $out --read-only-stratified; if ($LASTEXITCODE -ne 0) { throw "跨2016/2020/2024/2026真实重叠样本只读诊断失败；无生产改动" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.state -ne "fixed_historical_original_overlap_diagnostic_not_unit_certification" -or $r.registered_private_version_sha256 -ne "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" -or $r.total_distinct_stockdays_compared -ne 16 -or $r.samples_per_year -ne 2 -or $r.symbols_per_date -ne 2 -or $r.per_year_factor_counts.'2016'.paired_stockdays -ne 4 -or $r.per_year_factor_counts.'2020'.paired_stockdays -ne 4 -or $r.per_year_factor_counts.'2024'.paired_stockdays -ne 4 -or $r.per_year_factor_counts.'2026'.paired_stockdays -ne 4 -or $r.candidate_source_units_certified -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_automatic_market_merge -ne $false -or $r.source_market_files_written -ne $false -or $r.purchased_parquet_replaced -ne $false -or $r.private_or_production_active_pointer_modified -ne $false -or $r.h5_mirror_created -ne $false -or $r.quarantined_2026_07_16_stockday_bars_not_included -ne 5 -or $r.stock_ids_ohlcva_raw_integers_paths_not_exported -ne $true -or $r.source_file_stat_is_not_cryptographic_content_proof -ne $true -or $r.numeric_mismatch_or_zero_requires_quarantine -ne (-not $r.all_16_samples_numerically_within_candidate_tolerances)) { throw "分层量纲诊断SAFE安全门禁不通过，禁止进入生产" }; Write-Host "PASS：16个固定历史重叠股票日已完成脱敏只读数值诊断；是否全部数值吻合：$($r.all_16_samples_numerically_within_candidate_tolerances)（无论真假均未认证量纲）"; Write-Host "SAFE: $out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+**注意：** 如果任一年源文件没有这些预先挑选的交易日，程序会fail-closed且不会输出虚假SAFE，也不会改写原始数据；届时必须分析缺失的原因并另行显式更新预注册样本设计，不能偷偷替换日期选择最有利结果。
+用户只需提交 `H5ParquetReconciler/reports/private-day-stratified-factor-16-stockdays-*.json`，不要上传原始Parquet/H5、私有work键或行情数值。下一轮应依据各年份的真实正反结果，决定增加实证样本还是补充交易所/厂商单位与复权语义的独立证明，不因简单匹配而直接允许生产自动合并。

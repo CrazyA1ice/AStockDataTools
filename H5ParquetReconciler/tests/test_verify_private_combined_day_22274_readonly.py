@@ -137,7 +137,7 @@ class CombinedPrivateUnionTests(unittest.TestCase):
             second, p2 = self.run_fake(Path(tmp)/"instrumented", timing_sink=timings)
             self.assertEqual(first, second)
             self.assertEqual(p1.read_bytes(), p2.read_bytes())
-            self.assertEqual(len(timings), 9)
+            self.assertEqual(len(timings), 10)
             self.assertTrue(all(type(v) is float and v >= 0 for v in timings.values()))
             self.assertIn("mixed_years_exact_purchased_h5_key_scan_seconds", timings)
             self.assertIn("whole_four_days_original_market_recheck_seconds", timings)

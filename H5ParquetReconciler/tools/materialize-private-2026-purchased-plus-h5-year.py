@@ -12,11 +12,13 @@ No original source files or active pointers are written.
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
 import re
 import sqlite3
+import struct
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -119,7 +121,17 @@ def normalise(raw,kind,year=YEAR,month=None):
     }
 
 
-def write_source_rows(rows,kind,year,month,writer,connection,counters,arrow_schema):
+def row_bytes(item):
+    """Exact float64+raw-label bytes; a local roundtrip digest, not vendor proof."""
+    return (item["symbol"].encode("utf-8")+b"\0"+
+            item["source_symbol"].encode("utf-8")+b"\0"+
+            item["trading_date"].encode("ascii")+b"\0"+
+            item["value_source"].encode("ascii")+b"\0"+
+            struct.pack(">q6d",item["ts"],*(item[f] for f in F)))
+
+
+def write_source_rows(rows,kind,year,month,writer,connection,counters,arrow_schema,
+                      source_digest=None):
     """Streaming per-source row validation + global stockday unique constraint."""
     import pyarrow as pa
     out=[]
@@ -132,6 +144,8 @@ def write_source_rows(rows,kind,year,month,writer,connection,counters,arrow_sche
         except sqlite3.IntegrityError:
             raise ValueError("Duplicate purchased/purchased or purchased/H5 stockday; fail closed") from None
         out.append(item)
+        if source_digest is not None:
+            source_digest.update(row_bytes(item))
         counters[kind]+=1
         if sum(counters.values())>MAX_ROWS:
             raise ValueError("Year source rows exceed private materialization budget")
@@ -212,6 +226,7 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
             dst=directory/relative
             dst.parent.mkdir(parents=True,exist_ok=False)
             count=0
+            source_digest=hashlib.sha256()
             w=pq.ParquetWriter(dst,sch,compression="zstd")
             try:
                 if (reader.metadata.num_rows!=records[name]["rows"]
@@ -221,7 +236,7 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
                     batch=reader.read_row_group(rg,columns=["ts","symbol",*F],
                                                 use_threads=False)
                     count+=write_source_rows(batch.to_pylist(),"purchased_parquet",
-                        YEAR,m,w,con,counters,sch)
+                        YEAR,m,w,con,counters,sch,source_digest)
             finally:
                 w.close()
                 reader.close()
@@ -230,11 +245,13 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
             results[name]={
                 "relative_file":relative,"rows":count,"sha256":ST.sha(dst),
                 "source_kind":"purchased_parquet",
+                "original_rows_float64_digest_sha256":source_digest.hexdigest(),
             }
         candidate_pf=pq.ParquetFile(cand_path,memory_map=False,pre_buffer=False)
         rel="candidate/h5-gap-2026.parquet"
         dst=directory/rel
         dst.parent.mkdir(parents=True,exist_ok=False)
+        source_digest=hashlib.sha256()
         w=pq.ParquetWriter(dst,sch,compression="zstd")
         try:
             if (candidate_pf.schema_arrow!=ST.candidate_schema(pa)
@@ -245,7 +262,8 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
                 table=candidate_pf.read_row_group(rg,use_threads=False)
                 for kind in SOURCE_KINDS-{"purchased_parquet"}:
                     subset=[r for r in table.to_pylist() if r["value_source"]==kind]
-                    count+=write_source_rows(subset,kind,YEAR,None,w,con,counters,sch)
+                    count+=write_source_rows(subset,kind,YEAR,None,w,con,counters,sch,
+                                             source_digest)
         finally:
             w.close()
             candidate_pf.close()
@@ -255,6 +273,7 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
         results["h5_gap_2026"]={
             "relative_file":rel,"rows":count,"sha256":ST.sha(dst),
             "source_kind":"mixed_whole_h5_candidates",
+            "original_rows_float64_digest_sha256":source_digest.hexdigest(),
         }
         con.commit()
         total=con.execute("SELECT COUNT(*) FROM stockday").fetchone()[0]
@@ -274,6 +293,7 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
                 or ST.sha(file)!=part["sha256"]):
             raise ValueError("Written private 2026 partition bytes drifted")
         pqf=pq.ParquetFile(file,memory_map=False,pre_buffer=False)
+        check_digest=hashlib.sha256()
         try:
             if pqf.schema_arrow!=sch or pqf.metadata.num_rows!=part["rows"]:
                 raise ValueError("Written 2026 partition Arrow/footer mismatch")
@@ -282,8 +302,12 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
                 t=pqf.read_row_group(rg,use_threads=False)
                 if t.schema!=sch or t.num_rows>8192 or t.null_count:
                     raise ValueError("Written private 2026 Arrow data malformed")
+                for item in t.to_pylist():
+                    check_digest.update(row_bytes(item))
         finally:
             pqf.close()
+        if check_digest.hexdigest()!=part["original_rows_float64_digest_sha256"]:
+            raise ValueError("Private 2026 purchased/H5 original float64 roundtrip digest mismatch")
     # Full SHA for original licensed inputs before and after materialization;
     # original bundle README/manifest unchanged, candidate snapshots unchanged.
     if (any(QDC.file_state(p)!=original_state[p.name]

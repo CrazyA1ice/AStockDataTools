@@ -9,13 +9,13 @@ PR#195显式有界H5扫描在Windows通过六组回归、真实查询SH600000 20
 `tools/query-private-combined-day-22274-batch-readonly.py` 批次显式选择1–10只股票、同一年≤31天、指定不可变版本SHA，**整个批次只运行一次**原先已通过验收的`PRE.verify`真实全市场H5/PQ精确键缺失、全部22,274来源候选与四整日缺口校验。默认H5仍用原旧扫描；选`--fast-bounded-h5-scan`才启用已经初步实机验证的有界H5模式。随后逐股票执行原来的购买Parquet只读查询（无本地缓存），重用完整验证的独立私有整日与混合日候选，按`(股票,日期)`唯一键合并。任何股票出现异常、重叠、源漂移或超预算则整个批次fail closed；提交SAFE前再校验H5/PQ来源stat、私有stage SHA、前次校验SAFE和不可变版本。
 仅在当前进程内返回 `bars_by_symbol`（不会持久写OHLCVA）；CLI只打印返回数量及无敏感信息的SAFE，**不会写出股票代码、商业OHLCVA或私有83-key manifest**。没有生产路由或活动指针的读取/修改，没有原始行情写入，没有H5镜像。数据量纲仍未认证，五条2026-07-16的记录继续隔离。当前是研究接口，不可作为无人值守生产数据补齐。
 
-## 新增10项合成测试和Windows验收
+## 新增12项合成测试和Windows验收
 
-纯虚构数据验证：两股票共同共享一轮源核验，购买2+整日8+混合1=11，来源SHA一致且SAFE无证券代码、重复股票拒绝、非规范符号拒绝、超10股票拒绝、来源证明伪造拒绝、购买/私有同键冲突拒绝、查询中原始来源变化拒绝、报告不能覆盖、总返回条数预算、默认旧H5路径。新增测试与上游9+11+15项安全测试需在Windows先全通过。
+纯虚构数据验证：两股票共同共享一轮源核验，购买2+整日8+混合1=11，来源SHA一致且SAFE无证券代码、重复股票拒绝、非规范符号拒绝、超10股票拒绝、来源证明伪造拒绝、购买/私有同键冲突拒绝、查询中原始来源变化拒绝、报告不能覆盖、总返回条数预算、默认旧H5路径。新增12项测试与上游9+11+15项安全测试需在Windows先全通过。测试夹具修正Windows文本写入SAFE可能发生的LF→CRLF转换，SHA根据实际文件字节计算，并新增CRLF模拟回归；**真实查询来源SHA安全门禁未修改**。
 
-### PowerShell单行1：拉分支并运行45项测试
+### PowerShell单行1：拉分支并运行47项测试
 ```powershell
-cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "切换批量查询分支失败" }; git pull --ff-only origin feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\query-private-combined-day-22274-batch-readonly.py H5ParquetReconciler\tests\test_query_private_combined_day_22274_batch_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; $patterns=@("test_query_private_combined_day_22274_batch_readonly.py","test_optin_bounded_h5_mixed_day_scan.py","test_verify_private_combined_day_22274_readonly.py","test_query_private_combined_day_22274_readonly.py"); foreach ($p in $patterns) { .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p $p -v; if ($LASTEXITCODE -ne 0) { throw "批量读取或来源安全回归失败：$p；禁止实盘批量调用" } }; Write-Host "PASS：批量单轮校验10项新增+9+11+15项安全回归通过"
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "切换批量查询分支失败" }; git pull --ff-only origin feat/batch-private-day-22274-single-live-gate-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\query-private-combined-day-22274-batch-readonly.py H5ParquetReconciler\tests\test_query_private_combined_day_22274_batch_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; $patterns=@("test_query_private_combined_day_22274_batch_readonly.py","test_optin_bounded_h5_mixed_day_scan.py","test_verify_private_combined_day_22274_readonly.py","test_query_private_combined_day_22274_readonly.py"); foreach ($p in $patterns) { .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p $p -v; if ($LASTEXITCODE -ne 0) { throw "批量读取或来源安全回归失败：$p；禁止实盘批量调用" } }; Write-Host "PASS：批量单轮校验12项新增+9+11+15项安全回归通过"
 ```
 
 ### PowerShell单行2：两只股票、单轮full-gate的真实试点

@@ -260,8 +260,12 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
             count=0
             for rg in range(candidate_pf.metadata.num_row_groups):
                 table=candidate_pf.read_row_group(rg,use_threads=False)
-                for kind in SOURCE_KINDS-{"purchased_parquet"}:
-                    subset=[r for r in table.to_pylist() if r["value_source"]==kind]
+                source_rows=table.to_pylist()
+                # Stable source ordering matters for reproducible physical
+                # row fingerprints; never depend on Python set iteration.
+                for kind in ("private_h5_whole_date_candidate",
+                             "private_h5_mixed_stockday_candidate"):
+                    subset=[r for r in source_rows if r["value_source"]==kind]
                     count+=write_source_rows(subset,kind,YEAR,None,w,con,counters,sch,
                                              source_digest)
         finally:

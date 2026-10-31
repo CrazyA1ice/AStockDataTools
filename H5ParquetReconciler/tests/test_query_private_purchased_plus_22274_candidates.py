@@ -99,6 +99,8 @@ class UnifiedPrivateCandidateTests(unittest.TestCase):
                 "original_source_stat_sha256":"d"*64}),
             patch.object(M.STAGER.REG,"LOCK",self.root/"no-lock"),
             patch.object(M.P,"query_bars",side_effect=self.purchased),
+            patch.object(M.P.private_cache,"source_signature",
+                         return_value={"file_count":2,"fixed":True}),
         ]
         self.mocks=[p.start() for p in self.patches]
         for p in self.patches:
@@ -180,6 +182,14 @@ class UnifiedPrivateCandidateTests(unittest.TestCase):
 
     def test_mid_query_source_stat_drift_blocks_final_safe(self):
         self.mocks[3].side_effect=["d"*64,"f"*64]
+        with self.assertRaisesRegex(ValueError,"changed during query"):
+            self.run_it()
+        self.assertFalse(self.out.exists())
+
+    def test_queried_purchased_year_changes_during_read_fails(self):
+        self.mocks[7].side_effect=[
+            {"file_count":2,"fixed":True},
+            {"file_count":3,"fixed":False}]
         with self.assertRaisesRegex(ValueError,"changed during query"):
             self.run_it()
         self.assertFalse(self.out.exists())

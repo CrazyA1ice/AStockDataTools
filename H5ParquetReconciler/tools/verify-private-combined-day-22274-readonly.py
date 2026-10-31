@@ -121,7 +121,9 @@ def verify_mixed_stage(stage_safe, live_safe, private_keys, originals, year_date
 
 def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
            ledger, source2016, source2026, mixed_plan, out,
-           timing_sink=None):
+           timing_sink=None, bounded_h5_scan=False):
+    if type(bounded_h5_scan) is not bool:
+        raise ValueError("Explicit bounded H5 source scan flag must be boolean")
     if timing_sink is not None and type(timing_sink) is not dict:
         raise ValueError("Internal phase timing sink must be a dictionary")
     clock = time.perf_counter()
@@ -163,7 +165,11 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
     if mixed_days & WHOLE_DATES or len(selected) != MIXED_ROWS:
         raise ValueError("Mixed candidate overlaps full-market staged dates")
     lap("mixed_stage_manifest_sha_and_parquet_verification_seconds")
-    MIXED.verify_all_live_absence(root, year_dates, selected)
+    if bounded_h5_scan:
+        MIXED.verify_all_live_absence(
+            root, year_dates, selected, h5_scanner=KEYS.scan_h5_keys_bounded)
+    else:
+        MIXED.verify_all_live_absence(root, year_dates, selected)
     lap("mixed_years_exact_purchased_h5_key_scan_seconds")
     expected = MIXED.normalize_private_h5_rows(root, selected)
     lap("mixed_original_h5_83_value_normalization_seconds")

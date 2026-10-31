@@ -59,7 +59,11 @@ def locations(year,folder,source_gate,out):
             or any(q.suffix!=".json" or q.exists()
                    or q.resolve().parent!=REPORTS.resolve() for q in (p,s))):
         raise ValueError("Must use fresh private physical YEAR directory and two new reports")
-    return f,p,s
+    # The CLI accepts module-relative paths on Windows. Normalize them
+    # before creating any private directory or writing a SAFE receipt.
+    # Otherwise folder.relative_to(MODULE) raises only AFTER the large
+    # private parquet, SHA and manifest have all been built.
+    return f.resolve(),p.resolve(),s.resolve()
 
 
 def purchased_input(root,year,readme_sha,manifest_sha):

@@ -66,7 +66,9 @@ def index_folder(folder,read):
         raise ValueError("Private index directory absent")
     if not read and p.exists():
         raise ValueError("Private index directory already exists")
-    return p
+    # Normalize CLI-relative --index-dir before deriving its private
+    # module-relative immutable manifest location on Windows.
+    return p.resolve()
 
 
 def source_snapshot(snapshot_safe):

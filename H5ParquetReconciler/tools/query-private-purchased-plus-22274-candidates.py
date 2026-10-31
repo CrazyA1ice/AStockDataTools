@@ -94,13 +94,17 @@ def verified_candidate_selection(snapshot_safe,verified_full,requested_year,symb
     # Check the on-disk bytes BEFORE passing them to Arrow. This also turns
     # deliberate corruption into a stable fail-closed integrity error rather
     # than relying on whichever Arrow decoder error happens first.
+    rel=folder/("year="+year)/"day.parquet"
+    if (mf.is_symlink() or rel.parent.is_symlink() or rel.is_symlink()
+            or STAGER.sha(mf)!=doc["manifest_sha256"]
+            or V.source(snapshot_safe)[1]!=proof_sha):
+        raise ValueError("Private candidate year partition or SAFE changed before selection")
+    # SHA first, JSON parser second: mutated manifest bytes must not be
+    # interpreted by the parser before the provenance check rejects them.
     manifest=json.loads(mf.read_bytes())
     part=manifest["partitions"][year]
-    rel=folder/("year="+year)/"day.parquet"
-    if (rel.parent.is_symlink() or rel.is_symlink()
-            or STAGER.sha(mf)!=doc["manifest_sha256"]
-            or STAGER.sha(rel)!=part["sha256"]
-            or V.source(snapshot_safe)[1]!=proof_sha):
+    if (STAGER.sha(mf)!=doc["manifest_sha256"]
+            or STAGER.sha(rel)!=part["sha256"]):
         raise ValueError("Private candidate year partition or SAFE changed before selection")
     import pyarrow.parquet as pq
     pf=pq.ParquetFile(rel,memory_map=False,pre_buffer=False)

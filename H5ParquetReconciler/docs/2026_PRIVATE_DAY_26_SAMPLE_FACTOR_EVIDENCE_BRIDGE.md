@@ -4,8 +4,8 @@
 第十阶段Windows两只股票在同一批次只执行一次完整来源校验，原H5/购买Parquet均未修改。第十一阶段Windows18项新增合成测试通过；四组固定年份（2016、2020、2024、2026）的16个不同股票日均通过原H5整数价格÷1000、数量×100、金额×1000候选误差容限。原始报告：`reports/private-day-stratified-factor-16-stockdays-6b11efc8b5e9.json`。此前旧跨年五SAFE链另有10个不同股票日数值候选记录，归档SAFE为 `reports/parquet-primary-day-crossyear-10-stockday-factor-evidence-v1.json`。两个证据集的日期不重合，但证券仅为两只固定标的，不能认为统计独立样本或全市场代表性。
 
 ## 本轮开发
-`tools/audit-private-day-26-factor-evidence-offline.py`只读取模块reports中的**两份脱敏SAFE**。所有检查完全离线，不读原始H5、Parquet、work键或商业K线。先核验既有10样本SAFE的五份历史证据SHA链、10/10数值候选、原生Hikyuu真实解码仅2日；再逐年核验新增16样本SAFE的2016/2020/2024/2026数量、六字段数值候选命中、有效非零量额、实际读取行组预算以及SHA绑定的22,274条私有候选版本。拒绝伪造认证、日期年数、缺失源或样本数矛盾；若新增样本有不匹配，输出聚合否定结论，而不会静默移除该年。
-新脱敏报告保存两份输入SAFE**实际字节SHA256**及旧五SAFE上游SHA，合计26个不同股票日、每年的新样本正反证据和6项尚未解除的认证阻断。无论26/26是否通过，`candidate_source_units_certified=false`、`price_adjustment_basis_certified=false`、`vendor_amount_rounding_policy_certified=false`、`all_22274_private_stockday_candidates_individually_certified=false`、`ready_for_automatic_market_merge=false`、`ready_for_full_market_mirror=false`。2026-07-16五条继续隔离。
+`tools/audit-private-day-26-factor-evidence-offline.py`只读取模块reports中的**两份脱敏SAFE**。所有检查完全离线，不读原始H5、Parquet、work键或商业K线。先校验已有10样本SAFE中五份历史SHA**引用字段存在且格式合法**、10/10数值候选、原生Hikyuu真实解码仅2日的原报告声明；再核验新增16样本SAFE的2016/2020/2024/2026数量、六字段数值候选命中、有效非零量额及其22,274私有候选版本SHA标识。**本工具不重新打开旧五份底层SAFE、也不加载真实私有版本注册表验证其存在**：它只将两份输入汇总SAFE的文件字节绑定到新报告，不能代替此前真实核验。拒绝伪造认证、日期年数、缺失源或样本数矛盾；若新增样本有不匹配，输出聚合否定结论，而不会静默移除该年。
+新脱敏报告保存两份输入SAFE**实际字节SHA256**及旧五SAFE上游引用SHA，显式声明历史五份底层SAFE未重新打开、注册版本未重新读取；合计26个不同股票日、每年的新样本正反证据和6项尚未解除的认证阻断。无论26/26是否通过，`candidate_source_units_certified=false`、`price_adjustment_basis_certified=false`、`vendor_amount_rounding_policy_certified=false`、`all_22274_private_stockday_candidates_individually_certified=false`、`ready_for_automatic_market_merge=false`、`ready_for_full_market_mirror=false`。2026-07-16五条继续隔离。
 
 供应商24个购买日线Parquet的schema/footer元数据没有提供足以认证的单位/复权/金额舍入信息。字段级正式供应商说明见 `docs/2026_PURCHASED_DAY_VENDOR_SEMANTICS_EVIDENCE_GATE.md`。这份离线证据桥不能以已核实样本代替签署并审核的产品文档，也不会自动开启来源转换或生产镜像。
 

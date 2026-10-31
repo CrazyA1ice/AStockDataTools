@@ -163,7 +163,11 @@ class MixedPrivateStageSyntheticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"market"
             keys=sample_keys()
-            source_h5(root,set(keys)-{next(iter(keys))})
+            # Keep the H5 stock group present, but omit its required date.
+            # An entirely missing stock dataset is a different error path.
+            missing=("SH600001",202604080000)
+            self.assertIn(missing,keys)
+            source_h5(root,(keys-{missing}) | {("SH600001",202604070000)})
             with self.assertRaisesRegex(ValueError,"missing/duplicate"):
                 M.normalize_private_h5_rows(root,keys)
 
@@ -245,11 +249,16 @@ class MixedPrivateStageSyntheticTests(unittest.TestCase):
             source_h5(market,sample_keys())
             origins,years,safe,keyfile,_=valid_audit_files(home,sample_keys())
             folder=home/"work"/"unified_parquet"/"mixed_day_stages"/"mixed_0123456789ab"
-            out=home/"reports"/"plan.json"
+            out=home/"reports"/"stage-plan-output.json"
             with temporary_module_dir(home),patch.object(
                     M.KEYS,"verified_existing_plan",return_value=(origins,years)),patch.object(
                     M.KEYS,"state_digest",return_value="source-state"),patch.object(
                     M,"verify_all_live_absence",return_value=1234):
+                # Preserve fail-closed behavior when an output aliases evidence.
+                with self.assertRaisesRegex(ValueError,"No overwrite"):
+                    M.run(market,*(origins[x][0] for x in
+                        ("ledger","2016","2026","plan")),
+                        safe,keyfile,folder,origins["plan"][0],"plan",False)
                 result=M.run(market,*(
                     origins[x][0] for x in ("ledger","2016","2026","plan")),
                     safe,keyfile,folder,out,"plan",False)

@@ -170,9 +170,11 @@ def normalize_private_h5_rows(source_root,keys):
                       "transCount","transAmount")]
                 if any(v<0 for v in raw):
                     raise ValueError("Negative native daily OHLCVA candidate")
-                op,hi,lo,cl=(v*PRICE_FACTOR for v in raw[:4])
-                vol=raw[4]*DAY_VOLUME_FACTOR
-                amt=raw[5]*AMOUNT_FACTOR
+                # Match the already-verified whole-day H5 staging float
+                # normalization exactly; these remain candidate factors.
+                op,hi,lo,cl=(v/1000.0 for v in raw[:4])
+                vol=raw[4]*100.0
+                amt=raw[5]*1000.0
                 if (not all(math.isfinite(v) for v in (op,hi,lo,cl,vol,amt))
                         or min(op,hi,lo,cl)<=0
                         or hi+1e-8<max(op,lo,cl)

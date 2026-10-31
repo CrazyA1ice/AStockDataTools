@@ -16,6 +16,7 @@ import importlib.util
 import json
 import re
 import sqlite3
+import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -144,10 +145,20 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
         sink=pq.ParquetWriter(private,sch,compression="zstd")
         digest=hashlib.sha256()
         rows=0
+        required={"ts","symbol",*PHYS.F}
+        observed=raw.schema_arrow.names
+        names=set(observed)
+        extra_fields=sorted(names-required)
         try:
             if (raw.metadata.num_rows!=record["rows"]
-                    or set(("ts","symbol",*PHYS.F))!=set(raw.schema_arrow.names)):
+                    or len(names)!=len(observed)
+                    or not required.issubset(names) or len(extra_fields)>1):
                 raise ValueError("Original purchased historical Arrow footer/schema mismatched")
+            expected_types={"ts":pa.int64(),"symbol":pa.string(),
+                            **{field:pa.float64() for field in PHYS.F}}
+            if any(raw.schema_arrow.field(field).type!=dtype
+                   for field,dtype in expected_types.items()):
+                raise ValueError("Original purchased historical required Arrow types differ")
             for rg in range(raw.metadata.num_row_groups):
                 batch=raw.read_row_group(rg,columns=["ts","symbol",*PHYS.F],
                                          use_threads=False)
@@ -160,6 +171,30 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
             raw.close()
         if rows!=record["rows"]:
             raise ValueError("Purchased historical annual full row-count mismatch")
+        # Noncanonical vendor columns must NEVER silently disappear. If this
+        # original has exactly one extra field, retain the COMPLETE original
+        # purchased Parquet bytes as a private, content-addressed companion.
+        # The normalized 8 source fields remain row-for-row unchanged and the
+        # extra source field remains recoverable byte-for-byte, without
+        # assuming its semantic role. >1 extras still fail closed.
+        extra_copy=None
+        if extra_fields:
+            rel_raw="purchased/original-with-unclassified-extra.parquet"
+            shadow=folder/rel_raw
+            with original.open("rb") as rd,shadow.open("xb") as wr:
+                shutil.copyfileobj(rd,wr,1024*1024)
+            if ST.sha(shadow)!=record["sha"] or (
+                    shadow.stat().st_size!=record["size"]):
+                raise ValueError("Private extra-field original source shadow SHA differs")
+            extra_copy={
+                "relative_file":rel_raw,
+                "sha256":record["sha"],"source_bytes":record["size"],
+                "extra_field_count":len(extra_fields),
+                "extra_field_arrow_type":str(raw.schema_arrow.field(extra_fields[0]).type),
+                "extra_field_name_private_only":extra_fields[0],
+                "source_semantics_certified":False,
+                "verbatim_original_licensed_parquet_private_only":True,
+            }
         parts["purchased"]={
             "relative_file":rel,"rows":rows,
             "sha256":ST.sha(private),"source_kind":"purchased_parquet",
@@ -250,6 +285,9 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
         "source_candidate_safe_sha256":source_safe_sha,
         "source_candidate_version_sha256":SOURCE_VERSION,
         "partition_files":parts,
+        "unclassified_purchased_extra_field_count":len(extra_fields),
+        "original_purchased_full_bytes_shadow":extra_copy,
+        "unknown_extra_field_semantics_certified":False,
         "original_purchased_rows":counts["purchased_parquet"],
         "h5_mixed_candidate_rows":counts["private_h5_mixed_stockday_candidate"],
         "total_private_physical_rows":unique,
@@ -287,6 +325,9 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
         "physical_partition_sha256":{
             name:{"rows":p["rows"],"sha256":p["sha256"]}
             for name,p in parts.items()},
+        "unclassified_purchased_extra_field_count":len(extra_fields),
+        "verbatim_original_purchased_extra_field_shadow_created":extra_copy is not None,
+        "unknown_extra_field_semantics_certified":False,
         "purchased_original_rows":counts["purchased_parquet"],
         "h5_mixed_candidate_rows":counts["private_h5_mixed_stockday_candidate"],
         "total_private_physical_rows":unique,

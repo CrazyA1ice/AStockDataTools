@@ -51,6 +51,11 @@ def source(safe):
             or doc.get("total_private_physical_rows")!=(
                 doc["purchased_original_rows"]+(year==2016))
             or doc.get("original_float64_roundtrip_exact") is not True
+            or type(doc.get("unclassified_purchased_extra_field_count")) is not int
+            or doc["unclassified_purchased_extra_field_count"] not in (0,1)
+            or doc.get("verbatim_original_purchased_extra_field_shadow_created") is not (
+                doc["unclassified_purchased_extra_field_count"]==1)
+            or doc.get("unknown_extra_field_semantics_certified") is not False
             or doc.get("no_market_ohlcva_or_symbols_in_safe") is not True
             or any(doc.get(k) is not False for k in (
                 "original_market_files_written","original_purchased_parquet_replaced",
@@ -90,12 +95,69 @@ def source(safe):
             or manifest.get("original_purchased_rows")!=doc["purchased_original_rows"]
             or manifest.get("h5_mixed_candidate_rows")!=doc["h5_mixed_candidate_rows"]
             or manifest.get("total_private_physical_rows")!=doc["total_private_physical_rows"]
+            or manifest.get("unclassified_purchased_extra_field_count")!=
+                doc["unclassified_purchased_extra_field_count"]
+            or manifest.get("unknown_extra_field_semantics_certified") is not False
             or any(manifest.get(k) is not False for k in (
                 "original_market_files_written","original_purchased_parquet_replaced",
                 "private_or_production_active_pointer_modified",
                 "candidate_source_units_certified","ready_for_production_query",
                 "ready_for_automatic_market_merge","ready_for_h5_mirror"))):
         raise ValueError("Historic manifest/source SAFE provenance mismatch")
+    extra=manifest.get("original_purchased_full_bytes_shadow")
+    n=doc["unclassified_purchased_extra_field_count"]
+    if n==0:
+        if extra is not None:
+            raise ValueError("Unexpected original purchased extension archive")
+    else:
+        if (type(extra) is not dict
+                or set(extra)!={"relative_file","sha256","source_bytes",
+                                "extra_field_count","extra_field_arrow_type",
+                                "extra_field_name_private_only",
+                                "source_semantics_certified",
+                                "verbatim_original_licensed_parquet_private_only"}
+                or extra.get("relative_file")!=
+                   "purchased/original-with-unclassified-extra.parquet"
+                or extra.get("sha256")!=
+                   doc["source_purchased_original_parquet_sha256"]
+                or extra.get("extra_field_count")!=1
+                or type(extra.get("extra_field_name_private_only")) is not str
+                or not extra["extra_field_name_private_only"]
+                or type(extra.get("extra_field_arrow_type")) is not str
+                or extra.get("source_semantics_certified") is not False
+                or extra.get("verbatim_original_licensed_parquet_private_only") is not True
+                or type(extra.get("source_bytes")) is not int
+                or not 0<extra["source_bytes"]<1024*1024*1024):
+            raise ValueError("Missing or untrusted full source extension archive")
+        shadow=folder/extra["relative_file"]
+        if (shadow.parent.is_symlink() or shadow.is_symlink()
+                or not shadow.is_file()
+                or shadow.resolve().parent!=(folder/"purchased").resolve()
+                or shadow.stat().st_size!=extra["source_bytes"]
+                or M.ST.sha(shadow)!=extra["sha256"]):
+            raise ValueError("Vendor original extra-field byte archive SHA drift")
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        pf=pq.ParquetFile(shadow,memory_map=False,pre_buffer=False)
+        try:
+            required={"ts","symbol",*PHYS.F}
+            names=pf.schema_arrow.names
+            extra_names=set(names)-required
+            required_types={"ts":pa.int64(),"symbol":pa.string(),
+                            **{field:pa.float64() for field in PHYS.F}}
+            if (len(names)!=len(set(names))
+                    or len(extra_names)!=1
+                    or extra_names!={extra["extra_field_name_private_only"]}
+                    or str(pf.schema_arrow.field(extra["extra_field_name_private_only"]).type)!=
+                       extra["extra_field_arrow_type"]
+                    or any(pf.schema_arrow.field(field).type!=dtype
+                           for field,dtype in required_types.items())
+                    or pf.metadata.num_rows!=doc["purchased_original_rows"]):
+                raise ValueError("Archived purchased source Arrow footer/extension differs")
+        finally:
+            pf.close()
+        if M.ST.sha(shadow)!=extra["sha256"]:
+            raise ValueError("Original vendor extra-field archive modified during read")
     return doc,hashlib.sha256(raw).hexdigest(),folder,mf,db,manifest
 
 
@@ -193,6 +255,11 @@ def verify(safe,out):
             counts["private_h5_mixed_stockday_candidate"],
         "private_total_rows_verified":sum(counts.values()),
         "private_partition_files_verified":len(names),
+        "private_unclassified_purchased_extra_field_count_verified":
+            doc["unclassified_purchased_extra_field_count"],
+        "private_verbatim_original_purchased_shadow_sha_verified":
+            doc["unclassified_purchased_extra_field_count"]==1,
+        "unknown_extra_field_semantics_certified":False,
         "source_materialization_safe_sha256":safe_sha,
         "source_private_manifest_sha256":doc["private_manifest_sha256"],
         "original_purchased_parquet_reopened":False,

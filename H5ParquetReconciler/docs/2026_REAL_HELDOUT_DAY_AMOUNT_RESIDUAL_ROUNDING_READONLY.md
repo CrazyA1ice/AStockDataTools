@@ -19,12 +19,14 @@
 
 ## Windows执行：所有PowerShell命令单行
 
-1. 更新Draft PR分支并仅执行14项小型虚构Parquet/H5合成测试：
+1. 更新Draft PR分支并仅执行15项小型虚构Parquet/H5合成测试：
 
-    cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/heldout-real-amount-residual-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/heldout-real-amount-residual-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\audit-real-heldout-pq-h5-amount-residual-readonly.py H5ParquetReconciler\tests\test_audit_real_heldout_pq_h5_amount_residual_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_real_heldout_pq_h5_amount_residual_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "14项合成测试失败，禁止真实Parquet/H5读取" }; Write-Host "14项留出日成交额残差合成测试通过"
+    cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/heldout-real-amount-residual-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/heldout-real-amount-residual-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\audit-real-heldout-pq-h5-amount-residual-readonly.py H5ParquetReconciler\tests\test_audit_real_heldout_pq_h5_amount_residual_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_real_heldout_pq_h5_amount_residual_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "15项合成测试失败，禁止真实Parquet/H5读取" }; Write-Host "15项留出日成交额残差合成测试通过"
 
 2. 第一条全部OK后，运行固定4组真实只读检查，生成全新模块reports/SAFE：
 
     cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\heldout-real-day-amount-residual-20260928-29-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-real-heldout-pq-h5-amount-residual-readonly.py --purchased-root "D:\stock\AllCycleAStockData" --h5-root "D:\stock\HikyuuData" --heldout-safe "H5ParquetReconciler\reports\real-h5-parquet-heldout-day-factors-20260928-29-v1.json" --discovery-amount-safe "H5ParquetReconciler\reports\real-day-h5-amount-residual-20260930-b724d250f30e.json" --out $out --read-only-heldout-amount-residual; if ($LASTEXITCODE -ne 0) { throw "4组留出日金额残差真实只读失败" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.heldout_stock_days_compared -ne 4 -or $r.prior_heldout_factor_counts_reproduced -ne $true -or $r.ready_for_full_market_mirror -ne $false -or $r.lossless_native_h5_amount_conversion_certified -ne $false -or $r.source_parquet_h5_or_market_sqlite_written -ne $false) { throw "SAFE权限门禁异常" }; Write-Host "留出日金额残差SAFE：$out"
+
+额外覆盖相对容差1e-5的包含边界（基数200000、偏差2刚好通过），以及偏差3大于容差的拒绝结果。
 
 仅回传新SAFE统计和合成测试日志；不要传原商业Parquet/H5、数据库或真实价量额。真实测试通过之前PR保持Draft，不自行批准生产转换。

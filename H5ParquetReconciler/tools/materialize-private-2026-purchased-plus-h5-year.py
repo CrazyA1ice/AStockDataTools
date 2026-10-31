@@ -361,8 +361,8 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
         fp.write("\n")
     manifest_sha=ST.sha(manifest)
     if (manifest_sha!=ST.sha(manifest) or ST.sha(index)!=m["global_stockday_unique_index_sha256"]
-            or any(ST.sha(directory[p["relative_file"]])!=p["sha256"]
-                   for p in results.values())):
+            or any(ST.sha(directory / part["relative_file"])!=part["sha256"]
+                   for part in results.values())):
         raise ValueError("2026 physical private output bytes changed before success SAFE")
     safe={
         "format":FORMAT,"status":m["status"],"year":YEAR,

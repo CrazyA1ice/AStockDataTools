@@ -1,0 +1,26 @@
+# 2026-10-31：26股票日历史来源SAFE及私有不可变注册表离线完整性重核
+
+## 已验收输入与准入边界
+用户Windows第十二阶段10/10合成测试及真实26股票日汇总通过。其SAFE `reports/private-day-factor-26-evidence-bridge-7fa5bcff95a2.json`报告26个**数值候选命中**，并明确指出底层五SAFE此前仅是SHA引用（`prior_five_source_files_independently_reopened=false`），私有版本未在那次汇总中独立读取。第十/十一阶段已通过的H5原始来源核验不是本轮重新执行。
+
+## 本轮新工具
+`tools/recheck-private-day-26-provenance-offline.py` 在**没有读取任何原始H5/购买Parquet**的情况下：
+1. 重开此前10样本汇总SAFE、新增16样本汇总SAFE和26样本桥接SAFE，每份独立计算磁盘字节SHA，并严格与桥接SAFE内记载一致。
+2. 分别打开更早的5个脱敏SAFE（`real_raw_stock_day`、`real_native_stock_day`、`same_month_heldout`、`annual_2025_key_only`、`crossyear_holdout`），按字节计算SHA并与10样本报告内保存的5个SHA逐一对应。任何缺失、错误路径、重复路径或SHA漂移，fail-closed。
+3. 复用原有不可变版本 `register-private-combined-day-22274-version.py::load_version` 完成真正的**内容寻址注册表及其引用的三份私有SAFE**检查，读前读后各核对一次。注册版本必须仍是22,191整日+83混合=22,274，只读、无生产指针切换。2026-07-16五条继续隔离。
+4. 最终只输出一份模块reports内的脱敏SAFE，包含实际8份源SAFE文件SHA、计数和只读标志；**不导出任何股票代码、OHLCVA、原始市场文件路径或work私有键。** 若过程中任何文件变化或上游宣称已认证单位，立即拒绝。
+
+## 仍然无法解除的限制
+历史SAFE按字节存在且未改，不等于最初的供应商数据来源可信，不等于market原始H5/PQ内容重新HASH，也不等于物理单位、复权、时间戳、金额舍入有了厂商正式证明。报告的`candidate_source_units_certified`、`ready_for_production_query`、`ready_for_automatic_market_merge`、`ready_for_h5_mirror`永远为`false`。商业数据仅在本机原目录，未修改任何生产源、活动指针或镜像。
+
+## Windows PowerShell单行验收
+先执行14项新增+10项原证据汇总回归：
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-day-26-offline-provenance-recheck-20261031; if ($LASTEXITCODE -ne 0) { throw "切换离线来源复核分支失败" }; git pull --ff-only origin feat/private-day-26-offline-provenance-recheck-20261031; if ($LASTEXITCODE -ne 0) { throw "拉取失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\recheck-private-day-26-provenance-offline.py H5ParquetReconciler\tests\test_recheck_private_day_26_provenance_offline.py; if ($LASTEXITCODE -ne 0) { throw "语法失败，禁止运行" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_recheck_private_day_26_provenance_offline.py" -v; if ($LASTEXITCODE -ne 0) { throw "14项真实SAFE来源重核合成测试失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_private_day_26_factor_evidence_offline.py" -v; if ($LASTEXITCODE -ne 0) { throw "原10项汇总回归失败" }; Write-Host "PASS：14项历史SAFE内容哈希复核+10项原证据汇总安全测试通过"
+```
+全部通过后仅使用模块reports与work中的既有证明，进行离线真实来源文件SHA复核：
+```powershell
+cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\private-day-26-provenance-recheck-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\recheck-private-day-26-provenance-offline.py --bridge-safe "H5ParquetReconciler\reports\private-day-factor-26-evidence-bridge-7fa5bcff95a2.json" --prior-ten-safe "H5ParquetReconciler\reports\parquet-primary-day-crossyear-10-stockday-factor-evidence-v1.json" --stratified-sixteen-safe "H5ParquetReconciler\reports\private-day-stratified-factor-16-stockdays-6b11efc8b5e9.json" --real-raw-safe "H5ParquetReconciler\reports\real-parquet-h5-raw-day-unit-factor-candidates-20260930-v1.json" --real-native-safe "H5ParquetReconciler\reports\real-hikyuu-native-20260930-hmac-v3.json" --same-month-heldout-safe "H5ParquetReconciler\reports\real-h5-parquet-heldout-day-factors-20260928-29-v1.json" --annual-2025-key-only-safe "H5ParquetReconciler\reports\real-2025-annual-parquet-day-keyonly-20250930-v1.json" --crossyear-heldout-safe "H5ParquetReconciler\reports\real-h5-parquet-crossyear-day-factors-keylocated-20250930-20260824-v2.json" --version-sha256 "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" --out $out --offline-only; if ($LASTEXITCODE -ne 0) { throw "七份历史证据SAFE+注册版本离线复核失败，不涉及市场源" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.status -ne "seven_real_safe_files_rehashed_and_immutable_private_manifest_verified_not_licensed_certification" -or $r.registered_private_version_sha256 -ne "e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23" -or $r.historical_underlying_safe_count -ne 5 -or $r.total_aggregate_safe_count -ne 2 -or $r.bridge_safe_count -ne 1 -or $r.total_26_stockday_candidate_observations -ne 26 -or $r.all_26_candidate_numeric_factors_matched -ne $true -or $r.five_underlying_source_safe_files_independently_rehashed -ne $true -or $r.immutable_version_content_address_and_referenced_safes_rechecked -ne $true -or $r.original_market_files_reopened -ne $false -or $r.candidate_source_units_certified -ne $false -or $r.ready_for_automatic_market_merge -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_h5_mirror -ne $false -or $r.source_market_files_written -ne $false -or $r.purchased_parquet_replaced -ne $false -or $r.private_or_production_active_pointer_modified -ne $false -or $r.quarantined_2026_07_16_stockday_bars_not_included -ne 5) { throw "复核SAFE证据不足，不得生产启用" }; Write-Host "PASS：五份底层历史SAFE+两份汇总SAFE及注册私有版本已离线核验，源行情未打开"; Write-Host "SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+只需反馈 `reports/private-day-26-provenance-recheck-*.json` 脱敏SAFE。若上述某个源SAFE文件不存在，**不要重建或猜测证据**，应先核对原有已验收报告的准确路径；不得因此跳过缺失文件认证。

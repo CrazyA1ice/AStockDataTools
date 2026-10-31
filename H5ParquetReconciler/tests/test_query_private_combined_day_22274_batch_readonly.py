@@ -67,7 +67,10 @@ def fake_batch(*, stale=False, overlap=False, source_changed=False):
             "original_source_stat_sha256":"d"*64,
             "original_preflight_safe_basename":"original.json",
             "original_preflight_safe_sha256":digest(orig),
-            "fresh_recheck_safe_sha256":sha(old.encode()),
+            # Hash the on-disk bytes, not the pre-write LF text. Windows
+            # text-mode write_text() can translate LF to CRLF; the real
+            # source verifier hashes bytes of its written SAFE report.
+            "fresh_recheck_safe_sha256":digest(orig),
         }
         dates=["2026-10-08","2026-10-09","2026-10-12","2026-10-13"]
         stages=[{"day":day,"rows":count} for day,count in zip(dates,[5546,5547,5549,5549])]
@@ -117,6 +120,16 @@ def run(root, reports, symbols=("SH600000","SH600001"),**kwargs):
 
 
 class PrivateBatchOneGateTests(unittest.TestCase):
+    def test_fixture_sha_binds_on_disk_safe_bytes_portably(self):
+        with fake_batch() as (root,reports,version,gate,purchase,entry):
+            source=reports/"original.json"
+            actual=hashlib.sha256(source.read_bytes()).hexdigest()
+            self.assertEqual(entry["original_preflight_safe_sha256"],actual)
+            self.assertEqual(entry["fresh_recheck_safe_sha256"],actual)
+            self.assertNotEqual(entry["fresh_recheck_safe_sha256"],
+                                hashlib.sha256(source.read_bytes()+b"modified").hexdigest())
+            gate.assert_not_called()
+
     def test_two_stocks_one_full_market_gate_with_exact_source_totals(self):
         with fake_batch() as (root,reports,version,gate,purchase,entry):
             result=run(root,reports,fast_bounded_h5_scan=True)

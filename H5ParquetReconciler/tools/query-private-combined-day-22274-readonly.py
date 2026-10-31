@@ -132,7 +132,9 @@ def selected_mixed_rows(rows, symbol, first, last):
 def query(root, symbol, first, last, version_sha, live_safe, private_keys,
           ledger, source2016, source2026, mixed_plan, fresh_recheck_out,
           out, max_candidate_rows=30000000, max_result_bars=100,
-          max_overlay_source_rows=30000):
+          max_overlay_source_rows=30000, fast_bounded_h5_scan=False):
+    if type(fast_bounded_h5_scan) is not bool:
+        raise ValueError("Private H5 bounded scan opt-in must be boolean")
     started = time.perf_counter()
     split_clock = started
     timings = {}
@@ -166,7 +168,8 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
     # checks are mandatory for every research query, even baseline-only.
     fresh = PRE.verify(root, whole_sha, mixed_safe, live_safe, private_keys,
                        ledger, source2016, source2026, mixed_plan, fresh_path,
-                       timing_sink=source_gate_timings)
+                       timing_sink=source_gate_timings,
+                       bounded_h5_scan=fast_bounded_h5_scan)
     lap("full_h5_purchased_parquet_live_gate_seconds")
     original_path, _, original = REG.read_audit(
         PRE.REPORTS / entry["original_preflight_safe_basename"])
@@ -259,6 +262,8 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
         "elapsed_seconds_this_invocation": round(time.perf_counter() - started, 6),
         "phase_elapsed_seconds": timings,
         "full_live_gate_phase_elapsed_seconds": source_gate_timings,
+        "bounded_h5_scan_explicit_opt_in": fast_bounded_h5_scan,
+        "h5_scan_validates_exact_h5_purchased_stockday_keys_live": True,
         "timing_instrumentation_changes_original_market_scan": False,
         "timing_instrumentation_changes_live_source_safe": False,
     }
@@ -287,6 +292,8 @@ def main(argv=None):
     p.add_argument("--max-result-bars", type=int, default=100)
     p.add_argument("--max-overlay-source-rows", type=int, default=30000)
     p.add_argument("--read-only", action="store_true", required=True)
+    p.add_argument("--fast-bounded-h5-scan", action="store_true",
+                   help="Experimental exact-key H5 span scan; default original scanner")
     a = p.parse_args(argv)
     try:
         result = query(
@@ -294,7 +301,8 @@ def main(argv=None):
             a.version_sha256, a.live_safe, a.private_keys,
             a.history_ledger, a.source_2016, a.source_2026, a.mixed_plan,
             a.fresh_recheck_out, a.out, a.max_candidate_rows,
-            a.max_result_bars, a.max_overlay_source_rows)
+            a.max_result_bars, a.max_overlay_source_rows,
+            fast_bounded_h5_scan=a.fast_bounded_h5_scan)
         print("Research-only day bars:", result["safe_summary"]["matching_stockday_bars"])
         print("Purchased:", result["safe_summary"]["matched_purchased_stockday_bars"])
         print("Whole-day private:", result["safe_summary"]["matched_private_whole_day_stockday_bars"])

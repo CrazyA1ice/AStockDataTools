@@ -279,6 +279,7 @@ def snapshot(root,version_sha,live_safe,private_keys,ledger,source2016,
     with mf.open("x",encoding="utf-8",newline="\n") as f:
         json.dump(manifest,f,indent=2,sort_keys=True,ensure_ascii=False)
         f.write("\n")
+    manifest_sha=sha(mf)
     # Recheck the full market stat alarm, both underlying immutable
     # partitions and source report/registration before publishing SAFE.
     if (PRE.KEYS.state_digest(root,(2016,2026))!=before
@@ -289,7 +290,7 @@ def snapshot(root,version_sha,live_safe,private_keys,ledger,source2016,
             or sha(gate)!=proof_sha
             or REG.load_version(version_sha)!=version
             or WHOLE.verified_version(whole_sha,30000)!=(whole,evidence,stages)
-            or sha(mf)!=sha(mf)
+            or sha(mf)!=manifest_sha
             or REG.LOCK.is_symlink() or REG.LOCK.exists()):
         raise ValueError("Postwrite stage/live proof or private registry drift")
     for year,record in parts.items():
@@ -299,7 +300,7 @@ def snapshot(root,version_sha,live_safe,private_keys,ledger,source2016,
         "format":FORMAT,
         "state":manifest["state"],
         "snapshot_relative_dir":directory.relative_to(MODULE).as_posix(),
-        "manifest_sha256":sha(mf),
+        "manifest_sha256":manifest_sha,
         "source_version_sha256":version_sha,
         "source_fresh_full_live_safe_sha256":proof_sha,
         "original_source_stat_sha256":before,

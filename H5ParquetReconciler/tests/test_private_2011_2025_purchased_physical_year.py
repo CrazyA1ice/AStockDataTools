@@ -281,6 +281,22 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
                           self.reports/"orphan-audit.json")
         self.assertFalse((self.reports/"orphan-success.json").exists())
 
+    def test_incomplete_2016_orphan_without_manifest_cannot_publish_safe(self):
+        self.install_purchased_extension(2016,1)
+        self.build(2016)
+        self.safes[2016].unlink()
+        (self.dir_for_year[2016]/"manifest.json").unlink()
+        with patch.object(R.M,"MODULE",self.root),\
+             patch.object(R.M,"ROOT",self.private_root),\
+             patch.object(R.M,"REPORTS",self.reports):
+            with self.assertRaisesRegex(ValueError,"incomplete"):
+                R.recover(self.dir_for_year[2016],self.purchased,
+                          self.candidate_safe,self.readme_sha,self.qdc_sha,
+                          self.reports/"incomplete-gate.json",
+                          self.reports/"incomplete-safe.json",
+                          self.reports/"incomplete-audit.json")
+        self.assertFalse((self.reports/"incomplete-safe.json").exists())
+
     def test_relative_private_year_and_reports_paths_resolve_before_manifest_SAFE(self):
         import os
         relative=lambda p:Path(os.path.relpath(p,Path.cwd()))

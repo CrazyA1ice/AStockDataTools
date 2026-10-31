@@ -153,6 +153,82 @@ def scan_h5_keys(root,year,days):
     return keys
 
 
+def scan_h5_keys_bounded(root,year,days):
+    """Opt-in exact-key H5 scanner: two index bounds + one bounded slice per stock.
+
+    Like scan_h5_keys(), this reads every eligible source stock dataset from
+    each market. The original requires two binary searches FOR EVERY date;
+    this implementation searches the inclusive candidate-date envelope ONCE
+    per stock, then filters the actual native datetime keys. All requested
+    dates remain checked explicitly. It never creates a cached gap claim.
+    """
+    import h5py
+
+    if type(year) is not int or not 2011 <= year <= 2100:
+        raise ValueError("Invalid bounded H5 scan year")
+    if not isinstance(days, (tuple, list)) or not days:
+        raise ValueError("Bounded H5 scan requires exact selected dates")
+    wanted = set()
+    for entry in days:
+        if type(entry) is not dict or type(entry.get("date")) is not str:
+            raise ValueError("Invalid bounded H5 requested day")
+        label = entry["date"]
+        d = date.fromisoformat(label)
+        if d.isoformat() != label or d.year != year:
+            raise ValueError("Noncanonical/out-of-year bounded H5 requested day")
+        wanted.add(int(label.replace("-", "")) * 10000)
+    if len(wanted) != len(days):
+        raise ValueError("Duplicate requested bounded H5 day")
+    lower, upper = min(wanted), max(wanted) + 1
+    # The candidate range is within one calendar year. A native daily H5
+    # symbol can have at most 366 unique days in that interval. A generous
+    # 1024-record bound rejects badly shaped/duplicated source windows rather
+    # than materializing an unbounded original dataset.
+    max_records = 1024
+    keys = set()
+    for market in ("sh", "sz", "bj"):
+        path = Path(root) / "HikyuuData" / (market + "_day.h5")
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Original daily H5 missing or symlinked")
+        with h5py.File(path, "r") as fh:
+            group = fh.get("data")
+            if not isinstance(group, h5py.Group):
+                raise ValueError("Invalid original H5 data group")
+            for symbol in group:
+                if (not symbol.startswith(market.upper())
+                        or not CORE.is_a_share_candidate(symbol, year)):
+                    continue
+                ds = group.get(symbol)
+                if (not isinstance(ds, h5py.Dataset)
+                        or not set(CORE.H5_FIELDS).issubset(ds.dtype.names or ())):
+                    raise ValueError("Bad original H5 candidate dataset")
+                lo, hi = CORE.h5_key_slice(ds, lower, upper)
+                if not 0 <= lo <= hi <= len(ds) or hi - lo > max_records:
+                    raise ValueError("Unbounded/corrupt original H5 day span")
+                if lo == hi:
+                    continue
+                # Use the compound H5 datetime projection only, not OHLCVA.
+                stamps = ds.fields("datetime")[lo:hi]
+                if len(stamps) != hi - lo:
+                    raise ValueError("Truncated native H5 datetime slice")
+                last = None
+                for raw in stamps:
+                    stamp = int(raw)
+                    if (stamp < lower or stamp >= upper
+                            or (last is not None and stamp <= last)):
+                        raise ValueError("Unsorted/duplicate source H5 day key span")
+                    last = stamp
+                    if stamp not in wanted:
+                        continue
+                    key = (symbol, stamp)
+                    if key in keys:
+                        raise ValueError("Duplicate H5 stockday key")
+                    keys.add(key)
+                    if len(keys) > MAX_KEYS_PER_YEAR:
+                        raise ValueError("H5 candidate year key budget exceeded")
+    return keys
+
+
 def scan_parquet_keys(root,year,days):
     """Project ts + symbol ONLY from relevant year row groups; reject duplicates."""
     import pyarrow.parquet as pq

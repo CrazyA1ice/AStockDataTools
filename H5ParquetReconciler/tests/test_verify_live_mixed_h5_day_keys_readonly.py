@@ -71,6 +71,31 @@ def files(root,year,dates):
     return source/f"{year}-04.parquet"
 
 
+def realistic_date_evidence():
+    """Rebuild a fully SHA-linked 16-year fictional source ledger.
+
+    The older OFFTEST fixture intentionally put the five quarantined rows on
+    2026-10-01 to test generic offline categorization. The LIVE gate instead
+    requires the actual observed quarantine day 2026-07-16, so rebuild BOTH
+    that synthetic annual source and its full-history SHA ledger. Keep the
+    production quarantine rule strict, never weaken it for the fixture.
+    """
+    reports={}
+    annual_inputs=[]
+    for year in OFFTEST.FULL.M.YEARS:
+        source=OFFTEST.source(year)
+        if year==2026:
+            buckets=source["results"]["day/2026"]["by_day"]
+            buckets["20260716"]=buckets.pop("20261001")
+        raw=json.dumps(source,sort_keys=True).encode("utf-8")
+        filename=f"day-{year}-safe.json"
+        annual_inputs.append((filename,raw))
+        if year in (2016,2026):
+            reports[filename]=raw
+    ledger=OFFTEST.FULL.M.plan_reports(annual_inputs,"2026-10-31")
+    return json.dumps(ledger,sort_keys=True).encode("utf-8"),reports
+
+
 class PureMixedKeyGateTests(unittest.TestCase):
     def test_classify_real_exact_one_missing_per_day(self):
         rows=[day("2026-04-08"),day("2026-04-09")]
@@ -174,8 +199,29 @@ class PureMixedKeyGateTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     M.private_folder(accepted)
 
-    def test_actual_offline_gate_recomputes_original_plan_from_sha(self):
+    def test_wrong_quarantined_date_is_refused_even_if_source_sha_valid(self):
+        # The generic offline fixture is internally SHA-consistent but has
+        # the quarantine on 2026-10-01. That MUST fail the live-day policy.
         ledger,reports=OFFTEST.example()
+        offline=OFFTEST.M.analyze(ledger,reports)
+        with tempfile.TemporaryDirectory() as folder:
+            report=Path(folder)/"reports"
+            report.mkdir()
+            paths={}
+            for name,blob in [("ledger.json",ledger),*reports.items(),
+                              ("plan.json",json.dumps(offline).encode())]:
+                path=report/name
+                path.write_bytes(blob)
+                paths[name]=path
+            with patch.object(M,"REPORTS",report):
+                with self.assertRaisesRegex(ValueError,
+                                            "Mixed-day candidate keys or quarantine set changed"):
+                    M.verified_existing_plan(
+                        paths["ledger.json"],paths["day-2016-safe.json"],
+                        paths["day-2026-safe.json"],paths["plan.json"])
+
+    def test_actual_offline_gate_recomputes_original_plan_from_sha(self):
+        ledger,reports=realistic_date_evidence()
         output=OFFTEST.M.analyze(ledger,reports)
         with tempfile.TemporaryDirectory() as folder:
             report=Path(folder)/"reports"
@@ -197,7 +243,7 @@ class PureMixedKeyGateTests(unittest.TestCase):
                                  [x["date"] for y in dates.values() for x in y])
 
     def test_source_report_tamper_breaks_sha_link_even_if_plan_unchanged(self):
-        ledger,reports=OFFTEST.example()
+        ledger,reports=realistic_date_evidence()
         output=OFFTEST.M.analyze(ledger,reports)
         with tempfile.TemporaryDirectory() as folder:
             report=Path(folder)/"reports"

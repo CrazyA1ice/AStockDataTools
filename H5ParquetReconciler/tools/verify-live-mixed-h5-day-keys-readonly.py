@@ -314,7 +314,7 @@ def execute(root,ledger,source2016,source2026,plan,manifest_dir,out):
     summary={
         "format":FORMAT,
         "live_verified_nonquarantined_h5_only_stockdays":83,
-        "separately_quarantined_stockdays_not_scanned":5,
+        "quarantined_stockdays_excluded_from_exact_live_keyset":5,
         "years":result_by_year,
         "purchased_two_column_rows_projected":projected_rows,
         "private_key_manifest_sha256":digest(blob),

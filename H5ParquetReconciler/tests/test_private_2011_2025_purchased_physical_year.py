@@ -259,6 +259,11 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.assertEqual(result["h5_candidate_rows_checked_before_refusal"],1)
         self.assertTrue(result["all_purchased_h5_candidate_stockdays_unique"])
         self.assertTrue(result["source_shas_and_stats_unchanged_after_complete_scan"])
+        self.assertTrue(result["purchased_footer_row_count_matches_received_manifest"])
+        self.assertTrue(result["purchased_required_fields_present"])
+        self.assertEqual(result["purchased_missing_required_field_count"],0)
+        self.assertEqual(result["purchased_additional_field_count"],0)
+        self.assertTrue(result["purchased_required_arrow_types_match"])
         self.assertFalse(self.private_root.exists())
 
     def test_2016_readonly_diagnostic_detects_duplicate_without_stock_ids(self):
@@ -285,6 +290,77 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.assertFalse(result["private_annual_parquet_or_sqlite_created"])
         raw=out.read_text(encoding="utf-8")
         self.assertNotIn(str(self.purchased),raw)
+
+    def test_2016_readonly_diagnostic_distinguishes_footer_rows(self):
+        self.record[2016]["rows"]=3
+        result=self.diagnose()
+        self.assertEqual(result["failure_stage"],"purchased_footer")
+        self.assertEqual(result["failure_code"],"PURCHASED_FOOTER_ROW_COUNT_MISMATCH")
+        self.assertFalse(result["purchased_footer_row_count_matches_received_manifest"])
+        self.assertTrue(result["purchased_required_fields_present"])
+        self.assertEqual(result["purchased_additional_field_count"],0)
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_diagnostic_reports_unexpected_arrow_field_without_values(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        schema=pa.schema([
+            pa.field("ts",pa.int64()),pa.field("symbol",pa.string()),
+            *(pa.field(field,pa.float64()) for field in M.PHYS.F),
+            pa.field("synthetic_additional_field",pa.int32()),
+        ])
+        rows=[{**paid("600001.XSHG","2016-08-17"),
+               "synthetic_additional_field":1},
+              {**paid("000002.XSHE","2016-08-17"),
+               "synthetic_additional_field":2}]
+        pq.write_table(pa.Table.from_pylist(rows,schema=schema),self.sources[2016])
+        self.record[2016]["sha"]=M.ST.sha(self.sources[2016])
+        self.record[2016]["size"]=self.sources[2016].stat().st_size
+        result=self.diagnose()
+        self.assertEqual(result["failure_code"],"PURCHASED_ADDITIONAL_FIELDS_PRESENT")
+        self.assertEqual(result["failure_stage"],"purchased_footer")
+        self.assertTrue(result["purchased_footer_row_count_matches_received_manifest"])
+        self.assertTrue(result["purchased_required_fields_present"])
+        self.assertTrue(result["purchased_required_arrow_types_match"])
+        self.assertEqual(result["purchased_additional_field_count"],1)
+        self.assertEqual(result["purchased_missing_required_field_count"],0)
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_diagnostic_reports_missing_required_arrow_field(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        schema=pa.schema([
+            pa.field("ts",pa.int64()),pa.field("symbol",pa.string()),
+            *(pa.field(field,pa.float64()) for field in M.PHYS.F if field!="amount"),
+        ])
+        rows=[paid("600001.XSHG","2016-08-17"),
+              paid("000002.XSHE","2016-08-17")]
+        pq.write_table(pa.Table.from_pylist(rows,schema=schema),self.sources[2016])
+        self.record[2016]["sha"]=M.ST.sha(self.sources[2016])
+        self.record[2016]["size"]=self.sources[2016].stat().st_size
+        result=self.diagnose()
+        self.assertEqual(result["failure_code"],"PURCHASED_REQUIRED_FIELDS_MISSING")
+        self.assertEqual(result["purchased_missing_required_field_count"],1)
+        self.assertEqual(result["purchased_additional_field_count"],0)
+
+    def test_2016_readonly_diagnostic_reports_wrong_required_arrow_type(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        schema=pa.schema([
+            pa.field("ts",pa.int64()),pa.field("symbol",pa.string()),
+            *(pa.field(field,pa.int64() if field=="volume" else pa.float64())
+              for field in M.PHYS.F),
+        ])
+        rows=[{**paid("600001.XSHG","2016-08-17"),"volume":300},
+              {**paid("000002.XSHE","2016-08-17"),"volume":300}]
+        pq.write_table(pa.Table.from_pylist(rows,schema=schema),self.sources[2016])
+        self.record[2016]["sha"]=M.ST.sha(self.sources[2016])
+        self.record[2016]["size"]=self.sources[2016].stat().st_size
+        result=self.diagnose()
+        self.assertEqual(result["failure_code"],"PURCHASED_REQUIRED_FIELD_TYPES_MISMATCH")
+        self.assertEqual(result["purchased_missing_required_field_count"],0)
+        self.assertEqual(result["purchased_additional_field_count"],0)
+        self.assertFalse(result["purchased_required_arrow_types_match"])
 
     def test_2016_readonly_diagnostic_reports_original_sha_tamper(self):
         self.sources[2016].write_bytes(self.sources[2016].read_bytes()+b"tampered")

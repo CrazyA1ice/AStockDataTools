@@ -119,6 +119,52 @@ def verify_source_no_changes(root,year,initial):
     return True
 
 
+def observed_source_frontier(verified_gate):
+    """Describe what the SOURCE AUDIT actually observed, not an update promise.
+
+    by_day contains only dates with at least one source stock-day key.
+    A gap between its last observed date and the requested audit end may
+    represent unavailable source data, a non-trading day, or something else:
+    no missing market rows or trading sessions are fabricated here.
+    """
+    window=verified_gate.get("audited_window")
+    rows=verified_gate.get("daily_coverage")
+    if (type(window) is not dict or set(window)!={"from_date","to_date"}
+            or type(rows) is not list or not rows):
+        raise ValueError("No bounded daily source observation frontier")
+    try:
+        first=date.fromisoformat(window["from_date"])
+        last=date.fromisoformat(window["to_date"])
+    except (ValueError,TypeError,KeyError):
+        raise ValueError("Invalid source audit window for observation frontier") from None
+    if (first.isoformat()!=window["from_date"] or last.isoformat()!=window["to_date"]
+            or first>last):
+        raise ValueError("Noncanonical source observation window")
+    seen=set()
+    for row in rows:
+        if type(row) is not dict or type(row.get("date")) is not str:
+            raise ValueError("Invalid observed daily row")
+        text=row["date"]
+        if len(text)!=8 or not text.isascii() or not text.isdigit():
+            raise ValueError("Invalid observed daily key")
+        try:
+            day=date.fromisoformat(text[:4]+"-"+text[4:6]+"-"+text[6:])
+        except ValueError:
+            raise ValueError("Invalid observed source calendar day") from None
+        if day<first or day>last or day in seen:
+            raise ValueError("Out-of-window or duplicate source observation day")
+        seen.add(day)
+    last_observed=max(seen)
+    return {
+        "audit_requested_end_date":last.isoformat(),
+        "last_source_stockday_observed_date":last_observed.isoformat(),
+        "calendar_days_after_last_source_observation":(last-last_observed).days,
+        "source_observations_reach_audit_window_end":last_observed==last,
+        "day_gap_staging_does_not_prove_later_market_freshness":True,
+        "post_frontier_market_data_fabricated":False,
+    }
+
+
 def run(root,gate_path,source_path,out,action,allow_private_stage=False):
     safe=output_path(out)
     source_root=Path(root).resolve()
@@ -131,6 +177,14 @@ def run(root,gate_path,source_path,out,action,allow_private_stage=False):
     gate=Path(gate_path).resolve()
     source=Path(source_path).resolve()
     known,original_gate=evidence(gate,source)
+    # The audit window is a REQUEST, not evidence that every trading day was
+    # represented by rows. Rebuild against the SHA-verified original source.
+    verified_source=STAGE.gate_tool.analyze(
+        json.loads(source.read_text(encoding="utf-8")))
+    if (original_gate.get("audited_window")!=verified_source["audited_window"]
+            or original_gate.get("daily_coverage")!=verified_source["daily_coverage"]):
+        raise ValueError("Daily source observation frontier is not SHA-linked to gate")
+    frontier=observed_source_frontier(verified_source)
     expected=known["expected"]
     year=date.fromisoformat(next(iter(expected))).year
     state_before=STAGE.source_file_states(source_root,year)
@@ -182,6 +236,7 @@ def run(root,gate_path,source_path,out,action,allow_private_stage=False):
         "action":action,
         "audited_year":year,
         "audited_window":original_gate["audited_window"],
+        "source_observation_frontier":frontier,
         "audited_complete_h5_only_days":len(expected),
         "audited_complete_h5_only_day_rows":sum(expected.values()),
         "date_counts":[{"date":d,"audited_h5_only_rows":expected[d],
@@ -234,6 +289,13 @@ def main(argv=None):
         print("SAFE full-market H5-only day Parquet completion:",a.out)
         print("Audited full dates:",result["audited_complete_h5_only_days"])
         print("Audited H5 missing day rows:",result["audited_complete_h5_only_day_rows"])
+        frontier=result["source_observation_frontier"]
+        print("Last observed source day / audit end:",
+              frontier["last_source_stockday_observed_date"],
+              frontier["audit_requested_end_date"])
+        if not frontier["source_observations_reach_audit_window_end"]:
+            print("WARNING: no audited source stock-day keys after the last observed day;"
+                  " private date-gap staging is NOT a latest-market update.")
         print("New private dates staged:",len(result["staged_new_private_days_this_action"]))
         print("Prepared immutable version:",result["prepared_immutable_overlay_sha256"])
         print("Purchased originals / H5 sources / private pointer modified: NO")

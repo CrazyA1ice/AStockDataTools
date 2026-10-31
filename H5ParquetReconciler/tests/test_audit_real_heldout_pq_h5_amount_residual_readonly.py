@@ -96,10 +96,21 @@ class PureResidualHeldoutTests(unittest.TestCase):
         self.assertEqual(res["absolute_integer_candidate_residual_buckets"]["zero"],2)
 
     def test_large_residual_can_be_reported_not_silenced(self):
-        pq,h5=pairs(offsets=(2.0,-2.0))
+        # Both examples exceed relative tolerance 1e-5 even though the
+        # native integer scales differ by a factor of two.
+        pq,h5=pairs(offsets=(3.0,-3.0))
         res=T.sample_day(pq,h5,"2026-09-28")
         self.assertEqual(res["absolute_integer_candidate_residual_buckets"]["gt_1"],2)
         self.assertEqual(res["within_previous_relative_tolerance_count"],0)
+
+    def test_relative_tolerance_includes_exact_boundary(self):
+        # With candidate=199998 and native=200000, relative deviation is
+        # exactly 2/200000 = 1e-5; inclusive comparison must pass.
+        # The first sample (100002 vs 100000) is above that threshold.
+        pq,h5=pairs(offsets=(2.0,-2.0))
+        res=T.sample_day(pq,h5,"2026-09-28")
+        self.assertEqual(res["absolute_integer_candidate_residual_buckets"]["gt_1"],2)
+        self.assertEqual(res["within_previous_relative_tolerance_count"],1)
 
     def test_bad_day_or_missing_pair_is_rejected(self):
         pq,h5=pairs()

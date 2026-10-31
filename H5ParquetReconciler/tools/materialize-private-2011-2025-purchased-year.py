@@ -149,6 +149,8 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
         observed=raw.schema_arrow.names
         names=set(observed)
         extra_fields=sorted(names-required)
+        extra_type=(str(raw.schema_arrow.field(extra_fields[0]).type)
+                    if len(extra_fields)==1 else None)
         try:
             if (raw.metadata.num_rows!=record["rows"]
                     or len(names)!=len(observed)
@@ -190,7 +192,7 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
                 "relative_file":rel_raw,
                 "sha256":record["sha"],"source_bytes":record["size"],
                 "extra_field_count":len(extra_fields),
-                "extra_field_arrow_type":str(raw.schema_arrow.field(extra_fields[0]).type),
+                "extra_field_arrow_type":extra_type,
                 "extra_field_name_private_only":extra_fields[0],
                 "source_semantics_certified":False,
                 "verbatim_original_licensed_parquet_private_only":True,

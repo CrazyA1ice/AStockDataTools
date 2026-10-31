@@ -300,7 +300,8 @@ def materialize(source_root,candidate_safe,readme_sha,manifest_sha,
             for rg in range(pqf.metadata.num_row_groups):
                 # Read all actual market values, not only footer row counts.
                 t=pqf.read_row_group(rg,use_threads=False)
-                if t.schema!=sch or t.num_rows>8192 or t.null_count:
+                if (t.schema!=sch or t.num_rows>8192 or
+                        any(col.null_count for col in t.columns)):
                     raise ValueError("Written private 2026 Arrow data malformed")
                 for item in t.to_pylist():
                     check_digest.update(row_bytes(item))

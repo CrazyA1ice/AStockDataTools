@@ -218,6 +218,30 @@ class StratifiedFactorTests(unittest.TestCase):
             self.assertEqual(scanned,4)
             self.assertEqual(groups,4)
 
+    def test_purchased_nonfloat64_ohlcva_rejected_before_comparison(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            source=root/"purchased.parquet"
+            records=[]
+            for d in M.SAMPLES[2026]:
+                ts=int(datetime.fromisoformat(
+                    d+"T00:00:00+08:00").timestamp()*1000)
+                for symbol in M.SYMBOLS:
+                    p,_=good()
+                    records.append({"ts":ts,"symbol":symbol,**p})
+            table=pa.Table.from_pylist(records)
+            # A rounded Arrow float32 price is not valid evidence for
+            # the original purchased float64 conversion hypothesis.
+            index=table.schema.get_field_index("close")
+            table=table.set_column(index,"close",
+                table["close"].cast(pa.float32()))
+            pq.write_table(table,source)
+            with patch.object(M.CORE,"year_files",return_value=[source]):
+                with self.assertRaisesRegex(ValueError,"dtypes"):
+                    M.scan_purchased_year(root,2026)
+
     def test_duplicate_purchased_stockday_key_rejected(self):
         import pyarrow as pa
         import pyarrow.parquet as pq

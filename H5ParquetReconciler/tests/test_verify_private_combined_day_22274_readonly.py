@@ -80,7 +80,7 @@ class CombinedPrivateUnionTests(unittest.TestCase):
                  M.sha(private), [{"symbol": "SH600000", "ts": 1}], stage_safe)
         return market, reports, out, whole, dates, origins, mixed, live, private, source
 
-    def run_fake(self, root, *, modified=None, whole=None, selected=None, expected=None):
+    def run_fake(self, root, *, modified=None, whole=None, selected=None, expected=None, timing_sink=None):
         market, reports, out, w, dates, origins, mixed, live, private, source = self.fixtures(root)
         if whole is not None:
             w = whole
@@ -97,7 +97,8 @@ class CombinedPrivateUnionTests(unittest.TestCase):
              patch.object(M.MIXED, "normalize_private_h5_rows", return_value=expected), \
              patch.object(M.OVERLAY, "recheck_live") as original_market_recheck:
             result = M.verify(market, "a"*64, mixed[6], live, private,
-                              source, source, source, source, out)
+                              source, source, source, source, out,
+                              timing_sink=timing_sink)
             original_market_recheck.assert_called_once()
             return result, out
 
@@ -127,6 +128,26 @@ class CombinedPrivateUnionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "changed"):
                 self.run_fake(Path(tmp), modified=["source","different"])
+
+
+    def test_optional_timing_preserves_exact_signed_safe_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, p1 = self.run_fake(Path(tmp)/"no_timing")
+            timings = {}
+            second, p2 = self.run_fake(Path(tmp)/"instrumented", timing_sink=timings)
+            self.assertEqual(first, second)
+            self.assertEqual(p1.read_bytes(), p2.read_bytes())
+            self.assertEqual(len(timings), 10)
+            self.assertTrue(all(type(v) is float and v >= 0 for v in timings.values()))
+            self.assertIn("mixed_years_exact_purchased_h5_key_scan_seconds", timings)
+            self.assertIn("whole_four_days_original_market_recheck_seconds", timings)
+            self.assertNotIn("phase_elapsed_seconds", second)
+            self.assertNotIn("timing", p2.read_text())
+
+    def test_invalid_timing_sink_fails_before_market_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "dictionary"):
+                self.run_fake(Path(tmp), timing_sink=[])
 
     def test_wrong_full_market_row_count_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

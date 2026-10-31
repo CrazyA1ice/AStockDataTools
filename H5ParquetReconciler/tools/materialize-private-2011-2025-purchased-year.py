@@ -312,7 +312,9 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
     sha=ST.sha(mf)
     if (ST.sha(db)!=manifest["stockday_unique_sqlite_sha256"]
             or any(ST.sha(folder/x["relative_file"])!=x["sha256"]
-                   for x in parts.values())):
+                   for x in parts.values())
+            or (extra_copy is not None and
+                ST.sha(folder/extra_copy["relative_file"])!=extra_copy["sha256"])):
         raise ValueError("Historical private physical files changed before SAFE")
     safe={
         "format":FORMAT,

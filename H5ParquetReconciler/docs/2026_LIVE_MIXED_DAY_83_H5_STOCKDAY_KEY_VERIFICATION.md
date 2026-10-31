@@ -14,13 +14,13 @@
 
 通过后，工具在模块私有work/unified_parquet/mixed_day_key_manifests/keys_十六进制编号/keys.json创建仅包含83个股票代码+交易日期的精确缺口清单，不包含原OHLCVA，**严禁将此清单上传GitHub或复制外发**。同时在模块reports保存不包含股票代码的聚合SAFE（每年日期数量、SHA256和全程只读状态）。
 
-本工具不会读取原数据来创建私有行情值，不会建立新的Parquet K线分区，不会改动购买Parquet、原H5、private active、production路由，不能创建H5镜像。83条键证明不代表候选成交量/成交额单位、舍入精度和价格真实性通过认证。新增12项合成测试，尚需Windows验收。
+本工具不会读取原数据来创建私有行情值，不会建立新的Parquet K线分区，不会改动购买Parquet、原H5、private active、production路由，不能创建H5镜像。83条键证明不代表候选成交量/成交额单位、舍入精度和价格真实性通过认证。新增13项合成测试，尚需Windows验收。其中新增的反向测试确保2016/2026年度源的完整SHA与总账一致时，也不能用错误的2026-10-01隔离日绕过真实2026-07-16的安全门禁。
 
 ## Windows PowerShell单行命令
 
-第一步：更新新开发分支、Python编译、运行12项合成回归：
+第一步：更新新开发分支、Python编译、运行13项合成回归：
 
-    cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/live-verify-mixed-day-83-keys-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/live-verify-mixed-day-83-keys-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\verify-live-mixed-h5-day-keys-readonly.py H5ParquetReconciler\tests\test_verify_live_mixed_h5_day_keys_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_verify_live_mixed_h5_day_keys_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "新12项精确键合成测试失败，停止" }; Write-Host "12项精确键合成测试通过"
+    cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/live-verify-mixed-day-83-keys-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/live-verify-mixed-day-83-keys-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\verify-live-mixed-h5-day-keys-readonly.py H5ParquetReconciler\tests\test_verify_live_mixed_h5_day_keys_readonly.py; if ($LASTEXITCODE -ne 0) { throw "语法检查失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_verify_live_mixed_h5_day_keys_readonly.py" -v; if ($LASTEXITCODE -ne 0) { throw "新13项精确键合成测试失败，停止" }; Write-Host "13项精确键合成测试通过"
 
 第二步：上一项测试全部OK后，运行真实83键只读核验。唯一可新增的是module work私有键清单和module reports脱敏SAFE，不生成行情K线：
 

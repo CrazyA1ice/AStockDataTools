@@ -147,6 +147,69 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
              patch.object(V.M,"REPORTS",self.reports):
             return V.verify(self.safes[year],target)
 
+    def install_purchased_extension(self,year,extra_fields=1):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        rows=([paid("600001.XSHG","2016-08-17"),
+               paid("000002.XSHE","2016-08-17")]
+              if year==2016 else [paid("600001.XSHG","2015-08-17")])
+        ext_names=[f"synthetic_vendor_extension_{i}" for i in range(extra_fields)]
+        schema=pa.schema([
+            pa.field("ts",pa.int64()),pa.field("symbol",pa.string()),
+            *(pa.field(field,pa.float64()) for field in M.PHYS.F),
+            *(pa.field(field,pa.string()) for field in ext_names),
+        ])
+        source_rows=[{**row,**{name:"opaque-private-metadata" for name in ext_names}}
+                     for row in rows]
+        src=self.sources[year]
+        pq.write_table(pa.Table.from_pylist(source_rows,schema=schema),src)
+        self.record[year]={"size":src.stat().st_size,
+                           "rows":len(source_rows),"sha":M.ST.sha(src)}
+        return src
+
+    def test_2016_one_unclassified_vendor_field_keeps_byte_identical_private_shadow(self):
+        src=self.install_purchased_extension(2016,1)
+        r=self.build(2016)
+        self.assertEqual(r["purchased_original_rows"],2)
+        self.assertEqual(r["h5_mixed_candidate_rows"],1)
+        self.assertEqual(r["unclassified_purchased_extra_field_count"],1)
+        self.assertTrue(r["verbatim_original_purchased_extra_field_shadow_created"])
+        self.assertFalse(r["unknown_extra_field_semantics_certified"])
+        shadow=self.dir_for_year[2016]/"purchased"/"original-with-unclassified-extra.parquet"
+        self.assertTrue(shadow.exists())
+        self.assertEqual(shadow.read_bytes(),src.read_bytes())
+        receipt=self.check(2016)
+        self.assertTrue(receipt["private_verbatim_original_purchased_shadow_sha_verified"])
+        self.assertEqual(receipt["private_unclassified_purchased_extra_field_count_verified"],1)
+        self.assertEqual(receipt["private_total_rows_verified"],3)
+        self.assertNotIn("synthetic_vendor_extension_0",self.safes[2016].read_text())
+
+    def test_2016_unclassified_shadow_tamper_blocks_independent_safe(self):
+        self.install_purchased_extension(2016,1)
+        self.build(2016)
+        shadow=self.dir_for_year[2016]/"purchased"/"original-with-unclassified-extra.parquet"
+        shadow.write_bytes(shadow.read_bytes()+b"tampered")
+        with self.assertRaisesRegex(ValueError,"archive SHA drift"):
+            self.check(2016)
+        self.assertFalse((self.reports/"verified-2016.json").exists())
+
+    def test_2016_two_unclassified_fields_still_rejected_without_safe(self):
+        self.install_purchased_extension(2016,2)
+        with self.assertRaisesRegex(ValueError,"footer/schema mismatched"):
+            self.build(2016)
+        self.assertFalse((self.reports/"history-safe-2016.json").exists())
+
+    def test_2015_one_unclassified_vendor_field_keeps_shadow_without_h5(self):
+        src=self.install_purchased_extension(2015,1)
+        r=self.build(2015)
+        self.assertEqual(r["unclassified_purchased_extra_field_count"],1)
+        self.assertEqual(r["h5_mixed_candidate_rows"],0)
+        shadow=self.dir_for_year[2015]/"purchased"/"original-with-unclassified-extra.parquet"
+        self.assertEqual(M.ST.sha(shadow),M.ST.sha(src))
+        audited=self.check(2015)
+        self.assertEqual(audited["private_purchased_rows_verified"],1)
+        self.assertEqual(audited["private_unclassified_purchased_extra_field_count_verified"],1)
+
     def test_2016_purchased_two_and_one_h5_gap_exact_float64(self):
         r=self.build(2016)
         self.assertEqual(r["purchased_original_rows"],2)

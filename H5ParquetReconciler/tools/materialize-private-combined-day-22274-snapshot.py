@@ -64,8 +64,6 @@ def transform(result,symbols,first,last,version_sha):
             or set(members)!=set(symbols)):
         raise ValueError("Combined 22,274 source query has no qualifying live gate")
     for k in ("private_combined_version_sha256","full_live_recheck_safe_sha256"):
-        BASE.BATCH.single.purchased  # no-op: retain established query module import
-        BASE.hash_file  # source SHA handling delegated to registered query gate
         import re
         if not re.fullmatch("[0-9a-f]{64}",s[k]):
             raise ValueError("Untrusted 22,274 source SHA")

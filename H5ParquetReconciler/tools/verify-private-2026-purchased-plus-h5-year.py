@@ -128,18 +128,22 @@ def verify(materialization_safe,out):
                            if key!="h5_gap_2026"
                            else "candidate/h5-gap-2026.parquet")
             if (type(data) is not dict or
-                    set(data)!={"relative_file","rows","sha256","source_kind"}
+                    set(data)!={"relative_file","rows","sha256","source_kind",
+                                "original_rows_float64_digest_sha256"}
                     or data["relative_file"]!=expected_path
                     or data["source_kind"]!=expected_source
                     or safe_parts[key]!={"sha256":data["sha256"],"rows":data["rows"]}
                     or type(data["rows"]) is not int or not 0<data["rows"]<=M.MAX_ROWS
                     or not re.fullmatch("[0-9a-f]{64}",str(data["sha256"]))
+                    or not re.fullmatch("[0-9a-f]{64}",str(
+                        data["original_rows_float64_digest_sha256"]))
                     or path.parent.is_symlink() or path.is_symlink()
                     or not path.is_file() or not 0<path.stat().st_size<=M.MAX_PART_BYTES
                     or M.ST.sha(path)!=data["sha256"]):
                 raise ValueError("Private 2026 partition path/rows/hash invalid")
             pf=pq.ParquetFile(path,memory_map=False,pre_buffer=False)
             count=0
+            roundtrip_sha=hashlib.sha256()
             try:
                 if pf.schema_arrow!=sch or pf.metadata.num_rows!=data["rows"]:
                     raise ValueError("Private 2026 Arrow schema/footer changed")
@@ -161,6 +165,7 @@ def verify(materialization_safe,out):
                         clean=M.normalise(test,kind,year=2026,month=month)
                         if clean!=row:
                             raise ValueError("Private 2026 physical values or raw symbol changed")
+                        roundtrip_sha.update(M.row_bytes(row))
                         lookup=con.execute(
                             "SELECT kind FROM stockday WHERE year=? AND symbol=? "
                             "AND trading_date=?",
@@ -171,8 +176,10 @@ def verify(materialization_safe,out):
                         count+=1
             finally:
                 pf.close()
-            if count!=data["rows"] or M.ST.sha(path)!=data["sha256"]:
-                raise ValueError("Private 2026 partition totals or bytes changed")
+            if (count!=data["rows"] or M.ST.sha(path)!=data["sha256"]
+                    or roundtrip_sha.hexdigest()!=
+                        data["original_rows_float64_digest_sha256"]):
+                raise ValueError("Private 2026 partition totals, original float64 or bytes changed")
             files_checked+=1
     finally:
         con.close()

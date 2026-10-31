@@ -40,9 +40,13 @@ class CombinedPrivateUnionTests(unittest.TestCase):
             root = Path(tmp)
             reports = root/"reports"
             reports.mkdir()
-            (reports/"link.json").symlink_to(root/"elsewhere.json")
-            with patch.object(M, "REPORTS", reports), self.assertRaises(ValueError):
-                M.new_report(reports/"link.json")
+            candidate = reports/"link.json"
+            original_is_symlink = Path.is_symlink
+            # Windows may disallow symlink creation without Developer Mode.
+            with patch.object(Path, "is_symlink",
+                              lambda p: p == candidate or original_is_symlink(p)):
+                with patch.object(M, "REPORTS", reports), self.assertRaises(ValueError):
+                    M.new_report(candidate)
 
     def test_guard_rejects_unsafe_mixed_stage_before_private_io(self):
         with tempfile.TemporaryDirectory() as tmp:

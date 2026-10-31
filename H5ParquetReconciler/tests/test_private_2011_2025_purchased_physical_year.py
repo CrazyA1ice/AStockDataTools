@@ -110,6 +110,8 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         return self.candidate_doc,self.candidate_sha,self.h5_dir.parent,self.source_manifest
 
     def full_gap(self,source,out):
+        if getattr(self,"current_year",None)!=2016:
+            raise AssertionError("Full 22,274-row H5 audit may only run for 2016")
         Path(out).write_bytes(b'{"all":22274,"offline":true}\n')
         return {"total_h5_only_day_candidates_verified":22274,
                 "mixed_date_candidate_rows_verified":83,
@@ -117,6 +119,7 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
                 "candidate_source_units_certified":False}
 
     def build(self,year):
+        self.current_year=year
         folder=self.private_root/f"physical_{year}_{year:012x}"
         gate=self.reports/f"history-gate-{year}.json"
         safe=self.reports/f"history-safe-{year}.json"
@@ -155,9 +158,7 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.assertTrue(a["original_float64_roundtrip_fingerprint_verified"])
 
     def test_2015_purchased_only_does_not_require_full_22274_decode(self):
-        with patch.object(M.V,"verify",
-                          side_effect=AssertionError("full candidate audit not needed")):
-            r=self.build(2015)
+        r=self.build(2015)
         self.assertEqual(r["total_private_physical_rows"],1)
         self.assertEqual(r["h5_mixed_candidate_rows"],0)
         self.assertEqual(set(r["physical_partition_sha256"]),{"purchased"})
@@ -180,10 +181,7 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
     def test_modified_original_purchased_SHA_fails_before_writes(self):
         self.sources[2015].write_bytes(
             self.sources[2015].read_bytes()+b"modified")
-        # Real hash preflight must be exercised, not replaced with a stub.
-        with patch.object(M,"purchased_input",
-                          side_effect=lambda a,b,c,d: M.purchased_input(a,b,c,d)):
-            pass
+        # Exercise actual source hash gate, not synthetic data import.
         with self.assertRaisesRegex(ValueError,"Original"):
             with patch.object(M.QDC,"parse_manifest",return_value={
                 "2015.parquet":self.record[2015]}):

@@ -110,6 +110,7 @@ class Private2026PhysicalYearTests(unittest.TestCase):
         cls.gate=cls.reports/"candidate-gate.json"
         cls.safe=cls.reports/"physical-safe.json"
         cls.verified=cls.reports/"physical-verified.json"
+        cls.build_attempt=0
 
     @classmethod
     def tearDownClass(cls):
@@ -131,23 +132,38 @@ class Private2026PhysicalYearTests(unittest.TestCase):
             "candidate_source_units_certified":False,
         }
 
-    def build(self):
-        with patch.object(M,"MODULE",self.root),\
-             patch.object(M,"WORK",self.work),\
-             patch.object(M,"ROOT",self.path.parent),\
-             patch.object(M,"REPORTS",self.reports),\
-             patch.object(M,"purchased_manifest",side_effect=self.fake_existing_source),\
-             patch.object(M.V,"verify",side_effect=self.fake_gap_check),\
+    @classmethod
+    def build(cls):
+        # Failed private writes deliberately remain unactivated. A later
+        # test must NOT reuse an orphan directory or overwrite gate SAFE.
+        # Allocate a fresh fixture output, just as the real CLI requires.
+        if cls.path.exists() or cls.gate.exists() or cls.safe.exists():
+            if cls.safe.exists():
+                return json.loads(cls.safe.read_bytes())
+            cls.build_attempt=cls.build_attempt+1
+            tag=f"{cls.build_attempt:012x}"
+            cls.path=cls.work/"physical_years"/("physical_2026_"+tag)
+            cls.gate=cls.reports/("candidate-gate-"+tag+".json")
+            cls.safe=cls.reports/("physical-safe-"+tag+".json")
+            cls.verified=cls.reports/("physical-verified-"+tag+".json")
+        with patch.object(M,"MODULE",cls.root),\
+             patch.object(M,"WORK",cls.work),\
+             patch.object(M,"ROOT",cls.path.parent),\
+             patch.object(M,"REPORTS",cls.reports),\
+             patch.object(M,"purchased_manifest",side_effect=cls.fake_existing_source),\
+             patch.object(M.V,"verify",side_effect=cls.fake_gap_check),\
              patch.object(M.V,"source",return_value=(
-                 self.candidate_doc,
-                 hashlib.sha256(self.candidate_safe.read_bytes()).hexdigest(),
-                 self.candidate_dir,self.candidate_manifest)):
-            return M.materialize(self.root_src,self.candidate_safe,
-                self.readme_sha,self.vendor_sha,self.path,self.gate,self.safe)
+                 cls.candidate_doc,
+                 hashlib.sha256(cls.candidate_safe.read_bytes()).hexdigest(),
+                 cls.candidate_dir,cls.candidate_manifest)):
+            return M.materialize(cls.root_src,cls.candidate_safe,
+                cls.readme_sha,cls.vendor_sha,cls.path,cls.gate,cls.safe)
 
-    def ensure_built(self):
-        if not self.safe.exists():
-            self.build()
+    @classmethod
+    def ensure_built(cls):
+        if not cls.safe.exists():
+            return cls.build()
+        return json.loads(cls.safe.read_bytes())
 
     def test_private_year_synthetic_full_9_months_plus_22273_candidates(self):
         outcome=self.build() if not self.safe.exists() else json.loads(self.safe.read_bytes())

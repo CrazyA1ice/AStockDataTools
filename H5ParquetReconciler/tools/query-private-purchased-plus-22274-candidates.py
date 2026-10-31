@@ -41,6 +41,8 @@ P=B.PURCHASED
 Q=B.Q
 STAGER=V.STAGER
 FIELDS=STAGER.FIELDS
+INDEX=load("joined_22274_candidate_index",
+           "index-private-22274-day-rowgroups.py")
 
 
 def requests(symbols,first,last,max_candidate_rows_per_symbol,max_total_candidate_rows,
@@ -146,7 +148,7 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
           max_candidate_rows_per_symbol=30000000,
           max_total_candidate_rows=30000000,
           max_result_bars_per_symbol=100,
-          max_total_result_bars=1000):
+          max_total_result_bars=1000,index_safe=None):
     start_time=time.perf_counter()
     canon,start,end=requests(
         symbols,first,last,max_candidate_rows_per_symbol,
@@ -169,10 +171,19 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
     before=STAGER.PRE.KEYS.state_digest(original_root.resolve(),(2016,2026))
     if before!=prior["original_source_stat_sha256"]:
         raise ValueError("Original market stat differs from immutable candidate source")
-    # One complete private candidate verification, not a 180s live key scan.
-    full=V.verify(snapshot_safe,verify_path)
-    selected,doc,proof_sha=verified_candidate_selection(
-        snapshot_safe,full,start.year,canon,start,end)
+    # Compatibility: no --index-safe preserves the previously accepted
+    # per-query full all-row verification. With an explicit immutable
+    # indexed SAFE, hash every original candidate Parquet + SQLite index,
+    # use only referenced rowgroups, and describe this DIFFERENT assurance
+    # correctly in the aggregate report.
+    index_gate=None
+    if index_safe is None:
+        full=V.verify(snapshot_safe,verify_path)
+        selected,doc,proof_sha=verified_candidate_selection(
+            snapshot_safe,full,start.year,canon,start,end)
+    else:
+        selected,doc,proof_sha,index_gate=INDEX.select(
+            index_safe,snapshot_safe,canon,start,end,verify_path)
     if doc["original_source_stat_sha256"]!=before:
         raise ValueError("Private source stat no longer matches candidate proof")
     purchased=whole=mixed=source_rows_scanned=0
@@ -211,6 +222,9 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
             or P.private_cache.source_signature(
                 original_root,"day",start,end,P.core)!=purchased_selected_year_before
             or V.source(snapshot_safe)[1]!=proof_sha
+            or (index_gate is not None and
+                INDEX.indexed_source(index_safe,snapshot_safe)[1]!=
+                index_gate["index_safe_sha256"])
             or STAGER.REG.load_version(doc["source_version_sha256"]).get(
                 "original_source_stat_sha256")!=before
             or STAGER.REG.LOCK.exists() or STAGER.REG.LOCK.is_symlink()):
@@ -223,7 +237,16 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
         "private_source_version_sha256":doc["source_version_sha256"],
         "private_candidate_snapshot_safe_sha256":proof_sha,
         "private_candidate_manifest_sha256":doc["manifest_sha256"],
-        "private_candidate_full_recheck_safe_sha256":STAGER.sha(verify_path),
+        "private_candidate_full_recheck_safe_sha256":
+            STAGER.sha(verify_path) if index_gate is None else None,
+        "private_candidate_index_selection_safe_sha256":
+            STAGER.sha(verify_path) if index_gate is not None else None,
+        "private_candidate_index_built_from_all_22274_verified_source_rows":
+            index_gate is not None,
+        "private_index_candidate_source_and_sqlite_sha_verified_this_query":
+            index_gate is not None,
+        "private_candidate_full_rows_redecoded_this_query":
+            index_gate is None,
         "requested_stock_count":len(canon),
         "queried_calendar_year":start.year,
         "returned_stockday_rows":total,
@@ -232,7 +255,8 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
         "mixed_h5_candidate_rows":mixed,
         "purchased_source_rows_scanned":source_rows_scanned,
         "purchased_parquet_first_no_duplicate_stockday":True,
-        "private_candidate_all_22274_rows_sha_schema_keys_verified":True,
+        "private_candidate_all_22274_rows_sha_schema_keys_verified":
+            index_gate is None,
         "source_file_stat_before_and_after_unchanged":True,
         "queried_purchased_year_file_count_and_stat_before_after_unchanged":True,
         "source_stat_drift_detection_not_full_live_market_key_absence_audit":True,
@@ -267,13 +291,15 @@ def main(argv=None):
     p.add_argument("--max-total-candidate-rows",type=int,default=30000000)
     p.add_argument("--max-result-bars-per-symbol",type=int,default=100)
     p.add_argument("--max-total-result-bars",type=int,default=1000)
+    p.add_argument("--index-safe",type=Path,default=None)
     p.add_argument("--read-only-view",action="store_true",required=True)
     a=p.parse_args(argv)
     try:
         r=query(a.source_root,a.candidate_safe,a.symbols,a.from_date,
                 a.to_date,a.candidate_recheck_out,a.out,
                 a.max_candidate_rows_per_symbol,a.max_total_candidate_rows,
-                a.max_result_bars_per_symbol,a.max_total_result_bars)
+                a.max_result_bars_per_symbol,a.max_total_result_bars,
+                index_safe=a.index_safe)
         s=r["safe_summary"]
         print("Purchased + private candidate stockdays:",s["returned_stockday_rows"])
         print("Purchased:",s["purchased_parquet_rows"],

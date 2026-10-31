@@ -160,9 +160,8 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
     original_path, _, original = REG.read_audit(
         PRE.REPORTS / entry["original_preflight_safe_basename"])
     live_recheck_sha = PRE.sha(fresh_path)
-    if (live_recheck_sha != entry["fresh_recheck_safe_sha256"] and
-            original != fresh):
-        raise ValueError("Current union proof changed; cannot query an unverified source")
+    if live_recheck_sha != entry["fresh_recheck_safe_sha256"]:
+        raise ValueError("Current union proof changed since private version registration")
     if (fresh != original or fresh["whole_day_overlay_version_sha256"] != whole_sha
             or fresh["mixed_stage_parquet_sha256"] != entry["mixed_stage_parquet_sha256"]
             or fresh["mixed_stage_manifest_sha256"] != entry["mixed_stage_manifest_sha256"]

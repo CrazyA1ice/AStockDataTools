@@ -206,9 +206,11 @@ class PrivateBatchOneGateTests(unittest.TestCase):
 
     def test_source_mutation_after_stock_queries_blocks_output(self):
         with fake_batch(source_changed=True) as (root,reports,version,gate,purchase,entry):
-            with self.assertRaisesRegex(ValueError,"changed"):
+            with self.assertRaisesRegex(ValueError,"changed during batch"):
                 run(root,reports)
             self.assertFalse((reports/"safe.json").exists())
+            gate.assert_called_once()
+            self.assertEqual(purchase.call_count, 2)
 
     def test_reject_existing_output_without_overwrite(self):
         with fake_batch() as (root,reports,version,gate,purchase,entry):

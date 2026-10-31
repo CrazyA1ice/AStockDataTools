@@ -150,7 +150,7 @@ def verify(materialization_safe,out):
                 month=int(key[5:7]) if key!="h5_gap_2026" else None
                 for rg in range(pf.metadata.num_row_groups):
                     table=pf.read_row_group(rg,use_threads=False)
-                    if table.schema!=sch or table.null_count:
+                    if table.schema!=sch or any(col.null_count for col in table.columns):
                         raise ValueError("Private 2026 partition corrupted Arrow data")
                     for row in table.to_pylist():
                         kind=row.get("value_source")

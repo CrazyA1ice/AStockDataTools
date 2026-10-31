@@ -154,7 +154,10 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
                 raise ValueError("2016 original purchased Arrow field names repeat")
             if not footer_required_field_names_present:
                 raise ValueError("2016 original purchased expected field names are missing")
-            if footer_extra_field_count:
+            # One noncanonical column is now accepted only with a full,
+            # SHA-pinned original vendor Parquet byte shadow in the private
+            # materializer. No extra field is silently discarded or recast.
+            if footer_extra_field_count>1:
                 raise ValueError("2016 original purchased contains additional field names")
             if not footer_expected_field_types_match:
                 raise ValueError("2016 original purchased required Arrow physical field types differ")
@@ -233,6 +236,9 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
         "purchased_required_fields_present":footer_required_field_names_present,
         "purchased_missing_required_field_count":footer_missing_required_field_count,
         "purchased_additional_field_count":footer_extra_field_count,
+        "purchased_extra_field_requires_byte_identical_private_original_shadow":
+            footer_extra_field_count==1,
+        "purchased_extra_field_business_semantics_certified":False,
         "purchased_field_names_unique":footer_schema_names_unique,
         "purchased_required_arrow_types_match":footer_expected_field_types_match,
         "purchased_rows_checked_before_refusal":purchased_count,

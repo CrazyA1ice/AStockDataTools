@@ -26,7 +26,8 @@ def bar(symbol, day):
 
 
 @contextmanager
-def fake_batch(*, stale=False, overlap=False, source_changed=False):
+def fake_batch(*, stale=False, overlap=False, source_changed=False,
+               simulated_crlf=False):
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         reports = root / "reports"
@@ -53,7 +54,10 @@ def fake_batch(*, stale=False, overlap=False, source_changed=False):
             "candidate_source_units_certified":False,
         }
         old=json.dumps(proof,sort_keys=True,indent=2,ensure_ascii=False)+"\n"
-        orig.write_text(old,encoding="utf-8")
+        if simulated_crlf:
+            orig.write_bytes(old.replace("\n", "\r\n").encode("utf-8"))
+        else:
+            orig.write_text(old,encoding="utf-8")
         entry={
             "ready_for_production_query":False,
             "whole_day_candidate_rows":22191,
@@ -80,7 +84,11 @@ def fake_batch(*, stale=False, overlap=False, source_changed=False):
             changed=dict(proof)
             if stale:
                 changed["original_source_stat_sha256"]="f"*64
-            target.write_text(json.dumps(changed,sort_keys=True,indent=2,ensure_ascii=False)+"\n")
+            live_text=json.dumps(changed,sort_keys=True,indent=2,ensure_ascii=False)+"\n"
+            if simulated_crlf:
+                target.write_bytes(live_text.replace("\n", "\r\n").encode("utf-8"))
+            else:
+                target.write_text(live_text,encoding="utf-8")
             if "timing_sink" in kwargs:kwargs["timing_sink"]["mixed_2026_h5_exact_key_scan_seconds"]=2.0
             return changed
         def purchase(_root,symbol,period,start,end,**kw):
@@ -129,6 +137,15 @@ class PrivateBatchOneGateTests(unittest.TestCase):
             self.assertNotEqual(entry["fresh_recheck_safe_sha256"],
                                 hashlib.sha256(source.read_bytes()+b"modified").hexdigest())
             gate.assert_not_called()
+
+    def test_simulated_windows_crlf_safe_passes_identical_sha_gate(self):
+        with fake_batch(simulated_crlf=True) as (root,reports,version,gate,purchase,entry):
+            self.assertIn(b"\r\n", (reports/"original.json").read_bytes())
+            result=run(root,reports,symbols=("SH600000",))
+            self.assertEqual(result["safe_summary"]["full_live_recheck_safe_sha256"],
+                             entry["fresh_recheck_safe_sha256"])
+            self.assertEqual(result["safe_summary"]["query_result_stockday_bars"],5)
+            self.assertEqual(gate.call_count,1)
 
     def test_two_stocks_one_full_market_gate_with_exact_source_totals(self):
         with fake_batch() as (root,reports,version,gate,purchase,entry):

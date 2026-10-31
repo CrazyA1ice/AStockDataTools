@@ -134,6 +134,14 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
           out, max_candidate_rows=30000000, max_result_bars=100,
           max_overlay_source_rows=30000):
     started = time.perf_counter()
+    split_clock = started
+    timings = {}
+    source_gate_timings = {}
+    def lap(label):
+        nonlocal split_clock
+        now = time.perf_counter()
+        timings[label] = round(now - split_clock, 6)
+        split_clock = now
     canonical, first_d, last_d = PURCHASED.request_dates(
         symbol, "day", first, last, max_candidate_rows, max_result_bars)
     if first_d.year != last_d.year:
@@ -151,12 +159,15 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
             or entry["candidate_total_new_stockday_rows"] != PRE.TOTAL_ROWS
             or entry["ready_for_production_query"] is not False):
         raise ValueError("Untrusted private version counts or activation claim")
+    lap("request_and_immutable_registry_load_seconds")
     whole_sha = entry["whole_day_overlay_version_sha256"]
     mixed_safe = PRE.REPORTS / entry["mixed_stage_safe_basename"]
     # Do not rely on historical stale certificates: fresh H5/PQ exact-key
     # checks are mandatory for every research query, even baseline-only.
     fresh = PRE.verify(root, whole_sha, mixed_safe, live_safe, private_keys,
-                       ledger, source2016, source2026, mixed_plan, fresh_path)
+                       ledger, source2016, source2026, mixed_plan, fresh_path,
+                       timing_sink=source_gate_timings)
+    lap("full_h5_purchased_parquet_live_gate_seconds")
     original_path, _, original = REG.read_audit(
         PRE.REPORTS / entry["original_preflight_safe_basename"])
     live_recheck_sha = PRE.sha(fresh_path)
@@ -184,20 +195,24 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
             or PRE.sha(stage_meta) != entry["mixed_stage_manifest_sha256"]
             or PRE.sha(stage_safe) != entry["mixed_stage_safe_sha256"]):
         raise ValueError("Mixed private stage content changed since registration")
+    lap("sha_bound_candidate_and_original_provenance_recheck_seconds")
     purchased_result = PURCHASED.query_bars(
         root, canonical, "day", first_d.isoformat(), last_d.isoformat(),
         max_candidate_rows=max_candidate_rows, max_result_bars=max_result_bars,
         local_cache=False)
     purchased_rows = purchased_result["bars"]
+    lap("single_symbol_purchased_parquet_query_seconds")
     whole_rows = []
     for item in whole_stages:
         d = date.fromisoformat(item["day"])
         if first_d <= d <= last_d:
             whole_rows.extend(WHOLE._decode_selected_stage(item, canonical))
+    lap("whole_private_day_stage_selected_decode_seconds")
     mixed_selected = selected_mixed_rows(mixed_rows, canonical, first_d, last_d)
     combined, counts = merge_stock_day_rows(
         canonical, first_d, last_d, purchased_rows, whole_rows,
         mixed_selected, max_result_bars)
+    lap("mixed_83_stage_selected_decode_and_stockday_merge_seconds")
     # Check the complete private versions and exact origin state at the end
     # to prevent a stale candidate from being returned after a mid-query edit.
     if (PRE.KEYS.state_digest(root, (2016, 2026)) != start_state
@@ -213,6 +228,7 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
         whole_sha, max_overlay_source_rows)
     if again != version or stages_again != whole_stages:
         raise ValueError("Whole-day stage SHA/key changed during read")
+    lap("final_sha_stat_and_immutable_version_checks_seconds")
     summary = {
         "format": FORMAT,
         "period": "day",
@@ -241,6 +257,10 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
         "ready_for_production_query": False,
         "ready_for_automatic_market_merge": False,
         "elapsed_seconds_this_invocation": round(time.perf_counter() - started, 6),
+        "phase_elapsed_seconds": timings,
+        "full_live_gate_phase_elapsed_seconds": source_gate_timings,
+        "timing_instrumentation_changes_original_market_scan": False,
+        "timing_instrumentation_changes_live_source_safe": False,
     }
     with report_path.open("x", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, sort_keys=True, indent=2)

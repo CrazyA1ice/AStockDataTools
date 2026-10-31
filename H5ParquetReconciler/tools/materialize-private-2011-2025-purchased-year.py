@@ -151,7 +151,7 @@ def materialize(year,source_root,candidate_safe,readme_sha,manifest_sha,
             for rg in range(raw.metadata.num_row_groups):
                 batch=raw.read_row_group(rg,columns=["ts","symbol",*PHYS.F],
                                          use_threads=False)
-                if (batch.null_count!=0):
+                if any(col.null_count for col in batch.columns):
                     raise ValueError("Purchased historical source Arrow contains nulls")
                 rows+=PHYS.write_source_rows(batch.to_pylist(),"purchased_parquet",
                                              year,None,sink,conn,counts,sch,digest)

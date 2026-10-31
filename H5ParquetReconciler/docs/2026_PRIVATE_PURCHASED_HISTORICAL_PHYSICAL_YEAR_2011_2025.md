@@ -55,3 +55,15 @@ cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,
 ```
 
 诊断程序若拒绝返回退出码2属**预期可分析结果**，不要立即重复物化。回传`reports/historical-2016-readonly-diagnostic-*.json`的脱敏内容与单元测试日志。若状态`readonly_2016_historical_preflight_pass`但旧物化仍拒绝，问题发生在物理Parquet或SQLite写读/manifest发布阶段，应基于上一步的工作目录状态进一步修正代码，仍不覆盖旧文件。物化原始数据与2016单股代码清单不要上传GitHub。
+
+## 重要：2026-10-31 2016诊断首次拒绝的已知原因（参数误传，不是行情）
+
+真实Windows批次已跑过52/52测试PASS，但第一次诊断SAFE `reports/historical-2016-readonly-diagnostic-2929d93037e3.json` 只返回 `failure_stage=input_source_sha` / `failure_code=UNCLASSIFIED_SOURCE_OR_CODE_FAILURE`，原始购买/H5行检查均为0。**原因已经确认：聊天中给出的诊断PowerShell将`--readme-sha256`误拼成86个字符，正确SHA256必须是下面64字符：**
+
+`4c4e7c2081390407a06fecbe8b2693bddc9ce76191c44381b6be0e7781a2f023`
+
+校验清单的64字符SHA256则是：
+
+`24f099faeb0a2e810f46691b81b2a357cc5aa42cd7ccd800dae6e19db16b06eb`
+
+当前仓库文档中诊断命令的两个SHA是**正确**的。不要再次使用聊天消息中86位的README值；诊断原始输入被拒并**不能**证明最初真实2016物化失败是同一原因，因为最初的物化命令使用过正确README SHA。只读诊断工具现在将SHA长度异常明确映射到固定 `INPUT_SHA256_PIN_FORMAT_INVALID` 而不是通用失败码，并新增对应合成测试；须先跑新增测试，然后用正确的64位参数重做**只读诊断，而非真实物化**。禁止改原始购买数据和H5数据。

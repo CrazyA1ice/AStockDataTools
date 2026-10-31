@@ -67,3 +67,23 @@ cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,
 `24f099faeb0a2e810f46691b81b2a357cc5aa42cd7ccd800dae6e19db16b06eb`
 
 当前仓库文档中诊断命令的两个SHA是**正确**的。不要再次使用聊天消息中86位的README值；诊断原始输入被拒并**不能**证明最初真实2016物化失败是同一原因，因为最初的物化命令使用过正确README SHA。只读诊断工具现在将SHA长度异常明确映射到固定 `INPUT_SHA256_PIN_FORMAT_INVALID` 而不是通用失败码，并新增对应合成测试；须先跑新增测试，然后用正确的64位参数重做**只读诊断，而非真实物化**。禁止改原始购买数据和H5数据。
+
+## 2026-10-31 第二次2016真实只读诊断：购买Footer/Schema精确分流
+
+Windows实际第15项合成回归PASS，使用**正确64位SHA**的2016只读SAFE `reports/historical-2016-readonly-diagnostic-b6ed732014e2.json` 得到 `failure_stage=purchased_footer`、`failure_code=SOURCE_ARROW_SCHEMA_INVALID`，购买文件已定位且候选SHA校验阶段未拒绝，**购买行读取0、H5候选行读取0**。原诊断把**原购买年文件footer.num_rows与QDC清单行数比较**、**Arrow字段名集合完全相等**两项合并成一个错误，不能据此判定商业原文件损坏。以前用户验收过原24文件随包清单SHA/footer，因此应该细查字段情况；不允许臆测是哪一列。
+
+本次继续完善同一个**只读、不生成物理Parquet/SQLite**工具，新增不含原始字段名、ticker或OHLCVA的确定性SAFE：`purchased_footer_row_count_matches_received_manifest`、`purchased_missing_required_field_count`、`purchased_additional_field_count`、`purchased_required_arrow_types_match`、`purchased_field_names_unique`、`purchased_footer_rowgroup_count`。拒绝原因细化为 `PURCHASED_FOOTER_ROW_COUNT_MISMATCH`、`PURCHASED_REQUIRED_FIELDS_MISSING`、`PURCHASED_ADDITIONAL_FIELDS_PRESENT`、`PURCHASED_REQUIRED_FIELD_TYPES_MISMATCH`、`PURCHASED_DUPLICATE_FIELD_NAMES`。新增4项虚构Arrow回归，总历史测试19项。**未擅自修改历史年物化器的严格Schema判断**，防止未经审计丢字段。
+
+**先拉取并跑19项安全回归（完整单行PowerShell）：**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "切换分支失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\diagnose-private-2016-purchased-h5-readonly.py H5ParquetReconciler\tests\test_private_2011_2025_purchased_physical_year.py; if ($LASTEXITCODE -ne 0) { throw "页脚诊断工具语法检查失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_private_2011_2025_purchased_physical_year.py" -v; if ($LASTEXITCODE -ne 0) { throw "19项历史年与页脚分流安全测试失败，禁止真实物化" }; Write-Host "PASS：19项历史年及页脚分流安全回归通过"
+```
+
+**19项通过后运行真实2016只读Footer/Schema细分诊断（完整单行PowerShell）：**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; $readme="4c4e7c2081390407a06fecbe8b2693bddc9ce76191c44381b6be0e7781a2f023"; $manifest="24f099faeb0a2e810f46691b81b2a357cc5aa42cd7ccd800dae6e19db16b06eb"; if ($readme -notmatch '^[0-9a-f]{64}$' -or $manifest -notmatch '^[0-9a-f]{64}$') { throw "错误的SHA参数" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\historical-2016-readonly-footer-detail-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\diagnose-private-2016-purchased-h5-readonly.py --purchased-root "D:\stock\AllCycleAStockData" --candidate-safe "H5ParquetReconciler\reports\full-22274-private-candidates-60ae77774c30.json" --readme-sha256 $readme --manifest-sha256 $manifest --out $out --diagnose-2016-readonly; $ec=$LASTEXITCODE; if (-not (Test-Path -LiteralPath $out)) { throw "没有生成页脚诊断SAFE，退出码=$ec" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.original_market_files_written -ne $false -or $r.private_annual_parquet_or_sqlite_created -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_automatic_market_merge -ne $false -or $r.ready_for_h5_mirror -ne $false) { throw "诊断只读限制不满足" }; Write-Host "退出码=$ec，错误代码=$($r.failure_code)，阶段=$($r.failure_stage)，页脚行数匹配=$($r.purchased_footer_row_count_matches_received_manifest)，必要字段存在=$($r.purchased_required_fields_present)，缺失字段数=$($r.purchased_missing_required_field_count)，额外字段数=$($r.purchased_additional_field_count)，字段类型匹配=$($r.purchased_required_arrow_types_match)，字段名唯一=$($r.purchased_field_names_unique)，RowGroup数=$($r.purchased_footer_rowgroup_count)"; Write-Host "SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+此处退出码2表示被安全拒绝，**应读取SAFE后停止**，不要再次直接执行物化命令。回传脱敏SAFE；若发现存在额外字段而必要字段及物理类型匹配，应先查清额外字段语义并更新源投影规则和测试；不能仅为绕过错误去丢弃列。2016及其余历史年度尚未生产启用，2026年1,032,623条独立验收结果保持不变。

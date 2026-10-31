@@ -171,8 +171,9 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
         source_sha_before_and_after=True
         stockdays_unique=True
         stage="complete"
-    except (OSError,ValueError,TypeError,KeyError,OverflowError,ImportError,
-            sqlite3.Error) as exc:
+    except Exception as exc:
+        # Arrow/third-party exceptions must also be sanitized. Never emit a
+        # raw exception string, traceback, symbol, date or licensed value.
         error=code_for(exc)
     finally:
         con.close()

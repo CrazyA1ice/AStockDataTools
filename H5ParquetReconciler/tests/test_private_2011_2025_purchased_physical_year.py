@@ -23,6 +23,8 @@ M=load("historical_purchased_day_builder_tests",
        "materialize-private-2011-2025-purchased-year.py")
 V=load("historical_purchased_day_independent_tests",
        "verify-private-2011-2025-purchased-year.py")
+R=load("historical_2016_existing_orphan_recovery_tests",
+       "recover-private-2016-historical-orphan-readonly.py")
 D=load("historical_2016_readonly_diagnosis_tests",
        "diagnose-private-2016-purchased-h5-readonly.py")
 
@@ -210,6 +212,100 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         audited=self.check(2015)
         self.assertEqual(audited["private_purchased_rows_verified"],1)
         self.assertEqual(audited["private_unclassified_purchased_extra_field_count_verified"],1)
+
+    def recover_without_rebuilding(self):
+        folder=self.dir_for_year[2016]
+        # The original CLI wrote all private data + manifest but failed only
+        # when the final success SAFE was being rendered.
+        self.safes[2016].unlink()
+        out=self.reports/"recovered-historical-2016-safe.json"
+        independent=self.reports/"recovered-historical-2016-audit.json"
+        gate=self.reports/"recovered-h5-candidate-recheck.json"
+        with patch.object(R.M,"MODULE",self.root),\
+             patch.object(R.M,"WORK",self.work),\
+             patch.object(R.M,"ROOT",self.private_root),\
+             patch.object(R.M,"REPORTS",self.reports),\
+             patch.object(R.M,"purchased_input",side_effect=self.mock_input),\
+             patch.object(R.M.V,"source",side_effect=self.source),\
+             patch.object(R.M.V,"verify",side_effect=self.full_gap),\
+             patch.object(R.I.M,"MODULE",self.root),\
+             patch.object(R.I.M,"WORK",self.work),\
+             patch.object(R.I.M,"ROOT",self.private_root),\
+             patch.object(R.I.M,"REPORTS",self.reports):
+            v=R.recover(folder,self.purchased,self.candidate_safe,
+                        self.readme_sha,self.qdc_sha,gate,out,independent)
+        self.assertTrue(out.is_file())
+        self.assertTrue(independent.is_file())
+        self.assertEqual(v["private_h5_mixed_candidate_rows_verified"],1)
+        self.assertEqual(v["private_purchased_rows_verified"],2)
+        self.assertTrue(v["private_verbatim_original_purchased_shadow_sha_verified"])
+        self.assertTrue(v["private_byte_shadow_source_float64_rows_recompared"])
+        self.assertFalse(v["ready_for_h5_mirror"])
+        self.assertFalse(v["ready_for_automatic_market_merge"])
+        return v
+
+    def test_2016_true_orphan_recovered_from_existing_manifest_without_rebuild(self):
+        self.install_purchased_extension(2016,1)
+        before=self.build(2016)
+        folder=self.dir_for_year[2016]
+        orig_parquet=folder/"purchased"/"day.parquet"
+        extension=folder/"purchased"/"original-with-unclassified-extra.parquet"
+        manifest=folder/"manifest.json"
+        from hashlib import sha256
+        hashes=[sha256(x.read_bytes()).hexdigest() for x in (orig_parquet,extension,manifest)]
+        verified=self.recover_without_rebuilding()
+        self.assertEqual(verified["private_total_rows_verified"],3)
+        self.assertEqual(hashes,[sha256(x.read_bytes()).hexdigest()
+                           for x in (orig_parquet,extension,manifest)])
+        self.assertFalse(self.safes[2016].exists())
+        self.assertEqual(before["total_private_physical_rows"],3)
+
+    def test_2016_orphan_shadow_tamper_rejected_before_recovery_SAFE(self):
+        self.install_purchased_extension(2016,1)
+        self.build(2016)
+        shadow=self.dir_for_year[2016]/"purchased"/"original-with-unclassified-extra.parquet"
+        shadow.write_bytes(shadow.read_bytes()+b"tampered")
+        self.safes[2016].unlink()
+        with patch.object(R.M,"MODULE",self.root),\
+             patch.object(R.M,"WORK",self.work),\
+             patch.object(R.M,"ROOT",self.private_root),\
+             patch.object(R.M,"REPORTS",self.reports),\
+             patch.object(R.M,"purchased_input",side_effect=self.mock_input),\
+             patch.object(R.M.V,"source",side_effect=self.source),\
+             patch.object(R.M.V,"verify",side_effect=self.full_gap):
+            with self.assertRaisesRegex(ValueError,"archive SHA mismatch"):
+                R.recover(self.dir_for_year[2016],self.purchased,self.candidate_safe,
+                          self.readme_sha,self.qdc_sha,
+                          self.reports/"orphan-gate.json",
+                          self.reports/"orphan-success.json",
+                          self.reports/"orphan-audit.json")
+        self.assertFalse((self.reports/"orphan-success.json").exists())
+
+    def test_relative_private_year_and_reports_paths_resolve_before_manifest_SAFE(self):
+        import os
+        relative=lambda p:Path(os.path.relpath(p,Path.cwd()))
+        test_year=2015
+        folder=self.private_root/f"physical_{test_year}_{test_year:012x}"
+        gate=self.reports/"history-gate-2015.json"
+        safe=self.reports/"history-safe-2015.json"
+        with patch.object(M,"MODULE",self.root),\
+             patch.object(M,"WORK",self.work),\
+             patch.object(M,"ROOT",self.private_root),\
+             patch.object(M,"REPORTS",self.reports),\
+             patch.object(M,"purchased_input",side_effect=self.mock_input),\
+             patch.object(M.V,"source",side_effect=self.source),\
+             patch.object(M.V,"verify",side_effect=self.full_gap):
+            r=M.materialize(2015,self.purchased,self.candidate_safe,
+                self.readme_sha,self.qdc_sha,
+                relative(folder),relative(gate),relative(safe))
+        self.assertTrue(safe.exists())
+        self.assertEqual(r["year"],2015)
+        self.assertEqual(r["total_private_physical_rows"],1)
+        self.assertEqual(r["private_relative_directory"],
+            folder.relative_to(self.root).as_posix())
+        self.safes[2015]=safe
+        v=self.check(2015)
+        self.assertEqual(v["private_total_rows_verified"],1)
 
     def test_2016_purchased_two_and_one_h5_gap_exact_float64(self):
         r=self.build(2016)

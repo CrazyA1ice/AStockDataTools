@@ -159,6 +159,10 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
                        ledger, source2016, source2026, mixed_plan, fresh_path)
     original_path, _, original = REG.read_audit(
         PRE.REPORTS / entry["original_preflight_safe_basename"])
+    live_recheck_sha = PRE.sha(fresh_path)
+    if (live_recheck_sha != entry["fresh_recheck_safe_sha256"] and
+            original != fresh):
+        raise ValueError("Current union proof changed; cannot query an unverified source")
     if (fresh != original or fresh["whole_day_overlay_version_sha256"] != whole_sha
             or fresh["mixed_stage_parquet_sha256"] != entry["mixed_stage_parquet_sha256"]
             or fresh["mixed_stage_manifest_sha256"] != entry["mixed_stage_manifest_sha256"]
@@ -202,7 +206,8 @@ def query(root, symbol, first, last, version_sha, live_safe, private_keys,
             or PRE.sha(stage_meta) != entry["mixed_stage_manifest_sha256"]
             or PRE.sha(stage_safe) != entry["mixed_stage_safe_sha256"]
             or REG.load_version(version_sha) != entry
-            or original_path.read_bytes() == b""  # keep explicit trusted provenance in read
+            or PRE.sha(original_path) != entry["original_preflight_safe_sha256"]
+            or PRE.sha(fresh_path) != live_recheck_sha
             or REG.LOCK.exists() or REG.LOCK.is_symlink()):
         raise ValueError("Private combined query evidence or source changed during read")
     again, _, stages_again = WHOLE.verified_version(

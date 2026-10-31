@@ -180,6 +180,37 @@ class CombinedSnapshotTests(unittest.TestCase):
             self.assertTrue(loaded["safe_summary"]["no_live_market_source_freshness_recheck"])
             self.assertTrue(read_safe.is_file())
 
+    def test_postwrite_original_source_stat_drift_aborts_materialization(self):
+        import pyarrow
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t)
+            folder=root/"work"/"unified_parquet"/"snapshots"/"snapshot_cdef01234567"
+            reports=root/"reports"
+            reports.mkdir()
+            fresh=reports/"fresh.json"
+            batch=reports/"batch.json"
+            safe=reports/"snapshot.json"
+            def fake_query(*args,**kwargs):
+                batch.write_bytes(b'{"aggregate":true}\n')
+                fresh.write_bytes(b'{"source":true}\n')
+                return fake_result()
+            with patch.object(M.BASE,"MODULE",root),\
+                 patch.object(M.BASE,"safe_paths",return_value=(folder,safe)),\
+                 patch.object(M.BATCH.PRE,"new_report",side_effect=lambda x:Path(x)),\
+                 patch.object(M.BATCH,"checked_requests",return_value=(
+                     list(SYM),date(2026,9,30),date(2026,10,13))),\
+                 patch.object(M.BATCH,"query_batch",side_effect=fake_query),\
+                 patch.object(M.BATCH.REG,"load_version",return_value={
+                     "original_source_stat_sha256":"d"*64}),\
+                 patch.object(M.BATCH.PRE.KEYS,"state_digest",return_value="f"*64):
+                with self.assertRaisesRegex(ValueError,"drift after writing"):
+                    M.materialize(root,list(SYM),"2026-09-30","2026-10-13",
+                        VERSION,None,None,None,None,None,None,fresh,batch,folder,safe)
+            self.assertFalse(safe.exists())
+            self.assertTrue((folder/"day.parquet").is_file())
+            # An orphan private scratch directory is NOT a verified snapshot:
+            # without the final SAFE existing readers cannot open it.
+
     def test_invalid_output_prevents_live_query(self):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t)

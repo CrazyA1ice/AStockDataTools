@@ -148,6 +148,8 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
             or not original_root.is_dir()):
         raise ValueError("Purchased Parquet root must be explicit absolute directory")
     prior,_,_,_=V.source(snapshot_safe)
+    purchased_selected_year_before=P.private_cache.source_signature(
+        original_root,"day",start,end,P.core)
     before=STAGER.PRE.KEYS.state_digest(original_root.resolve(),(2016,2026))
     if before!=prior["original_source_stat_sha256"]:
         raise ValueError("Original market stat differs from immutable candidate source")
@@ -190,6 +192,8 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
         mixed+=counts["private_h5_mixed_stockday_candidate"]
         combined[symbol]=rows
     if (STAGER.PRE.KEYS.state_digest(original_root.resolve(),(2016,2026))!=before
+            or P.private_cache.source_signature(
+                original_root,"day",start,end,P.core)!=purchased_selected_year_before
             or V.source(snapshot_safe)[1]!=proof_sha
             or STAGER.REG.load_version(doc["source_version_sha256"]).get(
                 "original_source_stat_sha256")!=before
@@ -214,6 +218,7 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
         "purchased_parquet_first_no_duplicate_stockday":True,
         "private_candidate_all_22274_rows_sha_schema_keys_verified":True,
         "source_file_stat_before_and_after_unchanged":True,
+        "queried_purchased_year_file_count_and_stat_before_after_unchanged":True,
         "source_stat_drift_detection_not_full_live_market_key_absence_audit":True,
         "original_live_h5_keyset_not_rescanned":True,
         "candidate_source_units_certified":False,

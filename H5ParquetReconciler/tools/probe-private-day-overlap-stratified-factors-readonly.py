@@ -109,6 +109,7 @@ def source_snapshot(root):
 
 def scan_purchased_year(root,year):
     """Read all day samples of a year in one pass; exact (symbol,date) join."""
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
     selected=SAMPLES[year]
@@ -124,8 +125,14 @@ def scan_purchased_year(root,year):
         if path.is_symlink() or not path.is_file():
             raise ValueError("Purchased daily source symlink")
         pf=pq.ParquetFile(path)
-        if not set(PARQUET_COLUMNS).issubset(pf.schema_arrow.names):
+        schema=pf.schema_arrow
+        if not set(PARQUET_COLUMNS).issubset(schema.names):
             raise ValueError("Purchased original day OHLCVA schema missing")
+        if (not pa.types.is_int64(schema.field("ts").type)
+                or not pa.types.is_string(schema.field("symbol").type)
+                or any(not pa.types.is_float64(schema.field(f).type)
+                       for f in FIELDS)):
+            raise ValueError("Purchased original Parquet day numeric Arrow dtypes differ")
         for index in range(pf.metadata.num_row_groups):
             if not CORE.row_group_overlaps_timestamp(
                     pf.metadata.row_group(index),low_ms,high_ms):

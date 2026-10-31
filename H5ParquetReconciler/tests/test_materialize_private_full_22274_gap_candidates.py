@@ -44,7 +44,9 @@ class FullCandidatePartitionTests(unittest.TestCase):
     def setUpClass(cls):
         import pyarrow as pa
         import pyarrow.parquet as pq
-        cls.temp=tempfile.TemporaryDirectory()
+        scratch=HERE.parent/"work"/"_union_scratch"
+        scratch.mkdir(parents=True,exist_ok=True)
+        cls.temp=tempfile.TemporaryDirectory(prefix="full_22274_synthetic_",dir=scratch)
         cls.root=Path(cls.temp.name)
         cls.reports=cls.root/"reports"
         cls.reports.mkdir()

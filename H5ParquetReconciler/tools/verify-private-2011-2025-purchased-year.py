@@ -240,6 +240,36 @@ def verify(safe,out):
                 raise ValueError("Historical private original float64/partition SHA drift")
     finally:
         con.close()
+    # Independently reproduce the market OHLCVA float64 row fingerprint from
+    # the byte-identical preserved original, not from the normalized result
+    # or from builder-supplied source digest. Never read source QDC paths.
+    extra_source_recompared=False
+    if doc["unclassified_purchased_extra_field_count"]==1:
+        shadow=folder/"purchased"/"original-with-unclassified-extra.parquet"
+        p=pq.ParquetFile(shadow,memory_map=False,pre_buffer=False)
+        raw_digest=hashlib.sha256()
+        raw_count=0
+        try:
+            for rg in range(p.metadata.num_row_groups):
+                source_batch=p.read_row_group(
+                    rg,columns=["ts","symbol",*PHYS.F],use_threads=False)
+                if any(col.null_count for col in source_batch.columns):
+                    raise ValueError("Archived original purchased source contains nulls")
+                for original_row in source_batch.to_pylist():
+                    normalized=PHYS.normalise(
+                        original_row,"purchased_parquet",year,None)
+                    raw_digest.update(PHYS.row_bytes(normalized))
+                    raw_count+=1
+        finally:
+            p.close()
+        manifest_digest=manifest["partition_files"]["purchased"][
+            "original_rows_float64_digest_sha256"]
+        if (raw_count!=doc["purchased_original_rows"]
+                or raw_digest.hexdigest()!=manifest_digest
+                or M.ST.sha(shadow)!=
+                   doc["source_purchased_original_parquet_sha256"]):
+            raise ValueError("Purchased original byte-shadow and canonical float64 rows mismatch")
+        extra_source_recompared=True
     if (counts["purchased_parquet"]!=doc["purchased_original_rows"]
             or counts["private_h5_mixed_stockday_candidate"]!=(year==2016)
             or sum(counts.values())!=doc["total_private_physical_rows"]
@@ -259,6 +289,7 @@ def verify(safe,out):
             doc["unclassified_purchased_extra_field_count"],
         "private_verbatim_original_purchased_shadow_sha_verified":
             doc["unclassified_purchased_extra_field_count"]==1,
+        "private_byte_shadow_source_float64_rows_recompared":extra_source_recompared,
         "unknown_extra_field_semantics_certified":False,
         "source_materialization_safe_sha256":safe_sha,
         "source_private_manifest_sha256":doc["private_manifest_sha256"],

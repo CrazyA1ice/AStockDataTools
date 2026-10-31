@@ -196,8 +196,22 @@ class UnifiedPrivateCandidateTests(unittest.TestCase):
 
     def test_modified_private_partition_sha_blocks_result(self):
         self.parquet.write_bytes(self.parquet.read_bytes()+b"modified")
-        with self.assertRaisesRegex(ValueError,"changed"):
-            self.run_it()
+        # The on-disk SHA gate must reject this BEFORE Arrow touches a
+        # corrupted Parquet footer; do not depend on Arrow error wording.
+        with patch("pyarrow.parquet.ParquetFile",
+                   side_effect=AssertionError("opened corrupt Parquet before SHA")) as opened:
+            with self.assertRaisesRegex(ValueError,"changed before selection"):
+                self.run_it()
+            opened.assert_not_called()
+        self.assertFalse(self.out.exists())
+
+    def test_modified_private_manifest_sha_blocks_before_arrow(self):
+        self.mf.write_bytes(self.mf.read_bytes()+b"modified")
+        with patch("pyarrow.parquet.ParquetFile",
+                   side_effect=AssertionError("opened Parquet with bad manifest")) as opened:
+            with self.assertRaisesRegex(ValueError,"changed before selection"):
+                self.run_it()
+            opened.assert_not_called()
         self.assertFalse(self.out.exists())
 
     def test_forged_full_offline_verification_cannot_bypass(self):

@@ -23,6 +23,8 @@ M=load("historical_purchased_day_builder_tests",
        "materialize-private-2011-2025-purchased-year.py")
 V=load("historical_purchased_day_independent_tests",
        "verify-private-2011-2025-purchased-year.py")
+D=load("historical_2016_readonly_diagnosis_tests",
+       "diagnose-private-2016-purchased-h5-readonly.py")
 
 
 def ts(day):
@@ -230,6 +232,76 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.build(2015)
         with self.assertRaisesRegex(ValueError,"fresh private"):
             self.build(2015)
+
+    def diagnose(self):
+        out=self.reports/"diagnostic-only-2016.json"
+        with patch.object(D,"REPORTS",self.reports),\
+             patch.object(D.M,"purchased_input",side_effect=self.mock_input),\
+             patch.object(D.M.V,"source",side_effect=self.source):
+            result=D.inspect(self.purchased,self.candidate_safe,
+                             self.readme_sha,self.qdc_sha,out)
+        self.assertTrue(out.is_file())
+        raw=out.read_text(encoding="utf-8")
+        self.assertNotIn("SH600001",raw)
+        self.assertNotIn("SH600002",raw)
+        self.assertNotIn("2016-08-17",raw)
+        self.assertNotIn("1000.0",raw)
+        self.assertNotIn(str(self.purchased),raw)
+        self.assertFalse(result["private_annual_parquet_or_sqlite_created"])
+        self.assertFalse(result["ready_for_automatic_market_merge"])
+        self.assertFalse(result["ready_for_h5_mirror"])
+        return result
+
+    def test_2016_readonly_diagnostic_proves_two_purchased_and_one_gap(self):
+        result=self.diagnose()
+        self.assertEqual(result["status"],"readonly_2016_historical_preflight_pass")
+        self.assertEqual(result["purchased_rows_checked_before_refusal"],2)
+        self.assertEqual(result["h5_candidate_rows_checked_before_refusal"],1)
+        self.assertTrue(result["all_purchased_h5_candidate_stockdays_unique"])
+        self.assertTrue(result["source_shas_and_stats_unchanged_after_complete_scan"])
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_diagnostic_detects_duplicate_without_stock_ids(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        pq.write_table(pa.Table.from_pylist([
+            h5("SH600001","2016-08-17")
+        ],schema=M.ST.candidate_schema(pa)),self.h5_file)
+        self.candidate_doc["partition_sha256"]["2016"]=M.ST.sha(self.h5_file)
+        result=self.diagnose()
+        self.assertEqual(result["status"],"readonly_2016_historical_preflight_rejected")
+        self.assertEqual(result["failure_stage"],"h5_candidate")
+        self.assertEqual(result["failure_code"],"DUPLICATE_STOCKDAY")
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_diagnostic_reports_original_sha_tamper(self):
+        self.sources[2016].write_bytes(self.sources[2016].read_bytes()+b"tampered")
+        result=self.diagnose()
+        self.assertEqual(result["failure_stage"],"input_source_sha")
+        self.assertEqual(result["failure_code"],"PURCHASED_SOURCE_SHA_INVALID")
+        self.assertEqual(result["purchased_rows_checked_before_refusal"],0)
+        self.assertFalse(self.private_root.exists())
+
+    def test_2016_readonly_diagnostic_reports_source_geometry_without_values(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        wrong=paid("600001.XSHG","2016-08-17")
+        wrong["high"]=1.0
+        purchased_schema=pa.schema([
+            pa.field("ts",pa.int64()),pa.field("symbol",pa.string()),
+            *(pa.field(field,pa.float64()) for field in M.PHYS.F),
+        ])
+        pq.write_table(pa.Table.from_pylist([
+            wrong,paid("000002.XSHE","2016-08-17")
+        ],schema=purchased_schema),self.sources[2016])
+        self.record[2016]={
+            "size":self.sources[2016].stat().st_size,
+            "rows":2,"sha":M.ST.sha(self.sources[2016]),
+        }
+        result=self.diagnose()
+        self.assertEqual(result["failure_stage"],"purchased_rows")
+        self.assertEqual(result["failure_code"],"SOURCE_PRICE_GEOMETRY_INVALID")
+        self.assertFalse(self.private_root.exists())
 
 
 if __name__=="__main__":

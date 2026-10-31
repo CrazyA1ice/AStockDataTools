@@ -212,6 +212,11 @@ class PrivateIndexedCandidateTests(unittest.TestCase):
             I.select(self.index_safe,self.source_safe,["SH600000","SH600000"],
                      date(2026,10,8),date(2026,10,13),self.out("read"))
 
+    def test_windows_style_cli_relative_index_path_canonicalized(self):
+        import os
+        relative=Path(os.path.relpath(self.index_dir,Path.cwd()))
+        self.assertEqual(I.index_folder(relative,True),self.index_dir.resolve())
+
     def test_private_index_cannot_escape_work_root(self):
         with self.assertRaisesRegex(ValueError,"escaped"):
             I.index_folder(self.root/"elsewhere"/"index_abcdefabcdef",False)

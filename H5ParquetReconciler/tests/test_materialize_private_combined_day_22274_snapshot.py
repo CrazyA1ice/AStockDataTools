@@ -155,7 +155,10 @@ class CombinedSnapshotTests(unittest.TestCase):
                  patch.object(M.BATCH.PRE,"new_report",side_effect=lambda x:Path(x)),\
                  patch.object(M.BATCH,"checked_requests",return_value=(
                      list(SYM),date(2026,9,30),date(2026,10,13))),\
-                 patch.object(M.BATCH,"query_batch",side_effect=fake_query) as q:
+                 patch.object(M.BATCH,"query_batch",side_effect=fake_query) as q,\
+                 patch.object(M.BATCH.REG,"load_version",return_value={
+                     "original_source_stat_sha256":"d"*64}),\
+                 patch.object(M.BATCH.PRE.KEYS,"state_digest",return_value="d"*64):
                 result=M.materialize(root,list(SYM),"2026-09-30","2026-10-13",
                     VERSION,None,None,None,None,None,None,fresh,batch,folder,safe)
                 self.assertEqual(result["purchased_rows"],2)

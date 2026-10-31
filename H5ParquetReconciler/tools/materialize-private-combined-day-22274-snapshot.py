@@ -208,6 +208,19 @@ def materialize(root,symbols,first,last,version_sha,live_safe,private_keys,
     manifest_sha=BASE.hash_file(manifest_path)
     if BASE.hash_file(parquet)!=sha or BASE.hash_file(manifest_path)!=manifest_sha:
         raise ValueError("Private combined day SHA drift after manifest")
+    # The full live gate checked original sources before returning bars.
+    # Recheck the same registered source stat digest AFTER writing the
+    # private snapshot; a concurrent original-market edit cannot silently
+    # be considered a valid materialization. This is a stat drift alarm,
+    # not a cryptographic hash of all original market source bytes.
+    entry=BATCH.REG.load_version(version_sha)
+    if (entry.get("original_source_stat_sha256")!=
+            BATCH.PRE.KEYS.state_digest(Path(root).resolve(),(2016,2026))
+            or BATCH.REG.LOCK.is_symlink() or BATCH.REG.LOCK.exists()
+            or BASE.hash_file(batch)!=manifest["batch_query_safe_sha256"]
+            or BASE.hash_file(parquet)!=sha or
+            BASE.hash_file(manifest_path)!=manifest_sha):
+        raise ValueError("Original daily source or snapshot evidence drift after writing")
     safe={
         "format":FORMAT,
         "state":manifest["state"],

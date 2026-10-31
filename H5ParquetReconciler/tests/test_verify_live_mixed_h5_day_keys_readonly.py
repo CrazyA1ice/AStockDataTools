@@ -181,8 +181,8 @@ class PureMixedKeyGateTests(unittest.TestCase):
             report=Path(folder)/"reports"
             report.mkdir()
             paths={}
-            for name,blob in (("ledger.json",ledger),(*reports.items(),),
-                              ("plan.json",json.dumps(output).encode())):
+            for name,blob in [("ledger.json",ledger),*reports.items(),
+                              ("plan.json",json.dumps(output).encode())]:
                 path=report/name
                 path.write_bytes(blob)
                 paths[name]=path

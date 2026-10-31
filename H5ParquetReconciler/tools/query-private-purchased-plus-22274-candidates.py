@@ -41,6 +41,8 @@ P=B.PURCHASED
 Q=B.Q
 STAGER=V.STAGER
 FIELDS=STAGER.FIELDS
+SHARED=load("joined_purchased_shared_rowgroups",
+            "query-purchased-day-shared-rowgroups-readonly.py")
 INDEX=load("joined_22274_candidate_index",
            "index-private-22274-day-rowgroups.py")
 
@@ -148,7 +150,8 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
           max_candidate_rows_per_symbol=30000000,
           max_total_candidate_rows=30000000,
           max_result_bars_per_symbol=100,
-          max_total_result_bars=1000,index_safe=None):
+          max_total_result_bars=1000,index_safe=None,
+          purchased_shared_rowgroups=False):
     start_time=time.perf_counter()
     canon,start,end=requests(
         symbols,first,last,max_candidate_rows_per_symbol,
@@ -189,25 +192,47 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
     purchased=whole=mixed=source_rows_scanned=0
     total=0
     combined={}
+    shared=None
+    if purchased_shared_rowgroups:
+        shared=SHARED.query_bars(
+            original_root,canon,start.isoformat(),end.isoformat(),
+            max_candidate_rows_per_symbol,max_total_candidate_rows,
+            max_result_bars_per_symbol,max_total_result_bars)
+        summary=shared["safe_summary"]
+        source_rows_scanned=summary.get("shared_physical_source_rows_scanned")
+        if (summary.get("state")!=
+                "one_physical_purchased_rowgroup_scan_per_requested_batch"
+                or type(source_rows_scanned) is not int
+                or not 0<=source_rows_scanned<=max_total_candidate_rows
+                or summary.get("requested_stock_count")!=len(canon)
+                or summary.get("original_market_files_written") is not False
+                or summary.get("original_h5_opened") is not False
+                or summary.get("purchased_values_modified") is not False
+                or set(shared.get("bars_by_symbol",{}))!=set(canon)):
+            raise ValueError("Shared purchased rowgroup source proof not trusted")
     for symbol in canon:
-        remaining=max_total_candidate_rows-source_rows_scanned
-        if remaining<1:
-            raise ValueError("Purchased cumulative source-row budget exhausted")
-        result=P.query_bars(
-            original_root,symbol,"day",start.isoformat(),end.isoformat(),
-            max_candidate_rows=min(max_candidate_rows_per_symbol,remaining),
-            max_result_bars=max_result_bars_per_symbol,local_cache=False)
-        item=result["safe_summary"]
-        scanned=item.get("source_rows_scanned")
-        if (type(scanned) is not int or scanned<0 or scanned>remaining
-                or item.get("source_market_files_modified") is not False
-                or item.get("no_h5_read") is not True
-                or item.get("no_automatic_gaps_fill") is not True):
-            raise ValueError("Purchased Parquet bounded query source proof not trusted")
-        source_rows_scanned+=scanned
+        if shared is None:
+            remaining=max_total_candidate_rows-source_rows_scanned
+            if remaining<1:
+                raise ValueError("Purchased cumulative source-row budget exhausted")
+            result=P.query_bars(
+                original_root,symbol,"day",start.isoformat(),end.isoformat(),
+                max_candidate_rows=min(max_candidate_rows_per_symbol,remaining),
+                max_result_bars=max_result_bars_per_symbol,local_cache=False)
+            item=result["safe_summary"]
+            scanned=item.get("source_rows_scanned")
+            if (type(scanned) is not int or scanned<0 or scanned>remaining
+                    or item.get("source_market_files_modified") is not False
+                    or item.get("no_h5_read") is not True
+                    or item.get("no_automatic_gaps_fill") is not True):
+                raise ValueError("Purchased Parquet bounded query source proof not trusted")
+            source_rows_scanned+=scanned
+            purchased_rows=result["bars"]
+        else:
+            purchased_rows=shared["bars_by_symbol"][symbol]
         bundle=selected[symbol]
         rows,counts=Q.merge_stock_day_rows(
-            symbol,start,end,result["bars"],
+            symbol,start,end,purchased_rows,
             bundle["private_h5_whole_date_candidate"],
             bundle["private_h5_mixed_stockday_candidate"],
             max_result_bars_per_symbol)
@@ -254,6 +279,12 @@ def query(root,snapshot_safe,symbols,first,last,candidate_recheck_out,out,
         "whole_h5_candidate_rows":whole,
         "mixed_h5_candidate_rows":mixed,
         "purchased_source_rows_scanned":source_rows_scanned,
+        "purchased_shared_rowgroup_batch_used":shared is not None,
+        "purchased_shared_physical_rowgroups_read":
+            shared["safe_summary"]["shared_physical_candidate_rowgroups"]
+            if shared is not None else None,
+        "purchased_source_rows_scanned_means_unique_physical_rows":
+            shared is not None,
         "purchased_parquet_first_no_duplicate_stockday":True,
         "private_candidate_all_22274_rows_sha_schema_keys_verified":
             index_gate is None,
@@ -292,6 +323,7 @@ def main(argv=None):
     p.add_argument("--max-result-bars-per-symbol",type=int,default=100)
     p.add_argument("--max-total-result-bars",type=int,default=1000)
     p.add_argument("--index-safe",type=Path,default=None)
+    p.add_argument("--purchased-shared-rowgroups",action="store_true")
     p.add_argument("--read-only-view",action="store_true",required=True)
     a=p.parse_args(argv)
     try:
@@ -299,7 +331,8 @@ def main(argv=None):
                 a.to_date,a.candidate_recheck_out,a.out,
                 a.max_candidate_rows_per_symbol,a.max_total_candidate_rows,
                 a.max_result_bars_per_symbol,a.max_total_result_bars,
-                index_safe=a.index_safe)
+                index_safe=a.index_safe,
+                purchased_shared_rowgroups=a.purchased_shared_rowgroups)
         s=r["safe_summary"]
         print("Purchased + private candidate stockdays:",s["returned_stockday_rows"])
         print("Purchased:",s["purchased_parquet_rows"],

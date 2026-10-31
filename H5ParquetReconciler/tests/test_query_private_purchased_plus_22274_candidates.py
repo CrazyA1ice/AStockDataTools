@@ -262,6 +262,51 @@ class UnifiedPrivateCandidateTests(unittest.TestCase):
             __import__("datetime").date(2026,10,13))
         self.assertEqual(len(selected[SYM[0]]["private_h5_mixed_stockday_candidate"]),1)
 
+    def test_optin_shared_purchased_rowgroups_integrates_with_private_view(self):
+        def shared(root,symbols,first,last,*budgets):
+            self.assertEqual(list(symbols),list(SYM))
+            self.assertEqual((first,last),(START,END))
+            return {
+                "bars_by_symbol":{sym:[bar(sym,START)] for sym in symbols},
+                "safe_summary":{
+                    "state":"one_physical_purchased_rowgroup_scan_per_requested_batch",
+                    "requested_stock_count":2,
+                    "shared_physical_source_rows_scanned":400,
+                    "shared_physical_candidate_rowgroups":1,
+                    "original_market_files_written":False,
+                    "original_h5_opened":False,
+                    "purchased_values_modified":False,
+                },
+            }
+        with patch.object(M.SHARED,"query_bars",side_effect=shared) as batched:
+            result=self.run_it(purchased_shared_rowgroups=True)
+        self.mocks[6].assert_not_called()
+        batched.assert_called_once()
+        self.assertEqual(result["safe_summary"]["returned_stockday_rows"],10)
+        self.assertEqual(result["safe_summary"]["purchased_parquet_rows"],2)
+        self.assertEqual(result["safe_summary"]["whole_h5_candidate_rows"],8)
+        self.assertEqual(result["safe_summary"]["purchased_source_rows_scanned"],400)
+        self.assertTrue(result["safe_summary"]["purchased_shared_rowgroup_batch_used"])
+        self.assertTrue(result["safe_summary"][
+            "purchased_source_rows_scanned_means_unique_physical_rows"])
+        self.assertFalse(result["safe_summary"]["ready_for_automatic_market_merge"])
+
+    def test_forged_shared_purchased_summary_fails_before_any_output(self):
+        with patch.object(M.SHARED,"query_bars",return_value={
+            "bars_by_symbol":{sym:[bar(sym,START)] for sym in SYM},
+            "safe_summary":{
+                "state":"one_physical_purchased_rowgroup_scan_per_requested_batch",
+                "requested_stock_count":2,
+                "shared_physical_source_rows_scanned":400,
+                "shared_physical_candidate_rowgroups":1,
+                "original_market_files_written":True,
+                "original_h5_opened":False,
+                "purchased_values_modified":False,
+            }}):
+            with self.assertRaisesRegex(ValueError,"not trusted"):
+                self.run_it(purchased_shared_rowgroups=True)
+        self.assertFalse(self.out.exists())
+
     def test_wrong_original_source_flag_rejected_before_merge(self):
         def badp(*a,**k):
             return {"bars":[],"safe_summary":{

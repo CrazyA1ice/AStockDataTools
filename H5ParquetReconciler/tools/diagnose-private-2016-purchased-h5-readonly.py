@@ -50,6 +50,11 @@ SAFE_CODES={
     "Purchased/H5 stockday OHLC geometry is invalid":"SOURCE_PRICE_GEOMETRY_INVALID",
     "Private H5 candidate provenance/date is not certified":"H5_CANDIDATE_PROVENANCE_INVALID",
     "Original purchased historical Arrow footer/schema mismatched":"SOURCE_ARROW_SCHEMA_INVALID",
+    "2016 original purchased footer row total differs from QDC manifest":"PURCHASED_FOOTER_ROW_COUNT_MISMATCH",
+    "2016 original purchased expected field names are missing":"PURCHASED_REQUIRED_FIELDS_MISSING",
+    "2016 original purchased contains additional field names":"PURCHASED_ADDITIONAL_FIELDS_PRESENT",
+    "2016 original purchased required Arrow physical field types differ":"PURCHASED_REQUIRED_FIELD_TYPES_MISMATCH",
+    "2016 original purchased Arrow field names repeat":"PURCHASED_DUPLICATE_FIELD_NAMES",
     "Original purchased annual file differs from full QDC SHA manifest":"PURCHASED_SOURCE_SHA_INVALID",
     "Original purchased README or manifest SHA differs":"QDC_DOC_SHA_INVALID",
     "Duplicate purchased/purchased or purchased/H5 stockday; fail closed":"DUPLICATE_STOCKDAY",
@@ -89,6 +94,15 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
     source_sha_before_and_after=False
     stockdays_unique=False
     original_source_file_count=0
+    # All footer details are boolean/count-only; no field names, ticker,
+    # market values, original path, or raw Arrow metadata are exported.
+    footer_rows_match=None
+    footer_required_field_names_present=None
+    footer_extra_field_count=None
+    footer_missing_required_field_count=None
+    footer_expected_field_types_match=None
+    footer_rowgroup_count=None
+    footer_schema_names_unique=None
     con=sqlite3.connect(":memory:")
     try:
         con.execute("CREATE TABLE stockday(symbol TEXT NOT NULL, trading_date TEXT NOT NULL,"
@@ -115,9 +129,35 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
         import pyarrow.parquet as pq
         p=pq.ParquetFile(original,memory_map=False,pre_buffer=False)
         try:
-            if (p.metadata.num_rows!=record["rows"]
-                    or set(("ts","symbol",*M.PHYS.F))!=set(p.schema_arrow.names)):
-                raise ValueError("Original purchased historical Arrow footer/schema mismatched")
+            expected={"ts","symbol",*M.PHYS.F}
+            observed=p.schema_arrow.names
+            names=set(observed)
+            footer_rows_match=(p.metadata.num_rows==record["rows"])
+            footer_rowgroup_count=p.metadata.num_row_groups
+            footer_schema_names_unique=(len(names)==len(observed))
+            footer_missing_required_field_count=len(expected-names)
+            footer_extra_field_count=len(names-expected)
+            footer_required_field_names_present=(footer_missing_required_field_count==0)
+            # Exact expected source physical types, never string-coerce
+            # unexpected columns, and never silently remove extra fields.
+            expected_types={"symbol":pa.string(),"ts":pa.int64(),
+                            **{field:pa.float64() for field in M.PHYS.F}}
+            footer_expected_field_types_match=(
+                footer_required_field_names_present
+                and footer_schema_names_unique
+                and all(p.schema_arrow.field(field).type==arrow_type
+                        for field,arrow_type in expected_types.items())
+            )
+            if not footer_rows_match:
+                raise ValueError("2016 original purchased footer row total differs from QDC manifest")
+            if not footer_schema_names_unique:
+                raise ValueError("2016 original purchased Arrow field names repeat")
+            if not footer_required_field_names_present:
+                raise ValueError("2016 original purchased expected field names are missing")
+            if footer_extra_field_count:
+                raise ValueError("2016 original purchased contains additional field names")
+            if not footer_expected_field_types_match:
+                raise ValueError("2016 original purchased required Arrow physical field types differ")
             stage="purchased_rows"
             for rg in range(p.metadata.num_row_groups):
                 t=p.read_row_group(rg,columns=["ts","symbol",*M.PHYS.F],
@@ -188,6 +228,13 @@ def inspect(source_root,candidate_safe,readme_sha,manifest_sha,out):
         "failure_stage":None if error is None else stage,
         "failure_code":error,
         "original_purchased_2016_source_file_count_seen":original_source_file_count,
+        "purchased_footer_row_count_matches_received_manifest":footer_rows_match,
+        "purchased_footer_rowgroup_count":footer_rowgroup_count,
+        "purchased_required_fields_present":footer_required_field_names_present,
+        "purchased_missing_required_field_count":footer_missing_required_field_count,
+        "purchased_additional_field_count":footer_extra_field_count,
+        "purchased_field_names_unique":footer_schema_names_unique,
+        "purchased_required_arrow_types_match":footer_expected_field_types_match,
         "purchased_rows_checked_before_refusal":purchased_count,
         "h5_candidate_rows_checked_before_refusal":h5_count,
         "source_shas_and_stats_unchanged_after_complete_scan":source_sha_before_and_after,

@@ -80,7 +80,7 @@ class CombinedPrivateUnionTests(unittest.TestCase):
                  M.sha(private), [{"symbol": "SH600000", "ts": 1}], stage_safe)
         return market, reports, out, whole, dates, origins, mixed, live, private, source
 
-    def run_fake(self, root, *, modified=None, whole=None, selected=None, expected=None, timing_sink=None):
+    def run_fake(self, root, *, modified=None, whole=None, selected=None, expected=None, timing_sink=None, bounded_h5_scan=False):
         market, reports, out, w, dates, origins, mixed, live, private, source = self.fixtures(root)
         if whole is not None:
             w = whole
@@ -93,13 +93,20 @@ class CombinedPrivateUnionTests(unittest.TestCase):
              patch.object(M.KEYS, "verified_existing_plan", return_value=(origins, {})), \
              patch.object(M.KEYS, "state_digest", side_effect=modified or ["source","source"]), \
              patch.object(M, "verify_mixed_stage", return_value=mixed), \
-             patch.object(M.MIXED, "verify_all_live_absence", return_value=1236863), \
+             patch.object(M.MIXED, "verify_all_live_absence", return_value=1236863) as mixed_live_scan, \
              patch.object(M.MIXED, "normalize_private_h5_rows", return_value=expected), \
              patch.object(M.OVERLAY, "recheck_live") as original_market_recheck:
             result = M.verify(market, "a"*64, mixed[6], live, private,
                               source, source, source, source, out,
-                              timing_sink=timing_sink)
+                              timing_sink=timing_sink,
+                              bounded_h5_scan=bounded_h5_scan)
             original_market_recheck.assert_called_once()
+            mixed_live_scan.assert_called_once()
+            if bounded_h5_scan:
+                self.assertIs(mixed_live_scan.call_args.kwargs["h5_scanner"],
+                              M.KEYS.scan_h5_keys_bounded)
+            else:
+                self.assertEqual(mixed_live_scan.call_args.kwargs, {})
             return result, out
 
     def test_synthetic_valid_union_summarizes_22274_only(self):

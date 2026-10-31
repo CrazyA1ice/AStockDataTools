@@ -87,7 +87,7 @@ def fake_batch(*, stale=False, overlap=False, source_changed=False):
             return [bar(symbol,stage_item["day"])]
         def mixed_decode(rows,symbol,start,end):
             return [bar(symbol,"2026-10-07")] if symbol=="SH600001" else []
-        digest_states=["d"*64,"f"*64] if source_changed else "d"*64
+        digest_states=["d"*64,"f"*64] if source_changed else ["d"*64,"d"*64]
         with patch.object(B.PRE,"REPORTS",reports),\
              patch.object(B.REG,"LOCK",root/"not-existing-lock"),\
              patch.object(B.REG,"load_version",return_value=entry) as version_load,\

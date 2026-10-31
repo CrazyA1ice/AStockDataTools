@@ -403,7 +403,7 @@ def main(argv=None):
     p.add_argument("--private-year-dir",type=Path,required=True)
     p.add_argument("--candidate-verification-out",type=Path,required=True)
     p.add_argument("--out",type=Path,required=True)
-    p.add_argument("--private-2026-candidate-only",action="store_true",required=True)
+    p.add_argument("--private-physical-2026-only",action="store_true",required=True)
     a=p.parse_args(argv)
     try:
         result=materialize(a.purchased_root,a.candidate_safe,

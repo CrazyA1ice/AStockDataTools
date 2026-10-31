@@ -19,7 +19,7 @@ tools/stage-private-mixed-h5-day-83-bars.py，只执行显式 --action plan 或�
 
 此暂存候选不属于已经存在的22,191根完整缺日不可变overlay版本；后续需要新的显式逻辑联合版本/只读查询验证，按购买Parquet优先、整日缺口先、混合股票日缺口后且绝不重叠，**不能直接覆盖或替换旧版本**。
 
-新增 tests/test_stage_private_mixed_h5_day_83_bars.py，14项合成测试：SHA/私有路径约束、异常重复/隔离键、真实形状83条虚构H5转换和Parquet字段回读、计划绝不暂存、显式暂存、购买来源过期失败、源异常价格或缺记录拒绝。**用户Windows尚未运行，先测试、PLAN，再STAGE。**
+新增 tests/test_stage_private_mixed_h5_day_83_bars.py，14项合成测试：SHA/私有路径约束、异常重复/隔离键、真实形状83条虚构H5转换和Parquet字段回读、计划绝不暂存、显式暂存、购买来源过期失败、源异常价格或缺记录拒绝。**Windows首轮执行14项合成测试：12项通过、1项FAIL、1项ERROR。两处测试夹具问题已在提交 00e14c0 修复（保持生产代码 fail-closed 保护）。修复版本尚待Windows重测确认；必须先14/14通过，再PLAN，最后显式STAGE。**
 
 ## Windows PowerShell，每个命令仅一行
 

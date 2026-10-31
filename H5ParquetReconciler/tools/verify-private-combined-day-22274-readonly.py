@@ -167,7 +167,8 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
     lap("mixed_stage_manifest_sha_and_parquet_verification_seconds")
     if bounded_h5_scan:
         MIXED.verify_all_live_absence(
-            root, year_dates, selected, h5_scanner=KEYS.scan_h5_keys_bounded)
+            root, year_dates, selected, h5_scanner=KEYS.scan_h5_keys_bounded,
+            timing_sink=timing_sink)
     else:
         MIXED.verify_all_live_absence(root, year_dates, selected)
     lap("mixed_years_exact_purchased_h5_key_scan_seconds")

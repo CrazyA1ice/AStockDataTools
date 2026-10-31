@@ -204,6 +204,9 @@ def audit(prior_safe,stratified_safe,out):
         "source_aggregate_safe_sha256":{
             "prior_10_stockdays":old_sha,"new_fixed_16_stockdays":new_sha},
         "prior_five_source_safe_sha256":ancestors,
+        "prior_five_source_files_independently_reopened":False,
+        "private_immutable_registry_independently_loaded":False,
+        "factor_evidence_only_from_existing_aggregate_SAFE":True,
         "unresolved_independent_certification_blockers":list(BLOCKERS),
         "licensed_vendor_physical_price_volume_amount_units_certified":False,
         "price_adjustment_basis_certified":False,

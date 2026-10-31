@@ -29,3 +29,29 @@ cd D:\ChatGPT\AStockDataTools; $s=Get-ChildItem "H5ParquetReconciler\reports\his
 ```
 
 通过后下一轮再一次性推出2011..2015及2017..2025共14个年份的批处理命令，生成逐年份独立SAFE，最后将2011—2026年的16个已验收年度绑定到同一个**未激活的**跨年私有manifest和版本回滚机制。
+
+## 2026-10-31 Windows真实2016试运行失败后：只读诊断（**先于任何重试**）
+
+此前2016原始购买Parquet+1条H5候选真实物化被现有CLI拦截，仅返回`Historical purchased DAY annual private physical materialization refused`。该字符串是旧入口对多类异常的统一提示，**不能据此断言哪一个输入值有问题**。可能有全量来源gate SAFE或未发布的私有工作目录，**不得删除、覆盖或启用**。2026年的1,032,623条物理年度数据已经独立验收通过，不需要重做。
+
+新增`tools/diagnose-private-2016-purchased-h5-readonly.py`：不建立年度Parquet/SQLite、不触碰原始源，核对原2016购买年度文件整文件SHA、Footer和每行的源时间戳/代码/Float64/OHLC结构，再与SHA固定的2016唯一H5候选核对复合股票日唯一键。失败时用**固定英文原因代码**和阶段（如`purchased_rows`、`h5_candidate`）写一个新脱敏SAFE，绝不输出股票名、代码、日期、原始路径、OHLCVA或底层异常全文。诊断成功仅表示静态来源字段与主键自洽，不认证vendor金额舍入、全市场缺口新鲜度，也不能取代物理年度独立验证。新增4项合成测试，历史年测试累计14项。
+
+**A. 先拉取诊断分支并跑14项安全测试（单行PowerShell）：**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "切换历史物理年分支失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "拉取失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\diagnose-private-2016-purchased-h5-readonly.py H5ParquetReconciler\tests\test_private_2011_2025_purchased_physical_year.py; if ($LASTEXITCODE -ne 0) { throw "安全诊断代码语法失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_private_2011_2025_purchased_physical_year.py" -v; if ($LASTEXITCODE -ne 0) { throw "2016历史年14项安全测试失败，禁止真实物化" }; Write-Host "PASS：14项历史年度物化和只读诊断合成测试全部通过"
+```
+
+**B. 只读列举之前失败后的目录与验证SAFE状态（不导出行情）：**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; Write-Host "2016年未激活工作目录（仅名称与文件数量）"; Get-ChildItem "H5ParquetReconciler\work\unified_parquet\physical_years" -Directory -Filter "physical_2016_*" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name,LastWriteTime,@{Name="parquet_files";Expression={@(Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Filter "*.parquet" -ErrorAction SilentlyContinue).Count}},@{Name="has_manifest";Expression={Test-Path -LiteralPath (Join-Path $_.FullName "manifest.json")}} | Format-Table -AutoSize; Write-Host "最近2016年候选全量审计SAFE（只看文件名）"; Get-ChildItem "H5ParquetReconciler\reports" -File -Filter "historical-2016-h5-full-source-gate-*.json" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name,Length,LastWriteTime | Format-Table -AutoSize
+```
+
+**C. 在14项通过后，运行2016年独立只读诊断（不重建大文件）：**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\historical-2016-readonly-diagnostic-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\diagnose-private-2016-purchased-h5-readonly.py --purchased-root "D:\stock\AllCycleAStockData" --candidate-safe "H5ParquetReconciler\reports\full-22274-private-candidates-60ae77774c30.json" --readme-sha256 "4c4e7c2081390407a06fecbe8b2693bddc9ce76191c44381b6be0e7781a2f023" --manifest-sha256 "24f099faeb0a2e810f46691b81b2a357cc5aa42cd7ccd800dae6e19db16b06eb" --out $out --diagnose-2016-readonly; $exit=$LASTEXITCODE; if (-not (Test-Path -LiteralPath $out)) { throw "诊断未生成SAFE，退出码=$exit；停止后续物化" }; $d=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($d.original_market_files_written -ne $false -or $d.private_annual_parquet_or_sqlite_created -ne $false -or $d.ready_for_automatic_market_merge -ne $false) { throw "诊断报告违反只读安全边界" }; Write-Host "诊断退出码=$exit；状态=$($d.status)；失败阶段=$($d.failure_stage)；失败原因代码=$($d.failure_code)"; Write-Host "已检查购买原始行数=$($d.purchased_rows_checked_before_refusal)；H5候选行数=$($d.h5_candidate_rows_checked_before_refusal)"; Write-Host "诊断SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+诊断程序若拒绝返回退出码2属**预期可分析结果**，不要立即重复物化。回传`reports/historical-2016-readonly-diagnostic-*.json`的脱敏内容与单元测试日志。若状态`readonly_2016_historical_preflight_pass`但旧物化仍拒绝，问题发生在物理Parquet或SQLite写读/manifest发布阶段，应基于上一步的工作目录状态进一步修正代码，仍不覆盖旧文件。物化原始数据与2016单股代码清单不要上传GitHub。

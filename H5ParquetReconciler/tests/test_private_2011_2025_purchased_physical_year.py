@@ -289,7 +289,7 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         with patch.object(R.M,"MODULE",self.root),\
              patch.object(R.M,"ROOT",self.private_root),\
              patch.object(R.M,"REPORTS",self.reports):
-            with self.assertRaisesRegex(ValueError,"incomplete"):
+            with self.assertRaisesRegex(ValueError,r"(?i)incomplete 2016 orphan private manifest/index"):
                 R.recover(self.dir_for_year[2016],self.purchased,
                           self.candidate_safe,self.readme_sha,self.qdc_sha,
                           self.reports/"incomplete-gate.json",

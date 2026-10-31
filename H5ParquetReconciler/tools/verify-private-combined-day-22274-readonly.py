@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -119,7 +120,17 @@ def verify_mixed_stage(stage_safe, live_safe, private_keys, originals, year_date
 
 
 def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
-           ledger, source2016, source2026, mixed_plan, out):
+           ledger, source2016, source2026, mixed_plan, out,
+           timing_sink=None):
+    if timing_sink is not None and type(timing_sink) is not dict:
+        raise ValueError("Internal phase timing sink must be a dictionary")
+    clock = time.perf_counter()
+    def lap(label):
+        nonlocal clock
+        now = time.perf_counter()
+        if timing_sink is not None:
+            timing_sink[label] = round(now-clock, 6)
+        clock = now
     root = Path(root).resolve()
     output = new_report(out)
     if (not (root / "HikyuuData").is_dir()
@@ -132,9 +143,12 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
             or {item["day"] for item in stages} != WHOLE_DATES
             or sum(x["rows"] for x in stages) != WHOLE_ROWS):
         raise ValueError("Not the audited exact four full-market missing dates")
+    lap("whole_immutable_overlay_validation_seconds")
     originals, year_dates = KEYS.verified_existing_plan(
         ledger, source2016, source2026, mixed_plan)
+    lap("mixed_offline_plan_and_ledger_verification_seconds")
     before = KEYS.state_digest(root, (2016, 2026))
+    lap("original_source_stat_digest_before_seconds")
     doc, selected, stage_data, stage_meta, mixed_hash, actual, safe_path = (
         verify_mixed_stage(mixed_safe, live_safe, private_keys, originals, year_dates))
     original_stage_safe_hash = sha(safe_path)
@@ -148,13 +162,17 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
     }
     if mixed_days & WHOLE_DATES or len(selected) != MIXED_ROWS:
         raise ValueError("Mixed candidate overlaps full-market staged dates")
+    lap("mixed_stage_manifest_sha_and_parquet_verification_seconds")
     MIXED.verify_all_live_absence(root, year_dates, selected)
+    lap("mixed_years_exact_purchased_h5_key_scan_seconds")
     expected = MIXED.normalize_private_h5_rows(root, selected)
+    lap("mixed_original_h5_83_value_normalization_seconds")
     if actual != expected:
         raise ValueError("Mixed private Parquet differs from original H5 candidate rows")
     # Purchased Parquet has no keys on audited whole dates, and no purchased
     # stock-day key overlaps selected mixed keys; both rechecked on live originals.
     OVERLAY.recheck_live(root, evidence)
+    lap("whole_four_days_original_market_recheck_seconds")
     if (KEYS.state_digest(root, (2016, 2026)) != before
             or sha(stage_data) != mixed_hash
             or sha(safe_path) != original_stage_safe_hash
@@ -164,9 +182,11 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
         raise ValueError("Trusted inputs changed during complete preflight")
     # Reverify the four existing whole-date stages and version content after
     # the live source reads. No market or private version writes occur here.
+    lap("after_market_source_stat_and_provenance_checks_seconds")
     whole2, evidence2, stages2 = WHOLE.verified_version(whole_sha, 30000)
     if whole2 != whole or evidence2 != evidence or stages2 != stages:
         raise ValueError("Immutable whole-day version changed during verification")
+    lap("whole_immutable_overlay_second_validation_seconds")
     result = {
         "format": FORMAT,
         "state": "read_only_union_preflight_passed_not_promoted",
@@ -190,6 +210,7 @@ def verify(root, whole_sha, mixed_safe, live_safe, private_keys,
     with output.open("x", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, sort_keys=True, indent=2)
         f.write("\n")
+    lap("safe_report_file_creation_seconds")
     return result
 
 

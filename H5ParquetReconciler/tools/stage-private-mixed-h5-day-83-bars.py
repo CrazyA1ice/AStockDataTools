@@ -195,14 +195,18 @@ def normalize_private_h5_rows(source_root,keys):
     return out
 
 
-def verify_all_live_absence(root,year_dates,expected):
+def verify_all_live_absence(root,year_dates,expected,h5_scanner=None):
+    if h5_scanner is None:
+        h5_scanner=KEYS.scan_h5_keys
+    elif h5_scanner is not KEYS.scan_h5_keys_bounded:
+        raise ValueError("Unknown private H5 bounded scanner mode")
     # Exact H5/PQ source sets are re-read NOW, not trusted only from the
     # private manifest or stat fingerprint. This never writes market data.
     keys=[]
     total_pq_projection=0
     for year in (2016,2026):
         active=year_dates[year]
-        h=KEYS.scan_h5_keys(root,year,active)
+        h=h5_scanner(root,year,active)
         p,scanned=KEYS.scan_parquet_keys(root,year,active)
         total_pq_projection+=scanned
         _summary,missing=KEYS.classify_exact_days(year,active,h,p)

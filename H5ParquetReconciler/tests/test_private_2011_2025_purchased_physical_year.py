@@ -274,6 +274,18 @@ class HistoricalPrivateAnnualTests(unittest.TestCase):
         self.assertEqual(result["failure_code"],"DUPLICATE_STOCKDAY")
         self.assertFalse(self.private_root.exists())
 
+    def test_2016_readonly_diagnostic_classifies_malformed_readme_pin(self):
+        out=self.reports/"malformed-pin-diagnostic.json"
+        with patch.object(D,"REPORTS",self.reports):
+            result=D.inspect(self.purchased,self.candidate_safe,
+                             self.readme_sha+"abcdef",self.qdc_sha,out)
+        self.assertEqual(result["failure_stage"],"input_source_sha")
+        self.assertEqual(result["failure_code"],"INPUT_SHA256_PIN_FORMAT_INVALID")
+        self.assertEqual(result["purchased_rows_checked_before_refusal"],0)
+        self.assertFalse(result["private_annual_parquet_or_sqlite_created"])
+        raw=out.read_text(encoding="utf-8")
+        self.assertNotIn(str(self.purchased),raw)
+
     def test_2016_readonly_diagnostic_reports_original_sha_tamper(self):
         self.sources[2016].write_bytes(self.sources[2016].read_bytes()+b"tampered")
         result=self.diagnose()

@@ -1,0 +1,34 @@
+# 第十九阶段：2026年购买主源＋H5补缺候选私有物理Parquet完整年度版本
+
+## 前置真实状态
+第十八阶段Windows 56/56项测试PASS。SH600000/SH600519于2026-09-30~10-13的购买优先视图仍返回10根（购买2/H5整日8）；共享扫描仅解码1个购买RowGroup、28191条原始购买记录（原56382），但单次耗时2.123802秒，高于仅候选索引方案1.779536秒；因此共享扫描仍是可选，不改默认查询。原购买24个日线Parquet随包清单SHA已由既有只读工具确认，全共14,115,707行；最近原始购买文件截至2026-09。
+
+## 新的真实物理数据主线
+新增 `tools/materialize-private-2026-purchased-plus-h5-year.py`：
+1. 固定 **2026年、原购买9个2026-01至2026-09月Parquet**，读取原购买随包README和SHA清单的已PIN SHA，严格匹配原始9个月文件名、每份文件大小、页脚行数及整文件SHA，物化后重哈希；不依赖Parquet文件名默默过滤不符记录。
+2. 先运行现有`verify-private-full-22274-gap-candidates.py`的22,274全行校验，后从已验SHA的2026 H5私有分区取出**22,273根候选**（整日22191，混合82；另1条2016混合候选不属于本轮2026分区）。
+3. 在`work/unified_parquet/physical_years/physical_2026_<hex>`只生成**9个购买月分区＋1个H5候选分区**；物理Arrow包含`ts,trading_date,symbol(规范查询键),source_symbol(完整原购买原标签),open/high/low/close/volume/amount(float64),value_source`。不缩放、不取整、不替换任何购买价格/数量/金额或时间戳。H5候选保留`private_h5_whole_date_candidate`/`private_h5_mixed_stockday_candidate`逐条标签，不伪装购买。
+4. 所有来源共用私有SQLite `(year,canonical_symbol,trading_day)` **硬唯一索引**。购买/购买或购买/H5或H5/H5发生任何重复键时立即fail-closed，不把数据静默覆盖。保存私有SQLite SHA；每个物理Parquet同时保存原始来源行**float64字节精确顺序SHA**及文件SHA，写读逐字段重新验证，候选异常2026-07-16五根不参与。
+5. 单独新增 `tools/verify-private-2026-purchased-plus-h5-year.py` 再独立打开10个分区、SHA、逐行解析、恢复原始符号与本地交易日、检查购买/H5来源、每行浮点字节摘要与SQLite唯一索引对应关系；输出独立的脱敏SAFE。它**不重新打开**购买源和H5源，也不声明输入已经得到交易所或供应商授权。
+
+## 本轮明确不做
+- 2026年9月之后没有购买数据，10月仅加入**已有真实来源证明**的H5缺口四个整日，不能捏造2026-10-14之后行情。
+- 2011—2025的购买历史数据**本轮没有写入年度统一库**；2016的1根H5混合候选也需后续单独年份处理。2026构建是完整年度*已收到来源*的私有物理版本，不等于截至今天的最新实时全市场数据。
+- 原始QDC商业Parquet/H5及生产路由、已有私有活动指针全部保持原值；元/股/成交额精度/复权等未经独立解决的部分，仍为`candidate_source_units_certified=false`、`ready_for_automatic_market_merge=false`、`ready_for_h5_mirror=false`。尚未获得任何真实文件生产写入许可。
+
+## Windows PowerShell：第一步，38项安全测试
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2026-purchased-h5-candidate-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "切换2026物理主线分支失败" }; git pull --ff-only origin feat/private-2026-purchased-h5-candidate-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "拉取失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\materialize-private-2026-purchased-plus-h5-year.py H5ParquetReconciler\tools\verify-private-2026-purchased-plus-h5-year.py H5ParquetReconciler\tests\test_private_2026_purchased_h5_physical_year.py; if ($LASTEXITCODE -ne 0) { throw "新物理年源码语法失败，禁止真实写入" }; $names=@("test_private_2026_purchased_h5_physical_year.py","test_materialize_private_full_22274_gap_candidates.py","test_query_private_purchased_plus_22274_candidates.py"); foreach ($n in $names) { .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p $n -v; if ($LASTEXITCODE -ne 0) { throw "2026统一物理年安全回归失败：$n，禁止进入实盘物化" } }; Write-Host "PASS：10项新增2026物理数据闭环+11项全候选验证+17项原查询回归，共38项"
+```
+
+## 第二步，仅当38项通过：物化真实2026完整收到的数据
+```powershell
+cd D:\ChatGPT\AStockDataTools; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $dir="H5ParquetReconciler\work\unified_parquet\physical_years\physical_2026_$rid"; $gate="H5ParquetReconciler\reports\physical-2026-candidate-full-gate-$rid.json"; $out="H5ParquetReconciler\reports\physical-2026-purchased-plus-h5-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\materialize-private-2026-purchased-plus-h5-year.py --purchased-root "D:\stock\AllCycleAStockData" --candidate-safe "H5ParquetReconciler\reports\full-22274-private-candidates-60ae77774c30.json" --readme-sha256 "4c4e7c2081390407a06fecbe8b2693bddc9ce76191c44381b6be0e7781a2f023" --manifest-sha256 "24f099faeb0a2e810f46691b81b2a357cc5aa42cd7ccd800dae6e19db16b06eb" --private-year-dir $dir --candidate-verification-out $gate --out $out --private-physical-2026-only; if ($LASTEXITCODE -ne 0) { throw "2026购买+H5私有物理年物化失败；即使work中有不完整目录也不得视为成功" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.status -ne "private_full_2026_purchased_and_h5_candidate_physical_not_activated" -or $r.purchased_original_2026_source_files -ne 9 -or $r.h5_whole_candidate_rows -ne 22191 -or $r.h5_mixed_candidate_rows -ne 82 -or $r.total_private_physical_rows -ne ($r.purchased_original_rows+22273) -or $r.physical_partition_sha256.PSObject.Properties.Count -ne 10 -or $r.source_all_nine_2026_original_purchased_parquet_sha_verified -ne $true -or $r.original_market_files_written -ne $false -or $r.original_purchased_parquet_replaced -ne $false -or $r.private_or_production_active_pointer_modified -ne $false -or $r.candidate_source_units_certified -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_automatic_market_merge -ne $false -or $r.ready_for_h5_mirror -ne $false -or $r.historical_2011_2025_purchased_all_included -ne $false) { throw "2026物理年源SHA/计数/权限检查不通过" }; Write-Host "PASS：2026购买9原始月+22,273H5候选已经仅写入新私有物理分区，未启动生产"; Write-Host "SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+## 第三步，仅当真实物化PASS：独立逐行校验全部物理数据
+```powershell
+cd D:\ChatGPT\AStockDataTools; $s=Get-ChildItem "H5ParquetReconciler\reports\physical-2026-purchased-plus-h5-*.json" -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if ($null -eq $s) { throw "找不到成功物化SAFE，不得独立验证" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\physical-2026-independent-full-audit-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\verify-private-2026-purchased-plus-h5-year.py --materialization-safe $s.FullName --out $out --verify-private-only; if ($LASTEXITCODE -ne 0) { throw "2026完整物理Parquet逐行SHA、Float64、唯一键独立审计失败" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.status -ne "independent_full_2026_private_physical_parquet_sha_values_keys_verified" -or $r.purchased_month_files_verified -ne 9 -or $r.private_partition_files_verified -ne 10 -or $r.private_h5_whole_candidate_rows_verified -ne 22191 -or $r.private_h5_mixed_candidate_rows_verified -ne 82 -or $r.private_total_stockday_rows_verified -ne ($r.private_purchased_records_verified+22273) -or $r.original_market_files_opened -ne $false -or $r.original_market_source_freshness_rechecked_now -ne $false -or $r.candidate_source_units_certified -ne $false -or $r.ready_for_production_query -ne $false -or $r.ready_for_automatic_market_merge -ne $false -or $r.ready_for_h5_mirror -ne $false -or $r.historical_purchased_2011_2025_included -ne $false) { throw "2026独立物理年度审计报告不可信" }; Write-Host "PASS：2026购买+H5候选所有10个分区、完整逐行数据、SHA和全局唯一股票日验证通过"; Write-Host "SAFE：$out"; Get-Content -LiteralPath $out -Encoding UTF8
+```
+
+只上传新 `reports/physical-2026-purchased-plus-h5-*.json`、`reports/physical-2026-independent-full-audit-*.json`（以及必要测试报错文本）；**禁止上传**`work/unified_parquet/physical_years`中的真实Parquet和SQLite索引、QDC原始说明及行情。若真实购买源有新增月文件，或某个历史数据键与H5候选冲突，当前工具会fail-closed，下一步按真实差异处理，而非删除或强行覆盖商用源。独立物理验证通过之后，再扩大到2011—2025购买按年历史和2016 H5额外一条，建立整体私有版本、回滚以及通达信盘后delta。

@@ -89,8 +89,20 @@ def verified_candidate_selection(snapshot_safe,verified_full,requested_year,symb
     year=str(requested_year)
     if year not in doc["candidate_year_rows"]:
         return results,doc,proof_sha
-    import pyarrow.parquet as pq
+    # V.verify() has already rehashed every candidate partition, but the
+    # file could change after that audit and before this second read.
+    # Check the on-disk bytes BEFORE passing them to Arrow. This also turns
+    # deliberate corruption into a stable fail-closed integrity error rather
+    # than relying on whichever Arrow decoder error happens first.
+    manifest=json.loads(mf.read_bytes())
+    part=manifest["partitions"][year]
     rel=folder/("year="+year)/"day.parquet"
+    if (rel.parent.is_symlink() or rel.is_symlink()
+            or STAGER.sha(mf)!=doc["manifest_sha256"]
+            or STAGER.sha(rel)!=part["sha256"]
+            or V.source(snapshot_safe)[1]!=proof_sha):
+        raise ValueError("Private candidate year partition or SAFE changed before selection")
+    import pyarrow.parquet as pq
     pf=pq.ParquetFile(rel,memory_map=False,pre_buffer=False)
     try:
         schema=STAGER.candidate_schema(__import__("pyarrow"))

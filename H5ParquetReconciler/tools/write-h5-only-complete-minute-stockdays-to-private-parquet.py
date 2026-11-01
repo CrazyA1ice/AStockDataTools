@@ -181,10 +181,18 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
         raise ValueError("Only explicitly bounded 2025/2026 1min or 5min gap stage")
     if not root.is_dir():
         raise ValueError("Input root is missing")
+    source_markets=[]
+    missing_market_files=[]
     for market in ("sh","sz","bj"):
         p=root/"HikyuuData"/f"{market}_{period}.h5"
-        if not p.is_file() or p.is_symlink():
-            raise ValueError("All three original minute H5 market files required")
+        if p.is_symlink() or (p.exists() and not p.is_file()):
+            raise ValueError("Original minute H5 market source is unsafe")
+        if p.is_file():
+            source_markets.append(market)
+        else:
+            missing_market_files.append(market)
+    if not source_markets:
+        raise ValueError("No original Hikyuu minute H5 files available")
     purchased,scan=purchased_stockdays(
         root,period,day,max_rows=max_purchased_rows)
     target=WORK/run_id/period
@@ -210,7 +218,7 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
         buffer.clear()
 
     with pq.ParquetWriter(output,parquet_schema,compression="zstd") as writer:
-        for market in ("sh","sz","bj"):
+        for market in source_markets:
             file=root/"HikyuuData"/f"{market}_{period}.h5"
             with h5py.File(file,"r") as fh:
                 group=fh.get("data")
@@ -290,6 +298,7 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
         "private_parquet_stockdays":int(stats["h5_full_stockdays_staged"]),
         "purchased_scan":scan,
         "other_h5_counts":{k:int(v) for k,v in stats.items()},
+        "missing_h5_market_files":missing_market_files,
         "quarantined_stockdays":{k:int(v) for k,v in reasons.items()},
         "private_parquet_relative_file":output.relative_to(MODULE).as_posix(),
         "private_parquet_sha256":pct_hash(output),

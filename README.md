@@ -1,5 +1,8 @@
 # AStockDataTools
 
+> **2026-11-01 最高优先级主线：** 保留原购买Parquet不动，以H5补缺生成新统一Parquet，再从新Parquet生成原生Hikyuu H5镜像并核对day/1min/5min一致，最后以TDX增量更新两者。日线私有版本14,137,981条已验，镜像和分钟仍待交付。详见[主线唯一执行计划](H5ParquetReconciler/docs/MAINLINE_PARQUET_H5_TDX_20261101.md)。
+
+
 A股行情数据本地处理与校验工具仓库。工具源代码、合成测试和文档在GitHub保存；**付费行情和本地数据库不上传仓库**。
 
 ## 工具目录

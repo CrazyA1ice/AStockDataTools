@@ -111,7 +111,8 @@ def main(argv=None):
             max_candidate_rows=args.max_candidate_rows,
             max_result_bars=args.max_result_bars)
         summary=result["safe_summary"]
-        assert "bars" not in summary
+        if "bars" in summary:
+            raise ValueError("Licensed values cannot be included in aggregate SAFE")
         with dest.open("x",encoding="utf-8",newline="\n") as fp:
             json.dump(summary,fp,indent=2,sort_keys=True)
             fp.write("\n")

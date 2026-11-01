@@ -13,3 +13,10 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 如果3项写出测试PASS和真实8条H5生成/回读PASS，立即执行**原生Hikyuu读取**与字段可表示性处理，并把单股票写出器扩展为按交易所/证券流式构建整个日线H5；不要继续做无关的索引、版本指针或十几项性能测试。若`all_six_fields_exactly_representable_in_h5=false`，不可把整数H5的经舍入值冒充Parquet Float64原值，需要在来源允许的H5精度下指定容差，明确原值与目标整数反算后的偏差，达不到用户要求时不能宣传完全相同。
 
 然后以同一Parquet优先/只填确实缺失键的方法开发1min和5min新Parquet分区、镜像H5并做三周期覆盖/数值等价校验，最后通达信盘后增量一次写Parquet和同步H5。全部最终目标见[唯一主线计划](MAINLINE_PARQUET_H5_TDX_20261101.md)。
+
+
+## Windows实测异常及无额外性能测试的修复路径（2026-11-01）
+
+用户实际运行新增写出工具的3/3项合成测试PASS，但进入8条真实购买Parquet→独立H5操作后返回`Isolated DAY H5 write refused; sources remain unchanged`；早期CLI把原始异常全部隐藏，**尚不能证明真实H5已写出，也不能推断源行情有问题**。本次直接修复失败诊断：仅输出固定阶段、异常类型及触发的函数/行号，允许的安全错误消息白名单；不打印任何OHLCVA、股票代码、原始文件路径或单条记录。源代码提交`604a1eb995cc24a5cd69946d210cd365a54a403f`。
+
+下一次只需要`git pull --ff-only`、`py_compile`和用**新的12位ID**重试真实8条H5隔离写出；前面3项合成测试已经通过，不需要重复跑25项其他查询回归。失败请记录CLI方括号内的`阶段/异常类/触发函数:行号/安全错误`，不要上传真实H5或单条付费价量。成功后立即继续Hikyuu原生C++实际读取及全日线批量镜像，而不是继续增加计划/版本/索引。

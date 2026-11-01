@@ -219,7 +219,7 @@ class PrivateAll16VersionTests(unittest.TestCase):
     def test_unknown_or_changed_2016_anchor_refused(self):
         self.anchors["accepted_2016_recovery_safe_sha256"]="0"*64
         with self.under_patches():
-            with self.assertRaisesRegex(ValueError,"Accepted 2016 recovered evidence"):
+            with self.assertRaisesRegex(ValueError,"anchor SHA differs"):
                 self.run_all16()
         self.assertFalse(self.target.exists())
 

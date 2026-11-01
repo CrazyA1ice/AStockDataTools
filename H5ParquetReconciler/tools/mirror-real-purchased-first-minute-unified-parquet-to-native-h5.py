@@ -84,7 +84,7 @@ def source_summary(path):
             raise ValueError("Untrusted daily physical unified Parquet source")
         file=MODULE/rel
         if (file.is_symlink() or file.parent.is_symlink()
-                or file.resolve().parent.parent.parent.parent.parent!=MODULE.resolve()
+                or file.resolve().parent.parent.parent.parent!=MODULE.resolve()
                 or not file.is_file() or sha(file)!=r.get("unified_parquet_sha256")):
             raise ValueError("Physical unified minute Parquet SHA mismatch")
         result[period]=(file,r)
@@ -135,7 +135,7 @@ def collect(batch,additional):
     return sorted(days.items()),receipt_shas
 
 
-def raw_purchased(row,period,day,dt):
+def raw_purchased(row,period,day):
     ts=row["ts"]
     if type(ts) is not int:
         raise ValueError("Purchased minute timestamp not an int64")
@@ -230,7 +230,6 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                     arr=arr.take(sorted_idx)
                     del sorted_idx
                     by_source=Counter()
-                    seen_keys=set()
                     # group per stock even across record batch boundaries.
                     current=None
                     bucket=[]
@@ -244,15 +243,11 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                             ts=row["ts"]
                             if type(ts) is not int:
                                 raise ValueError("Invalid purchased/H5 minute physical key")
-                            key=(sym,ts)
-                            if key in seen_keys:
-                                raise ValueError("Duplicate stock timestamp in unified minute day")
-                            seen_keys.add(key)
                             if row["value_source"]=="h5_only_complete_stockday":
                                 record=M.native_rows([row],period,day,native_dtype,np)[0]
                                 loss={}
                             elif row["value_source"]=="purchased_parquet":
-                                raw,loss=raw_purchased(row,period,day,native_dtype)
+                                raw,loss=raw_purchased(row,period,day)
                                 record=np.zeros((),dtype=native_dtype)
                                 for k,v in raw.items():
                                     record[k]=v

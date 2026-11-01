@@ -153,8 +153,10 @@ def exclude_by_exact_symbol_statistics(statistics,canonical):
             and (canonical<statistics.min or canonical>statistics.max))
 
 
-def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
+def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000,\n          private_row_callback=None):
     started=time.perf_counter()
+    if private_row_callback is not None and not callable(private_row_callback):
+        raise ValueError("Private row handler must be callable and local-only")
     canonical,begin,end=parameters(symbol,first,last,max_candidate_rows)
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -248,7 +250,8 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
         with pq.ParquetFile(path,memory_map=False,pre_buffer=False) as pf:
             for group,year,key in groups:
                 table=pf.read_row_group(group,
-                    columns=["ts","trading_date","symbol","value_source"],
+                    columns=(["ts","trading_date","symbol","value_source"]
+                             if private_row_callback is None else None),
                     use_threads=False)
                 metadata["physical_rowgroups_loaded"]+=1
                 if any(x.null_count for x in table.columns):
@@ -264,11 +267,16 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
                             pc.less_equal(table.column("trading_date"),day_last))))
                 selected=table.filter(mask)
                 metadata["physical_key_rows_selected_by_arrow"]+=selected.num_rows
-                for ts,day,sym,kind in zip(
+                selected_rows=(
+                    ((r["ts"],r["trading_date"],r["symbol"],r["value_source"],r)
+                     for r in selected.to_pylist())
+                    if private_row_callback is not None else
+                    ((ts,day,sym,kind,None) for ts,day,sym,kind in zip(
                         selected.column("ts").to_pylist(),
                         selected.column("trading_date").to_pylist(),
                         selected.column("symbol").to_pylist(),
-                        selected.column("value_source").to_pylist()):
+                        selected.column("value_source").to_pylist())))
+                for ts,day,sym,kind,raw in selected_rows:
                     if (kind not in KNOWN_CLASSES
                             or (key=="purchased" or key.startswith("2026-"))
                                and kind!="purchased_parquet"
@@ -279,6 +287,17 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
                     identity=(year,day,sym)
                     if identity in seen:
                         raise ValueError("Duplicate private stockday in bounded version query")
+                    # Optional *programmatic-only* private data consumer:
+                    # exact original Float64 check; no local row is placed
+                    # in the ordinary aggregate SAFE returned by query().
+                    if private_row_callback is not None:
+                        restored=dict(raw)
+                        restored["symbol"]=raw["source_symbol"]
+                        month=(int(key[5:7]) if key.startswith("2026-")
+                               else None)
+                        if PHYS.normalise(restored,kind,year,month)!=raw:
+                            raise ValueError("Private row original Float64/provenance validation failed")
+                        private_row_callback(raw)
                     seen.add(identity)
                     counter[kind]+=1
     timings["arrow_key_filter_seconds"]=round(
@@ -326,7 +345,9 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
         "phase_timings_seconds":timings,
         "bounded_window_days_max":31,
         "elapsed_seconds":round(time.perf_counter()-started,6),
-        "all_original_licensed_OHLCVA_values_read":False,
+        "all_original_licensed_OHLCVA_values_read":
+            private_row_callback is not None,
+        "local_licensed_OHLCVA_values_exported_to_safe":False,
         "original_market_source_opened":False,
         "private_or_production_active_pointer_modified":False,
         "ready_for_production_query":False,

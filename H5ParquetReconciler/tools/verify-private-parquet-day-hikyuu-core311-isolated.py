@@ -68,10 +68,21 @@ def make_worker():
     new_read='''    # The only market-shaped file is the SHA-pinned PRIVATE generated H5.
     # Independently read its raw integers and compare actual KRecords decoded
     # by the installed native HDF5 driver. Never log any values or dates.
-    import h5py
-    with h5py.File(sh,"r") as f:
-        ds=f["data"]["SH600000"]
-        rows=ds[:]
+    # Parent verifies H5 SHA, then sends bounded original integer records
+    # through local stdin. Unlike importing h5py here, this requires only
+    # the installed hikyuu 2.8.1 native core in its Python311 environment.
+    private_input=sys.stdin.buffer.read(16384)
+    if len(private_input)>16000:
+        raise RuntimeError("bounded-private-integers-exceeded")
+    rows=json.loads(private_input.decode("ascii"))
+    if type(rows) is not list or not 1<=len(rows)<=31:
+        raise RuntimeError("invalid-private-record-envelope")
+    if any(type(r) is not dict or
+           set(r)!={"datetime","openPrice","highPrice","lowPrice",
+                    "closePrice","transAmount","transCount"}
+           or any(type(v) is not int or v<0 for v in r.values())
+           for r in rows):
+        raise RuntimeError("untrusted-private-record-envelope")
     if not 1<=len(rows)<=31:
         out["state"]="invalid_private_h5_sample_count"
         raise RuntimeError("out-of-budget")
@@ -164,6 +175,22 @@ def verify(prior,python_exe,out,run_id,timeout=75,runner=subprocess.run):
         raise ValueError("Require a NEW module reports/ SAFE output")
     doc,h5=audited_source(prior)
     interpreter=CHECK._explicit_python(python_exe)
+    import h5py
+    with h5py.File(h5,"r") as fh:
+        ds=fh["data"]["SH600000"]
+        names=("datetime","openPrice","highPrice","lowPrice",
+               "closePrice","transAmount","transCount")
+        if (ds.ndim!=1 or ds.dtype.itemsize!=40 or
+                ds.attrs.get("CLASS") not in ("TABLE",b"TABLE")):
+            raise ValueError("Real private native H5 TABLE no longer has audited layout")
+        private_rows=[{key:int(row[key]) for key in names} for row in ds[:]]
+    if len(private_rows)!=doc["written_h5_integer_rows"]:
+        raise ValueError("Raw H5 record count no longer matches pinned canary")
+    # Private raw values exist only in the parent and the local stdin pipe.
+    # They are never printed, stored in the output SAFE or written to disk.
+    private_stdin=json.dumps(private_rows,separators=(",",":")).encode("ascii")
+    if len(private_stdin)>16000:
+        raise ValueError("Bounded private native H5 sample too large")
     parent=CANARIES/"_native_h5_281"
     stage=parent/run_id
     if (parent.is_symlink() or stage.is_symlink() or stage.exists()
@@ -177,7 +204,7 @@ def verify(prior,python_exe,out,run_id,timeout=75,runner=subprocess.run):
     try:
         p=runner(
             [str(interpreter),"-I","-c",WORKER,str(stage),str(h5),str(h5)],
-            cwd=stage,capture_output=True,text=False,
+            cwd=stage,capture_output=True,input=private_stdin,
             timeout=timeout,check=False,env=CHECK._sandbox_env(stage,interpreter))
         phase=NATIVE.last_native_phase(p.stdout)
         if p.returncode==0:

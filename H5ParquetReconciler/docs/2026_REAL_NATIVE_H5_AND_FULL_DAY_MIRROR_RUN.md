@@ -19,3 +19,10 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 **失败保护**：任何写出或core311读取异常停止，成功SAFE不发布；此前已生成的16年私有Parquet全部不修改；失败的本轮全量镜像仅保留新work路径，不触碰现有H5。第一次失败别重复运行14,137,981条，要先根据失败的具体年份、异常类型及位置修正。
 
 完成DAY后主线直接是**1min、5min H5独有键→新私有Parquet增量→Hikyuu原生分钟镜像并核对→TDX盘后增量**，不再做其它查询索引或指针。
+
+
+## 2026-11-01 Windows首次运行：2/2全量模拟测试中的SAFE int64序列化已修复
+
+Windows运行结果：单股票原生TABLE布局6/6、隔离Hikyuu worker模拟安全测试2/2通过；批量2025/2026合成测试确实写入并回读11条H5记录后，`json.dump`遇到PyTables `table.nrows`返回的`numpy.int64`导致`TypeError: Object of type int64 is not JSON serializable`。**在生成真实8条H5及启动全16年14,137,981条镜像之前已停止**，不存在实际全量H5生成成功的回执。
+
+批量镜像工具现对PyTables读回行数使用`int(table.nrows)`，将SAFE计数统一归一化为Python `int`、误差统一转成`float`；先`json.dumps`完成编码，后创建SAFE，防止半截JSON。原两项合成测试新增对数据类型及报告可解析的断言。只需重新跑`test_mirror_private_2011_2026_day_to_native_hikyuu_h5.py`的**2项测试**即可继续真实H5原生读取与全量镜像，**不重复已通过的6+2项或25项查询测试**。

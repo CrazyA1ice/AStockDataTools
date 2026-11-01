@@ -145,7 +145,8 @@ def exclude_by_exact_symbol_statistics(statistics,canonical):
     """
     if statistics is None:
         return False
-    return (getattr(statistics,"has_min_max",False) is True
+    return (type(canonical) is str
+            and getattr(statistics,"has_min_max",False) is True
             and getattr(statistics,"is_min_max_exact",False) is True
             and type(getattr(statistics,"min",None)) is str
             and type(getattr(statistics,"max",None)) is str

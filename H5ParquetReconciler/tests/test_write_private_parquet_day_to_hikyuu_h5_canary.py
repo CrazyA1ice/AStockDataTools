@@ -76,7 +76,8 @@ class RealHikyuuH5DayCanaryTests(unittest.TestCase):
         h5=self.base/result["private_h5_relative_file"]
         with h5py.File(h5,"r") as source:
             ds=source["data"]["SH600000"]
-            self.assertEqual(ds.attrs["CLASS"],b"TABLE")
+            marker=ds.attrs["CLASS"]
+            self.assertEqual(marker.decode("ascii") if isinstance(marker,bytes) else marker,"TABLE")
             self.assertEqual(ds.dtype.itemsize,40)
             self.assertEqual(ds.dtype.names,(
                 "closePrice","datetime","highPrice","lowPrice",

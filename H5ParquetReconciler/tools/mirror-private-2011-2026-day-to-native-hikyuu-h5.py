@@ -202,7 +202,9 @@ def mirror(version_path,version_sha,run_id,out,
                         check.update(table.read(offset,min(table.nrows,offset+8192)).tobytes())
                     if check.digest()!=digests[sym].digest():
                         raise ValueError("Private H5 TABLE bytes differ from Parquet-derived integers")
-                    readback+=table.nrows
+                    # PyTables may expose nrows as numpy.int64; never let
+                    # NumPy scalars escape into JSON SAFE statistics.
+                    readback+=int(table.nrows)
         full=sum(annual_rows.values())
         if (readback!=full or sum(counts.values())!=full
                 or sum(categories.values())!=full):
@@ -212,15 +214,15 @@ def mirror(version_path,version_sha,run_id,out,
             "status":"private_day_native_h5_40byte_tables_written_all_integer_rows_readback_not_activated",
             "source_16year_private_version_sha256":version_sha,
             "year_range":[first_year,last_year],
-            "annual_rows":annual_rows,
-            "purchased_h5_candidate_source_counts":dict(categories),
-            "total_private_parquet_rows":full,
-            "total_h5_native_integer_records":readback,
-            "venue_record_counts":dict(counts),
-            "stock_tables_count":len(digests),
-            "source_parquet_partitions_sha_verified":partition_files,
-            "h5_native_integer_changed_field_rows":dict(loss),
-            "h5_native_integer_max_abs_purchased_unit_error":maximum,
+            "annual_rows":{str(k):int(v) for k,v in annual_rows.items()},
+            "purchased_h5_candidate_source_counts":{str(k):int(v) for k,v in categories.items()},
+            "total_private_parquet_rows":int(full),
+            "total_h5_native_integer_records":int(readback),
+            "venue_record_counts":{str(k):int(v) for k,v in counts.items()},
+            "stock_tables_count":int(len(digests)),
+            "source_parquet_partitions_sha_verified":int(partition_files),
+            "h5_native_integer_changed_field_rows":{str(k):int(v) for k,v in loss.items()},
+            "h5_native_integer_max_abs_purchased_unit_error":{str(k):float(v) for k,v in maximum.items()},
             "all_source_ohlcva_bitwise_exactly_representable":not bool(loss),
             "native_40byte_table_integer_sha_readback_verified":True,
             "native_hikyuu_cpp_full_market_read_verified":False,
@@ -233,9 +235,11 @@ def mirror(version_path,version_sha,run_id,out,
             "full_mirror_ready_for_production":False,
             "source_ohlcva_values_or_stock_symbols_exported_to_safe":False,
         }
+        # Encode BEFORE creating the SAFE output. A malformed statistic
+        # must never leave behind a truncated JSON that looks like a report.
+        safe_text=json.dumps(safe_result,sort_keys=True,indent=2)+"\n"
         with safe.open("x",encoding="utf-8",newline="\n") as fp:
-            json.dump(safe_result,fp,sort_keys=True,indent=2)
-            fp.write("\n")
+            fp.write(safe_text)
         completed=True
         return safe_result
     finally:

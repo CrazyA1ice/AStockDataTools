@@ -54,7 +54,10 @@ CORE=load()
 
 def session_stamps(day,period):
     start=int(day.strftime("%Y%m%d"))*10000
-    sessions=((9*60+31,11*60+30),(13*60+1,15*60))
+    sessions=(
+        ((9*60+31,11*60+30),(13*60+1,15*60))
+        if period=="1min" else
+        ((9*60+35,11*60+30),(13*60+5,15*60)))
     step=1 if period=="1min" else 5
     return frozenset(start+(minute//60)*100+minute%60
         for lo,hi in sessions for minute in range(lo,hi+1,step))

@@ -220,7 +220,10 @@ def verify(prior,python_exe,out,run_id,timeout=75,runner=subprocess.run):
                     if not good:
                         raise ValueError("Native private H5 KRecords not verified")
         if state!="native_private_h5_all_rows_matched":
-            raise ValueError("Native private H5 core311 load did not complete")
+            safe_state=(state if re.fullmatch(r"[a-z0-9_]{1,80}",state)
+                        else "invalid_native_worker_state")
+            safe_phase=(phase if phase in NATIVE.PHASES else "none")
+            raise ValueError("Native core311 status="+safe_state+" phase="+safe_phase)
     except subprocess.TimeoutExpired:
         raise ValueError("Native isolated core311 read timed out") from None
     finally:
@@ -271,8 +274,12 @@ def main(argv=None):
         print("Native matched rows:",result["native_krecord_rows_matched"])
         print("Full-market native mirror: NOT YET; original market sources untouched")
         print("SAFE:",a.out)
-    except (ValueError,TypeError,OSError,ImportError):
-        p.error("Native private read refused: failed isolated core311/real H5 verification")
+    except (ValueError,TypeError,OSError,ImportError) as exc:
+        message=str(exc)
+        if message.startswith("Native core311 status="):
+            p.error(message+"; original files unchanged")
+        p.error("Native private read refused ["+type(exc).__name__+
+                "]: failed isolated core311/real H5 verification")
 
 
 if __name__=="__main__":

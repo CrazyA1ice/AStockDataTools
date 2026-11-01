@@ -153,7 +153,8 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
     years=list(range(begin.year,end.year+1))
     pending=[]
     source_indexes=[]
-    expected_rows={}
+    timings={}
+    phase_start=time.perf_counter()
     # Footer + all selected private file SHA preflight BEFORE reading keys.
     for year in years:
         node=version_doc["annual"][str(year)]
@@ -200,40 +201,78 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
                              ts_stats.min>=timestamp_high)):
                         metadata["physical_rowgroups_pruned"]+=1
                         continue
+                    # Only trust symbol stats for exact min/max values.
+                    # Missing, truncated, or unknown statistics never
+                    # exclude a RowGroup. The column is the canonical
+                    # stock symbol (third column of fixed Arrow schema).
+                    sym_stats=info.column(2).statistics
+                    if (sym_stats is not None
+                            and sym_stats.has_min_max
+                            and getattr(sym_stats,"is_min_max_exact",False) is True
+                            and isinstance(sym_stats.min,str)
+                            and isinstance(sym_stats.max,str)
+                            and (canonical<sym_stats.min
+                                 or canonical>sym_stats.max)):
+                        metadata["physical_rowgroups_pruned_by_exact_symbol_stats"]+=1
+                        continue
                     metadata["candidate_rows_upper_bound"]+=info.num_rows
                     pending.append((path,group,year,key))
+    timings["sha_footer_and_rowgroup_preflight_seconds"]=round(
+        time.perf_counter()-phase_start,6)
     if metadata["candidate_rows_upper_bound"]>max_candidate_rows:
         raise ValueError("Requested private window exceeds bounded read budget")
-    # Only key+source columns are decoded. No OHLCVA is loaded.
+    phase_start=time.perf_counter()
+    # Scan only FOUR index/source columns. Apply all four key comparisons
+    # by Arrow compute before converting to Python. For many symbols,
+    # this avoids boxing >1 million nonmatching rows as Python strings.
+    # Reuse a ParquetFile per private partition instead of reopening each
+    # individual RowGroup (187 opens in the original 2025-26 smoke test).
+    import pyarrow.compute as pc
+    day_first=begin.isoformat()
+    day_last=end.isoformat()
+    by_file={}
     for path,group,year,key in pending:
+        by_file.setdefault(path,[]).append((group,year,key))
+    for path,groups in by_file.items():
         with pq.ParquetFile(path,memory_map=False,pre_buffer=False) as pf:
-            table=pf.read_row_group(group,
-                columns=["ts","trading_date","symbol","value_source"],
-                use_threads=False)
-        metadata["physical_rowgroups_loaded"]+=1
-        if any(x.null_count for x in table.columns):
-            raise ValueError("Private normalized stockday key/source contains null")
-        for ts,day,sym,kind in zip(
-                table.column("ts").to_pylist(),
-                table.column("trading_date").to_pylist(),
-                table.column("symbol").to_pylist(),
-                table.column("value_source").to_pylist()):
-            if (ts<timestamp_low or ts>=timestamp_high
-                    or sym!=canonical or day<begin.isoformat()
-                    or day>end.isoformat()):
-                continue
-            if (kind not in KNOWN_CLASSES
-                    or (key=="purchased" or key.startswith("2026-"))
-                       and kind!="purchased_parquet"
-                    or key=="h5_gap_2016"
-                       and kind!="private_h5_mixed_stockday_candidate"
-                    or key=="h5_gap_2026" and kind=="purchased_parquet"):
-                raise ValueError("Unexpected normalized private purchased/H5 provenance")
-            identity=(year,day,sym)
-            if identity in seen:
-                raise ValueError("Duplicate private stockday in bounded version query")
-            seen.add(identity)
-            counter[kind]+=1
+            for group,year,key in groups:
+                table=pf.read_row_group(group,
+                    columns=["ts","trading_date","symbol","value_source"],
+                    use_threads=False)
+                metadata["physical_rowgroups_loaded"]+=1
+                if any(x.null_count for x in table.columns):
+                    raise ValueError("Private normalized stockday key/source contains null")
+                mask=pc.and_(
+                    pc.and_(
+                        pc.greater_equal(table.column("ts"),timestamp_low),
+                        pc.less(table.column("ts"),timestamp_high)),
+                    pc.and_(
+                        pc.equal(table.column("symbol"),canonical),
+                        pc.and_(
+                            pc.greater_equal(table.column("trading_date"),day_first),
+                            pc.less_equal(table.column("trading_date"),day_last))))
+                selected=table.filter(mask)
+                metadata["physical_key_rows_selected_by_arrow"]+=selected.num_rows
+                for ts,day,sym,kind in zip(
+                        selected.column("ts").to_pylist(),
+                        selected.column("trading_date").to_pylist(),
+                        selected.column("symbol").to_pylist(),
+                        selected.column("value_source").to_pylist()):
+                    if (kind not in KNOWN_CLASSES
+                            or (key=="purchased" or key.startswith("2026-"))
+                               and kind!="purchased_parquet"
+                            or key=="h5_gap_2016"
+                               and kind!="private_h5_mixed_stockday_candidate"
+                            or key=="h5_gap_2026" and kind=="purchased_parquet"):
+                        raise ValueError("Unexpected normalized private purchased/H5 provenance")
+                    identity=(year,day,sym)
+                    if identity in seen:
+                        raise ValueError("Duplicate private stockday in bounded version query")
+                    seen.add(identity)
+                    counter[kind]+=1
+    timings["arrow_key_filter_seconds"]=round(
+        time.perf_counter()-phase_start,6)
+    phase_start=time.perf_counter()
     sql_total=0
     sql_kinds=Counter()
     for year,idx in source_indexes:
@@ -252,6 +291,8 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
             sql_total+=n
     if sql_total!=len(seen) or sql_kinds!=counter:
         raise ValueError("Private Parquet coverage and SHA-bound SQLite keys disagree")
+    timings["sqlite_count_crosscheck_seconds"]=round(
+        time.perf_counter()-phase_start,6)
     return {
         "format":FORMAT,
         "status":"private_all16_bounded_day_coverage_keys_and_provenance_verified_only",
@@ -264,8 +305,14 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
         "sha_checked_private_partitions":metadata["physical_parquet_partitions_sha_checked"],
         "rowgroups_metadata_checked":metadata["physical_rowgroups_checked"],
         "rowgroups_pruned":metadata["physical_rowgroups_pruned"],
+        "rowgroups_pruned_by_exact_symbol_stats":
+            metadata["physical_rowgroups_pruned_by_exact_symbol_stats"],
         "rowgroups_loaded":metadata["physical_rowgroups_loaded"],
         "candidate_rows_upper_bound":metadata["candidate_rows_upper_bound"],
+        "matched_key_rows_vectorized_by_arrow":
+            metadata["physical_key_rows_selected_by_arrow"],
+        "parquet_file_handles_for_rowgroups":len(by_file),
+        "phase_timings_seconds":timings,
         "bounded_window_days_max":31,
         "elapsed_seconds":round(time.perf_counter()-started,6),
         "all_original_licensed_OHLCVA_values_read":False,

@@ -186,6 +186,51 @@ class All16PrivateCoverageTests(unittest.TestCase):
         self.assertEqual(r["sha_checked_private_partitions"],11)
         self.assertEqual(r["sqlite_rows_matched"],3)
 
+    def test_vectorized_arrow_counts_match_sqlite_and_profile_phases(self):
+        r=self.run_query("2025-12-31","2026-01-06")
+        self.assertEqual(r["matched_stockday_rows"],
+                         r["matched_key_rows_vectorized_by_arrow"])
+        self.assertEqual(r["matched_stockday_rows"],r["sqlite_rows_matched"])
+        self.assertGreater(r["parquet_file_handles_for_rowgroups"],0)
+        self.assertLessEqual(r["parquet_file_handles_for_rowgroups"],
+                             r["sha_checked_private_partitions"])
+        self.assertEqual(set(r["phase_timings_seconds"]),{
+            "sha_footer_and_rowgroup_preflight_seconds",
+            "arrow_key_filter_seconds",
+            "sqlite_count_crosscheck_seconds",
+        })
+        self.assertTrue(all(x>=0 for x in r["phase_timings_seconds"].values()))
+        self.assertNotIn("SH600000",json.dumps(r))
+        self.assertNotIn("2025-12-31",json.dumps(r))
+        self.assertFalse(r["all_original_licensed_OHLCVA_values_read"])
+
+    def test_exact_symbol_footer_bounds_prune_only_provably_excluded(self):
+        from types import SimpleNamespace
+        a=SimpleNamespace(has_min_max=True,is_min_max_exact=True,
+                          min="SH000001",max="SH000999")
+        self.assertTrue(Q.exclude_by_exact_symbol_statistics(a,"SH600000"))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(a,"SH000500"))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(a,None))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(None,"SH600000"))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(
+            SimpleNamespace(has_min_max=True,min="SH000001",
+                            max="SH000999"),"SH600000"))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(
+            SimpleNamespace(has_min_max=True,is_min_max_exact=False,
+                            min="SH000001",max="SH000999"),"SH600000"))
+        self.assertFalse(Q.exclude_by_exact_symbol_statistics(
+            SimpleNamespace(has_min_max=True,is_min_max_exact=True,
+                            min=b"SH000001",max=b"SH000999"),"SH600000"))
+
+    def test_vectorized_query_preserves_zero_match_and_year_safe_metadata(self):
+        r=self.run_query("2016-08-20","2016-08-20")
+        self.assertEqual(r["matched_stockday_rows"],0)
+        self.assertEqual(r["matched_key_rows_vectorized_by_arrow"],0)
+        self.assertEqual(r["sqlite_rows_matched"],0)
+        self.assertEqual(r["query_years"],[2016])
+        self.assertEqual(r["by_source_counts"],{})
+        self.assertFalse(r["ready_for_production_query"])
+
     def test_wrong_version_sha_fails_before_private_partition_probe(self):
         with self.patched():
             with self.assertRaisesRegex(ValueError,"version SAFE SHA differs"):

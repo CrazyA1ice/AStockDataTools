@@ -135,6 +135,30 @@ def collect(batch,additional):
     return sorted(days.items()),receipt_shas
 
 
+def purchased_minute_map(day,period):
+    """Map canonical Parquet ms to native minute label without dropping
+    boundary records. Contract matches CORE.pq_stamp for 1min/5min; all
+    timestamps remain CANDIDATES until source vendor semantics are certified.
+    """
+    if period not in ST.PERIODS:
+        raise ValueError("Unsupported minute period")
+    step=0 if period=="1min" else 5
+    result={
+        int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
+             .replace(tzinfo=ST.CORE.UTC8)
+             -timedelta(minutes=step)).timestamp()*1000):stamp
+        for stamp in ST.session_stamps(day,period)
+    }
+    if period=="1min":
+        for hm in ("0930","1300"):
+            opening=datetime.strptime(
+                day.strftime("%Y%m%d")+hm,"%Y%m%d%H%M"
+            ).replace(tzinfo=ST.CORE.UTC8)
+            stamp=int(opening.strftime("%Y%m%d%H%M"))
+            result[int(opening.timestamp()*1000)]=stamp
+    return result
+
+
 def raw_purchased(row,minute_map):
     ts=row["ts"]
     if type(ts) is not int or ts not in minute_map:
@@ -214,27 +238,9 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
             for day,records in sources:
                 for period in ST.PERIODS:
                     path,receipt=records[period]
-                    # Reuse the project's existing Parquet time contract:
-                    # 1min source carries the minute END label; 5min source
-                    # carries its START label (5min + 5 -> native END).
-                    # Previous generic +1/+5 incorrectly rejected real 1min.
-                    # Preserve an independently labelled 09:30/13:00
-                    # opening bar as its OWN native record, never collapse it
-                    # onto 09:31/13:01. Its C++ semantics are not certified.
-                    step=0 if period=="1min" else 5
-                    minute_map={
-                        int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
-                             .replace(tzinfo=ST.CORE.UTC8)
-                             -timedelta(minutes=step)).timestamp()*1000):stamp
-                        for stamp in ST.session_stamps(day,period)
-                    }
-                    if period=="1min":
-                        for hm in ("0930","1300"):
-                            opening=datetime.strptime(
-                                day.strftime("%Y%m%d")+hm,"%Y%m%d%H%M"
-                            ).replace(tzinfo=ST.CORE.UTC8)
-                            native_stamp=int(opening.strftime("%Y%m%d%H%M"))
-                            minute_map[int(opening.timestamp()*1000)]=native_stamp
+                    # 1min source end (0), 5min source start (+5);
+                    # 09:30/13:00 purchase boundaries stay distinct.
+                    minute_map=purchased_minute_map(day,period)
                     before=sha(path)
                     # Table.take/Arrow sort avoids holding millions of
                     # heavyweight Python dictionaries for sorting.

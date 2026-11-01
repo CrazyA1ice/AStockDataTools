@@ -96,6 +96,7 @@ def stage(reader,symbol,version_safe,sha,start,end,
     mark("preflight")
     import h5py
     import numpy as np
+    import tables
     if not SUFFIX.fullmatch(run_id):
         raise ValueError("Require fresh 12-hex run id")
     if symbol[:2] not in ("SH","SZ","BJ") or not re.fullmatch(
@@ -139,30 +140,55 @@ def stage(reader,symbol,version_safe,sha,start,end,
     if len({row[0] for row in original})!=len(rows):
         raise ValueError("Duplicate Hikyuu stockday in one-symbol sample")
     original.sort(key=lambda row:row[0])
-    dt=np.dtype([("datetime","<u8"),("openPrice","<u4"),
+    # The audited native 2.8.1 H5 format is a packed 40-byte PyTables
+    # TABLE, not a generic HDF5 compound dataset. Reuse the proven exact
+    # order/offsets from build-hikyuu-native-h5-synthetic-canary.py.
+    dt=np.dtype([("closePrice","<u4"),("datetime","<u8"),
                  ("highPrice","<u4"),("lowPrice","<u4"),
-                 ("closePrice","<u4"),("transCount","<u8"),
-                 ("transAmount","<u8")])
+                 ("openPrice","<u4"),("transAmount","<u8"),
+                 ("transCount","<u8")])
+    order=("closePrice","datetime","highPrice","lowPrice",
+           "openPrice","transAmount","transCount")
+    if dt.itemsize!=40 or dt.names!=order:
+        raise ValueError("Hikyuu native 40-byte TABLE dtype unavailable")
+    raw=np.empty(len(original),dtype=dt)
+    for i,record in enumerate(original):
+        raw[i]["datetime"]=record[0]
+        raw[i]["openPrice"]=record[1]
+        raw[i]["highPrice"]=record[2]
+        raw[i]["lowPrice"]=record[3]
+        raw[i]["closePrice"]=record[4]
+        raw[i]["transCount"]=record[5]
+        raw[i]["transAmount"]=record[6]
     mark("create_isolated_h5")
     OUT.mkdir(parents=True,exist_ok=True)
-    with h5py.File(dest,"x") as h5:
-        grp=h5.create_group("data")
-        ds=grp.create_dataset(symbol,data=np.array([tuple(r) for r in original],
-                                   dtype=dt),compression="gzip",
-                              compression_opts=3,shuffle=True,chunks=True)
+    with tables.open_file(str(dest),mode="w") as h5:
+        group=h5.create_group("/","data")
+        table=h5.create_table(
+            group,symbol,description=dt,title=symbol,
+            filters=tables.Filters(complevel=5,complib="zlib",shuffle=True),
+            expectedrows=len(raw))
+        table.append(raw)
+        table.flush()
     mark("verify_h5_integer_readback")
-    # Independent on-disk H5 bytes and ALL integer value read-back:
     with h5py.File(dest,"r") as h5:
         if (not isinstance(h5.get("data"),h5py.Group)
                 or not isinstance(h5["data"].get(symbol),h5py.Dataset)):
             raise ValueError("Native Hikyuu layout /data/symbol missing")
         ds=h5["data"][symbol]
-        if (ds.dtype!=dt or len(ds)!=len(original)
-                or list(ds.dtype.names)!=list(H5_COLS)):
+        marker=ds.attrs.get("CLASS")
+        if isinstance(marker,bytes):
+            marker=marker.decode("ascii")
+        if (marker!="TABLE" or ds.dtype!=dt or len(ds)!=len(original)
+                or ds.dtype.itemsize!=40 or ds.ndim!=1
+                or ds.dtype.names!=order):
             raise ValueError("Hikyuu-layout H5 fixed-width compound dtype incorrect")
         for got,want in zip(ds,original):
             if [int(got[f]) for f in H5_COLS]!=want:
                 raise ValueError("Hikyuu-layout H5 full integer roundtrip changed")
+    with tables.open_file(str(dest),"r") as h5:
+        if h5.get_node("/data/"+symbol).nrows!=len(original):
+            raise ValueError("Hikyuu PyTables TABLE native row count differs")
     mark("hash_written_h5")
     sha_h5=hashlib.sha256(dest.read_bytes()).hexdigest()
     doc={
@@ -177,6 +203,9 @@ def stage(reader,symbol,version_safe,sha,start,end,
         "h5_fixedpoint_max_abs_source_value_errors":maxima,
         "all_six_fields_exactly_representable_in_h5":not bool(changed),
         "h5py_compound_integer_full_row_readback_verified":True,
+        "pytables_table_class_marker_and_40byte_layout_verified":True,
+        "native_hikyuu_amount_value_in_purchased_units_requires_multiplier":10000,
+        "native_hikyuu_volume_value_in_purchased_units_requires_multiplier":100,
         "hikyuu_cpp_native_reader_verified":False,
         "ready_for_full_market_mirror":False,
         "ready_for_production_query":False,
@@ -231,6 +260,8 @@ def main(argv=None):
             "Invalid private Float64 value",
             "Original float exceeds Hikyuu native integer range",
             "Hikyuu-layout H5 fixed-width compound dtype incorrect",
+            "Hikyuu native 40-byte TABLE dtype unavailable",
+            "Hikyuu PyTables TABLE native row count differs",
             "Hikyuu-layout H5 full integer roundtrip changed",
             "Only new private H5 canary and module reports SAFE",
         }

@@ -124,17 +124,13 @@ def canonical_purchased(row,period,low,high,year,extras):
     }
 
 
-def canonical_h5(row,period,day):
+def canonical_h5(row,period,expected_ts):
     if (row.get("period")!=period
             or row.get("value_source")!="h5_only_complete_stockday"
             or not re.fullmatch(r"(SH|SZ|BJ)\d{6}",row["symbol"])
-            or row["h5_native_datetime"] not in ST.session_stamps(day,period)):
+            or row["h5_native_datetime"] not in expected_ts):
         raise ValueError("H5 staged row metadata invalid")
-    original_dt=datetime.strptime(
-        str(row["h5_native_datetime"]),"%Y%m%d%H%M"
-    ).replace(tzinfo=ST.CORE.UTC8)
-    expected=original_dt-timedelta(minutes=1 if period=="1min" else 5)
-    if row["ts"]!=int(expected.timestamp()*1000):
+    if row["ts"]!=expected_ts[row["h5_native_datetime"]]:
         raise ValueError("H5 candidate minute timestamp differs from original")
     return {
         **{k:row[k] for k in BASE},
@@ -227,13 +223,23 @@ def stage_unified(root,stage_report,run_id,out,*,max_rows=4500000):
                                 counts["purchased_parquet"]+=1
                                 if sum(counts.values())>max_rows:
                                     raise ValueError("Purchased minute stockday merge budget exceeded")
+            # At most 240 different native minute labels per day. Decode
+            # each label once, not for every one of 1.6 million stock bars.
+            allowed=ST.session_stamps(day,period)
+            step=1 if period=="1min" else 5
+            expected_ts={
+                stamp:int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
+                           .replace(tzinfo=ST.CORE.UTC8)
+                           -timedelta(minutes=step)).timestamp()*1000)
+                for stamp in allowed
+            }
             with pq.ParquetFile(staged_file,memory_map=False,pre_buffer=False) as pf:
                 if (pf.schema_arrow!=ST.schema(pa)
                         or pf.metadata.num_rows!=entry["private_parquet_rows"]):
                     raise ValueError("H5 minute gap source Parquet schema/count changed")
                 for batch in pf.iter_batches(batch_size=32768,use_threads=False):
                     for original in batch.to_pylist():
-                        row=canonical_h5(original,period,day)
+                        row=canonical_h5(original,period,expected_ts)
                         key=(row["symbol"],row["ts"])
                         if row["symbol"] in purchased_stockdays:
                             raise ValueError("H5 stage overlaps purchased stockday")

@@ -186,7 +186,10 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
     if expected_total>max_total_rows:
         raise ValueError("Purchased/H5 unified minute rows exceed budget")
     native_dtype=M.dtype_for_hikyuu(np)
-    fields=list(U.BASE)+["value_source"]+list(U.H5_NATIVE)
+    # M.native_rows() validates BOTH period and value_source; retain period
+    # in the Arrow projection as well as all six OHLCVA / native integer
+    # columns. Dropping it caused KeyError('period') in the real-write test.
+    fields=list(U.BASE)+["period","value_source"]+list(U.H5_NATIVE)
     counts=Counter()
     prices_changed=Counter()
     max_error={field:0.0 for field in U.BASE[2:]}

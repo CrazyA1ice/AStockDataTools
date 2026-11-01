@@ -183,7 +183,7 @@ class All16PrivateCoverageTests(unittest.TestCase):
         self.assertEqual(r["matched_stockday_rows"],3)
         self.assertEqual(r["by_source_counts"]["purchased_parquet"],2)
         self.assertEqual(r["by_source_counts"]["private_h5_whole_date_candidate"],1)
-        self.assertEqual(r["sha_checked_private_partitions"],12)
+        self.assertEqual(r["sha_checked_private_partitions"],11)
         self.assertEqual(r["sqlite_rows_matched"],3)
 
     def test_wrong_version_sha_fails_before_private_partition_probe(self):

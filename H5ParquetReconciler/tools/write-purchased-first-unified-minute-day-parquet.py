@@ -136,11 +136,8 @@ def canonical_h5(row,period,day):
     expected=original_dt-timedelta(minutes=1 if period=="1min" else 5)
     if row["ts"]!=int(expected.timestamp()*1000):
         raise ValueError("H5 candidate minute timestamp differs from original")
-    original={k:row[k] for k in ST.schema(__import__("pyarrow")).names}
-    del original["value_source"]
-    del original["period"]
     return {
-        **{k:original[k] for k in BASE},
+        **{k:row[k] for k in BASE},
         "period":period,
         "value_source":"h5_only_complete_stockday",
         "source_symbol":row["symbol"],

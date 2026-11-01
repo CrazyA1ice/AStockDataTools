@@ -192,6 +192,7 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
     fields=list(U.BASE)+["period","value_source"]+list(U.H5_NATIVE)
     counts=Counter()
     prices_changed=Counter()
+    purchased_opening_labels=Counter()
     max_error={field:0.0 for field in U.BASE[2:]}
     expected_native_digest={}
     expected_stock_count=Counter()
@@ -213,15 +214,27 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
             for day,records in sources:
                 for period in ST.PERIODS:
                     path,receipt=records[period]
-                    # Actual source timestamps are bounded to the known 240
-                    # or 48 session bars. Avoid millions of datetime parses.
-                    step=1 if period=="1min" else 5
+                    # Reuse the project's existing Parquet time contract:
+                    # 1min source carries the minute END label; 5min source
+                    # carries its START label (5min + 5 -> native END).
+                    # Previous generic +1/+5 incorrectly rejected real 1min.
+                    # Preserve an independently labelled 09:30/13:00
+                    # opening bar as its OWN native record, never collapse it
+                    # onto 09:31/13:01. Its C++ semantics are not certified.
+                    step=0 if period=="1min" else 5
                     minute_map={
                         int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
                              .replace(tzinfo=ST.CORE.UTC8)
                              -timedelta(minutes=step)).timestamp()*1000):stamp
                         for stamp in ST.session_stamps(day,period)
                     }
+                    if period=="1min":
+                        for hm in ("0930","1300"):
+                            opening=datetime.strptime(
+                                day.strftime("%Y%m%d")+hm,"%Y%m%d%H%M"
+                            ).replace(tzinfo=ST.CORE.UTC8)
+                            native_stamp=int(opening.strftime("%Y%m%d%H%M"))
+                            minute_map[int(opening.timestamp()*1000)]=native_stamp
                     before=sha(path)
                     # Table.take/Arrow sort avoids holding millions of
                     # heavyweight Python dictionaries for sorting.
@@ -260,6 +273,8 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                             buffer=np.empty(len(rows),dtype=native_dtype)
                             for i,row in enumerate(rows):
                                 raw,loss=raw_purchased(row,minute_map)
+                                if period=="1min" and int(raw["datetime"])%10000 in (930,1300):
+                                    purchased_opening_labels["1min"]+=1
                                 record=np.zeros((),dtype=native_dtype)
                                 for k,v in raw.items():
                                     record[k]=v
@@ -358,6 +373,12 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
             "native_40byte_pytables_integer_full_readback_verified":True,
             "source_h5_raw_integer_rows_preserved":True,
             "purchased_float64_quantized_field_changed_rows":dict(prices_changed),
+            "purchased_1min_boundary_opening_labels_preserved":int(
+                purchased_opening_labels["1min"]),
+            "purchased_minute_time_mapping":{
+                "1min":"source_end_label_0min_offset_with_separate_0930_1300",
+                "5min":"source_start_label_plus_5min_to_native_end",
+            },
             "purchased_float64_quantized_max_abs_errors":max_error,
             "purchased_minute_unit_mapping_certified":False,
             "purchased_to_h5_minute_timestamp_mapping_certified":False,

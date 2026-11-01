@@ -59,9 +59,16 @@ def raw_row(source):
              tz=timezone(timedelta(hours=8)))
     except (OverflowError,OSError,ValueError):
         raise ValueError("Invalid private DAY timestamp") from None
-    if (d.isoformat()[11:]!="00:00:00+08:00"
-            or d.date().isoformat()!=source.get("trading_date")):
-        raise ValueError("Private DAY timestamp not midnight CST")
+    # The independently audited unified Parquet builder intentionally
+    # allows purchased DAY source timestamps at any Beijing-local time:
+    # its canonical trading_date is dt.date(), not necessarily 00:00.
+    # H5-only additions are separately constrained to midnight by the
+    # existing source materializer; preserve that contract here too.
+    if d.date().isoformat()!=source.get("trading_date"):
+        raise ValueError("Private DAY source timestamp differs from trading date")
+    if (source.get("value_source")!="purchased_parquet"
+            and (d.hour,d.minute,d.second,d.microsecond)!=(0,0,0,0)):
+        raise ValueError("Private H5 candidate DAY timestamp must be midnight CST")
     stamp=int(d.strftime("%Y%m%d"))*10000
     raw=[stamp]
     errors={}
@@ -219,7 +226,8 @@ def main(argv=None):
             "Cross-stock DAY mirror is not permitted",
             "Invalid normalized private DAY row",
             "Invalid private DAY timestamp",
-            "Private DAY timestamp not midnight CST",
+            "Private DAY source timestamp differs from trading date",
+            "Private H5 candidate DAY timestamp must be midnight CST",
             "Invalid private Float64 value",
             "Original float exceeds Hikyuu native integer range",
             "Hikyuu-layout H5 fixed-width compound dtype incorrect",

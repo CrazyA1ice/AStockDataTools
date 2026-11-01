@@ -47,7 +47,8 @@ def make_worker():
     original=NATIVE.WORKER
     start=original.index('    root=Path(sys.argv[1]).resolve()')
     end=original.index('    # Also require no preexisting registry:',start)
-    new_root='''    root=Path(sys.argv[1]).resolve()
+    new_root='''    import re
+    root=Path(sys.argv[1]).resolve()
     sh=Path(sys.argv[2]).resolve()
     sz=Path(sys.argv[3]).resolve()
     if (root!=Path.cwd().resolve() or root.parent.name!="_native_h5_281"

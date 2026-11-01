@@ -237,35 +237,41 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                         if not rows:
                             return
                         market=sym[:2]
-                        buffer=np.empty(len(rows),dtype=native_dtype)
-                        last_key=last_timestamp.get((period,sym),0)
-                        for i,row in enumerate(rows):
-                            ts=row["ts"]
-                            if type(ts) is not int:
+                        source_class=rows[0]["value_source"]
+                        if source_class not in (
+                                "purchased_parquet","h5_only_complete_stockday"
+                        ) or any(row["value_source"]!=source_class for row in rows):
+                            raise ValueError("Source class mixed within one stock-day")
+                        for row in rows:
+                            if type(row["ts"]) is not int:
                                 raise ValueError("Invalid purchased/H5 minute physical key")
-                            if row["value_source"]=="h5_only_complete_stockday":
-                                record=M.native_rows([row],period,day,native_dtype,np)[0]
-                                loss={}
-                            elif row["value_source"]=="purchased_parquet":
+                        if source_class=="h5_only_complete_stockday":
+                            # Validate/convert 240 or 48 records together.
+                            # M.native_rows must not run once per 1.3m bar.
+                            buffer=M.native_rows(
+                                rows,period,day,native_dtype,np)
+                        else:
+                            buffer=np.empty(len(rows),dtype=native_dtype)
+                            for i,row in enumerate(rows):
                                 raw,loss=raw_purchased(row,period,day)
                                 record=np.zeros((),dtype=native_dtype)
                                 for k,v in raw.items():
                                     record[k]=v
-                            else:
-                                raise ValueError("Unknown minute source class")
+                                buffer[i]=record
+                                for field,error in loss.items():
+                                    if error:
+                                        prices_changed[field]+=1
+                                    if error>max_error[field]:
+                                        max_error[field]=error
+                        last_key=last_timestamp.get((period,sym),0)
+                        for record in buffer:
                             stamp=int(record["datetime"])
                             if stamp<=last_key:
                                 raise ValueError("Native H5 timestamps duplicate or unordered")
                             last_key=stamp
-                            buffer[i]=record
-                            by_source[row["value_source"]]+=1
-                            counts[period]+=1
-                            counts[period+"_"+row["value_source"]]+=1
-                            for field,error in loss.items():
-                                if error:
-                                    prices_changed[field]+=1
-                                if error>max_error[field]:
-                                    max_error[field]=error
+                        by_source[source_class]+=len(buffer)
+                        counts[period]+=len(buffer)
+                        counts[period+"_"+source_class]+=len(buffer)
                         last_timestamp[period,sym]=last_key
                         handle=h5[period,market]
                         try:

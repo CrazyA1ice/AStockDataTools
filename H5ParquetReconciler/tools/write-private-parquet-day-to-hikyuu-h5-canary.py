@@ -20,6 +20,7 @@ import importlib.util
 import json
 import math
 import re
+import traceback
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -227,8 +228,11 @@ def main(argv=None):
         }
         detail=(str(exc) if type(exc) is ValueError and str(exc) in reasons
                 else "details_redacted")
+        last=traceback.extract_tb(exc.__traceback__)[-1]
+        site=(last.name + ":" + str(last.lineno))
         p.error("Isolated DAY H5 write refused [" + phase[0] + "/" +
-                type(exc).__name__ + "/" + detail + "]; no original sources changed")
+                type(exc).__name__ + "/" + site + "/" + detail +
+                "]; no original sources changed")
 
 
 if __name__=="__main__":

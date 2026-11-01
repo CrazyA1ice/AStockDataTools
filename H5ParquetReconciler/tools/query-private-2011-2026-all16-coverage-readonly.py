@@ -153,7 +153,8 @@ def exclude_by_exact_symbol_statistics(statistics,canonical):
             and (canonical<statistics.min or canonical>statistics.max))
 
 
-def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000,\n          private_row_callback=None):
+def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000,
+          private_row_callback=None):
     started=time.perf_counter()
     if private_row_callback is not None and not callable(private_row_callback):
         raise ValueError("Private row handler must be callable and local-only")

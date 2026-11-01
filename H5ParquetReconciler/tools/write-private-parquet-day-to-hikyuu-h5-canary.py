@@ -81,7 +81,11 @@ def raw_row(source):
 
 
 def stage(reader,symbol,version_safe,sha,start,end,
-          run_id,out_safe,max_candidate_rows=3000000):
+          run_id,out_safe,max_candidate_rows=3000000,phase_callback=None):
+    def mark(phase):
+        if phase_callback is not None:
+            phase_callback(phase)
+    mark("preflight")
     import h5py
     import numpy as np
     if not SUFFIX.fullmatch(run_id):
@@ -97,6 +101,7 @@ def stage(reader,symbol,version_safe,sha,start,end,
             or safe.resolve().parent!=REPORTS.resolve()
             or dest.resolve().parent!=OUT.resolve()):
         raise ValueError("Only new private H5 canary and module reports SAFE")
+    mark("read_private_parquet")
     response=reader.read_local_bars(
         version_safe,sha,symbol,start,end,allow_private_values=True,
         max_candidate_rows=max_candidate_rows,max_result_bars=31)
@@ -108,6 +113,7 @@ def stage(reader,symbol,version_safe,sha,start,end,
             or stats.get("ready_for_h5_mirror") is not False
             or stats.get("local_licensed_OHLCVA_values_exported_to_safe") is not False):
         raise ValueError("Private DAY row provenance or count invalid")
+    mark("convert_float64_to_h5_integer")
     kinds=Counter()
     original=[]
     maxima={k:0.0 for k in FIELDS}
@@ -129,12 +135,14 @@ def stage(reader,symbol,version_safe,sha,start,end,
                  ("highPrice","<u4"),("lowPrice","<u4"),
                  ("closePrice","<u4"),("transCount","<u8"),
                  ("transAmount","<u8")])
+    mark("create_isolated_h5")
     OUT.mkdir(parents=True,exist_ok=True)
     with h5py.File(dest,"x") as h5:
         grp=h5.create_group("data")
         ds=grp.create_dataset(symbol,data=np.array([tuple(r) for r in original],
                                    dtype=dt),compression="gzip",
                               compression_opts=3,shuffle=True,chunks=True)
+    mark("verify_h5_integer_readback")
     # Independent on-disk H5 bytes and ALL integer value read-back:
     with h5py.File(dest,"r") as h5:
         if (not isinstance(h5.get("data"),h5py.Group)
@@ -147,6 +155,7 @@ def stage(reader,symbol,version_safe,sha,start,end,
         for got,want in zip(ds,original):
             if [int(got[f]) for f in H5_COLS]!=want:
                 raise ValueError("Hikyuu-layout H5 full integer roundtrip changed")
+    mark("hash_written_h5")
     sha_h5=hashlib.sha256(dest.read_bytes()).hexdigest()
     doc={
         "format":FORMAT,
@@ -171,6 +180,7 @@ def stage(reader,symbol,version_safe,sha,start,end,
         "source_symbol_and_exact_dates_exported_to_safe":False,
         "source_ohlcva_exported_to_safe":False,
     }
+    mark("write_aggregate_report")
     with safe.open("x",encoding="utf-8",newline="\n") as f:
         json.dump(doc,f,sort_keys=True,indent=2)
         f.write("\n")
@@ -188,17 +198,37 @@ def main(argv=None):
     p.add_argument("--out",type=Path,required=True)
     p.add_argument("--write-isolated-h5-canary",action="store_true",required=True)
     args=p.parse_args(argv)
+    phase=["import_and_args"]
     try:
         r=stage(tool(),args.symbol,args.version_safe,args.version_sha256,
-                args.start,args.end,args.run_id,args.out)
+                args.start,args.end,args.run_id,args.out,
+                phase_callback=lambda value: phase.__setitem__(0,value))
         print("PASS: isolated Hikyuu-layout DAY H5 actually written/read back")
         print("H5 rows:",r["written_h5_integer_rows"])
         print("Exact Float64 representability:",r["all_six_fields_exactly_representable_in_h5"])
         print("Changed field counts:",r["h5_fixedpoint_source_value_changed_field_counts"])
         print("H5 SAFE:",args.out)
         print("Real Hikyuu native C++ reader not yet verified; no production source touched")
-    except Exception:
-        p.error("Isolated DAY H5 write refused; sources remain unchanged")
+    except Exception as exc:
+        # Never reveal private values, source row dictionaries or full
+        # exceptions that may contain source file paths. Phase + exception
+        # class is enough for a focused code repair after real-world failure.
+        reasons={
+            "Private DAY row provenance or count invalid",
+            "Cross-stock DAY mirror is not permitted",
+            "Invalid normalized private DAY row",
+            "Invalid private DAY timestamp",
+            "Private DAY timestamp not midnight CST",
+            "Invalid private Float64 value",
+            "Original float exceeds Hikyuu native integer range",
+            "Hikyuu-layout H5 fixed-width compound dtype incorrect",
+            "Hikyuu-layout H5 full integer roundtrip changed",
+            "Only new private H5 canary and module reports SAFE",
+        }
+        detail=(str(exc) if type(exc) is ValueError and str(exc) in reasons
+                else "details_redacted")
+        p.error("Isolated DAY H5 write refused [" + phase[0] + "/" +
+                type(exc).__name__ + "/" + detail + "]; no original sources changed")
 
 
 if __name__=="__main__":

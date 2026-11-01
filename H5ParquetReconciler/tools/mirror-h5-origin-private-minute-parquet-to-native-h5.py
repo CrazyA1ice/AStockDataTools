@@ -111,7 +111,7 @@ def selected_source(report):
         elif match.group(1)!=stage_id:
             raise ValueError("Mixed minute stage versions refused")
         path=MODULE/rel
-        expected=path.parent.parent.parent.parent.parent
+        expected=path.parent.parent.parent.parent.parent.parent
         if (path.is_symlink() or path.parent.is_symlink()
                 or expected.resolve()!=MODULE.resolve()
                 or not path.is_file() or sha(path)!=record.get("private_parquet_sha256")):
@@ -216,8 +216,11 @@ def write_mirror(stage_safe,run_id,out,max_rows=3500000):
                         # is monotonically increasing, never duplicate.
                         for symbol,group in itertools.groupby(
                                 batch.to_pylist(),lambda r:r["symbol"]):
+                            rank={"SH":0,"SZ":1,"BJ":2}
                             if (not re.fullmatch(r"(SH|SZ|BJ)\d{6}",symbol)
-                                    or (last_sym is not None and symbol<last_sym)
+                                    or (last_sym is not None and
+                                        (rank[symbol[:2]],symbol)<
+                                        (rank[last_sym[:2]],last_sym))
                                     or (symbol!=last_sym and symbol in seen)):
                                 raise ValueError("Minute Parquet symbols not grouped/sorted")
                             if symbol!=last_sym:

@@ -7,6 +7,7 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+from datetime import datetime
 from unittest.mock import patch
 
 HERE=Path(__file__).resolve().parent
@@ -72,9 +73,29 @@ class PurchasedAndH5NativeMinuteMirrorTests(unittest.TestCase):
             self.assertEqual(table.nrows,1)
             self.assertEqual(table.dtype.itemsize,40)
             rec=table.read()[0]
-            self.assertEqual(int(rec["datetime"]),202610130931)
+            # Purchased 1min 09:30 is an independent opening label,
+            # not 09:31 (which might already hold a different bar).
+            self.assertEqual(int(rec["datetime"]),202610130930)
             self.assertEqual(int(rec["transCount"]),1)
             self.assertEqual(int(rec["transAmount"]),2)
+        with tables.open_file(str(self.h5_root/"minute_union_123456789abc"/"sz_5min.h5"),"r") as source:
+            self.assertEqual(int(source.get_node("/data/SZ000001").read()[0]["datetime"]),
+                             202610130935)
+        # Test the independently documented 1min end/5min start convention,
+        # including the extra 09:30 record and 13:00 boundary.
+        day=self.fixture.f.day
+        one=M.purchased_minute_map(day,"1min")
+        five=M.purchased_minute_map(day,"5min")
+        for hm in ("0930","0931","1300","1301","1500"):
+            tm=datetime.strptime(str(day).replace("-","")+hm,"%Y%m%d%H%M"
+                ).replace(tzinfo=M.ST.CORE.UTC8)
+            self.assertEqual(one[int(tm.timestamp()*1000)],
+                             int(tm.strftime("%Y%m%d%H%M")))
+        self.assertEqual(len(set(one.values())),len(one))
+        opening=datetime.strptime(str(day).replace("-","")+"0930","%Y%m%d%H%M"
+            ).replace(tzinfo=M.ST.CORE.UTC8)
+        self.assertEqual(five[int(opening.timestamp()*1000)],202610130935)
+        self.assertEqual(len(five),48)
         with tables.open_file(str(self.h5_root/"minute_union_123456789abc"/"sh_1min.h5"),"r") as source:
             table=source.get_node("/data/SH600000")
             self.assertEqual(table.nrows,240)

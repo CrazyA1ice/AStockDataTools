@@ -18,3 +18,8 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 ```
 
 真实四日原生H5成功后，下一主线是**把按日期的分钟统一Parquet批次扩大到全部可覆盖2025—2026交易日，构建一套完整的购买+H5统一H5镜像并进行C++原生读回**；不能只完成几个示例日期就发布“全量双源一致”。
+
+
+## 2026-11-01 首次Windows运行：2项测试中第1项报 KeyError('period')，已修复
+
+用户Windows日志：`test_actual_purchased_and_h5_minute_parquet_both_mirrored` 创建了合成的购买1min 1行+H5 240行，以及购买5min 1行+H5 48行；在新写入器 `flush_stock` 把已写的H5原始整数转换为原生PyTables记录时，`M.native_rows`访问`r["period"]`报`KeyError: 'period'`。根因是Arrow投影`fields=list(U.BASE)+["value_source"]+list(U.H5_NATIVE)`**错误遗漏了已有的`period`列**，而不是源数据缺列。现修为`fields=list(U.BASE)+["period","value_source"]+list(U.H5_NATIVE)`，并在实际写入时核对所有源行的`period`与本周期一致。已有2项测试覆盖真正混合购买+H5格式、逐行原生整数读回和SHA篡改拦截；**直接重跑这2项，不重做9月/10月统一Parquet或日线**。截至用户最新结果，真实6,427,013条仍**尚未写入**新的6个混合原生H5，所有原购买Parquet/原H5安全未变。

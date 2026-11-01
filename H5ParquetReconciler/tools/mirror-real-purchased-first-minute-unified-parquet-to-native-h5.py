@@ -245,8 +245,9 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                         source_class=rows[0]["value_source"]
                         if source_class not in (
                                 "purchased_parquet","h5_only_complete_stockday"
-                        ) or any(row["value_source"]!=source_class for row in rows):
-                            raise ValueError("Source class mixed within one stock-day")
+                        ) or any(row["value_source"]!=source_class
+                                 or row["period"]!=period for row in rows):
+                            raise ValueError("Source class or period mixed within one stock-day")
                         for row in rows:
                             if type(row["ts"]) is not int:
                                 raise ValueError("Invalid purchased/H5 minute physical key")

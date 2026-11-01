@@ -251,6 +251,8 @@ def write_mirror(stage_safe,run_id,out,max_rows=3500000):
                             written[period]+=len(arr)
                             if written[period]>max_rows:
                                 raise ValueError("Minute mirrored row budget exceeded")
+                if sha(path)!=entry["private_parquet_sha256"]:
+                    raise ValueError("Minute source Parquet changed during mirror")
                 if (written[period]!=entry["private_parquet_rows"]
                         or symbols_per_period[period]!=entry["private_parquet_stockdays"]):
                     raise ValueError("Minute Parquet rows/stocks not conserved in native H5")

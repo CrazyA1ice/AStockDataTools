@@ -54,6 +54,15 @@ class WholeDayNativeH5Test(unittest.TestCase):
                             max_year_rows=1200000)
         self.assertEqual(result["total_private_parquet_rows"],11)
         self.assertEqual(result["total_h5_native_integer_records"],11)
+        # Regression: tables.Table.nrows may be numpy.int64, but SAFE must
+        # contain only JSON-native numbers and be published after serialization.
+        self.assertIs(type(result["total_h5_native_integer_records"]),int)
+        self.assertIs(type(result["annual_rows"]["2026"]),int)
+        self.assertIs(type(result["venue_record_counts"]["SH"]),int)
+        self.assertIs(type(result["stock_tables_count"]),int)
+        report_data=json.loads(self.safe.read_text(encoding="utf-8"))
+        self.assertEqual(report_data["total_h5_native_integer_records"],11)
+        self.assertEqual(report_data["annual_rows"],{"2025":1,"2026":10})
         self.assertEqual(result["annual_rows"],{"2025":1,"2026":10})
         self.assertEqual(result["purchased_h5_candidate_source_counts"],{
             "purchased_parquet":10,"private_h5_whole_date_candidate":1})

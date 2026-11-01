@@ -84,7 +84,7 @@ def source_summary(path):
             raise ValueError("Untrusted daily physical unified Parquet source")
         file=MODULE/rel
         if (file.is_symlink() or file.parent.is_symlink()
-                or file.resolve().parent.parent.parent.parent!=MODULE.resolve()
+                or file.resolve().parent.parent.parent.parent.parent!=MODULE.resolve()
                 or not file.is_file() or sha(file)!=r.get("unified_parquet_sha256")):
             raise ValueError("Physical unified minute Parquet SHA mismatch")
         result[period]=(file,r)

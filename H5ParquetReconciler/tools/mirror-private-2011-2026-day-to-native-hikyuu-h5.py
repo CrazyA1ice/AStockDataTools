@@ -17,6 +17,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import traceback
 from collections import Counter,defaultdict
 from contextlib import ExitStack
 from pathlib import Path
@@ -266,8 +267,11 @@ def main(argv=None):
               r["h5_native_integer_changed_field_rows"].get("amount",0))
         print("H5 C++ full market verified: NO; original market modified: NO")
         print("SAFE:",a.out)
-    except Exception:
-        p.error("Private annual Parquet-to-Hikyuu native DAY H5 batch incomplete; original sources unchanged")
+    except Exception as exc:
+        last=traceback.extract_tb(exc.__traceback__)[-1]
+        p.error("Private native DAY H5 batch failed ["+
+                type(exc).__name__+"/"+last.name+":"+str(last.lineno)+
+                "]; no source or original H5 changed; incomplete private output retained")
 
 
 if __name__=="__main__":

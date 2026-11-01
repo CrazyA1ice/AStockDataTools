@@ -23,3 +23,10 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 ## 2026-11-01 首次Windows运行：2项测试中第1项报 KeyError('period')，已修复
 
 用户Windows日志：`test_actual_purchased_and_h5_minute_parquet_both_mirrored` 创建了合成的购买1min 1行+H5 240行，以及购买5min 1行+H5 48行；在新写入器 `flush_stock` 把已写的H5原始整数转换为原生PyTables记录时，`M.native_rows`访问`r["period"]`报`KeyError: 'period'`。根因是Arrow投影`fields=list(U.BASE)+["value_source"]+list(U.H5_NATIVE)`**错误遗漏了已有的`period`列**，而不是源数据缺列。现修为`fields=list(U.BASE)+["period","value_source"]+list(U.H5_NATIVE)`，并在实际写入时核对所有源行的`period`与本周期一致。已有2项测试覆盖真正混合购买+H5格式、逐行原生整数读回和SHA篡改拦截；**直接重跑这2项，不重做9月/10月统一Parquet或日线**。截至用户最新结果，真实6,427,013条仍**尚未写入**新的6个混合原生H5，所有原购买Parquet/原H5安全未变。
+
+
+## 2026-11-01 第二次Windows真实运行：原生分钟时间标签错用 +1（已修复）
+
+本轮仅2项合成混合源H5测试均通过；真实6,427,013条镜像进入购买Parquet部分后，`raw_purchased:141` 因 `Purchased source time cannot align with native Hikyuu grid` 停止，真实混合H5文件**没有成功验收**（如果存在残余隔离H5，不得当成可用结果）。核对仓库已有 `tools/reconcile-local-a-share-h5-parquet.py::pq_stamp` 第70—77行发现：此前明确采用`1min源时间标签原样`、`5min源时间标签+5分钟`的候选约定；新写入器却对1min也做`+1分钟`，使真实末尾1min 15:00变成15:01等非法网格。现**仅修转换器**，1min使用原标签，5min继续加5；对于购买Parquet中单独存在的1min 09:30/13:00边界记录，**作为独立原生时间标签保留，绝不覆盖09:31或13:01**。两周期仍要求每股时间严格升序、无重复，时间标签约定仍为候选，Hikyuu原生分钟C++消费这些边界记录尚未认证。测试新增对`09:30→09:30`、`09:31→09:31`、`13:00→13:00`、`13:01→13:01`和`5min 09:30→09:35`的断言，2项测试保持不增加。
+
+不重做日线、9月28—30日购买统一Parquet或10月13日H5补缺统一Parquet；新run-id仅重建此前**失败的隔离原生分钟H5**。保留对真实其他不匹配时间的阻断，而非默默丢行。若仍因购买来源时间非法而拒绝，下一轮仅围绕这个SAFE聚合错误定位，不重复已经通过的6,427,013条来源文件。原商业Parquet和原H5永远只读。

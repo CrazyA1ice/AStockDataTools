@@ -135,18 +135,11 @@ def collect(batch,additional):
     return sorted(days.items()),receipt_shas
 
 
-def raw_purchased(row,period,day):
+def raw_purchased(row,minute_map):
     ts=row["ts"]
-    if type(ts) is not int:
-        raise ValueError("Purchased minute timestamp not an int64")
-    src=datetime.fromtimestamp(ts/1000,tz=ST.CORE.UTC8)
-    if (src.date()!=day or src.second!=0 or src.microsecond!=0):
-        raise ValueError("Purchased source timestamp off-day/off-minute")
-    end=src+timedelta(minutes=1 if period=="1min" else 5)
-    native_stamp=int(end.strftime("%Y%m%d%H%M"))
-    if native_stamp not in ST.session_stamps(day,period):
+    if type(ts) is not int or ts not in minute_map:
         raise ValueError("Purchased source time cannot align with native Hikyuu grid")
-    result={"datetime":native_stamp}
+    result={"datetime":minute_map[ts]}
     loss={}
     for field,name,mult,limit in (
         ("open","openPrice",1000,2**32-1),
@@ -217,6 +210,15 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
             for day,records in sources:
                 for period in ST.PERIODS:
                     path,receipt=records[period]
+                    # Actual source timestamps are bounded to the known 240
+                    # or 48 session bars. Avoid millions of datetime parses.
+                    step=1 if period=="1min" else 5
+                    minute_map={
+                        int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
+                             .replace(tzinfo=ST.CORE.UTC8)
+                             -timedelta(minutes=step)).timestamp()*1000):stamp
+                        for stamp in ST.session_stamps(day,period)
+                    }
                     before=sha(path)
                     # Table.take/Arrow sort avoids holding millions of
                     # heavyweight Python dictionaries for sorting.
@@ -253,7 +255,7 @@ def stage(batch_safe,additional_safe,run_id,out,*,max_total_rows=12000000):
                         else:
                             buffer=np.empty(len(rows),dtype=native_dtype)
                             for i,row in enumerate(rows):
-                                raw,loss=raw_purchased(row,period,day)
+                                raw,loss=raw_purchased(row,minute_map)
                                 record=np.zeros((),dtype=native_dtype)
                                 for k,v in raw.items():
                                     record[k]=v

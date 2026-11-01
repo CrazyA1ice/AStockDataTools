@@ -136,6 +136,22 @@ def entries(year,folder,manifest):
         yield key,folder/relative,part
 
 
+
+def exclude_by_exact_symbol_statistics(statistics,canonical):
+    """Fail open unless footer explicitly guarantees non-truncated bounds.
+
+    Many Arrow releases do not expose is_min_max_exact; never assume that
+    ordinary min/max string stats are sufficient for a negative result.
+    """
+    if statistics is None:
+        return False
+    return (getattr(statistics,"has_min_max",False) is True
+            and getattr(statistics,"is_min_max_exact",False) is True
+            and type(getattr(statistics,"min",None)) is str
+            and type(getattr(statistics,"max",None)) is str
+            and (canonical<statistics.min or canonical>statistics.max))
+
+
 def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
     started=time.perf_counter()
     canonical,begin,end=parameters(symbol,first,last,max_candidate_rows)
@@ -206,13 +222,7 @@ def query(version_doc,version_sha,symbol,first,last,max_candidate_rows=1200000):
                     # exclude a RowGroup. The column is the canonical
                     # stock symbol (third column of fixed Arrow schema).
                     sym_stats=info.column(2).statistics
-                    if (sym_stats is not None
-                            and sym_stats.has_min_max
-                            and getattr(sym_stats,"is_min_max_exact",False) is True
-                            and isinstance(sym_stats.min,str)
-                            and isinstance(sym_stats.max,str)
-                            and (canonical<sym_stats.min
-                                 or canonical>sym_stats.max)):
+                    if exclude_by_exact_symbol_statistics(sym_stats,canonical):
                         metadata["physical_rowgroups_pruned_by_exact_symbol_stats"]+=1
                         continue
                     metadata["candidate_rows_upper_bound"]+=info.num_rows

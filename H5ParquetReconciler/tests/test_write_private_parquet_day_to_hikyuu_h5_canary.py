@@ -92,6 +92,33 @@ class RealHikyuuH5DayCanaryTests(unittest.TestCase):
         self.assertFalse(result["ready_for_full_market_mirror"])
         self.assertFalse(result["ready_for_production_query"])
 
+    def test_real_purchased_intraday_timestamp_uses_verified_trading_date(self):
+        # Vendor DAY records do not promise midnight timestamps. The
+        # original normalizer accepts any Beijing-local time on the day.
+        import h5py
+        bar=dict(self.bar)
+        dt=datetime.fromisoformat("2026-09-30T15:00:00+08:00")
+        bar["ts"]=int(dt.timestamp()*1000)
+        result=self.run_stage(bar)
+        self.assertEqual(result["written_h5_integer_rows"],1)
+        with h5py.File(self.base/result["private_h5_relative_file"],"r") as h5:
+            self.assertEqual(int(h5["data"]["SH600000"][0]["datetime"]),
+                             202609300000)
+
+    def test_purchased_timestamp_and_trading_date_disagreement_is_rejected(self):
+        bar=dict(self.bar,trading_date="2026-09-29")
+        with self.assertRaisesRegex(ValueError,"differs from trading date"):
+            self.run_stage(bar)
+        self.assertFalse(self.safe.exists())
+
+    def test_h5_only_candidate_still_requires_midnight_timestamp(self):
+        bar=dict(self.bar,value_source="private_h5_mixed_stockday_candidate")
+        dt=datetime.fromisoformat("2026-09-30T15:00:00+08:00")
+        bar["ts"]=int(dt.timestamp()*1000)
+        with self.assertRaisesRegex(ValueError,"must be midnight"):
+            self.run_stage(bar)
+        self.assertFalse(self.safe.exists())
+
     def test_bad_run_id_fails_before_h5_write(self):
         with patch.object(W,"MODULE",self.base),\
              patch.object(W,"OUT",self.out),\

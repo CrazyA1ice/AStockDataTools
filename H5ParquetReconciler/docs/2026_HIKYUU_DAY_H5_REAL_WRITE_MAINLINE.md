@@ -20,3 +20,10 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 用户实际运行新增写出工具的3/3项合成测试PASS，但进入8条真实购买Parquet→独立H5操作后返回`Isolated DAY H5 write refused; sources remain unchanged`；早期CLI把原始异常全部隐藏，**尚不能证明真实H5已写出，也不能推断源行情有问题**。本次直接修复失败诊断：仅输出固定阶段、异常类型及触发的函数/行号，允许的安全错误消息白名单；不打印任何OHLCVA、股票代码、原始文件路径或单条记录。源代码提交`604a1eb995cc24a5cd69946d210cd365a54a403f`。
 
 下一次只需要`git pull --ff-only`、`py_compile`和用**新的12位ID**重试真实8条H5隔离写出；前面3项合成测试已经通过，不需要重复跑25项其他查询回归。失败请记录CLI方括号内的`阶段/异常类/触发函数:行号/安全错误`，不要上传真实H5或单条付费价量。成功后立即继续Hikyuu原生C++实际读取及全日线批量镜像，而不是继续增加计划/版本/索引。
+
+
+## 2026-11-01 真实失败根因已确认并修正
+
+真实Windows首次重试显示：`convert_float64_to_h5_integer/ValueError/raw_row:64/Private DAY timestamp not midnight CST`。不是已验收Parquet损坏；已有`materialize-private-2026-purchased-plus-h5-year.py::normalise`第94—107行**对购买Parquet只要求北京时间日期落在对应年/月**，明确仅对**H5候选**才强制午夜，而我新写的镜像转换器误将“午夜”限制应用于所有来源。现已改为：购买Parquet取现有SHA绑定`trading_date`及时间戳的北京时间**日期**一致即可；生成Hikyuu日线目标键`YYYYMMDD0000`，**不改原ts或OHLCVA**；H5独有行仍检查午夜。增加3项针对性回归测试，当前该写出器共6项。**无需重建16年日线，亦无需重跑25项查询回归。**
+
+下一条单行PowerShell依次执行更新、语法检查、6项写入测试、真实8条日线隔离H5写入/回读。发生错误会保留已生成的隔离文件（如有），不触碰正式H5或购买Parquet。注意真实Hikyuu C++原生读取验收尚未通过，不能把h5py读回称为已完成全市场同步。

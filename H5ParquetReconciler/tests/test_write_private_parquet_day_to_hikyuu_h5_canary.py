@@ -68,11 +68,22 @@ class RealHikyuuH5DayCanaryTests(unittest.TestCase):
         self.assertEqual(result["written_h5_integer_rows"],1)
         self.assertTrue(result["all_six_fields_exactly_representable_in_h5"])
         self.assertTrue(result["h5py_compound_integer_full_row_readback_verified"])
+        self.assertTrue(result["pytables_table_class_marker_and_40byte_layout_verified"])
+        self.assertEqual(result["native_hikyuu_amount_value_in_purchased_units_requires_multiplier"],10000)
+        self.assertEqual(result["native_hikyuu_volume_value_in_purchased_units_requires_multiplier"],100)
         self.assertFalse(result["hikyuu_cpp_native_reader_verified"])
         self.assertFalse(result["original_hikyuu_h5_rewritten"])
         h5=self.base/result["private_h5_relative_file"]
         with h5py.File(h5,"r") as source:
-            data=source["data"]["SH600000"][0]
+            ds=source["data"]["SH600000"]
+            self.assertEqual(ds.attrs["CLASS"],b"TABLE")
+            self.assertEqual(ds.dtype.itemsize,40)
+            self.assertEqual(ds.dtype.names,(
+                "closePrice","datetime","highPrice","lowPrice",
+                "openPrice","transAmount","transCount"))
+            self.assertEqual(tuple(ds.dtype.fields[k][1] for k in ds.dtype.names),
+                             (0,4,12,16,20,24,32))
+            data=ds[0]
             self.assertEqual(int(data["datetime"]),202609300000)
             self.assertEqual(int(data["openPrice"]),10000)
             self.assertEqual(int(data["transCount"]),100)

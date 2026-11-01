@@ -194,70 +194,85 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
         raise ValueError("Use a new unique isolated minute Parquet output")
     stats=Counter()
     reasons=Counter()
-    data=[]
     parquet_schema=schema(pa)
-    day_base=int(day.strftime("%Y%m%d"))*10000
-    lower=day_base
+    lower=int(day.strftime("%Y%m%d"))*10000
     upper=int((day+timedelta(days=1)).strftime("%Y%m%d"))*10000
-    for market in ("sh","sz","bj"):
-        file=root/"HikyuuData"/f"{market}_{period}.h5"
-        with h5py.File(file,"r") as fh:
-            group=fh.get("data")
-            if not isinstance(group,h5py.Group):
-                raise ValueError("Missing original Hikyuu minute data group")
-            for symbol in group:
-                if (not re.fullmatch(market.upper()+r"\d{6}",symbol)
-                        or not CORE.is_a_share_candidate(symbol,day.year)):
-                    continue
-                ds=group[symbol]
-                if not isinstance(ds,h5py.Dataset) or not set(RAW_FIELDS).issubset(ds.dtype.names or ()):
-                    reasons["invalid_native_h5_schema"]+=1
-                    continue
-                a,b=CORE.h5_key_slice(ds,lower,upper)
-                if a==b:
-                    continue
-                stats["h5_stockdays_seen"]+=1
-                if symbol in purchased:
-                    stats["h5_stockdays_skipped_purchased_priority"]+=1
-                    continue
-                if b-a>240 or stats["h5_rows_examined"]+(b-a)>max_h5_rows:
-                    raise ValueError("Minute H5 source rows exceed bounded day budget")
-                original=ds[a:b]
-                stats["h5_rows_examined"]+=len(original)
-                classification=completeness(
-                    [int(r["datetime"]) for r in original],day,period)
-                if classification!="complete":
-                    reasons[classification]+=1
-                    continue
-                try:
-                    chunk=[converted_row(r,symbol,period,day) for r in original]
-                except (TypeError,ValueError,OverflowError):
-                    reasons["invalid_native_minute_values"]+=1
-                    continue
-                data.extend(chunk)
-                stats["h5_full_stockdays_staged"]+=1
-    data.sort(key=lambda r:(r["symbol"],r["ts"]))
-    if any(data[i]["symbol"]==data[i-1]["symbol"] and data[i]["ts"]==data[i-1]["ts"]
-           for i in range(1,len(data))):
-        raise ValueError("Duplicated normalized H5 minute key")
     target.mkdir(parents=True,exist_ok=False)
-    table=pa.Table.from_pylist(data,schema=parquet_schema)
-    pq.write_table(table,output,compression="zstd",row_group_size=65536)
-    # Replay native integer columns and exact source identity on disk.
-    with pq.ParquetFile(output) as f:
-        if f.schema_arrow!=parquet_schema or f.metadata.num_rows!=len(data):
+    total=0
+    input_digest=hashlib.sha256()
+    buffer=[]
+    # Bound working memory to about 32k bars even on a 1.3m-bar day.
+    def flush(writer):
+        if not buffer:
+            return
+        chunk=pa.Table.from_pylist(buffer,schema=parquet_schema)
+        writer.write_table(chunk,row_group_size=32768)
+        buffer.clear()
+
+    with pq.ParquetWriter(output,parquet_schema,compression="zstd") as writer:
+        for market in ("sh","sz","bj"):
+            file=root/"HikyuuData"/f"{market}_{period}.h5"
+            with h5py.File(file,"r") as fh:
+                group=fh.get("data")
+                if not isinstance(group,h5py.Group):
+                    raise ValueError("Missing original Hikyuu minute data group")
+                for symbol in group:
+                    if (not re.fullmatch(market.upper()+r"\d{6}",symbol)
+                            or not CORE.is_a_share_candidate(symbol,day.year)):
+                        continue
+                    ds=group[symbol]
+                    if (not isinstance(ds,h5py.Dataset)
+                            or not set(RAW_FIELDS).issubset(ds.dtype.names or ())):
+                        reasons["invalid_native_h5_schema"]+=1
+                        continue
+                    a,b=CORE.h5_key_slice(ds,lower,upper)
+                    if a==b:
+                        continue
+                    stats["h5_stockdays_seen"]+=1
+                    if symbol in purchased:
+                        stats["h5_stockdays_skipped_purchased_priority"]+=1
+                        continue
+                    if b-a>240 or stats["h5_rows_examined"]+(b-a)>max_h5_rows:
+                        raise ValueError("Minute H5 source rows exceed bounded day budget")
+                    original=ds[a:b]
+                    stats["h5_rows_examined"]+=len(original)
+                    classification=completeness(
+                        [int(r["datetime"]) for r in original],day,period)
+                    if classification!="complete":
+                        reasons[classification]+=1
+                        continue
+                    try:
+                        rows=[converted_row(r,symbol,period,day) for r in original]
+                    except (TypeError,ValueError,OverflowError):
+                        reasons["invalid_native_minute_values"]+=1
+                        continue
+                    rows.sort(key=lambda r:r["ts"])
+                    if any(rows[k]["ts"]==rows[k-1]["ts"]
+                           for k in range(1,len(rows))):
+                        raise ValueError("Duplicate normalized H5 minute timestamp")
+                    for row in rows:
+                        input_digest.update(json.dumps(
+                            row,sort_keys=True,allow_nan=False).encode())
+                    buffer.extend(rows)
+                    total+=len(rows)
+                    stats["h5_full_stockdays_staged"]+=1
+                    if len(buffer)>=32768:
+                        flush(writer)
+        flush(writer)
+    # Full native integer and normalized OHLCVA row-by-row check.
+    with pq.ParquetFile(output) as file:
+        if file.schema_arrow!=parquet_schema or file.metadata.num_rows!=total:
             raise ValueError("Minute gap Parquet row/schema readback changed")
         digest=hashlib.sha256()
-        for batch in f.iter_batches(batch_size=65536,use_threads=False):
+        allowed=session_stamps(day,period)
+        for batch in file.iter_batches(batch_size=65536,use_threads=False):
             for row in batch.to_pylist():
                 if (row["period"]!=period
                         or row["value_source"]!="h5_only_complete_stockday"
-                        or row["h5_native_datetime"] not in session_stamps(day,period)):
+                        or row["h5_native_datetime"] not in allowed):
                     raise ValueError("Written native minute row identity changed")
-                digest.update(json.dumps(row,sort_keys=True,allow_nan=False).encode())
-    input_digest=hashlib.sha256()
-    for row in data:
-        input_digest.update(json.dumps(row,sort_keys=True,allow_nan=False).encode())
+                digest.update(json.dumps(
+                    row,sort_keys=True,allow_nan=False).encode())
     if digest.digest()!=input_digest.digest():
         raise ValueError("H5 native integer fields changed during Parquet write")
     return {
@@ -271,7 +286,7 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
             (1 if period=="1min" else 5),
         "minute_time_alignment_vendor_certified":False,
         "h5_raw_integer_fields_preserved":True,
-        "private_parquet_rows":len(data),
+        "private_parquet_rows":total,
         "private_parquet_stockdays":int(stats["h5_full_stockdays_staged"]),
         "purchased_scan":scan,
         "other_h5_counts":{k:int(v) for k,v in stats.items()},

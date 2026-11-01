@@ -28,7 +28,7 @@ HERE=Path(__file__).resolve().parent
 MODULE=HERE.parent.resolve()
 OUT=MODULE/"work"/"h5_mirror"/"canaries"
 REPORTS=MODULE/"reports"
-SUFFIX=re.compile("[a-f0-9]{12}\\Z")
+SUFFIX=re.compile(r"[a-f0-9]{12}\Z")
 FIELDS=("open","high","low","close","volume","amount")
 UNITS={"open":1000,"high":1000,"low":1000,"close":1000,
        "volume":1/100,"amount":1/1000}
@@ -171,9 +171,9 @@ def stage(reader,symbol,version_safe,sha,start,end,
         "source_symbol_and_exact_dates_exported_to_safe":False,
         "source_ohlcva_exported_to_safe":False,
     }
-    with safe.open("x",encoding="utf-8",newline="\\n") as f:
+    with safe.open("x",encoding="utf-8",newline="\n") as f:
         json.dump(doc,f,sort_keys=True,indent=2)
-        f.write("\\n")
+        f.write("\n")
     return doc
 
 

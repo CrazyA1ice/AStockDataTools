@@ -23,6 +23,8 @@ R=load("minute_legacy_rekey_synthetic",
        TOOLS/"rekey-existing-h5-origin-1min-parquet-to-purchased-end-label.py")
 F=load("minute_legacy_rekey_fixture",
        HERE/"test_write_h5_only_complete_minute_stockdays_to_private_parquet.py")
+U=load("minute_legacy_rekey_purchased_first_physical_union",
+       TOOLS/"write-purchased-first-unified-minute-day-parquet.py")
 
 
 class LegacyH5MinuteRekeyTests(unittest.TestCase):
@@ -108,6 +110,28 @@ class LegacyH5MinuteRekeyTests(unittest.TestCase):
         self.assertEqual(R.sha(self.base/json.loads(self.old.read_text())[
             "period_results"]["1min"]["private_parquet_relative_file"]),self.prior_sha)
         self.assertFalse(result["original_market_files_modified"])
+        # Same test also checks that the migrated SAFE is genuinely
+        # consumable by the purchased-first physical Parquet writer.
+        # This catches contract or H5 1min END-label mismatches BEFORE
+        # the user's 1.6m-row real migration starts.
+        union_out=self.report/"new-physical-unified.json"
+        with self.patched(),patch.object(U,"MODULE",self.base),patch.object(
+                U,"REPORTS",self.report),patch.object(
+                U,"OUT",self.base/"work"/"unified_parquet"/"minute_complete_day"
+        ),patch.object(U.G,"MODULE",self.base),patch.object(
+                U.G,"REPORTS",self.report):
+            united=U.stage_unified(self.base,self.output,"bbbbbbbbbbbb",
+                                   union_out,max_rows=10000)
+        self.assertEqual(united["periods"]["1min"]["unified_rows"],241)
+        self.assertEqual(united["periods"]["5min"]["unified_rows"],49)
+        self.assertEqual(united["periods"]["1min"]["source_rows"][
+            "h5_only_complete_stockday"],240)
+        self.assertEqual(united["periods"]["5min"]["source_rows"][
+            "h5_only_complete_stockday"],48)
+        self.assertEqual(united["periods"]["1min"]["standardized_minute_key_contract"],
+                         "native_1min_end_equals_purchased_1min_end")
+        self.assertEqual(united["periods"]["5min"]["standardized_minute_key_contract"],
+                         "native_5min_end_minus_5_equals_purchased_5min_start")
 
     def test_nonlegacy_candidate_shift_is_rejected_before_new_files(self):
         content=json.loads(self.old.read_text())

@@ -160,6 +160,19 @@ def stage_unified(root,stage_report,run_id,out,*,max_rows=4500000):
             or dest.resolve().parent!=OUT.resolve()):
         raise ValueError("Only NEW private physical minute Parquet files")
     doc,day,sources=G.selected_source(stage_report)
+    # Reject the OLD H5 1min (-1min) candidate key when adding H5 bars
+    # to the same physical dictionary as purchased 1min (END label).
+    # A separate versioned rekey tool converts old SHA-pinned private
+    # Parquet without rereading licensed H5 or overwriting the old file.
+    for period,(source_file,receipt) in sources.items():
+        if receipt["private_parquet_rows"] and (
+                receipt.get("h5_time_convention_source_end_to_candidate_parquet_start_minutes")
+                != (0 if period=="1min" else 5)
+                or receipt.get("standardized_minute_key_contract")!=(
+                    "native_1min_end_equals_purchased_1min_end" if period=="1min"
+                    else "native_5min_end_minus_5_equals_purchased_5min_start")
+        ):
+            raise ValueError("Unaligned legacy H5 minute keys require private rekey")
     sha_before=hash_file(stage_report)
     low,high=as_utc8_day_bound(day)
     # Check all source paths and metadata before creating any output files.
@@ -285,6 +298,7 @@ def stage_unified(root,stage_report,run_id,out,*,max_rows=4500000):
             "unified_parquet_sha256":hash_file(target),
             "full_merged_source_rows_and_vendor_extra_columns_readback_verified":True,
             "minute_time_alignment_vendor_certified":False,
+            "standardized_minute_key_contract":entry.get("standardized_minute_key_contract"),
             "ready_for_production_query":False,
         }
         print("Wrote purchased-first unified private minute Parquet:",period,

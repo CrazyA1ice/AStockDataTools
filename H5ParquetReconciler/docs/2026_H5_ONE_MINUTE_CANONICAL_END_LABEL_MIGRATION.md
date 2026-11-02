@@ -24,3 +24,10 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 ```
 
 执行成功后保留新`real-unified-minute-parquet-20261013-end-key-<id>.json`报告；接下来的2025—2026剩余分钟交易日直接使用已修正的`run-real-minute-h5-gap-unified-range.py`按周/旬批量真实落盘，不再混用旧10-13的-1min物理分区。只有所有交易日和购买股票日内部分钟缺口、异常时间网格等全部验收，才可声称全周期双库一致；金额量化和时间边界仍须单独说明。
+
+
+## 2026-11-02 Windows首次迁移测试修复（不修改真实旧Parquet）
+
+用户最新Windows实际日志：`test_nonlegacy_candidate_shift_is_rejected_before_new_files` PASS，`test_versioned_rekey_uses_staged_h5_integers_no_original_h5_access`在迁移器第90行`Old H5 1min source rows/schema disagree`被严格Schema校验阻断。因此此前新修正版10月13日私有Parquet **尚未产生成功SAFE**。已逐项复核：源私有Parquet工具用`pa.field("ts",pa.int64(),False)`明确声明`ts` **不可空**；这项合成测试为了模拟旧版-60秒的`ts`值，调用了`Table.set_column(...,"ts",shifted)`，用**字符串**作为字段定义意外生成`nullable=True`，违反真实的不可空Schema。问题在**测试构造**而非迁移器实际源校验。现在测试改为传`table.schema.field("ts")`保留`nullable=False`并断言原Schema前后一致；迁移器的严格schema检查完全保留。为避免真实159万行重复解析，迁移器现把每交易日240/48个时间格提前计算一次，并在完成时重查旧Parquet SHA。新增的同一项合成实际写盘测试还继续调用购买优先统一Parquet写入器，验证修正后的两个周期SAFE确实可直接消费，而不是只校验迁移本身。
+
+**下一执行步骤：** 只先跑`test_rekey_existing_h5_origin_1min_parquet_to_purchased_end_label.py`的2项测试，通过后直接运行本页原有`--old-stage-safe`旧版Parquet→新私有分钟Parquet迁移→购买优先统一物理Parquet，不重跑日线、九月批次、10月13日原H5采集或643万条原生H5。现提交只是代码修正，**Windows尚未再次实测，不宣称本次真实迁移成功**。

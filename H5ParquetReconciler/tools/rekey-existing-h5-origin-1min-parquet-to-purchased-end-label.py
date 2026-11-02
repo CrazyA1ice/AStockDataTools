@@ -108,7 +108,7 @@ def rekey(old_safe,run_id,out):
                                 batch.schema.get_field_index("ts"),
                                 pa.field("ts",pa.int64(),nullable=False),
                                 pa.array(shifted,type=pa.int64()))
-                            writer.write_batch(batch,row_group_size=32768)
+                            writer.write_table(pa.Table.from_batches([batch]),row_group_size=32768)
                             count+=batch.num_rows
                 if count!=meta["private_parquet_rows"]:
                     raise ValueError("H5 1min rekey row conservation failed")

@@ -50,21 +50,26 @@ def digest(path):
     return h.hexdigest()
 
 
-def days_between(start,finish,max_days):
+def days_between(start,finish,max_days,exclude_dates=()):
     if (type(max_days) is not int or not 1<=max_days<=15
             or start>finish
             or start<date(2025,1,1) or finish>date(2026,12,31)):
         raise ValueError("Require a bounded 1..15 weekdays range in 2025/2026")
+    excluded=set(exclude_dates)
+    if (len(excluded)!=len(tuple(exclude_dates))
+            or any(type(day) is not date or not start<=day<=finish
+                   or day.weekday()>=5 for day in excluded)):
+        raise ValueError("Excluded days must be unique weekdays in selected range")
     dates=[]
     day=start
     while day<=finish:
-        if day.weekday()<5:
+        if day.weekday()<5 and day not in excluded:
             dates.append(day)
             if len(dates)>max_days:
                 raise ValueError("Too many market candidate weekdays in date range")
         day+=timedelta(days=1)
     if not dates:
-        raise ValueError("No candidate weekdays to process")
+        raise ValueError("No unprocessed candidate weekdays in date range")
     return dates
 
 
@@ -131,10 +136,10 @@ def verified_completed(day,stage_safe,unified_safe,child):
 
 def process(root,start,end,run_id,out,*,max_days=5,
             max_purchased_rows=30000000,max_h5_rows=2500000,
-            max_unified_rows=4500000):
+            max_unified_rows=4500000,exclude_dates=()):
     if type(run_id) is not str or RUN.fullmatch(run_id) is None:
         raise ValueError("Invalid new 12-hex minute batch id")
-    dates=days_between(start,end,max_days)
+    dates=days_between(start,end,max_days,exclude_dates)
     if (not root.is_dir() or REPORTS.is_symlink()
             or Path(out).is_symlink()
             or Path(out).exists()
@@ -209,6 +214,7 @@ def process(root,start,end,run_id,out,*,max_days=5,
         "range_start":start.isoformat(),
         "range_end":end.isoformat(),
         "batch_days":len(completed),
+        "excluded_previous_completed_days":sorted(d.isoformat() for d in exclude_dates),
         "days":completed,
         "aggregated_source_rows":{
             p:{
@@ -233,6 +239,9 @@ def main(argv=None):
     p.add_argument("--to-date",required=True)
     p.add_argument("--run-id",required=True)
     p.add_argument("--max-days",type=int,default=5)
+    p.add_argument("--exclude-day",action="append",default=[],
+                   help="Explicit previously verified YYYY-MM-DD date to skip; "
+                        "never silently regenerate existing completed days")
     p.add_argument("--max-purchased-key-rows",type=int,default=30000000)
     p.add_argument("--max-h5-rows",type=int,default=2500000)
     p.add_argument("--max-unified-rows",type=int,default=4500000)
@@ -246,7 +255,8 @@ def main(argv=None):
             max_days=args.max_days,
             max_purchased_rows=args.max_purchased_key_rows,
             max_h5_rows=args.max_h5_rows,
-            max_unified_rows=args.max_unified_rows)
+            max_unified_rows=args.max_unified_rows,
+            exclude_dates=tuple(date.fromisoformat(x) for x in args.exclude_day))
         print("PASS: physical purchased-first 1min+5min Parquet range",
               result["batch_days"],"days")
         print("SAFE:",args.out)

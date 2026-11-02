@@ -47,6 +47,12 @@
 
 **直接推进反向H5的核心步骤**：已提交 `tools/mirror-real-purchased-first-minute-unified-parquet-to-native-h5.py`，读取**已有**9月3日+10月13日的私有统一Parquet、校验全部源SHA后，按日期/证券/周期写成同一套新6文件原生Hikyuu 40字节TABLE H5；此前H5来源整数直接复用，购买来源按日线候选缩放价格×1000、volume÷100、amount÷1000，逐行统计原Float64量化变化，分钟交易时标也按起点+1/5分钟候选映射，全部H5整数流式回读。**分钟单位/时间标签还没有独立厂商认证**，不会声称无损或启用生产H5；真实6,427,013条写入尚待Windows执行。只用2项聚焦合成实际写盘测试，操作见[购买+H5真实统一分钟Parquet→独立原生H5](2026_REAL_PURCHASED_PLUS_H5_MINUTE_NATIVE_H5_MERGE.md)。原购买Parquet、原H5和之前完成日线镜像绝不修改。
 
+## 2026-11-02 643万条真实两源分钟原生H5已成功；1min跨来源标准键修正是扩大前的唯一阻断
+
+**Windows实测新事实（无需再重跑）：** 先前四个日期的购买Parquet与H5补缺，已真正写成同一套六个原生Hikyuu 40字节TABLE H5并完成全记录整数回读，**1min 5,358,629条 / 5min 1,068,384条 / 共6,427,013条**，来源购买1min 4,026,869 + 5min 802,032、H5补缺1min 1,331,760 + 5min 266,352；报告`reports/mixed-purchased-h5-native-minute-4days-660389198d64.json`，H5目录`work/h5_mirror/minute_union_660389198d64/`。购买**4,631,662条amount**发生定点舍入，分钟量额/时间独立认证及真实Hikyuu C++分钟全市场读取仍待完成。原商业Parquet/H5与既有日线镜像未修改。此次物理H5完工不等于2025—2026分钟历史全量完工。
+
+**扩大新统一分钟前发现的关键标准键矛盾：** 已有`reconcile-local-a-share-h5-parquet.py::pq_stamp`对购买1min视为**分钟结束标签**、5min视为**分钟开始标签**；旧10月13日H5独有Parquet却把H5原生1min时间减了1分钟。此前6,427,013条原生H5自身原生整数未因此变化（H5来源保留原始`h5_native_datetime`），**但旧10月13日私有1min Parquet不能作为未来同键统一查询的规范版本**。已直接修复新H5分钟写出器、混合Parquet写出器、原生H5源时间核验，强制新数据使用1min 0偏移、5min -5偏移；遇旧H5非零分钟分区直接拒绝以防重复/错键。新增`tools/rekey-existing-h5-origin-1min-parquet-to-purchased-end-label.py`从**已经落盘的私有Parquet**迁移原本1,331,760个1min记录的`ts`为原H5结束标签、直接原样复制266,352条5min分区、生成全新的版本SHA和SAFE，不重读源H5、更不覆盖原私有旧版本；随后`write-purchased-first-unified-minute-day-parquet.py`写出10月13日新的规范统一物理Parquet。两项新合成实写/错版本拒绝测试及现有源时间断言已提交，**Windows新版本迁移尚待实际运行**；操作与一行命令见[分钟1min规范结束标签版本迁移](2026_H5_ONE_MINUTE_CANONICAL_END_LABEL_MIGRATION.md)。仍需认证特殊09:30/13:00边界。成功后直接扩展剩余日期的已开发`run-real-minute-h5-gap-unified-range.py`，不重复原有日线与4天原生H5。
+
 ## 从现在开始的最短交付顺序
 
 | 优先级 | 必须交付的实际产物 | 验收证据 | 当前状态 |

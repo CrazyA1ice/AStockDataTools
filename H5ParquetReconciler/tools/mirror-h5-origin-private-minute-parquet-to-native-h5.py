@@ -125,7 +125,9 @@ def native_rows(rows,period,day,dt,np):
         raise ValueError("Empty minute native table batch")
     out=np.empty(len(rows),dtype=dt)
     allowed=STAGE.session_stamps(day,period)
-    shift=1 if period=="1min" else 5
+    # Both H5-origin 1min and purchased 1min use end-of-minute labels.
+    # 5min purchased labels start-of-window; H5 raw labels end-of-window.
+    shift=0 if period=="1min" else 5
     previous=0
     for i,r in enumerate(rows):
         stamp=r["h5_native_datetime"]

@@ -105,6 +105,15 @@ class PurchasedFirstPhysicalMinuteDayTests(unittest.TestCase):
             self.assertEqual({r["symbol"] for r in h5},{"SH600000"})
             self.assertTrue(all(r["purchased__vendor_marker"] is None for r in h5))
             self.assertEqual(h5[0]["h5_native_openPrice"],10500)
+            native=h5[0]["h5_native_datetime"]
+            import datetime as _dt
+            natural=_dt.datetime.strptime(str(native),"%Y%m%d%H%M"
+                ).replace(tzinfo=M.ST.CORE.UTC8)
+            self.assertEqual(h5[0]["ts"],int((natural-_dt.timedelta(
+                minutes=0 if period=="1min" else 5)).timestamp()*1000))
+            self.assertEqual(r["standardized_minute_key_contract"],
+                ("native_1min_end_equals_purchased_1min_end" if period=="1min"
+                 else "native_5min_end_minus_5_equals_purchased_5min_start"))
             self.assertTrue(r["full_merged_source_rows_and_vendor_extra_columns_readback_verified"])
         self.assertFalse(result["full_minute_history_unified"])
         self.assertFalse(result["original_purchased_parquet_or_hikyuu_h5_modified"])

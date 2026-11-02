@@ -69,6 +69,16 @@ def rekey(old_safe,run_id,out):
     try:
         for period in S.PERIODS:
             original,meta=sources[period]
+            offset=0 if period=="1min" else 5
+            # One trading day has only 240/48 native time labels. Decode
+            # those once and reuse them when rekeying AND reading back
+            # all 1,598,112 real bars. Avoid 1.6m repeated strptime calls.
+            expected={
+                native:int((datetime.strptime(str(native),"%Y%m%d%H%M")
+                            .replace(tzinfo=S.CORE.UTC8)
+                            -timedelta(minutes=offset)).timestamp()*1000)
+                for native in S.session_stamps(day,period)
+            }
             p=work/period/(day.isoformat()+".parquet")
             p.parent.mkdir()
             if period=="5min":
@@ -77,11 +87,6 @@ def rekey(old_safe,run_id,out):
                 if sha(p)!=meta["private_parquet_sha256"]:
                     raise ValueError("Unchanged 5min Parquet copy lost source SHA")
             else:
-                expected={}
-                for native in S.session_stamps(day,period):
-                    label=datetime.strptime(str(native),"%Y%m%d%H%M").replace(
-                        tzinfo=S.CORE.UTC8)
-                    expected[native]=int(label.timestamp()*1000)
                 fields=S.schema(pa)
                 count=0
                 with pq.ParquetFile(original,memory_map=False,pre_buffer=False) as reader:
@@ -118,7 +123,6 @@ def rekey(old_safe,run_id,out):
                     raise ValueError("Rekey destination source schema/rows disagree")
                 # Full H5 native timestamp and normalized identity check.
                 num=0
-                offset=0 if period=="1min" else 5
                 for batch in reader.iter_batches(
                         batch_size=32768,use_threads=False,
                         columns=["ts","h5_native_datetime","symbol","period"]):
@@ -126,15 +130,16 @@ def rekey(old_safe,run_id,out):
                     for ts,native,symbol,period_value in zip(
                             vals["ts"],vals["h5_native_datetime"],
                             vals["symbol"],vals["period"]):
-                        d=datetime.strptime(str(native),"%Y%m%d%H%M").replace(
-                            tzinfo=S.CORE.UTC8)
-                        if (ts!=int((d-timedelta(minutes=offset)).timestamp()*1000)
+                        if (type(native) is not int or
+                                ts!=expected.get(native)
                                 or period_value!=period
                                 or not symbol.startswith(("SH","SZ","BJ"))):
                             raise ValueError("Rekey native H5 minute full readback mismatches")
                         num+=1
                 if num!=meta["private_parquet_rows"]:
                     raise ValueError("Rekey readback lost minute bars")
+            if sha(original)!=meta["private_parquet_sha256"]:
+                raise ValueError("Original SHA-bound H5 minute Parquet changed during rekey")
             new=dict(meta)
             new["private_parquet_relative_file"]=p.relative_to(MODULE).as_posix()
             new["private_parquet_sha256"]=sha(p)

@@ -204,6 +204,15 @@ def process(root,start,end,run_id,out,*,max_days=5,
                         "unified_parquet_sha256"],
                 } for period in ST.PERIODS},
         }
+        # A weekday is NOT evidence of a trading session. A zero-bar
+        # weekday must remain visibly unverified, not be misreported as
+        # fully covered exchange trading history.
+        entry["periods_without_source_rows"]=[
+            period for period in ST.PERIODS
+            if entry["by_period"][period]["physical_unified_rows"]==0
+        ]
+        if len(entry["periods_without_source_rows"])==len(ST.PERIODS):
+            entry["status"]="zero_market_rows_not_certified_as_trading_day"
         completed.append(entry)
         print("Completed purchased-first real minute physical day:",
               day.isoformat(),"1min:",entry["by_period"]["1min"],
@@ -215,6 +224,13 @@ def process(root,start,end,run_id,out,*,max_days=5,
         "range_end":end.isoformat(),
         "batch_days":len(completed),
         "excluded_previous_completed_days":sorted(d.isoformat() for d in exclude_dates),
+        "candidate_weekdays_no_market_source_rows":[
+            x["day"] for x in completed
+            if x["status"]=="zero_market_rows_not_certified_as_trading_day"],
+        "candidate_weekdays_partial_periods":{
+            x["day"]:x["periods_without_source_rows"]
+            for x in completed if x["periods_without_source_rows"]
+        },
         "days":completed,
         "aggregated_source_rows":{
             p:{

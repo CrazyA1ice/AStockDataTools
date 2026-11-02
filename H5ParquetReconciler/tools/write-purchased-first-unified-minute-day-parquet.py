@@ -239,7 +239,7 @@ def stage_unified(root,stage_report,run_id,out,*,max_rows=4500000):
             # At most 240 different native minute labels per day. Decode
             # each label once, not for every one of 1.6 million stock bars.
             allowed=ST.session_stamps(day,period)
-            step=1 if period=="1min" else 5
+            step=0 if period=="1min" else 5
             expected_ts={
                 stamp:int((datetime.strptime(str(stamp),"%Y%m%d%H%M")
                            .replace(tzinfo=ST.CORE.UTC8)

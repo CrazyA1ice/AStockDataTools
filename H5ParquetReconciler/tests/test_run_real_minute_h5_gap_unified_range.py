@@ -97,9 +97,17 @@ class RealMinuteRangePhysicalWrites(unittest.TestCase):
 
     def test_workday_limit_fails_before_writing_any_market_file(self):
         from datetime import date
+        monday=date(2026,10,12)
+        friday=date(2026,10,16)
+        completed=date(2026,10,13)
+        chosen=B.days_between(monday,friday,4,exclude_dates=(completed,))
+        self.assertEqual([d.isoformat() for d in chosen],[
+            "2026-10-12","2026-10-14","2026-10-15","2026-10-16"])
+        with self.assertRaisesRegex(ValueError,"Excluded days must be unique"):
+            B.days_between(monday,friday,5,exclude_dates=(completed,completed))
         with self.patched(),self.assertRaisesRegex(ValueError,"Too many"):
-            B.process(self.base,date(2026,10,12),date(2026,10,16),
-                      self.parent,self.out,max_days=2)
+            B.process(self.base,monday,friday,self.parent,self.out,
+                      max_days=3,exclude_dates=(completed,))
         self.assertFalse(self.out.exists())
         self.assertFalse(self.stage_dir.exists())
 

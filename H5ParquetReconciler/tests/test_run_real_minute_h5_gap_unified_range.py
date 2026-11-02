@@ -62,6 +62,9 @@ class RealMinuteRangePhysicalWrites(unittest.TestCase):
                 max_days=1,max_purchased_rows=10000,
                 max_h5_rows=10000,max_unified_rows=10000)
         self.assertEqual(result["batch_days"],1)
+        self.assertEqual(result["candidate_weekdays_no_market_source_rows"],[])
+        self.assertEqual(result["candidate_weekdays_partial_periods"],{})
+        self.assertEqual(result["days"][0]["periods_without_source_rows"],[])
         self.assertEqual(result["days"][0]["status"],
                          "new_physical_day_written_and_verified")
         self.assertEqual(result["aggregated_source_rows"]["1min"],{

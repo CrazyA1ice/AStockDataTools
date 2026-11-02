@@ -92,6 +92,15 @@ class RealMinuteGapWrites(unittest.TestCase):
             self.assertEqual(set(table.column("symbol").to_pylist()),{"SH600000"})
             self.assertEqual(table.column("h5_native_datetime")[0].as_py(),
                 min(M.session_stamps(self.day,period)))
+            # Canonical purchased 1min timestamps are minute END, while
+            # purchased 5min timestamps are the interval START.
+            from datetime import datetime
+            earliest=min(M.session_stamps(self.day,period))
+            end=datetime.strptime(str(earliest),"%Y%m%d%H%M"
+                ).replace(tzinfo=M.CORE.UTC8)
+            minutes=0 if period=="1min" else 5
+            self.assertEqual(table.column("ts")[0].as_py(),
+                int((end-timedelta(minutes=minutes)).timestamp()*1000))
             self.assertFalse(result["ready_for_automatic_market_merge"])
             self.assertTrue(result["h5_raw_integer_fields_preserved"])
             self.assertEqual(result["quarantined_stockdays"],{})

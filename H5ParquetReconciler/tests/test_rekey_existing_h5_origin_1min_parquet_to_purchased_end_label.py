@@ -49,8 +49,15 @@ class LegacyH5MinuteRekeyTests(unittest.TestCase):
         legacy=self.base/periods["1min"]["private_parquet_relative_file"]
         table=pq.read_table(legacy)
         shifted=pc.subtract(table.column("ts"),pa.scalar(60000,pa.int64()))
+        # This synthesizes an OLD-version data value, not an OLD-version
+        # schema. Keep the original required (nullable=False) ts field.
+        # Passing just the string "ts" silently replaces it with a
+        # nullable=True Field, making the migration's strict schema
+        # preflight reject this synthetic fixture before any real work.
+        original_schema=table.schema
         table=table.set_column(table.schema.get_field_index("ts"),
-                              "ts",shifted)
+                               table.schema.field("ts"),shifted)
+        self.assertEqual(table.schema,original_schema)
         pq.write_table(table,legacy,compression="zstd")
         periods["1min"]["private_parquet_sha256"]=R.sha(legacy)
         periods["1min"]["h5_time_convention_source_end_to_candidate_parquet_start_minutes"]=1

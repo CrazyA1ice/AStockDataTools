@@ -294,7 +294,10 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
         "source_purchased_parquet_stockdays_priority_preserved":True,
         "original_purchased_parquet_or_h5_modified":False,
         "h5_time_convention_source_end_to_candidate_parquet_start_minutes":
-            (1 if period=="1min" else 5),
+            (0 if period=="1min" else 5),
+        "standardized_minute_key_contract":
+            ("native_1min_end_equals_purchased_1min_end" if period=="1min"
+             else "native_5min_end_minus_5_equals_purchased_5min_start"),
         "minute_time_alignment_vendor_certified":False,
         "h5_raw_integer_fields_preserved":True,
         "private_parquet_rows":total,

@@ -53,6 +53,12 @@
 
 **扩大新统一分钟前发现的关键标准键矛盾：** 已有`reconcile-local-a-share-h5-parquet.py::pq_stamp`对购买1min视为**分钟结束标签**、5min视为**分钟开始标签**；旧10月13日H5独有Parquet却把H5原生1min时间减了1分钟。此前6,427,013条原生H5自身原生整数未因此变化（H5来源保留原始`h5_native_datetime`），**但旧10月13日私有1min Parquet不能作为未来同键统一查询的规范版本**。已直接修复新H5分钟写出器、混合Parquet写出器、原生H5源时间核验，强制新数据使用1min 0偏移、5min -5偏移；遇旧H5非零分钟分区直接拒绝以防重复/错键。新增`tools/rekey-existing-h5-origin-1min-parquet-to-purchased-end-label.py`从**已经落盘的私有Parquet**迁移原本1,331,760个1min记录的`ts`为原H5结束标签、直接原样复制266,352条5min分区、生成全新的版本SHA和SAFE，不重读源H5、更不覆盖原私有旧版本；随后`write-purchased-first-unified-minute-day-parquet.py`写出10月13日新的规范统一物理Parquet。两项新合成实写/错版本拒绝测试及现有源时间断言已提交，**Windows新版本迁移尚待实际运行**；操作与一行命令见[分钟1min规范结束标签版本迁移](2026_H5_ONE_MINUTE_CANONICAL_END_LABEL_MIGRATION.md)。仍需认证特殊09:30/13:00边界。成功后直接扩展剩余日期的已开发`run-real-minute-h5-gap-unified-range.py`，不重复原有日线与4天原生H5。
 
+## 2026-11-02 10月13日1min统一时间键真实迁移已完成；开始批量处理十月剩余日
+
+**用户Windows真实PASS：** 新10月13日私有统一Parquet `reports/real-unified-minute-parquet-20261013-end-key-11127c8d60ba.json`，其中H5 1min 1,331,760条严格按原生分钟**结束标签**生成统一购买风格的`ts`，5min 266,352条按结束减5分钟、其原Parquet整数SHA不变；两项迁移合成实写测试2/2 PASS、真实全部1,598,112条已写入新独立Parquet并完整回读，原旧版、购买原件与Hikyuu原H5未改，老四日6,427,013条原生H5字节校验无需重跑。仍是分钟时间键的项目约定，供应商时标单位和C++分钟消费未认证。
+
+**新的一步实际开展2026年10月批量**：已直接增强已有`tools/run-real-minute-h5-gap-unified-range.py`，增加显式 `--exclude-day 2026-10-13` 只允许范围内不重复的候选工作日，并在汇总SAFE标记**两个周期都0条数据**的候选工作日`zero_market_rows_not_certified_as_trading_day`，不把闭市/源未覆盖日当成已对齐交易所记录。原批次SHA和按日写盘/恢复机制未改。首轮选**2026-10-09至2026-10-16**，排除10月13日，剩5个候选工作日（10/09、10/12、10/14、10/15、10/16）；直接产出两周期实际私有Parquet/SHA，避免再次处理10月13日。聚焦2项合成实际批量测试，小范围真实Windows运行命令见 [十月5日分钟真实批量](2026_REAL_MINUTE_MULTIDAY_PURCHASED_FIRST_BATCH.md)。**新10月批次尚未Windows实测**，绝不能说剩余日期已经完成。10月后续逐周滚动，再扩大2025—2026剩余有H5源覆盖日期及统一全量H5，不能只重复四日私有H5样例。
+
 ## 从现在开始的最短交付顺序
 
 | 优先级 | 必须交付的实际产物 | 验收证据 | 当前状态 |

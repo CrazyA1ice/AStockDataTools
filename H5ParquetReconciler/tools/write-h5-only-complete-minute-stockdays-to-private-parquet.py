@@ -105,7 +105,10 @@ def converted_row(row,symbol,period,day):
     dt=datetime.strptime(str(stamp),"%Y%m%d%H%M").replace(tzinfo=CORE.UTC8)
     if dt.date()!=day:
         raise ValueError("H5 minute stamp outside requested date")
-    shift=1 if period=="1min" else 5
+    # Match purchased Parquet time-label convention: 1min records carry
+    # minute END timestamps, whereas 5min records carry START timestamps.
+    # Preserve original H5 1min end; only subtract 5min for 5min sources.
+    shift=0 if period=="1min" else 5
     started=dt-timedelta(minutes=shift)
     values=(
         raw["openPrice"]/1000,raw["highPrice"]/1000,

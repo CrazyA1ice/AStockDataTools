@@ -138,7 +138,9 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000,
     mean every row belongs to the requested stock-day; the old 6m budget
     incorrectly counted unrelated dates and failed on real January data.
     Use Arrow's vectorized timestamp filter before converting symbols to
-    Python. Memory stays bounded by the 65,536-row Arrow batch.
+    Python. Arrow batches are bounded to 65,536 rows. Optional exact-key
+    mode also stores one day's purchased key sets in memory, conservatively
+    bounded by max_rows; it must not be used to scan many days at once.
     """
     import pyarrow as pa
     import pyarrow.compute as pc

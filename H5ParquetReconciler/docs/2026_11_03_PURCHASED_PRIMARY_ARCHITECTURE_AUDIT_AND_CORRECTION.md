@@ -30,8 +30,9 @@
 - 只在严格发现至少1个完整且有效的H5独有股票日时，调用既有经过实机使用的 `write-h5-only-complete-minute-stockdays-to-private-parquet.py::write_private_day`；写出的市场行**100%来自H5**, 保留原H5整数，走全行回读和SHA。若两个周期分别为0行则不创建任意分钟Parquet，甚至不创建`work/unified_parquet/minute_gap_staging/<rid>/`目录；显式写入时仅留0增量JSON报告。
 - 只读预览是默认行为；真实写盘需要**显式**`--write-gap-only`或新PowerShell wrapper 的`-Run`。新/旧任务共享单一写盘锁；先后检查原购买和H5元数据签名，来源处理期间变化就拒绝验收。签名基于路径、文件大小、mtime_ns、inode，**不是源文件内容SHA**，不得声称跨运行不可变生产版本证明。
 - `partial_purchased_stockday_minute_keys_checked=false`：一旦购买源某个股票日有任何分钟记录，本轮**不猜测**该日其余时间键，也不把它宣称“完整无缺”。本轮只能处理“购买端整股票日0行”的H5补缺；下一步才扩展到同股票日内部的精确时间键差集并建立年级复用索引。即使该新程序输出零行，也**不代表该日完全没有部分缺分钟**。
+- 写盘前检查该日期旧 `minute-batch-stage-*`、旧H5时间键迁移以及新gap-only验收记录；若曾有历史H5补差且本次又发现候选补差，则**拒绝新增**，避免重复计算此前的10月13日等已验收H5行；复核旧证据与新来源版本后才可另行处理。
 - 输出含`purchased_bars_rematerialized=0`、`accepted_new_h5_full_stockday_gap_rows`、每周期H5验收行数与SHA、隔离计数、来源元数据指纹、生产未激活标记，便于以后发布逻辑统一源版本。
-- `tests/test_run_minute_h5_gap_only_overlay.py`新增7项本地合成真实H5/Parquet写盘测试：只读无副作用、购买覆盖0文件、真实H5独有288条仅写H5、5min不完整隔离、来源期间变化拒绝、无数据日不写、run-id防覆盖。**这些新测试尚未得到用户Windows PASS回执，不能声称实机验证**。
+- `tests/test_run_minute_h5_gap_only_overlay.py`新增8项本地合成真实H5/Parquet写盘测试：只读无副作用、购买覆盖0文件、真实H5独有288条仅写H5、5min不完整隔离、来源期间变化拒绝、无数据日不写、run-id防覆盖、已存在旧H5日验收报告时拒绝重复计为净增量。**这些新测试尚未得到用户Windows PASS回执，不能声称实机验证**。
 
 用户现在可在Windows仓库目录运行下面**一整行**：更新开发分支，自动跑既有H5补差测试与7项新测试，再只读核查之前误重写的2026-01-07，**默认不写任何真实行情或结果文件**：
 
@@ -107,4 +108,4 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 - `run-minute-2026-backfill.ps1 -Run`、`tools/launch-minute-year-backfill.py`以及GUI“开始新任务/恢复已有任务”的旧**全来源复制模式不再属于主线**，在新只写缺口程序验收之前不得继续用它们批量写盘；旧GUI**仅用于观察和日终暂停**。
 - `tools/write-purchased-first-unified-minute-day-parquet.py`和`tools/run-real-minute-h5-gap-unified-range.py`保留作隔离的历史验收工具，不应冒充新差集写出器。下一阶段不通过人为删除已有SAFE来绕过重复检查。
 - `docs/2026_11_03_MINUTE_41D_REAL_BACKFILL.md`、`docs/2026_11_03_FASTEST_COMPLETE_PARQUET_DELIVERY.md`及README旧分钟按日批量启动建议均视为**历史记录、已被本文件取代**。
-- **本文件只提出纠正后的执行标准，并非声称差集写出器或生产统一查询已经实现；需要后续专项编码、Windows小样本真实验收，才能重新启动真实补缺。**
+- **现已实现并提交仅补“完整缺失股票日”的H5-only写出器、零增量不写行情，以及8项合成测试（尚待Windows回归）；“同股票日内部精确分钟键差集、跨批次SHA级来源版本合并、生产统一查询”仍未实现，绝不能称全部差集处理与生产激活已完成。**

@@ -282,6 +282,15 @@ def main(argv=None):
     rid=args.run_id or secrets.token_hex(6)
     result=execute(args.root,args.day,rid,write=args.write_gap_only)
     print(json.dumps(result,sort_keys=True,ensure_ascii=False,indent=2))
+    for period in PERIODS:
+        x=result["periods"][period]
+        y=result["outputs"][period]
+        print(period+": purchased_stockdays="+str(x["purchased_source_stockdays"])+
+              " eligible_H5_only_full_stockday_rows="+str(x["eligible_h5_only_rows"])+
+              " actually_written_H5_rows="+str(y["written_h5_gap_rows"])+
+              " purchased_rows_copied=0",flush=True)
+    print("Total H5-only rows actually written="+
+          str(result["accepted_new_h5_full_stockday_gap_rows"]),flush=True)
     if not args.write_gap_only:
         print("READ-ONLY PREVIEW. Add --write-gap-only for NEW H5-only gaps, no purchased copies.")
 

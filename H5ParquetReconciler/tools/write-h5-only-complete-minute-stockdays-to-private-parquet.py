@@ -130,7 +130,8 @@ def converted_row(row,symbol,period,day):
     }
 
 
-def purchased_stockdays(root,period,day,*,max_rows=6000000):
+def purchased_stockdays(root,period,day,*,max_rows=6000000,
+                      include_time_keys=False):
     """Read only purchased ts/symbol columns; budget *date-matched* keys.
 
     Large vendor rowgroups may span many dates. Scanning a rowgroup does NOT
@@ -150,6 +151,7 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000):
     high=int(datetime(next_day.year,next_day.month,next_day.day,
                       tzinfo=CORE.UTC8).timestamp()*1000)
     stocks=set()
+    keys_by_stockday={} if include_time_keys else None
     scanned=0
     matched=0
     groups=0
@@ -185,18 +187,34 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000):
                     if matched>max_rows:
                         raise ValueError(
                             "Minute purchased matching-day key budget exceeded")
-                    for source_symbol in matched_symbols.to_pylist():
-                        sym=CORE.symbol_id(source_symbol)
-                        if sym and CORE.is_a_share_candidate(sym,day.year):
-                            stocks.add(sym)
-    return stocks,{
+                    matched_stamps=(pc.filter(timestamps,within_day).to_pylist()
+                                    if include_time_keys else None)
+                    source_symbols=matched_symbols.to_pylist()
+                    if include_time_keys:
+                        for stamp,source_symbol in zip(matched_stamps,source_symbols):
+                            sym=CORE.symbol_id(source_symbol)
+                            if sym and CORE.is_a_share_candidate(sym,day.year):
+                                stocks.add(sym)
+                                keys=keys_by_stockday.setdefault(sym,set())
+                                if stamp in keys:
+                                    raise ValueError(
+                                        "Duplicate purchased minute key on target date")
+                                keys.add(stamp)
+                    else:
+                        for source_symbol in source_symbols:
+                            sym=CORE.symbol_id(source_symbol)
+                            if sym and CORE.is_a_share_candidate(sym,day.year):
+                                stocks.add(sym)
+    scan={
         "purchased_files_opened":len(files),
         "purchased_rowgroups_read":groups,
         "purchased_key_candidate_rows_scanned":scanned,
         "purchased_timestamp_matched_day_rows":matched,
         "purchased_key_budget_applied_to":"matching_day_rows_only",
         "purchased_stockdays_present":len(stocks),
+        "exact_time_keys_in_memory":bool(include_time_keys),
     }
+    return (stocks,scan,keys_by_stockday) if include_time_keys else (stocks,scan)
 
 
 def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,

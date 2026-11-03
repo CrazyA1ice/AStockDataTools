@@ -37,7 +37,17 @@ Windows执行 `run-full-history-day-candidates.ps1 -Run` 真实回执：2+2项�
 
 新增 `tools/audit-full-history-day-quarantine-and-catalog.py`：接受本机刚产生的全历史候选 SAFE，预先以SHA256固定其内容；复用已验21年历史RAW来源校验、既有16年Parquet物理版本校验、21份年度报告与候选+隔离文件SHA/Schema/Parquet行数检查；每年仅读取**隔离原因列** `quarantine_reason`，按原因汇总校验与各年度原报告一致。最终仅产生 `reports/*.json`（年份/计数/分类/SHA，不含股票代码和实际量价）。输出两个强制分层：2011—2026已验物理层 vs 1990—2010未认证候选及原生整数隔离层；`ready_for_production_query=false`，**不激活生产/不重建任何行**。
 
-### 唯一下一条Windows单行PowerShell
+### 推荐：更短的一条Windows命令（无需重跑历史转换）
+
+已新增 `run-day-catalog-audit.ps1`，会自动完成源码更新后的四项测试、SHA重验和8,340条隔离原因分类。**仅访问已经完成的私有21年RAW/候选/隔离Parquet，不会再写入3,682,327条市场数据，也不会激活正式行情。**
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "分支切换失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-day-catalog-audit.ps1; if ($LASTEXITCODE -ne 0) { throw "历史21年隔离原因审计或SHA验收失败；原数据保持不变" }
+```
+
+下面保留等价的**手工展开参数版**，仅供审计与排错使用；正常运行短命令即可。
+
+### 展开版Windows单行PowerShell
 
 ```powershell
 cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "分支切换失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; .\.venv\Scripts\python.exe -m py_compile H5ParquetReconciler\tools\audit-full-history-day-quarantine-and-catalog.py H5ParquetReconciler\tests\test_audit_full_history_day_quarantine_and_catalog.py; if ($LASTEXITCODE -ne 0) { throw "审计脚本语法失败" }; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_audit_full_history_day_quarantine_and_catalog.py" -v; if ($LASTEXITCODE -ne 0) { throw "四项年度隔离原因测试失败，未运行真实报告审计" }; $v="H5ParquetReconciler\reports\pre2011-day-historical-candidates-and-2011-2026-union-3c808c8da646.json"; if (-not (Test-Path -LiteralPath $v -PathType Leaf)) { throw "本机21年真实候选版本SAFE丢失" }; $sha=(Get-FileHash -LiteralPath $v -Algorithm SHA256).Hash.ToLowerInvariant(); $id=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\pre2011-historical-reject-reasons-catalog-$id.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\audit-full-history-day-quarantine-and-catalog.py --candidate-version-safe $v --candidate-version-sha256 $sha --full21-safe "H5ParquetReconciler\reports\pre2011-full21-verify-9bba81ed3c33.json" --modern-version-safe "H5ParquetReconciler\reports\private-2011-2026-all16-sha-bound-version-15fb74d42d0b.json" --modern-version-sha256 bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05 --out $out --audit-sha-bound-private-only; if ($LASTEXITCODE -ne 0) { throw "真实21年历史目录SHA或隔离原因验收失败，原数据不变" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; if ($r.historical_purchase_schema_unverified_candidate_rows -ne 3673987 -or $r.historical_native_quarantined_rows -ne 8340 -or $r.all_history_source_rows_accounted -ne 17820308 -or $r.ready_for_production_query -ne $false) { throw "历史真实计数或生产门禁异常" }; Write-Host "PASS：1990—2026分层来源全数保留，隔离原因SHA审核完成；下一步只调查原因与历史量纲"; Write-Host "SAFE：$out"; $r.all_historical_quarantine_reasons | Format-List

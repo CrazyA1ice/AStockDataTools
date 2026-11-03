@@ -12,6 +12,7 @@ The index is rejected when this metadata changes; original sources stay read-onl
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import importlib.util
 import json
 import os
@@ -184,7 +185,9 @@ def build(root,first,last,run_id,*,max_date_rows=50000000):
         "ready_for_production_query":False,
     }
     try:
-        with sqlite3.connect(temp) as db:
+        # sqlite3.Connection context manager does NOT close the handle;
+        # explicit closing is required before Windows os.replace().
+        with closing(sqlite3.connect(temp)) as db, db:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("CREATE TABLE stockday (period TEXT NOT NULL, day TEXT NOT NULL, "
@@ -224,7 +227,7 @@ def query_index(path,root,period,day):
     d=date.fromisoformat(day) if isinstance(day,str) else day
     if not isinstance(d,date):
         raise ValueError("Invalid requested index day")
-    with sqlite3.connect("file:"+path.resolve().as_posix()+"?mode=ro",uri=True) as db:
+    with closing(sqlite3.connect(path.resolve().as_uri()+"?mode=ro",uri=True)) as db:
         found=db.execute("SELECT value FROM meta WHERE key='manifest'").fetchone()
         if not found:
             raise ValueError("Missing purchased index manifest")

@@ -78,6 +78,14 @@ def qualify(row,year):
         return None,"native_volume_or_amount_zero"
     # Exact integer test; do not silently force a single factor on all years.
     if not FACTOR.vwap_candidate_matches(amt,vol,lo,hi,10000):
+        # Diagnose, but DO NOT auto-switch conversion units. This makes
+        # early historical regimes visible for independent review.
+        alternatives=[factor for factor in FACTOR.FACTOR_GRID if factor!=10000
+                      and FACTOR.vwap_candidate_matches(amt,vol,lo,hi,factor)]
+        if len(alternatives)==1:
+            return None,"alternative_historical_vwap_factor_"+str(alternatives[0])
+        if alternatives:
+            return None,"multiple_alternative_historical_vwap_factors"
         return None,"historical_vwap_factor10000_not_supported"
     ts=int(datetime(when.year,when.month,when.day,tzinfo=UTC8).timestamp()*1000)
     item={

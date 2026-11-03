@@ -34,6 +34,8 @@ def load(tag,filename):
 N=load("minute_exact_key_existing_gap_preview",
        "run-minute-h5-gap-only-overlay.py")
 ST=N.ST
+I=load("minute_exact_key_optional_purchased_sqlite_index",
+       "build-minute-purchased-key-index.py")
 
 
 def normalized_native_keys(day,period):
@@ -48,12 +50,17 @@ def normalized_native_keys(day,period):
 
 
 def inspect_exact_period(root,day,period,*,max_purchased_rows=6000000,
-                         max_native_rows=2500000):
+                         max_native_rows=2500000,key_index=None):
     """Single date-only purchased scan + bounded H5 native datetime probes."""
     import h5py
 
-    bought,scan,bought_keys=ST.purchased_stockdays(
-        root,period,day,max_rows=max_purchased_rows,include_time_keys=True)
+    if key_index is None:
+        bought,scan,bought_keys=ST.purchased_stockdays(
+            root,period,day,max_rows=max_purchased_rows,include_time_keys=True)
+        scan=dict(scan, index_used=False)
+    else:
+        bought_keys,scan=I.query_index(key_index,root,period,day)
+        bought=set(bought_keys)
     normalized=normalized_native_keys(day,period)
     lower=int(day.strftime("%Y%m%d"))*10000
     upper=int((day+timedelta(days=1)).strftime("%Y%m%d"))*10000
@@ -152,12 +159,13 @@ def inspect_exact_period(root,day,period,*,max_purchased_rows=6000000,
     }
 
 
-def preview(root,day):
+def preview(root,day,*,key_index=None):
     root,day=N.validate(root,day,"000000000000")
     before=N.source_snapshot(root,day.year)
     outputs={}
     for period in N.PERIODS:
-        outputs[period]=inspect_exact_period(root,day,period)
+        outputs[period]=inspect_exact_period(
+            root,day,period,key_index=key_index)
         print("READONLY "+period+" exact-key probe: H5-only full-stockday="+
               str(outputs[period]["h5_only_keys_on_full_purchased_absence_days"])+
               " partial-stockday candidate keys="+
@@ -179,7 +187,9 @@ def preview(root,day):
         "h5_only_candidate_keys_not_automatically_accepted":True,
         "original_purchased_parquet_or_h5_modified":False,
         "ready_for_production_query":False,
-        "reusable_year_key_index_built":False,
+        "reusable_key_index_used":key_index is not None,
+        "reusable_key_index_path":str(key_index) if key_index else None,
+        "reusable_key_index_built_during_preview":False,
     }
 
 
@@ -187,8 +197,10 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root",required=True,type=Path)
     parser.add_argument("--day",required=True)
+    parser.add_argument("--key-index",type=Path,default=None,
+                        help="Previously completed private purchased key SQLite index")
     args=parser.parse_args(argv)
-    result=preview(args.root,args.day)
+    result=preview(args.root,args.day,key_index=args.key_index)
     print(json.dumps(result,sort_keys=True,indent=2,ensure_ascii=False))
 
 

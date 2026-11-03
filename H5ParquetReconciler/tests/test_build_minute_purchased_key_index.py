@@ -129,7 +129,7 @@ class SourceMinuteMembershipIndexTests(unittest.TestCase):
     def test_index_keeps_the_vendor_extra_0930_minute_slot(self):
         import pyarrow as pa
         import pyarrow.parquet as pq
-        epoch=int(datetime(2026,10,13,9,31,tzinfo=timezone(
+        epoch=int(datetime(2026,10,13,9,30,tzinfo=timezone(
             timedelta(hours=8))).timestamp()*1000)
         folder=self.root/"AllCycleAStockData"/"1min"/"2026"
         pq.write_table(pa.table({

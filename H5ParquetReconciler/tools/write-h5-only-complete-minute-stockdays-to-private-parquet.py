@@ -236,13 +236,19 @@ def write_private_day(root,day,period,run_id,*,max_purchased_rows=6000000,
                             or not set(RAW_FIELDS).issubset(ds.dtype.names or ())):
                         reasons["invalid_native_h5_schema"]+=1
                         continue
+                    # Purchased source owns this entire stock-day. Do not
+                    # binary-search the expensive H5 dataset just to discard
+                    # it. The new count is explicitly an unprobed dataset,
+                    # NOT a claimed observed H5 stock-day or verified H5 gap.
+                    # Needed H5-only symbols still use identical complete-grid,
+                    # conversion, lossless-native and SHA readback checks.
+                    if symbol in purchased:
+                        stats["h5_datasets_not_probed_purchased_stockday"]+=1
+                        continue
                     a,b=CORE.h5_key_slice(ds,lower,upper)
                     if a==b:
                         continue
                     stats["h5_stockdays_seen"]+=1
-                    if symbol in purchased:
-                        stats["h5_stockdays_skipped_purchased_priority"]+=1
-                        continue
                     if b-a>240 or stats["h5_rows_examined"]+(b-a)>max_h5_rows:
                         raise ValueError("Minute H5 source rows exceed bounded day budget")
                     original=ds[a:b]

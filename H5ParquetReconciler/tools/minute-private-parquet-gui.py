@@ -31,8 +31,25 @@ def labels(status):
         "interrupted_or_failed":"中断保留，待隔离重试",
     }.get(status,str(status))
 
+def worker_launch_executable_and_flags(python_executable,is_windows):
+    """Return a quiet background executable even if Python runs in a console.
+
+    Prefer the venv's pythonw.exe on Windows, which is a GUI subsystem binary.
+    A python.exe fallback uses CREATE_NO_WINDOW, not DETACHED_PROCESS (which
+    can suppress the no-window flag). The worker still logs to a file.
+    """
+    if not is_windows:
+        return str(python_executable),0
+    candidate=Path(python_executable).with_name("pythonw.exe")
+    executable=str(candidate) if candidate.is_file() else str(python_executable)
+    flags=(getattr(subprocess,"CREATE_NO_WINDOW",0x08000000) |
+           getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0x00000200))
+    return executable,flags
+
 def launch(jobid,*,resume=False,root=None,start=None,end=None):
-    argv=[sys.executable,str(WORKER),"--job-id",jobid,
+    executable,flags=worker_launch_executable_and_flags(
+        sys.executable,os.name=="nt")
+    argv=[executable,str(WORKER),"--job-id",jobid,
           "--run-real-private-minute-parquet"]
     if resume:
         argv.append("--resume")
@@ -41,12 +58,9 @@ def launch(jobid,*,resume=False,root=None,start=None,end=None):
     JOBS.mkdir(parents=True,exist_ok=True)
     job=JOBS/jobid
     job.mkdir(parents=True,exist_ok=True)
-    # Windows detached process intentionally outlives the Tk window and
-    # PowerShell; log redirection is separate from the UI text widget.
-    flags=0
-    if os.name=="nt":
-        flags=(getattr(subprocess,"DETACHED_PROCESS",0) |
-               getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0))
+    # Windows worker uses pythonw.exe (or CREATE_NO_WINDOW fallback);
+    # do not spawn a blank Python command window. Parent GUI exit does
+    # not terminate the separately launched worker process.
     env=os.environ.copy()
     env["PYTHONIOENCODING"]="utf-8"
     with (job/"worker-stdout.log").open("ab") as stdout:

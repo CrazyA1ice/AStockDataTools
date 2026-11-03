@@ -22,6 +22,25 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-03 Windows实机确认三日购买键索引PASS；多日批量复用正式开发
+
+**最新用户真实Windows验收（已PASS，无需重建）**：
+- `test_write_h5_only_complete_minute_stockdays_to_private_parquet.py` 6/6；`test_run_minute_h5_gap_only_overlay.py` 8/8；`test_preview_minute_exact_key_diff_readonly.py` 6/6；`test_build_minute_purchased_key_index.py` 5/5。**共25/25合成通过**。
+- `work/unified_parquet/minute_key_index/purchased-minute-keys-2026-01-05-2026-01-07-8b70d1032ad0.sqlite`真实已存在：范围3个日历日；购源1min唯一A股键 **3,953,846**、5min **787,488**，合计 **4,741,334**。**购买OHLCVA复制0条**，原始Parquet/H5没有被修改。
+- 通过已有SQLite索引复查`2026-01-07`，报告`index_used=true`、`no_purchased_parquet_scanned_during_lookup=true`；购买有效1min **1,318,029**、5min **262,512**，与原单日扫描结果一致；H5完整缺股日候选与同股票日内局部缺分钟候选**两周期均0**，未生成任何行情文件。1min购源独有键5,169，5min为0，仍未对09:30分布独立认证。
+- 源指纹覆盖24个源文件，以mtime_ns/大小/inode/路径计算，**非全文件内容SHA**。只证明此次同版本数据的快速只读核对，不能推导全年源数据完整或认证量纲。
+
+**下一段已开发代码（尚待Windows运行4项新合成测试）**：
+- `tools/audit-minute-index-window-readonly.py` 接收一个**已经存在且与来源元数据相符**的购源SQLite键位图、起止日期，逐日期用相同索引比对H5完整时间格及`(period,symbol,ts)`，统计两周期的整股票日缺失、局部分钟键候选、购买端独有键、异常隔离。默认周末跳过但**不会擅自认定任何无源日期为交易所休市**。
+- `run-minute-index-window-audit.ps1` 从`work/unified_parquet/minute_key_index`自动查找**唯一**符合日期范围的现有SQLite索引；若有0个或多个相同日期索引，拒绝隐式选择，允许`-Index`指定已有文件。它**不新建索引、不扫描购买Parquet数据、不写报告或任何市场数据**，只从已购索引与H5原始只读计算。
+- 新增`tests/test_audit_minute_index_window_readonly.py` **4项测试**：同索引两个日期复用而不调用旧Parquet扫描、日期越界拒绝、源版本变化拒绝、单日与已有精确对比一致；代码提交，不等于Windows已实测。
+- **先验收现成的3日索引**，检查01-05、06、07三日有无H5局部缺分钟，再决定是否扩至本月剩余日期；**避免重新构建已经验收的三日索引**。运行以下单行命令（只读）：
+```powershell
+cd D:\ChatGPT\AStockDataTools; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-minute-index-window-audit.ps1 -FromDay 2026-01-05 -ThroughDay 2026-01-07; if ($LASTEXITCODE -ne 0) { throw "既有分钟键索引多日核对失败" }
+```
+- 若本轮PASS，后续按**不重叠的日期范围**建2026-01-08→01-31月末购源键索引，沿用同样只读多日核对，再逐月推进2026/2025有真实分钟源覆盖的月份。新增市场行情永远只来自经过签名、时标和量纲认证的缺口，而不是购买数据重写副本。
+- `reusable index`和`exact key audit`是分析工具，**不含生产逻辑版本、全SHA时间快照、全部市场证券身份/交易事实认证或日内缺分钟自动补入**。按月索引不是全历史已完成。若本轮发现H5-only候选，先隔离调查，不自动写Parquet或同步H5。
+
 ## 2026-11-03 精确键审计实机验收与购买源一次扫描复用索引（代码待Windows验收）
 
 **用户实际Windows日志已验收的20项合成测试全部PASS**：既有H5写盘6/6、购买优先H5差集8/8、新精确分钟键审计6/6。针对真实`2026-01-07`的精确`(period,symbol,normalized_ts)`比对：

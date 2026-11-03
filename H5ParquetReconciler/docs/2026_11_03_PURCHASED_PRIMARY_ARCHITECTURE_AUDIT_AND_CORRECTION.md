@@ -22,6 +22,17 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-03 Windows首轮真实预览报错与修复：跨日行组预算误计
+
+用户在开发分支`2d4b4a4`上运行`run-minute-h5-gap-only.ps1 -Day 2026-01-07`：
+
+- 原H5 gap合成实写测试 **3/3 PASS**，新购买优先overlay合成测试 **8/8 PASS**。
+- 随后真实**只读**预览在`write-h5-only-complete-minute-stockdays-to-private-parquet.py::purchased_stockdays`的`Minute purchased key scan budget exceeded`处失败；购买和H5未写。尚无实际H5 gap预览结果，不能宣称01-07真实0条通过。
+- **根因明确**：年度Parquet可存在跨日期的timestamp rowgroup，旧`inspected+=len(ts)`把目标日之外的行也计入`max_rows=6,000,000`“目标日候选键”预算。1月7日已有购买1min约131万行，行组扫描可能远多于目标日行数，误触发。
+- **修复**：对每个rowgroup仍只读`ts,symbol`两列，按65,536记录的小批次用Arrow时间范围谓词筛选，**只对目标日期行进行Python股票解析**；`max_rows`仅检查命中目标日的键数，不再以跨日期扫描量触发误报。原`purchased_key_candidate_rows_scanned`保留总扫描量统计，并新增`purchased_timestamp_matched_day_rows`和`purchased_key_budget_applied_to=matching_day_rows_only`。timestamp需整数毫秒；symbol支持普通及Arrow字典编码字符串。
+- 增加**3个**针对跨日大rowgroup、真实目标日超预算拒绝、字典编码symbol兼容性的合成单测。现核心测试应为**6项**，新overlay测试**8项**（合计14项）。**新修复尚待用户Windows实机重跑，不能声称已经PASS**。
+- 不扩大预算到不受控的几千万，不从原源复制OHLCVA，不启动旧全年批量worker，不自动启用生产查询。下一步仍是对01-07先跑全部测试再做真实**只读**预览；正确验收标准为`purchased_timestamp_matched_day_rows`与`eligible_h5_only_rows`逐周期可见且原文件不变。
+
 ## 2026-11-03 已实现第一段新主线：仅完整缺股票日的H5增量写盘（待Windows实机验收）
 
 本轮新代码**已提交但未在用户Windows市场实数据执行**：

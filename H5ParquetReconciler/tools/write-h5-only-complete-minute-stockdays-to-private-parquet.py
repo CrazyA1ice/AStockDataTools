@@ -159,8 +159,11 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000):
                 raise ValueError("Parquet minute source lacks ts/symbol")
             if not pa.types.is_integer(f.schema_arrow.field("ts").type):
                 raise ValueError("Purchased minute timestamp must be integer epoch_ms")
-            if not (pa.types.is_string(f.schema_arrow.field("symbol").type)
-                    or pa.types.is_large_string(f.schema_arrow.field("symbol").type)):
+            symbol_type=f.schema_arrow.field("symbol").type
+            if pa.types.is_dictionary(symbol_type):
+                symbol_type=symbol_type.value_type
+            if not (pa.types.is_string(symbol_type)
+                    or pa.types.is_large_string(symbol_type)):
                 raise ValueError("Purchased minute symbol must be string")
             for rg in range(f.metadata.num_row_groups):
                 meta=f.metadata.row_group(rg)

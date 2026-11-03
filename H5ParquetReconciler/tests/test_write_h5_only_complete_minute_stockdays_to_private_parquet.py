@@ -128,6 +128,44 @@ class RealMinuteGapWrites(unittest.TestCase):
         self.assertTrue(result["h5_raw_integer_fields_preserved"])
         self.assertFalse(result["ready_for_automatic_market_merge"])
 
+    def test_target_day_budget_ignores_unrelated_days_in_big_rowgroup(self):
+        """Large multi-date rowgroups must not spend the target-day budget."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        folder=self.base/"AllCycleAStockData"/"1min"/"2026"
+        before=int(datetime(2026,10,12,9,31,tzinfo=M.CORE.UTC8
+                            ).timestamp()*1000)
+        today=int(datetime(2026,10,13,9,31,tzinfo=M.CORE.UTC8
+                           ).timestamp()*1000)
+        # One genuine extra stockday among 100 irrelevant records and a
+        # null; rowgroup min/max overlaps October 13 so must be examined.
+        pq.write_table(pa.table({
+            "ts":pa.array([before]*100+[today,None],type=pa.int64()),
+            "symbol":["SH600000"]*102,
+        }),folder/"wide_unsorted_rowgroup.parquet",row_group_size=102)
+        stocks,scan=M.purchased_stockdays(
+            self.base,"1min",self.day,max_rows=2)
+        self.assertEqual(stocks,{"SZ000001","SH600000"})
+        self.assertEqual(scan["purchased_timestamp_matched_day_rows"],2)
+        self.assertGreater(scan["purchased_key_candidate_rows_scanned"],100)
+        self.assertEqual(scan["purchased_key_budget_applied_to"],
+                         "matching_day_rows_only")
+
+    def test_target_day_budget_still_rejects_real_excess_day_rows(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        folder=self.base/"AllCycleAStockData"/"1min"/"2026"
+        today=int(datetime(2026,10,13,9,31,tzinfo=M.CORE.UTC8
+                           ).timestamp()*1000)
+        pq.write_table(pa.table({
+            "ts":pa.array([today,today],type=pa.int64()),
+            "symbol":["SH600000","SZ000001"],
+        }),folder/"real_target_date_rows.parquet")
+        # One original purchased key + two new date keys = 3 > budget 2.
+        with self.assertRaisesRegex(
+                ValueError,"matching-day key budget exceeded"):
+            M.purchased_stockdays(self.base,"1min",self.day,max_rows=2)
+
     def test_incomplete_five_minute_stockday_is_quarantined_not_written_as_gap(self):
         import h5py
         file=self.base/"HikyuuData"/"sh_5min.h5"

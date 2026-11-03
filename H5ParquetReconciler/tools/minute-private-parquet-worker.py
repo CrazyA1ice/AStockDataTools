@@ -234,7 +234,12 @@ def new_job(jobid,root,start,end):
         raise ValueError("Source market directory missing/unsafe")
     days=weekdays(start,end)
     job=JOBS/jobid
-    job.mkdir(parents=True,exist_ok=False)
+    # The GUI pre-opens worker-stdout.log before starting its subprocess,
+    # so the directory may exist; a pre-existing config/state means this
+    # ID was already allocated and must never be silently overwritten.
+    if (job/"config.json").exists() or (job/"state.json").exists():
+        raise ValueError("Task ID already allocated")
+    job.mkdir(parents=True,exist_ok=True)
     dump(job/"config.json",{"job_id":jobid,"root":str(root.resolve()),
         "start":start,"end":end,"weekdays":days,
         "mode":"REAL_PRIVATE_PURCHASED_FIRST_1MIN_5MIN_PARQUET_ONLY"})

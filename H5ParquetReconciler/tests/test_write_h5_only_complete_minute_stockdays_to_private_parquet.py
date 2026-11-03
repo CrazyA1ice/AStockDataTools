@@ -83,8 +83,8 @@ class RealMinuteGapWrites(unittest.TestCase):
         self.assertEqual(five["private_parquet_rows"],48)
         self.assertEqual(one["private_parquet_stockdays"],1)
         self.assertEqual(five["private_parquet_stockdays"],1)
-        self.assertEqual(one["other_h5_counts"]["h5_stockdays_skipped_purchased_priority"],1)
-        self.assertEqual(five["other_h5_counts"]["h5_stockdays_skipped_purchased_priority"],1)
+        self.assertEqual(one["other_h5_counts"]["h5_datasets_not_probed_purchased_stockday"],1)
+        self.assertEqual(five["other_h5_counts"]["h5_datasets_not_probed_purchased_stockday"],1)
         for period,result,num in (("1min",one,240),("5min",five,48)):
             path=self.base/result["private_parquet_relative_file"]
             table=pq.read_table(path)
@@ -104,6 +104,29 @@ class RealMinuteGapWrites(unittest.TestCase):
             self.assertFalse(result["ready_for_automatic_market_merge"])
             self.assertTrue(result["h5_raw_integer_fields_preserved"])
             self.assertEqual(result["quarantined_stockdays"],{})
+
+    def test_purchased_day_shortcuts_h5_seeks_without_changing_h5_gap_rows(self):
+        """The purchased SZ day must never binary-seek its H5 dataset."""
+        original=M.CORE.h5_key_slice
+        observed=[]
+        def checked_slice(dataset,lower,upper):
+            observed.append(dataset.name)
+            if dataset.name.endswith("/SZ000001"):
+                raise AssertionError("Purchased stockday improperly binary-searched in H5")
+            return original(dataset,lower,upper)
+        with self.patched(),patch.object(M.CORE,"h5_key_slice",
+                                        side_effect=checked_slice):
+            result=M.write_private_day(
+                self.base,self.day,"1min",self.runid,
+                max_purchased_rows=10000,max_h5_rows=10000)
+        self.assertEqual(result["private_parquet_rows"],240)
+        self.assertEqual(result["private_parquet_stockdays"],1)
+        self.assertEqual(
+            result["other_h5_counts"]["h5_datasets_not_probed_purchased_stockday"],1)
+        self.assertEqual(result["other_h5_counts"]["h5_stockdays_seen"],1)
+        self.assertEqual(observed,["/data/SH600000"])
+        self.assertTrue(result["h5_raw_integer_fields_preserved"])
+        self.assertFalse(result["ready_for_automatic_market_merge"])
 
     def test_incomplete_five_minute_stockday_is_quarantined_not_written_as_gap(self):
         import h5py

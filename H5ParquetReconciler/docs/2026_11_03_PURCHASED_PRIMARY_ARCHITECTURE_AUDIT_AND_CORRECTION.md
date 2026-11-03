@@ -22,6 +22,35 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-03 精确键审计实机验收与购买源一次扫描复用索引（代码待Windows验收）
+
+**用户实际Windows日志已验收的20项合成测试全部PASS**：既有H5写盘6/6、购买优先H5差集8/8、新精确分钟键审计6/6。针对真实`2026-01-07`的精确`(period,symbol,normalized_ts)`比对：
+
+| 精确核对量 | 1min | 5min |
+| --- | ---: | ---: |
+| 购买Parquet A股唯一规范键 | 1,318,029 | 262,512 |
+| H5完整时间格中与购买精确重合键 | 1,240,560 | 261,840 |
+| H5购买整股票日完全缺失的键 | **0** | **0** |
+| H5在已有购买股票日中额外候选分钟键 | **0** | **0** |
+| 购买独有时间键（限H5完整股票日） | 5,169 | 0 |
+| 对应H5完整股票日 | 5,169 | 5,455 |
+
+**重要限定**：1min多出的5,169个购源独有键恰好每个H5完整股票日有一个，很可能与已知的09:30购买分钟开始标签有关，**本轮输出没有给出独立09:30分布审计，不能把推测当认证**。两个周期均没有找到本次可补的完整股日或局部分钟键；只说明当前日期、代码筛选和通过H5完整时间格验证的股票日，不代表全年无缺口。程序报告`new_market_parquet_or_h5_files_written=false`、`purchased_bars_rematerialized=0`、`ready_for_production_query=false`。扫描仍昂贵：1min购买Parquet 9个源文件、218个rowgroup、26,736,299个跨日候选行；5min 9文件45rowgroup、5,325,072行。因此**禁止对全年逐日反复运行单日扫描**。
+
+**本轮新开发（尚待Windows首次实际执行）**：
+- `tools/build-minute-purchased-key-index.py`：将某一段**1—31个连续日期（同一年）**的购买Parquet`ts/symbol`，按1min和5min分别**只扫描一次**，转为每个`period/day/symbol`一个1440分钟位图（180字节）、保存在`work/unified_parquet/minute_key_index`的新隔离SQLite。任何已购OHLCVA都不复制，原购买Parquet/H5只读。这是**按日期范围（月级）复用的键索引，不是已经构建全年度索引**；后续可逐月按年滚动，避免一次持有全年数亿个键。
+- 位图保留一天1440个整分钟位置，包含09:30等购买端额外时标；原购买非整分钟时间键或重复A股键都`fail closed`，不擅自纠错。源筛选仍按A股代码候选规则，不能宣称股票身份已获交易所认证。
+- 建好SQLite后，`preview-minute-exact-key-diff-readonly.py --key-index <private_index.sqlite>`读取日级位图、重构精确购买键，与同日H5对比；**不重新扫描购买Parquet的上千万行**。允许不同日期重复读取同一个索引，只要日期在范围内且源元数据fingerprint仍一致；来源文件发生变化则拒绝旧索引。
+- 显式可见的来源版本限制：目前来源fingerprint只由路径/大小/mtime_ns/inode计算，**不是全文件内容SHA**；索引仅供只读诊断和候选缺口，不授权正式生产查询或自动写补缺。
+- SQLite在临时`.partial`构建、`PRAGMA integrity_check`并确保Windows数据库文件句柄关闭后才原子改名；意外失败保留私有partial，不覆盖旧索引或原始市场文件。
+- 新增`tests/test_build_minute_purchased_key_index.py`共**5项合成真实Arrow/SQLite测试**：与旧扫描精确键结果相同、索引复用禁止重读购买Parquet、跨范围/重复键拒绝、来源更新使旧索引失效、保留09:30额外键。现有测试预计20+5=**25项**，**新5项尚待Windows验收**。
+- 新PowerShell入口`run-minute-purchased-key-index.ps1`默认只建**2026-01-05—01-07三日私有键索引**，并以索引直接检查`2026-01-07`，不用再扫描原购买Parquet一次；仅写私有SQLite索引，**不写任何行情Parquet/H5文件**。测试通过后才能扩大到单月；不要直接全年度运行。
+
+**用户Windows下一条一行命令：**
+```powershell
+cd D:\ChatGPT\AStockDataTools; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-minute-purchased-key-index.ps1 -FromDay 2026-01-05 -ThroughDay 2026-01-07 -CheckDay 2026-01-07; if ($LASTEXITCODE -ne 0) { throw "购买分钟键索引构建或索引核对失败" }
+```
+
 ## 2026-11-03 Windows真实01-07购源优先零补差验收 + 精确分钟键只读比较器
 
 **用户实机回执（已通过）**：修复购买日期预算后，H5写盘合成测试6/6 + overlay合成测试8/8 共**14/14 PASS**。真实2026-01-07两周期只读预览成功、无任何原市场或私有行情写盘：

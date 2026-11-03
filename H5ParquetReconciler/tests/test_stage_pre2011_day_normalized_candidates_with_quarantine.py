@@ -30,7 +30,7 @@ class Pre2011CandidateParquetTests(unittest.TestCase):
         self.assertEqual(good["value_source"],W.SOURCE_KIND)
         self.assertTrue(W.SOURCE_KIND.endswith("not_vendor_certified"))
         self.assertEqual(W.qualify(raw("1992-01-03",100,10),1992)[1],
-                         "historical_vwap_factor10000_not_supported")
+                         "alternative_historical_vwap_factor_100000")
         self.assertEqual(W.qualify(raw("1992-01-06",100,0),1992)[1],
                          "native_volume_or_amount_zero")
         with self.assertRaisesRegex(ValueError,"historical daily stamp"):

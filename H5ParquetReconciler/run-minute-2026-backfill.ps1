@@ -38,5 +38,5 @@ if($Run){
     Write-Host 'Open H5ParquetReconciler\start-minute-converter.bat to attach and view live progress or pause after current day.'
     Write-Host 'All per-day actual results and state are under H5ParquetReconciler\work\minute_gui\jobs.'
 }else{
-    Write-Host 'Dry run only. To actually start background 1min+5min Parquet writes, add -Run.'
+    Write-Host 'Dry run only. The obsolete full-purchased-minute -Run workflow is retired; do not start a new duplicate conversion. Read docs/2026_11_03_PURCHASED_PRIMARY_ARCHITECTURE_AUDIT_AND_CORRECTION.md.'
 }

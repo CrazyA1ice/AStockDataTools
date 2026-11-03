@@ -248,7 +248,10 @@ class App(tk.Tk):
         for item in old-set(wanted):
             self.tree.delete(item)
         try:
-            tail=(folder/"activity.log").read_text(encoding="utf-8",
+            live=folder/"worker-stdout.log"
+            if not live.is_file():
+                live=folder/"activity.log"
+            tail=live.read_text(encoding="utf-8",
                     errors="replace").splitlines()[-120:]
             rendered="\n".join(tail)
         except OSError:

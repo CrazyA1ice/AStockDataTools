@@ -85,5 +85,40 @@ class BackfillLaunchTests(unittest.TestCase):
         self.assertEqual(r["status"],"dry_run_no_child_process")
         spawn.assert_not_called()
 
+    def test_windows_prefers_pythonw_and_requests_hidden_window(self):
+        py=self.base/"venv"/"python.exe"
+        py.parent.mkdir()
+        py.write_bytes(b"test")
+        gui=py.with_name("pythonw.exe")
+        gui.write_bytes(b"test")
+        executable,flags=L.GUI.worker_launch_executable_and_flags(str(py),True)
+        self.assertEqual(executable,str(gui))
+        self.assertTrue(flags & 0x08000000) # CREATE_NO_WINDOW
+        self.assertFalse(flags & 0x00000008) # DETACHED_PROCESS must NOT mask it
+
+    def test_windows_fallback_pythonexe_still_hidden(self):
+        py=self.base/"venv"/"python.exe"
+        py.parent.mkdir()
+        py.write_bytes(b"test")
+        executable,flags=L.GUI.worker_launch_executable_and_flags(str(py),True)
+        self.assertEqual(executable,str(py))
+        self.assertTrue(flags & 0x08000000)
+        other,plain=L.GUI.worker_launch_executable_and_flags(str(py),False)
+        self.assertEqual((other,plain),(str(py),0))
+
+    def test_gui_launch_passes_no_console_flags_to_popen(self):
+        with patch.object(L.GUI,"worker_launch_executable_and_flags",
+                          return_value=("C:/Python/pythonw.exe",0x08000200)),patch.object(
+             L.GUI.subprocess,"Popen",return_value=SimpleNamespace(pid=7890)) as spawn:
+            r=L.GUI.launch("aaaaaaaaaaaa",resume=False,root=self.root,
+                           start="2026-01-01",end="2026-10-13")
+        self.assertEqual(r.pid,7890)
+        argv=spawn.call_args.args[0]
+        self.assertEqual(argv[0],"C:/Python/pythonw.exe")
+        self.assertEqual(spawn.call_args.kwargs["creationflags"],0x08000200)
+        self.assertEqual(spawn.call_args.kwargs["stdin"],L.GUI.subprocess.DEVNULL)
+        self.assertEqual(spawn.call_args.kwargs["stderr"],L.GUI.subprocess.STDOUT)
+        self.assertTrue((self.jobs/"aaaaaaaaaaaa"/"worker-stdout.log").is_file())
+
 if __name__=="__main__":
     unittest.main(verbosity=2)

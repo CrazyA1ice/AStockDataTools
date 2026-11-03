@@ -22,6 +22,31 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-03 Windows真实01-07购源优先零补差验收 + 精确分钟键只读比较器
+
+**用户实机回执（已通过）**：修复购买日期预算后，H5写盘合成测试6/6 + overlay合成测试8/8 共**14/14 PASS**。真实2026-01-07两周期只读预览成功、无任何原市场或私有行情写盘：
+- 1min 购买源2026-01-07命中（A股模式过滤之前）**1,336,345条**、已买股票日5,469个，H5对应已买股票日无需探查数据集5,465个；9个购买年文件218个行组、候选扫描26,736,299行（两列，无OHLCVA）。
+- 5min 目标日原源时间命中**266,160条**、已买股票日5,469个，H5无需查已买数据集5,465个；9个购买年文件45行组、扫描5,325,072行。
+- 两周期`eligible_complete_h5_only_stockdays=0`、`eligible_h5_only_rows=0`、`written_h5_gap_rows=0`、`purchased_bars_rematerialized=0`。这**仅验证完全缺失的完整股票日补差为0**，不能证明部分分钟键没有缺失。
+- 旧2026-01-07`source_rows.purchased_parquet`是1min 1,318,029、5min 262,512，与此次购源**原始时间戳全记录**命中数不同，这是A股股码过滤前后不同统计口径，不得作为18,316/3,648条缺口来计算；未来精确键审计只比较**同一A股筛选条件与规范时间标签**。
+- `previous_gap_receipt_count_for_date=1`只是发现旧日级报告，**不代表旧报告确实有H5补缺行**；此前旧日数据来源拆分已证实0 H5补入。此次结果`existing_gap_key_reconciliation_completed=false`如实表明跨版本键集合未对账。
+- `source_fingerprint`基于24个文件路径/大小/mtime_ns/inode，**不是内容SHA，也不是永久版本认证**；只证实本次运行期间的元数据未变。
+
+**本次继续开发（尚待Windows第一次运行）**：
+- 新增`tools/preview-minute-exact-key-diff-readonly.py`。为每周期、一个日期单次Arrow读取购买`ts/symbol`两列、仅保留目标日A股精确时间键（`purchased_stockdays(include_time_keys=True)`，复用原有预算过滤与股票身份规则）；对H5逐股票日提取原生时间标签，使用已验证1min-END与5min-START候选映射、会话时间格校验，按真正的`(symbol, normalized_ts,period)`划分：
+  - `h5_only_keys_on_full_purchased_absence_days`：整股票日购买0行的H5键；
+  - `h5_only_candidate_keys_on_partial_purchased_stockdays`：**购买同日已有数据**但H5还有不同规范分钟键；
+  - `overlapping_exact_keys`：实际相同键；
+  - `purchased_only_keys_on_native_complete_H5_stockdays`：购买有但H5没有的键（如购买1min额外09:30，不代表异常）；
+  - `quarantined_h5_stockdays_by_reason`：不完整会话、非法原生schema、重复等隔离。
+- 新工具**只检查键，不读取H5的OHLCVA来做价值/复权/真实交易认证**；候选局部分钟全部`candidate_keys_automatically_accepted=0`，不能自动写盘或进入生产查询；输出只显示聚合计数，不含个股、价格。源元数据前后比对用于快速防事故，不替代全SHA。
+- 新增`tests/test_preview_minute_exact_key_diff_readonly.py`共**6项合成Parquet/H5只读单测**，覆盖整日缺失vs局部缺失、购买09:30多一根不误判、真实单分钟缺失、原买键重复必须失败、H5不完整隔离与元数据变更失败。加上旧6+8现共**20项**。尚未Windows实测，不能称PASS。
+- 独立Windows只读入口`run-minute-exact-key-diff-readonly.ps1`（自动测试全部20项、真实只读2026-01-07，**不写任何行情或报告文件**）。单行命令：
+```powershell
+cd D:\ChatGPT\AStockDataTools; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-minute-exact-key-diff-readonly.ps1 -Day 2026-01-07; if ($LASTEXITCODE -ne 0) { throw "精确分钟键只读对比或回归测试失败" }
+```
+- **注意性能边界**：2026全年源Parquet行组跨日使单日1min筛选仍要扫描2,674万行左右，**新比较器只应用于一个诊断日**，不要逐日循环全2025/26。下一主线应该建立**按年/周期只扫描一次购源的只读精确键缓存/索引**，再分日期批量比较（数据源变化需重建受影响的索引分区），而不是为每一天重复解析同一个年度文件。
+
 ## 2026-11-03 Windows首轮真实预览报错与修复：跨日行组预算误计
 
 用户在开发分支`2d4b4a4`上运行`run-minute-h5-gap-only.ps1 -Day 2026-01-07`：

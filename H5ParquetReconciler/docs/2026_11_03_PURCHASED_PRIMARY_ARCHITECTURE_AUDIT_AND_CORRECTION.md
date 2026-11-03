@@ -22,6 +22,25 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-03 已实现第一段新主线：仅完整缺股票日的H5增量写盘（待Windows实机验收）
+
+本轮新代码**已提交但未在用户Windows市场实数据执行**：
+- `tools/run-minute-h5-gap-only-overlay.py` 是**全新独立入口**，不调用旧的 `write-purchased-first-unified-minute-day-parquet.py` 合并复制程序。
+- 按日期对1min/5min只读原购买Parquet的 `ts/symbol` 两列获取已有股票日；检查H5源中购买**完全缺失**的股票日，按既有时间格/原生整数/OHLCVA约束校验。
+- 只在严格发现至少1个完整且有效的H5独有股票日时，调用既有经过实机使用的 `write-h5-only-complete-minute-stockdays-to-private-parquet.py::write_private_day`；写出的市场行**100%来自H5**, 保留原H5整数，走全行回读和SHA。若两个周期分别为0行则不创建任意分钟Parquet，甚至不创建`work/unified_parquet/minute_gap_staging/<rid>/`目录；显式写入时仅留0增量JSON报告。
+- 只读预览是默认行为；真实写盘需要**显式**`--write-gap-only`或新PowerShell wrapper 的`-Run`。新/旧任务共享单一写盘锁；先后检查原购买和H5元数据签名，来源处理期间变化就拒绝验收。签名基于路径、文件大小、mtime_ns、inode，**不是源文件内容SHA**，不得声称跨运行不可变生产版本证明。
+- `partial_purchased_stockday_minute_keys_checked=false`：一旦购买源某个股票日有任何分钟记录，本轮**不猜测**该日其余时间键，也不把它宣称“完整无缺”。本轮只能处理“购买端整股票日0行”的H5补缺；下一步才扩展到同股票日内部的精确时间键差集并建立年级复用索引。即使该新程序输出零行，也**不代表该日完全没有部分缺分钟**。
+- 输出含`purchased_bars_rematerialized=0`、`accepted_new_h5_full_stockday_gap_rows`、每周期H5验收行数与SHA、隔离计数、来源元数据指纹、生产未激活标记，便于以后发布逻辑统一源版本。
+- `tests/test_run_minute_h5_gap_only_overlay.py`新增7项本地合成真实H5/Parquet写盘测试：只读无副作用、购买覆盖0文件、真实H5独有288条仅写H5、5min不完整隔离、来源期间变化拒绝、无数据日不写、run-id防覆盖。**这些新测试尚未得到用户Windows PASS回执，不能声称实机验证**。
+
+用户现在可在Windows仓库目录运行下面**一整行**：更新开发分支，自动跑既有H5补差测试与7项新测试，再只读核查之前误重写的2026-01-07，**默认不写任何真实行情或结果文件**：
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "切换失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-minute-h5-gap-only.ps1 -Day 2026-01-07; if ($LASTEXITCODE -ne 0) { throw "新H5-only差集测试/只读预览失败；禁止写盘" }
+```
+
+在检查新输出中的 `eligible_h5_only_rows` 后，若有真实需要补齐的日期且确认未重复已有gap SAFE，再明确选择 `-Run` 实际只写H5缺口；不要现在无差别遍历全年，也不要恢复旧worker。现有2026-10-13等已有验收H5-only日期必须先做跨批次去重和来源版本绑定后才允许纳入正式逻辑覆盖，不能因为本轮新run-id而再计为新补入。
+
 ## A. 证据与已证实错误
 
 1. 旧后台任务 `0625f02019fe` 对2026-01-05购买源已存在的1min **1,317,788**、5min **262,464**条再次生成私有文件，H5-gap两周期**均0**。因此“新增1,580,252条行情覆盖”是错的；准确说是“新写1,580,252条购买来源的副本”。原文件未覆盖，私有物化有来源保全价值，但本方案里没有必要。

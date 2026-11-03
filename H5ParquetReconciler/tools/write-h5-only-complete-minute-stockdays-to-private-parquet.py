@@ -131,7 +131,16 @@ def converted_row(row,symbol,period,day):
 
 
 def purchased_stockdays(root,period,day,*,max_rows=6000000):
-    """Read only requested purchased ts/symbol Arrow columns; no OHLCVA."""
+    """Read only purchased ts/symbol columns; budget *date-matched* keys.
+
+    Large vendor rowgroups may span many dates. Scanning a rowgroup does NOT
+    mean every row belongs to the requested stock-day; the old 6m budget
+    incorrectly counted unrelated dates and failed on real January data.
+    Use Arrow's vectorized timestamp filter before converting symbols to
+    Python. Memory stays bounded by the 65,536-row Arrow batch.
+    """
+    import pyarrow as pa
+    import pyarrow.compute as pc
     import pyarrow.parquet as pq
     files=CORE.year_files(root,period,day.year)
     if not files:
@@ -141,12 +150,18 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000):
     high=int(datetime(next_day.year,next_day.month,next_day.day,
                       tzinfo=CORE.UTC8).timestamp()*1000)
     stocks=set()
-    inspected=0
+    scanned=0
+    matched=0
     groups=0
     for file in files:
         with pq.ParquetFile(file,memory_map=False,pre_buffer=False) as f:
             if not {"ts","symbol"}.issubset(f.schema_arrow.names):
                 raise ValueError("Parquet minute source lacks ts/symbol")
+            if not pa.types.is_integer(f.schema_arrow.field("ts").type):
+                raise ValueError("Purchased minute timestamp must be integer epoch_ms")
+            if not (pa.types.is_string(f.schema_arrow.field("symbol").type)
+                    or pa.types.is_large_string(f.schema_arrow.field("symbol").type)):
+                raise ValueError("Purchased minute symbol must be string")
             for rg in range(f.metadata.num_row_groups):
                 meta=f.metadata.row_group(rg)
                 if not CORE.row_group_overlaps_timestamp(meta,low,high):
@@ -155,20 +170,28 @@ def purchased_stockdays(root,period,day,*,max_rows=6000000):
                 for batch in f.iter_batches(
                         row_groups=[rg],batch_size=65536,
                         columns=["ts","symbol"],use_threads=False):
-                    ts=batch.column(0).to_pylist()
-                    syms=batch.column(1).to_pylist()
-                    inspected+=len(ts)
-                    if inspected>max_rows:
-                        raise ValueError("Minute purchased key scan budget exceeded")
-                    for stamp,s in zip(ts,syms):
-                        if type(stamp) is int and low<=stamp<high:
-                            sym=CORE.symbol_id(s)
-                            if sym and CORE.is_a_share_candidate(sym,day.year):
-                                stocks.add(sym)
+                    scanned+=batch.num_rows
+                    # Arrow's null-aware predicate skips malformed missing
+                    # timestamps, as the prior 'type(stamp) is int' did.
+                    timestamps=batch.column(0)
+                    within_day=pc.and_(
+                        pc.greater_equal(timestamps,low),
+                        pc.less(timestamps,high))
+                    matched_symbols=pc.filter(batch.column(1),within_day)
+                    matched+=len(matched_symbols)
+                    if matched>max_rows:
+                        raise ValueError(
+                            "Minute purchased matching-day key budget exceeded")
+                    for source_symbol in matched_symbols.to_pylist():
+                        sym=CORE.symbol_id(source_symbol)
+                        if sym and CORE.is_a_share_candidate(sym,day.year):
+                            stocks.add(sym)
     return stocks,{
         "purchased_files_opened":len(files),
         "purchased_rowgroups_read":groups,
-        "purchased_key_candidate_rows_scanned":inspected,
+        "purchased_key_candidate_rows_scanned":scanned,
+        "purchased_timestamp_matched_day_rows":matched,
+        "purchased_key_budget_applied_to":"matching_day_rows_only",
         "purchased_stockdays_present":len(stocks),
     }
 

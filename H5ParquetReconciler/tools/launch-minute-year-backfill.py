@@ -113,23 +113,6 @@ def launch(root,start,end,*,dry_run=False):
         "copies purchased Parquet instead of only writing H5 gaps. "
         "Do not resume. Inspect paused jobs read-only; implement and "
         "verify purchased-primary missing-key overlay first.")
-    if resume:
-        # User-requested pause remains respected until explicit opt-in launch.
-        pause=job/"stop_after_day.flag"
-        if pause.exists():
-            if pause.is_symlink():
-                raise ValueError("Unsafe pause marker")
-            pause.unlink()
-    process=GUI.launch(identifier,resume=resume,root=root,start=start,end=end)
-    return {"status":("resume_requested_detached" if resume else
-                      "new_real_backfill_requested_detached"),
-            "job_id":identifier,"worker_pid":process.pid,
-            "root":str(root),"start":start,"end":end,
-            "launched":True,
-            "job_directory":str(JOBS/identifier),
-            "state_file":str(JOBS/identifier/"state.json"),
-            "activity_log":str(JOBS/identifier/"activity.log"),
-            "note":"inspect state.json/activity.log: process start is not proof of completed dates"}
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)

@@ -95,22 +95,31 @@ def assemble(full21,modern_safe,modern_sha,run_id,out):
         raise ValueError("Modern 16-year authoritative source count different")
     records={}
     for year in YEARS:
-        safe=year_report(year,run_id)
-        folder=W.WORK/f"historical_{year}_{run_id}"
-        if safe.exists():
-            obj=verified_existing(year,run_id,full_sha,sources[year])
-            print("SHA reverified pre2011 year",year,"rows:",
-                  obj["total_raw_h5_rows"],flush=True)
-        else:
+        # The user may close PowerShell mid-year. Keep interrupted files and
+        # isolate only THAT annual retry, without restaging previous 20 years.
+        for attempt in range(20):
+            child=hashlib.sha256((run_id+":"+str(year)+":"+str(attempt))
+                                 .encode("ascii")).hexdigest()[:12]
+            safe=year_report(year,child)
+            folder=W.WORK/f"historical_{year}_{child}"
+            if safe.exists():
+                obj=verified_existing(year,child,full_sha,sources[year])
+                print("SHA reverified pre2011 year",year,"rows:",
+                      obj["total_raw_h5_rows"],flush=True)
+                break
             if folder.exists():
-                raise ValueError("Partial historical year preserved: "+str(year)+
-                                 ". Do not overwrite; start a new isolated run ID")
-            obj=W.annual(year,full21,run_id,safe,
+                print("Preserved interrupted isolated historical year:",
+                      year,"attempt:",attempt,flush=True)
+                continue
+            obj=W.annual(year,full21,child,safe,
                          verified_sources=sources,full_sha_override=full_sha)
             print("New actual historical DAY candidate/quarantine:",
                   year,"candidate=",obj[
                       "purchased_schema_candidate_rows_not_vendor_certified"],
                   "quarantine=",obj["lossless_native_quarantine_rows"],flush=True)
+            break
+        else:
+            raise ValueError("Too many preserved interrupted years: "+str(year))
         records[str(year)]={
             "raw_h5_rows":obj["total_raw_h5_rows"],
             "candidate_rows_unverified_unit_hypothesis":obj[

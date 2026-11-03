@@ -164,6 +164,26 @@ def inspect_period(root,day,period,*,max_purchased_rows=6000000,
     }
 
 
+def preexisting_gap_receipts(day):
+    """Conservatively block duplicate date-level H5 gap writes from prior runs.
+
+    Old stage receipts may represent completed or interrupted outputs. We
+    DO NOT silently trust/reuse them or declare them current-source matched.
+    Exact cross-run/source-version reconciliation is a separate gate.
+    """
+    label=day.strftime("%Y%m%d")
+    names=set()
+    for mask in (
+            f"minute-batch-stage-{label}-*.json",
+            f"minute-h5-1min-end-rekey-{label}-*.json",
+            f"minute-h5-gap-only-{label}-*.json"):
+        for path in REPORTS.glob(mask):
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Unsafe old H5 gap receipt")
+            names.add(path.name)
+    return sorted(names)
+
+
 def execute(root,day,run_id,*,write=False,
             max_purchased_rows=6000000,max_h5_rows=2500000):
     root,day=validate(root,day,run_id)
@@ -179,6 +199,13 @@ def execute(root,day,run_id,*,write=False,
             max_h5_rows=max_h5_rows) for period in PERIODS}
         if source_snapshot(root,day.year)!=before:
             raise RuntimeError("Input market file metadata changed while inspecting")
+        prior=preexisting_gap_receipts(day)
+        if write and prior and any(p["eligible_h5_only_rows"]>0
+                               for p in periods.values()):
+            raise RuntimeError(
+                "PRIOR_GAP_RECEIPT_FOR_DATE: possible existing H5 gap partition; "
+                "do not duplicate. Reconcile past receipt and source version "
+                "before accepting new net market keys. Count="+str(len(prior)))
         results={}
         accepted=0
         for period,entry in periods.items():
@@ -222,6 +249,8 @@ def execute(root,day,run_id,*,write=False,
             "accepted_new_h5_full_stockday_gap_rows":accepted,
             "purchased_bars_rematerialized":0,
             "source_fingerprint":before,
+            "previous_gap_receipt_count_for_date":len(prior),
+            "existing_gap_key_reconciliation_completed":False,
             "source_fingerprint_is_full_content_sha":False,
             "source_fingerprint_checked_unchanged_during_run":True,
             "original_purchased_parquet_or_h5_modified":False,

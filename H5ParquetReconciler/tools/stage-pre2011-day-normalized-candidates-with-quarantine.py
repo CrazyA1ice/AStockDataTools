@@ -112,13 +112,20 @@ def row_digest(row,columns):
     return (json.dumps([row[x] for x in columns],ensure_ascii=True,
                        separators=(",",":"),allow_nan=False)+"\n").encode()
 
-def annual(year,full21,run_id,out):
+def annual(year,full21,run_id,out,*,verified_sources=None,full_sha_override=None):
     import pyarrow as pa
     import pyarrow.parquet as pq
-    full,full_sha=PROFILE.source_safe(full21)
-    # Checks 21 immutable original H5 RAW stage manifest, Parquet SHA and
-    # FULL21 original source-inventory provenance; no vendor source opened.
-    sources={y:(f,n,h) for y,f,n,h in PROFILE.verified_private_files(full)}
+    if verified_sources is None:
+        full,full_sha=PROFILE.source_safe(full21)
+        # Checks 21 immutable original H5 RAW stage manifests and Parquet SHAs.
+        sources={y:(f,n,h) for y,f,n,h in PROFILE.verified_private_files(full)}
+    else:
+        if (type(verified_sources) is not dict
+                or type(full_sha_override) is not str
+                or re.fullmatch(r"[a-f0-9]{64}",full_sha_override) is None):
+            raise ValueError("Only prequalified full21 in-memory RAW sources")
+        sources=verified_sources
+        full_sha=full_sha_override
     if set(sources)!=set(range(1990,2011)):
         raise ValueError("Complete 1990-2010 RAW year set unavailable")
     file,n,raw_sha=sources[year]

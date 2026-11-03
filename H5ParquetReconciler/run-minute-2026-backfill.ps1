@@ -3,6 +3,11 @@
 param([switch]$Run)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+# Retired on 2026-11-03 after the purchased-primary planning audit:
+# -Run used to copy complete purchased source days into new private files.
+# Starting/resuming such full-rewrite jobs wastes licensed source I/O and disk.
+# This guard affects only a NEW invocation. It does not stop an old worker.
+if($Run){throw "RETIRED_FULL_PURCHASED_REWRITE: -Run is disabled. Old minute worker duplicates already purchased Parquet days. Inspect existing task read-only; do not resume. First implement H5-only key-delta overlays."}
 $module=Split-Path -Parent $PSCommandPath
 $repo=Split-Path -Parent $module
 Set-Location -LiteralPath $repo

@@ -63,7 +63,7 @@ class App(tk.Tk):
         self.jobid=None
         self.last_log=""
         self.root_value=tk.StringVar(value=r"D:\stock")
-        self.start_value=tk.StringVar(value="2026-07-01")
+        self.start_value=tk.StringVar(value="2026-01-01")
         self.end_value=tk.StringVar(value="2026-10-13")
         self.id_value=tk.StringVar()
         self.status_value=tk.StringVar(value="就绪 · 仅写私有统一Parquet，原数据只读")

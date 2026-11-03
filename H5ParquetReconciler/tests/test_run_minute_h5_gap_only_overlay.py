@@ -149,6 +149,20 @@ class PurchasedPrimaryGapOverlayTests(unittest.TestCase):
         self.assertFalse(self.work.exists())
         self.assertEqual(list(self.reports.glob("minute-h5-gap-only-*.json")),[])
 
+    def test_old_gap_receipt_blocks_double_counting_h5_market_keys(self):
+        # October 13 already has an old validated H5 gap in real history.
+        # A new run ID must not manufacture a second 'net new' gap receipt.
+        receipt=self.reports/"minute-batch-stage-20261013-aaaaaaaaaaaa.json"
+        receipt.write_text("{}",encoding="utf-8")
+        with self.patched():
+            preview=N.execute(self.root,self.day,self.runid,write=False)
+            self.assertEqual(preview["previous_gap_receipt_count_for_date"],1)
+            with self.assertRaisesRegex(RuntimeError,"PRIOR_GAP_RECEIPT_FOR_DATE"):
+                N.execute(self.root,self.day,self.runid,write=True)
+        self.assertFalse(self.work.exists())
+        self.assertFalse(list(self.reports.glob("minute-h5-gap-only-*.json")))
+        self.assertEqual(receipt.read_text(encoding="utf-8"),"{}")
+
     def test_readonly_day_without_market_data_has_no_write(self):
         with self.patched():
             r=N.execute(self.root,date(2026,1,1),self.runid,write=True)

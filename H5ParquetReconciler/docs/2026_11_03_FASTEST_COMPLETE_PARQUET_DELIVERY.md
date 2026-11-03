@@ -11,7 +11,7 @@
 | 2011—2026 私有统一 DAY | **14,137,981** | 16个年度物理Parquet+年度SQLite索引，固定版本SHA `bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05` | 已覆盖1990—2010历史 |
 | 1990—2010 H5原生日线RAW | **3,682,327** | 21个独立年度原生整数Parquet、全部内容SHA/值验证，报告 `pre2011-full21-verify-9bba81ed3c33.json` | 已认证购买schema量额、身份、复权 |
 | 全时段日线**来源总账** | **17,820,308** | 以上两段没有年份重叠 | 全部已变成可交易、同一语义的统一Parquet |
-| 2026年1/5分钟统一Parquet | 至少 **40,151,465** | 截至11月2日已有25个有行情日完整写盘回读；11月3日另有8/25—28四日共6,414,933条，以及8/10—24 11日的独立验收、10/08 SAFE；实际累计应重新由全部每日报告**去重计算** | 已覆盖2025—2026所有分钟交易日、所有股日缺口 |
+| 2026年1/5分钟统一Parquet | 至少 **46,566,398** | 截至11月2日25个有行情日40,151,465条；另有11月3日已验的8/25—28四日6,414,933条（不重叠）；8/10—24另有11日独立验收、10/08已有SAFE，累计准确值以**每日报告SHA去重重算**为准 | 已覆盖2025—2026所有分钟交易日、所有股日缺口 |
 | 反向原生H5 | 日线14,137,981；分钟4日6,427,013 | 独立Hikyuu原生整数写盘读回 | Parquet Float64金额全部无损等价或分钟全历史完成 |
 
 原分钟源端（当时只读观测）H5最多到2026-10-13；购买1min/5min的2026年度文件最多到2026-09-30。不要把源不存在的10-14之后标成缺口已补；要依赖新增 TDX 真正入库，才能更新到新的交易日。
@@ -37,6 +37,14 @@ cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { thro
 ## 3. 后续最快交付顺序
 
 **P1：分钟。** GUI `start-minute-converter.bat` 已编写但需先通过 `test_minute_private_parquet_gui_worker.py` 三项安全测试及Windows实测。使用**同一个**GUI逐日期恢复已有结果、从尚未物化的2025/2026区间批量跑购买优先1min/5min补差；每日报告+分区SHA验收，异常时格股票日单独隔离。按周期+证券日期键核算全历史缺口、区分无源/休市/数据异常，而不是继续手工重复已验8—10月数据。最新实际统计从去重SAFE汇总获得，**不可对同一日期重复计数**。
+
+**P1.1：一次取回精确分钟物理累计（新增工具）。** `tools/report-verified-unified-minute-progress.py` 使用GUI已经实现的 `verified_existing_batch()` 验收途径，对 `reports/minute-batch-unified-YYYYMMDD-*.json` 内全部历史已验日期逐日重算**实际私有Parquet SHA**，同日多次报告只计一次；2026-10-13仅认可修正后的1min END标签版，任何同日来源SHA冲突立即停止。输出实际完成日期数、各周期/合计条数，零行情日不算完成。全部读取私有分区和报告、不重新打开原市场源，也不新增行情分区。
+
+最新程序和5项离线测试需要用户 Windows 首次验收；然后直接得到**精确累计**而非从多个批次手工加总。一整行 PowerShell（仓库已切至最新本分支之后）：
+
+```powershell
+cd D:\\ChatGPT\\AStockDataTools; .\\.venv\\Scripts\\python.exe -m unittest discover -s H5ParquetReconciler\\tests -p "test_report_verified_unified_minute_progress.py" -v; if ($LASTEXITCODE -ne 0) { throw "分钟唯一日期SHA去重统计测试失败" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\\reports\\verified-unique-minute-physical-progress-$rid.json"; .\\.venv\\Scripts\\python.exe H5ParquetReconciler\\tools\\report-verified-unified-minute-progress.py --out $out --verify-existing-sha-only; if ($LASTEXITCODE -ne 0) { throw "一分钟/五分钟既存私有Parquet SHA验收或重复来源冲突，请保留原SAFE排查" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; Write-Host "已验收唯一行情日=$($r.unique_nonempty_date_count)，1min=$($r.verified_physical_rows_by_period.'1min')，5min=$($r.verified_physical_rows_by_period.'5min')，总行数=$($r.verified_physical_rows_total)，报告=$out"
+```
 
 **P2：高周期。** 原购买Parquet自带1/5/15/30/60分钟、day、week、month（及复权因子），在分区盘点后**直接引用/复制原有权威记录**，不应机械地从H5构造本就不存在的15/30/60分钟和周/月。**只对证实有缺口的周期/股票日**，在时间桶、交易日历、复权及OHLCVA量纲验收通过后，用统一较低周期合成新补缺分区，绝不覆盖购买原值。必须将“原有购买周期完整可读”和“高周期合成补齐完成”分开登记。
 

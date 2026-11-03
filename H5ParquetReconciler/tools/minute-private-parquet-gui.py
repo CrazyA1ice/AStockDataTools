@@ -47,10 +47,12 @@ def launch(jobid,*,resume=False,root=None,start=None,end=None):
     if os.name=="nt":
         flags=(getattr(subprocess,"DETACHED_PROCESS",0) |
                getattr(subprocess,"CREATE_NEW_PROCESS_GROUP",0))
+    env=os.environ.copy()
+    env["PYTHONIOENCODING"]="utf-8"
     with (job/"worker-stdout.log").open("ab") as stdout:
         return subprocess.Popen(argv,cwd=MODULE,stdin=subprocess.DEVNULL,
              stdout=stdout,stderr=subprocess.STDOUT,close_fds=True,
-             creationflags=flags)
+             creationflags=flags,env=env)
 
 class App(tk.Tk):
     def __init__(self):

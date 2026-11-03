@@ -151,6 +151,22 @@ class RealMinuteGapWrites(unittest.TestCase):
         self.assertEqual(scan["purchased_key_budget_applied_to"],
                          "matching_day_rows_only")
 
+    def test_date_scan_accepts_dictionary_encoded_vendor_symbols(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        folder=self.base/"AllCycleAStockData"/"1min"/"2026"
+        today=int(datetime(2026,10,13,9,31,tzinfo=M.CORE.UTC8
+                           ).timestamp()*1000)
+        pq.write_table(pa.table({
+            "ts":pa.array([today],type=pa.int64()),
+            "symbol":pa.array(["SH600000"],
+                         type=pa.dictionary(pa.int32(),pa.string())),
+        }),folder/"dictionary_symbols.parquet")
+        stocks,scan=M.purchased_stockdays(
+            self.base,"1min",self.day,max_rows=2)
+        self.assertEqual(stocks,{"SH600000","SZ000001"})
+        self.assertEqual(scan["purchased_timestamp_matched_day_rows"],2)
+
     def test_target_day_budget_still_rejects_real_excess_day_rows(self):
         import pyarrow as pa
         import pyarrow.parquet as pq

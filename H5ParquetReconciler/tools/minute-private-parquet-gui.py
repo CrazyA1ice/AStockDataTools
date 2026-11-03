@@ -92,8 +92,8 @@ class App(tk.Tk):
         ttk.Label(f,text="分钟数据转换控制台",font=("Microsoft YaHei UI",17,"bold")).pack(anchor="w")
         ttk.Label(f,text="真实流程：购买Parquet优先 → H5完整股票日补缺 → 私有1min/5min Parquet → SHA/全字段回读",
                   foreground="#41637e").pack(anchor="w",pady=(2,7))
-        ttk.Label(f,text="当前仅完成Parquet阶段；全量原生H5镜像 / Hikyuu C++验收尚未接入此界面。",
-                  foreground="#9f5818").pack(anchor="w",pady=(0,12))
+        ttk.Label(f,text="旧版全年重写购买Parquet已停用；此界面仅供旧任务状态查看与日终暂停。",
+                  foreground="#b42318").pack(anchor="w",pady=(0,12))
         group=ttk.LabelFrame(f,text="任务配置",padding=10)
         group.pack(fill="x")
         ttk.Label(group,text="原始数据根目录（只读）").grid(row=0,column=0,sticky="w")
@@ -108,9 +108,11 @@ class App(tk.Tk):
         group.columnconfigure(3,weight=1)
         actions=ttk.Frame(f)
         actions.pack(fill="x",pady=10)
-        ttk.Button(actions,text="▶ 开始新任务",command=self._new_job).pack(side="left",padx=(0,7))
+        ttk.Button(actions,text="▶ 旧重写模式已停用",command=self._new_job,
+                   state="disabled").pack(side="left",padx=(0,7))
         ttk.Button(actions,text="⏸ 当前日期结束后暂停",command=self._pause).pack(side="left",padx=(0,7))
-        ttk.Button(actions,text="↻ 恢复已有任务",command=self._resume).pack(side="left",padx=(0,7))
+        ttk.Button(actions,text="↻ 旧任务恢复已停用",command=self._resume,
+                   state="disabled").pack(side="left",padx=(0,7))
         ttk.Button(actions,text="📁 打开任务目录",command=self._open_dir).pack(side="left")
         ttk.Label(actions,text="任务ID").pack(side="left",padx=(12,5))
         ttk.Entry(actions,textvariable=self.id_value,width=15).pack(side="left")
@@ -171,6 +173,9 @@ class App(tk.Tk):
         self._paint()
 
     def _new_job(self):
+        messagebox.showwarning("旧版整日重写已停用",
+            "此功能会重复物化购买Parquet。后续新任务只允许写入已认证H5真实缺口。")
+        return
         try:
             a=date.fromisoformat(self.start_value.get().strip())
             b=date.fromisoformat(self.end_value.get().strip())
@@ -204,6 +209,9 @@ class App(tk.Tk):
         return JOBS/jobid
 
     def _resume(self):
+        messagebox.showwarning("旧版恢复已停用",
+            "已发现旧任务重复物化购买行情；请保留现有状态，不再恢复此模式。")
+        return
         job=self._chosen_job()
         if job is None:
             return

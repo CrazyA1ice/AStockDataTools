@@ -104,6 +104,15 @@ def launch(root,start,end,*,dry_run=False):
                 "job_id":identifier if resume else None,
                 "root":str(root),"start":start,"end":end,
                 "would_resume_existing":resume,"launched":False}
+    # RETIRED: full-day purchased Parquet rematerialization is not H5
+    # gap filling. The user requested a source-first delta overlay.
+    # Do not spawn a new worker or resume any paused legacy job.
+    # Existing running workers are unaffected by this source change.
+    raise RuntimeError(
+        "RETIRED_FULL_PURCHASED_REWRITE: old 2025/2026 minute job "
+        "copies purchased Parquet instead of only writing H5 gaps. "
+        "Do not resume. Inspect paused jobs read-only; implement and "
+        "verify purchased-primary missing-key overlay first.")
     if resume:
         # User-requested pause remains respected until explicit opt-in launch.
         pause=job/"stop_after_day.flag"

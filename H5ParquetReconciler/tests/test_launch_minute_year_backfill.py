@@ -43,24 +43,22 @@ class BackfillLaunchTests(unittest.TestCase):
             "job_id":folder.name,"status":status}),encoding="utf-8")
         return folder
 
-    def test_new_year_run_launches_one_detached_process(self):
-        with patch.object(L.GUI,"launch",return_value=SimpleNamespace(pid=12345)) as spawn,patch.object(
-            L.secrets,"token_hex",return_value="abcdef123456"):
-            r=L.launch(self.root,"2026-01-01","2026-10-13")
-        self.assertEqual(r["status"],"new_real_backfill_requested_detached")
-        self.assertTrue(r["launched"])
-        self.assertEqual(r["job_id"],"abcdef123456")
-        self.assertEqual(r["worker_pid"],12345)
-        self.assertEqual(spawn.call_count,1)
-        self.assertFalse(spawn.call_args.kwargs["resume"])
+    def test_new_year_legacy_rewrite_is_blocked_before_spawn(self):
+        with patch.object(L.GUI,"launch") as spawn:
+            with self.assertRaisesRegex(RuntimeError,"RETIRED_FULL_PURCHASED_REWRITE"):
+                L.launch(self.root,"2026-01-01","2026-10-13")
+        spawn.assert_not_called()
 
-    def test_existing_failed_job_resumes_not_duplicate(self):
-        self.prior("failed")
-        with patch.object(L.GUI,"launch",return_value=SimpleNamespace(pid=12345)) as spawn:
-            r=L.launch(self.root,"2026-01-01","2026-10-13")
-        self.assertEqual(r["job_id"],"123456789abc")
-        self.assertEqual(r["status"],"resume_requested_detached")
-        self.assertTrue(spawn.call_args.kwargs["resume"])
+    def test_existing_paused_or_failed_legacy_job_cannot_resume(self):
+        for prior_status in ("failed","paused","running","created"):
+            with self.subTest(prior_status=prior_status):
+                f=self.prior(prior_status)
+                with patch.object(L.GUI,"launch") as spawn:
+                    with self.assertRaisesRegex(RuntimeError,"RETIRED_FULL_PURCHASED_REWRITE"):
+                        L.launch(self.root,"2026-01-01","2026-10-13")
+                spawn.assert_not_called()
+                self.assertEqual(json.loads((f/"state.json").read_text())["status"],
+                                 prior_status)
 
     def test_completed_job_not_rewritten(self):
         self.prior("completed")

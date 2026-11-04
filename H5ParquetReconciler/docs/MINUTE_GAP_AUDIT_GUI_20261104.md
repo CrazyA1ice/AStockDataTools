@@ -63,7 +63,7 @@
 cd D:\ChatGPT\AStockDataTools; git -c http.version=HTTP/1.1 pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "GitHub更新失败，未打开新核对GUI" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\start-minute-gap-audit-gui.ps1; if ($LASTEXITCODE -ne 0) { throw "GUI后端安全回归失败，未启动界面" }
 ```
 
-启动脚本先跑`test_preview_minute_exact_key_diff_readonly.py`、`test_build_minute_purchased_key_index.py`、`test_audit_minute_index_window_readonly.py`、`test_ensure_minute_key_index_window.py`、`test_minute_gap_audit_gui_worker.py`，共**7+5+4+4+8=28项**合成测试。**新增8项GUI worker/启动兼容性测试与界面尚未有真实Windows PASS回执。** 通过后使用venv的`pythonw.exe`打开GUI；关GUI不影响已启动的后台审计进程。
+启动脚本先跑`test_preview_minute_exact_key_diff_readonly.py`、`test_build_minute_purchased_key_index.py`、`test_audit_minute_index_window_readonly.py`、`test_ensure_minute_key_index_window.py`、`test_minute_gap_audit_gui_worker.py`，共**7+5+4+4+8+6=34项**合成测试。**新增8项GUI worker/启动兼容性测试与6项历史日线测试、更新后的界面，尚未有真实Windows PASS回执。** 通过后使用venv的`pythonw.exe`打开GUI；关GUI不影响已启动的后台审计进程。
 
 ## 四、下一阶段边界
 

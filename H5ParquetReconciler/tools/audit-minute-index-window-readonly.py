@@ -38,6 +38,8 @@ FIELDS=(
     "h5_only_keys_on_full_purchased_absence_days",
     "h5_only_candidate_keys_on_partial_purchased_stockdays",
     "purchased_only_keys_on_native_complete_H5_stockdays",
+    "purchased_only_0930_keys_on_complete_H5_stockdays",
+    "purchased_only_other_time_keys_on_complete_H5_stockdays",
     "h5_only_complete_stockdays_without_purchased",
     "partial_purchased_stockdays_with_h5_only_candidate_keys",
 )

@@ -124,6 +124,7 @@ class App(tk.Tk):
         ttk.Button(actions,text="开始批量只读核对",command=self._start).pack(side="left",padx=7)
         ttk.Button(actions,text="当前分段完成后暂停",command=self._pause).pack(side="left",padx=7)
         ttk.Button(actions,text="填入剩余未完成范围",command=self._remaining).pack(side="left",padx=7)
+        ttk.Button(actions,text="查看隔离异常",command=self._exceptions).pack(side="left",padx=7)
         ttk.Button(actions,text="刷新",command=self._refresh).pack(side="right")
         ttk.Label(pad,textvariable=self.status,foreground="#264a6b").pack(anchor="w",pady=(0,3))
         ttk.Label(pad,textvariable=self.indicators).pack(anchor="w")
@@ -252,6 +253,44 @@ class App(tk.Tk):
             self.status.set("已填入未完成的日期范围。请先查看计划，再启动新任务；旧任务报告保留。")
         except Exception as e:
             messagebox.showerror("无法选择剩余范围",str(e))
+
+    def _exceptions(self):
+        """Read completed private receipts: date/period/reason/count only."""
+        try:
+            job=self._selected_job()
+            entries=[]
+            for p in sorted(job.glob("audit-*.json")):
+                if p.is_symlink() or not p.is_file():
+                    raise ValueError("Unsafe private aggregate audit receipt")
+                result=load_json(p)
+                if result.get("status")!="read_only_existing_index_multi_day_candidate_diff_not_activated":
+                    raise ValueError("Unknown audit receipt provenance")
+                for row in result.get("days",[]):
+                    for period in ("1min","5min"):
+                        for reason,count in row["periods"][period].get(
+                                "quarantined_h5_stockdays_by_reason",{}).items():
+                            if int(count):
+                                entries.append((row["day"],period,str(reason),int(count)))
+            win=tk.Toplevel(self)
+            win.title("H5时间格异常（只读统计，不包含行情数值）")
+            win.geometry("690x430")
+            note="隔离记录仅说明原生H5时间格异常。不能直接视为购买Parquet缺口或自动补入。"
+            ttk.Label(win,text=note,wraplength=660).pack(anchor="w",padx=12,pady=10)
+            tree=ttk.Treeview(win,columns=("day","period","reason","count"),
+                              show="headings")
+            for k,name,width in (
+                ("day","日期",125),("period","周期",75),
+                ("reason","隔离原因",380),("count","股票日数",80)):
+                tree.heading(k,text=name)
+                tree.column(k,width=width,anchor="center" if k=="count" else "w")
+            tree.pack(fill="both",expand=True,padx=12,pady=(0,12))
+            for item in entries:
+                tree.insert("","end",values=item)
+            if not entries:
+                ttk.Label(win,text="当前任务已完成的分段没有记录到H5隔离异常。").pack(
+                    anchor="w",padx=12,pady=(0,10))
+        except Exception as e:
+            messagebox.showerror("无法读取隔离明细",str(e))
 
     def _select(self,event=None):
         items=self.table.selection()

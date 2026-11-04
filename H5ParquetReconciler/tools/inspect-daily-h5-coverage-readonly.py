@@ -68,6 +68,54 @@ def plan(root,first,last):
     return result
 
 
+def detect_h5_day_bounds(root):
+    """Discover actual A-share-candidate H5 DAY timestamps, not guessed 1990."""
+    import h5py
+    root=Path(root)
+    # Validation checks source directories, H5 market files and symlinks.
+    plan(root,date(1990,1,1),date(1990,1,1))
+    earliest=None
+    latest=None
+    sources=0
+    for market in MARKETS:
+        path=root/"HikyuuData"/(market+"_day.h5")
+        if not path.is_file():
+            continue
+        with h5py.File(path,"r") as h5:
+            group=h5.get("data")
+            if not isinstance(group,h5py.Group):
+                raise ValueError("H5 day data group missing")
+            for raw_symbol in group:
+                symbol=CORE.symbol_id(raw_symbol)
+                if symbol is None or not symbol.startswith(market.upper()):
+                    continue
+                ds=group[raw_symbol]
+                if not isinstance(ds,h5py.Dataset) or not len(ds) or (
+                        "datetime" not in (ds.dtype.names or ())):
+                    continue
+                a=int(ds[0]["datetime"])//10000
+                b=int(ds[-1]["datetime"])//10000
+                try:
+                    da=date.fromisoformat(f"{a:08d}"[:4]+"-"+f"{a:08d}"[4:6]+
+                                        "-"+f"{a:08d}"[6:8])
+                    db=date.fromisoformat(f"{b:08d}"[:4]+"-"+f"{b:08d}"[4:6]+
+                                        "-"+f"{b:08d}"[6:8])
+                except ValueError:
+                    continue
+                if not CORE.is_a_share_candidate(symbol,da.year):
+                    continue
+                earliest=da if earliest is None else min(earliest,da)
+                latest=db if latest is None else max(latest,db)
+                sources+=1
+    if earliest is None or latest is None:
+        raise ValueError("No valid A-share-candidate H5 daily dates found")
+    return {"h5_earliest_candidate_day":earliest.isoformat(),
+            "h5_latest_candidate_day":latest.isoformat(),
+            "h5_candidate_series_examined":sources,
+            "historical_day_gap_not_certified":True,
+            "source_date_bounds_from_actual_H5":True}
+
+
 def inspect_year(root,first,last):
     import h5py
     first,last=bounds(first,last)
@@ -77,7 +125,8 @@ def inspect_year(root,first,last):
     # Validate the actual files; no static 1990 cutoff is assumed.
     plan(root,first,last)
     lower=int(first.strftime("%Y%m%d"))*10000
-    upper=int((last+timedelta(days=1)).strftime("%Y%m%d"))*10000
+    # End-of-day exclusive bound without date+1 overflow at year 9999.
+    upper=int(last.strftime("%Y%m%d"))*10000+2400
     source_markets=[]
     rows=0
     candidate_stockdays=0

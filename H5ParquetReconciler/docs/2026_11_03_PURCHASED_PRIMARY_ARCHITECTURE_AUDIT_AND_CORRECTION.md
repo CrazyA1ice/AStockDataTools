@@ -22,6 +22,34 @@
 
 今后 **禁止**以6,321,875重复购买副本或更大旧SAFE累计数字作为市场补缺。下一步读取已确认的来源差集，只有 `accepted_h5_gap_unique_keys>0` 才允许出现新补缺Parquet文件，并在零缺口时不产生行情副本。
 
+## 2026-11-04 三日精确键实机确认：全部没有可补H5键；下一段1月尾单次建索引
+
+用户在GitHub HTTPS连接中断时，直接用已存在的索引
+`work/unified_parquet/minute_key_index/purchased-minute-keys-2026-01-05-2026-01-07-8b70d1032ad0.sqlite`
+离线只读核对01-05、01-06、01-07。**三个日期的1min、5min两周期均零H5完整股日缺口、零局部分钟时间键候选**；无原始市场文件修改或新行情Parquet写入，源元数据均为同一个既有指纹（非内容SHA）。
+
+| 日期 | 购买有效1min键 | 购买有效5min键 | 与H5重合1min键 | 与H5重合5min键 | 购买1min独有（限H5完整股日） | H5可补完整/局部分钟键 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2026-01-05 | 1,317,788 | 262,464 | 1,239,840 | 261,696 | 5,166 | **0 / 0** |
+| 2026-01-06 | 1,318,029 | 262,512 | 1,240,320 | 261,792 | 5,168 | **0 / 0** |
+| 2026-01-07 | 1,318,029 | 262,512 | 1,240,560 | 261,840 | 5,169 | **0 / 0** |
+| **三日合计** | **3,953,846** | **787,488** | **3,720,720** | **785,328** | **15,503** | **0 / 0** |
+
+**重要边界**：购买1min独有键数量逐日约等于完整H5股票日数，疑似09:30约定差异，**未经独立按时间桶确认**；H5价格、量额、复权一致性尚未验收；没有出现在H5的股票日也无法由H5证明购源完整；不应扩大本次结论为全年行情无缺口。
+
+**本轮新增代码（待Windows实机测试）**：
+- `tools/ensure-minute-key-index-window.py`：若`from_day..through_day`已经有且只有一个来源指纹匹配的私有键SQLite，则经两个周期、区间头尾、来源路径和元数据校验后**直接复用**，任何现有索引都不重建；无索引才创建一次；同窗口出现多个或失效则fail-closed，不绕过旧指纹另写一个“新”索引。
+- `tools/audit-minute-index-window-readonly.py`及其独立PowerShell仍可用于复用旧三日索引进行多日汇总，但上传回执的离线三次旧单日命令**已经完成了等价三日真实核对**，无需再重复使用旧三日索引运行同样的审计。
+- `run-minute-jan2026-tail-index-audit.ps1`直接专注**2026-01-08→2026-01-31**新范围，不覆盖已验三日。只需调用一次入口，先运行索引5项+多日审计4项+索引复用4项合成测试（**累计13项本轮要求，新的8项未实机PASS**），后在私有SQLite里建立或复用这24日窗口两周期分钟位图，最后使用索引核对**17个候选周一至周五日期**。不会读取购买OHLCVA、不会生成额外的购买分钟行情Parquet、不会改变H5、不会恢复已暂停的旧worker。
+- 专用入口默认2026年1月尾，不代表全2026或2025已经完成。若发现任何`h5_only_candidate_keys_on_partial_purchased_stockdays`，仅报告候选，**不自动写入**。
+- 若GitHub HTTPS仍无法连接，**先检查网络或代理配置，保持本地源数据不变；不要重建旧索引，也不要关闭Git SSL验证**。新代码只有成功`git pull`后才可运行。
+
+**下一步一行PowerShell（仅新建/复用私有SQLite + 只读市场核对，不复制行情）**：
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git -c http.version=HTTP/1.1 pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "GitHub更新失败，未运行新的月尾索引" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-minute-jan2026-tail-index-audit.ps1; if ($LASTEXITCODE -ne 0) { throw "2026年1月尾索引/精确差集测试失败，禁止计入正式行情补缺" }
+```
+
 ## 2026-11-03 Windows实机确认三日购买键索引PASS；多日批量复用正式开发
 
 **最新用户真实Windows验收（已PASS，无需重建）**：

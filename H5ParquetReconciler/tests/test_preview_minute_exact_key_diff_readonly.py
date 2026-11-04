@@ -65,6 +65,9 @@ class ExactMinuteKeyReadOnlyTests(unittest.TestCase):
         self.assertEqual(one["h5_only_keys_on_full_purchased_absence_days"],240)
         self.assertEqual(one["h5_only_candidate_keys_on_partial_purchased_stockdays"],240)
         self.assertEqual(one["purchased_only_keys_on_native_complete_H5_stockdays"],1)
+        self.assertEqual(one["purchased_only_0930_keys_on_complete_H5_stockdays"],1)
+        self.assertEqual(one["purchased_only_other_time_keys_on_complete_H5_stockdays"],0)
+        self.assertEqual(five["purchased_only_0930_keys_on_complete_H5_stockdays"],0)
         self.assertEqual(five["h5_only_keys_on_full_purchased_absence_days"],48)
         self.assertEqual(five["h5_only_candidate_keys_on_partial_purchased_stockdays"],47)
         self.assertEqual(five["overlapping_exact_keys"],1)
@@ -92,6 +95,18 @@ class ExactMinuteKeyReadOnlyTests(unittest.TestCase):
             self.assertEqual(p["overlapping_stockdays_with_native_complete_H5"],2)
         self.assertEqual(result["periods"]["1min"][
             "purchased_only_keys_on_native_complete_H5_stockdays"],1)
+
+    def test_purchased_only_other_time_keys_are_distinguished_from_0930(self):
+        # Native 1min ends 09:31..15:00. Original purchased SZ 09:30
+        # is a distinct vendor key; add an unrelated 15:01 purchased key
+        # and insist that these two differences remain separately visible.
+        key=Q.I.day_epoch_ms(self.day)+(15*60+1)*60000
+        self.put_purchased_keys("1min","SZ000001",[key],"extra_1501.parquet")
+        with self.patched():
+            p=Q.inspect_exact_period(self.root,self.day,"1min")
+        self.assertEqual(p["purchased_only_keys_on_native_complete_H5_stockdays"],2)
+        self.assertEqual(p["purchased_only_0930_keys_on_complete_H5_stockdays"],1)
+        self.assertEqual(p["purchased_only_other_time_keys_on_complete_H5_stockdays"],1)
 
     def test_true_single_missing_minute_is_candidate_not_automatically_accepted(self):
         # Buy all SZ H5 keys; buy SH H5 keys except one (missing minute).

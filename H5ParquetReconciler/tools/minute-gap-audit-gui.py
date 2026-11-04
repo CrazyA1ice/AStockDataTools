@@ -161,7 +161,7 @@ class App(tk.Tk):
         for key,text,width in (
                 ("range","已登记任务范围",250),
                 ("status","任务状态",100),
-                ("dates","完成日期",110),
+                ("dates","完成单元",110),
                 ("gaps","H5候选缺口",140),
                 ("exceptions","隔离股票日",100)):
             self.table.heading(key,text=text)
@@ -366,8 +366,9 @@ class App(tk.Tk):
             pct=(100*state["days_done"]/state["days_total"] if state["days_total"] else 0)
             self.progress["value"]=min(100,pct)
             status=state["status"]
+            unit=("年份" if config.get("audit_mode","minute")=="day" else "日期")
             self.indicators.set(
-                f"状态：{status}    日期：{state['days_done']}/{state['days_total']}  "+
+                f"状态：{status}    {unit}：{state['days_done']}/{state['days_total']}  "+
                 f"分段：{state['windows_done']}/{state['windows_total']}    "+
                 f"当前：{state.get('current_day') or state.get('current_window') or '—'}")
             summary=state.get("summary_by_period",{})

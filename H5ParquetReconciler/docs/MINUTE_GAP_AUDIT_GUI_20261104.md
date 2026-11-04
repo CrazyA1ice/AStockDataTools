@@ -2,6 +2,18 @@
 
 > **独立新工具**。不复用已停用的`minute-private-parquet-gui.py`购买Parquet整日复制按钮；原始`D:\stock\AllCycleAStockData`和`D:\stock\HikyuuData`始终只读。**本文件描述的是已提交、待用户Windows运行新回归测试的代码，不能视为全部实机验收完成。**
 
+## 2026-11-04 Windows第二次启动：34项回归全PASS，PowerShell `python -c` 参数转义错误
+
+用户更新到`bf52fcbb`后，PowerShell 5.1已能正确解析ASCII启动脚本，且**六组全部34项合成回归测试实机PASS**：7分钟差集、5索引、4多日审计、4索引复用、8 GUI后台、6历史日线（含1990/1991）。**GUI尚未打开**：在下一段语法检查 `& $py -B -c '... encoding="utf-8" ...'` 中Windows PowerShell 5.1向原生Python进程传递参数时丢失内部双引号，Python实际把`utf-8`当作表达式，报`NameError: name 'utf' is not defined`。这与文件内容是否UTF-8有效无关；也不是34项合成回归的失败。
+
+修复方案：
+- 新增`tools/preflight-minute-gap-audit-gui.py`，在独立Python进程中读取UTF-8 GUI源、AST语法检查、import tkinter、实际加载GUI模块并检查`App`存在；不创建Tk根窗口，不读写行情或调用旧worker。
+- `start-minute-gap-audit-gui.ps1`不再使用任何`& $py -B -c`内嵌代码，而使用简单的`& $py -B $preflight --gui $gui`原生命令行参数，规避Windows PowerShell 5.1传参转义损坏。入口脚本仍全ASCII。
+- 更新GUI合成测试：额外2项验证子进程运行preflight确实打印`GUI_PREFLIGHT_OK`且拒绝不相关worker脚本；原ASCII测试附加校验启动器不再使用`& $py -B -c`。
+- 入口应当**先通过36项回归（7+5+4+4+10+6）**，再运行安全预检并使用`pythonw.exe`打开窗口。新增的两项和GUI启动仍**待用户Windows复验**；不得提前宣称已通过。
+
+重复之前Windows已经确认的34项测试不会访问真实行情源；synthetic H5/Parquet fixture由测试用临时目录生成。新启动预检也不会修改原市场文件。若GitHub临时不可达且本地仍在`bf52fcbb`，仍可用`.\.venv\Scripts\python.exe -B H5ParquetReconciler\tools\minute-gap-audit-gui.py`直接启动已通过34项回归检查的旧GUI源码，仅跳过出问题的PS预检、不会恢复旧物理复制任务。
+
 ## 2026-11-04 Windows首次启动解析失败与修复（等待复验）
 
 用户实际执行首次GUI启动，GitHub快速更新到 `a98a8ee` 已成功，但 `start-minute-gap-audit-gui.ps1` 在Windows PowerShell 5.1解析阶段出现 `TerminatorExpectedAtEndOfString`，错误指向`Start-Process`行，**尚未运行任何Python测试或GUI进程**。仓库文件是无BOM UTF-8，含非ASCII中文单引号提示，Windows PowerShell 5.1可能当作本地ANSI编码读取，导致引号被破坏。原始市场数据及已验私有索引没有任何修改。

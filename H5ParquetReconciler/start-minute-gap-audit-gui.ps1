@@ -24,6 +24,10 @@ foreach ($p in $tests) {
 # does not display traceback in a console if an import fails on Windows.
 & $py -B -c 'import ast, pathlib, sys; path=pathlib.Path(sys.argv[1]); ast.parse(path.read_text(encoding="utf-8"), filename=str(path))' $gui
 if ($LASTEXITCODE -ne 0) { throw "GUI Python syntax check failed. GUI not launched." }
+# Catch missing tkinter/dependencies and module import errors before using
+# pythonw.exe, where exceptions could otherwise be invisible to the user.
+& $py -B -c 'import importlib.util,sys; p=sys.argv[1]; s=importlib.util.spec_from_file_location("safe_gui_preflight",p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert hasattr(m,"App")' $gui
+if ($LASTEXITCODE -ne 0) { throw "GUI imports failed. GUI not launched." }
 if (-not (Test-Path -LiteralPath $pyw -PathType Leaf)) { $pyw = $py }
 Write-Host 'All safe GUI backend tests passed. Launching minute gap audit window.'
 $process = Start-Process -FilePath $pyw -ArgumentList @('-B', ('"' + $gui + '"')) -WorkingDirectory $module -PassThru

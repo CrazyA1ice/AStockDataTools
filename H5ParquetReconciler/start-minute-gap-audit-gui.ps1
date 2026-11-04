@@ -14,7 +14,8 @@ $tests = @(
     'test_build_minute_purchased_key_index.py',
     'test_audit_minute_index_window_readonly.py',
     'test_ensure_minute_key_index_window.py',
-    'test_minute_gap_audit_gui_worker.py'
+    'test_minute_gap_audit_gui_worker.py',
+    'test_historical_daily_h5_coverage_gui.py'
 )
 foreach ($p in $tests) {
     & $py -B -m unittest discover -s (Join-Path $module 'tests') -p $p -q

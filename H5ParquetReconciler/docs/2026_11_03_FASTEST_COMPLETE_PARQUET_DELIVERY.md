@@ -1,0 +1,62 @@
+# 2026-11-03：最快交付可用的完整 A 股 Parquet 数据库（执行与验收账）
+
+> **⚠️ 执行计划已纠偏：本文中“使用GUI逐日跑完2025/2026并重写完整购买分钟行”的建议已撤回；文件历史业绩可参考，后续禁用该全量复制模式。应先验证购买原位行情、只计算H5精确缺键、仅写真实增量。最新权威执行路线：[2026-11-03架构审查](2026_11_03_PURCHASED_PRIMARY_ARCHITECTURE_AUDIT_AND_CORRECTION.md)。**
+
+本文件作为**交付状态面板**，以已记录的本机真实 SAFE / 物理文件为依据。代码提交、离线合成测试、历史候选、空工作日和正式生产数据严格分开计数。核心目标改为**优先交付完整、可复用、可查询的本地 Parquet**；原 H5 镜像、无关查询性能改进不再阻塞 Parquet 交付。
+
+## 1. 不可重做的已有数据
+
+| 层级 | 已知真实数量 | 已达成 | 不能宣称 |
+| --- | ---: | --- | --- |
+| 2011—2026 购买 DAY | 14,115,707 | 原购买文件24/24核验；私有年度物化并独立验收 | 原购买文件已修改 |
+| 2011—2026 H5-only DAY | 22,274 | 22,191整缺日+83混合日期股日，逐键/源SHA验收，纳入私有16年物理年 | 2026-07-16另5个异常股日已补入 |
+| 2011—2026 私有统一 DAY | **14,137,981** | 16个年度物理Parquet+年度SQLite索引，固定版本SHA `bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05` | 已覆盖1990—2010历史 |
+| 1990—2010 H5原生日线RAW | **3,682,327** | 21个独立年度原生整数Parquet、全部内容SHA/值验证，报告 `pre2011-full21-verify-9bba81ed3c33.json` | 已认证购买schema量额、身份、复权 |
+| 全时段日线**来源总账** | **17,820,308** | 以上两段没有年份重叠 | 全部已变成可交易、同一语义的统一Parquet |
+| 2026年1/5分钟统一Parquet | 至少 **46,566,398** | 截至11月2日25个有行情日40,151,465条；另有11月3日已验的8/25—28四日6,414,933条（不重叠）；8/10—24另有11日独立验收、10/08已有SAFE，累计准确值以**每日报告SHA去重重算**为准 | 已覆盖2025—2026所有分钟交易日、所有股日缺口 |
+| 反向原生H5 | 日线14,137,981；分钟4日6,427,013 | 独立Hikyuu原生整数写盘读回 | Parquet Float64金额全部无损等价或分钟全历史完成 |
+
+原分钟源端（当时只读观测）H5最多到2026-10-13；购买1min/5min的2026年度文件最多到2026-09-30。不要把源不存在的10-14之后标成缺口已补；要依赖新增 TDX 真正入库，才能更新到新的交易日。
+
+## 2. 当前P0：1990—2026 日线的最短真实落盘路径
+
+1. **不重新扫描**原H5的3,682,327条，也**不重写**已有16年的14,137,981条。先消费已有21年RAW的SHA固定版本。
+2. 已开发 `tools/stage-pre2011-day-normalized-candidates-with-quarantine.py` 和 `tools/build-1990-2026-private-day-candidate-version.py`，分年将RAW写为购买schema *假设候选*，或完整RAW无损隔离；保持每年行数守恒、SHA与断点恢复。**尚待本机真正运行21年批次**。
+3. 新增一条短命令的入口 `run-full-history-day-candidates.ps1`：自动核对已验现代16年SHA、执行4项小规模离线写盘测试、固定任务ID、按年恢复、写新的未激活37年来源清单。默认仅预检；加 `-Run` 才对私有 `work/` 写候选。
+4. 对1990—2010来源身份（尤其早期A股/非A股历史证券）、未认证原生量额倍率及复权方式逐年处理，**明确区分物理完整的历史RAW档案和通过认证的标准行情层**。不能为了“全部17,820,308条”而猜测量纲、丢弃隔离原值或把非A股当A股。
+5. 建立供消费者使用的**只读版本化分区入口**：认证年份直接读取现有统一schema，未认证历史只能通过标注原生schema的隔离视图读取；生产入口默认拒绝未经确认的候选。所有分区内容SHA、行数、唯一键和来源分类对账成功后发布。直到这一步前 `ready_for_production_query=false`。
+
+### Windows下一条命令（不重建2011—2026，自动复用已验RAW）
+
+在仓库根目录的 PowerShell 执行下面**一整行**，先取得最新开发分支，再立即跑4项测试和21年历史候选写盘；只写模块私有新目录：
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; git fetch origin; if ($LASTEXITCODE -ne 0) { throw "fetch失败" }; git switch feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "分支切换失败" }; git pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "更新失败" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\run-full-history-day-candidates.ps1 -Run; if ($LASTEXITCODE -ne 0) { throw "历史21年候选写盘失败；保留同一任务ID供续跑" }
+```
+
+**完成的判据**是新 `reports/pre2011-day-historical-candidates-and-2011-2026-union-*.json` status=`1990_2026_day_full_history_private_candidates_with_raw_quarantine_not_activated`，候选+隔离严格=3,682,327，现代已验旧16年记录仍为14,137,981，来源总数17,820,308。候选条数和隔离原因应由本机真实输出确定，不能预测或将成功数学检验宣称为历史量额认证。断电重启可重复**同一整行**恢复；此前已完成年份只重验SHA，不重新物化。
+
+## 3. 后续最快交付顺序
+
+**P1：分钟。** GUI `start-minute-converter.bat` 已编写但需先通过 `test_minute_private_parquet_gui_worker.py` 三项安全测试及Windows实测。使用**同一个**GUI逐日期恢复已有结果、从尚未物化的2025/2026区间批量跑购买优先1min/5min补差；每日报告+分区SHA验收，异常时格股票日单独隔离。按周期+证券日期键核算全历史缺口、区分无源/休市/数据异常，而不是继续手工重复已验8—10月数据。最新实际统计从去重SAFE汇总获得，**不可对同一日期重复计数**。
+
+**P1.1：一次取回精确分钟物理累计（新增工具）。** `tools/report-verified-unified-minute-progress.py` 使用GUI已经实现的 `verified_existing_batch()` 验收途径，对 `reports/minute-batch-unified-YYYYMMDD-*.json` 内全部历史已验日期逐日重算**实际私有Parquet SHA**，同日多次报告只计一次；2026-10-13仅认可修正后的1min END标签版，任何同日来源SHA冲突立即停止。输出实际完成日期数、各周期/合计条数，零行情日不算完成。全部读取私有分区和报告、不重新打开原市场源，也不新增行情分区。
+
+最新程序和5项离线测试需要用户 Windows 首次验收；然后直接得到**精确累计**而非从多个批次手工加总。一整行 PowerShell（仓库已切至最新本分支之后）：
+
+```powershell
+cd D:\ChatGPT\AStockDataTools; .\.venv\Scripts\python.exe -m unittest discover -s H5ParquetReconciler\tests -p "test_report_verified_unified_minute_progress.py" -v; if ($LASTEXITCODE -ne 0) { throw "分钟唯一日期SHA去重统计测试失败" }; $rid=[Guid]::NewGuid().ToString("N").Substring(0,12); $out="H5ParquetReconciler\reports\verified-unique-minute-physical-progress-$rid.json"; .\.venv\Scripts\python.exe H5ParquetReconciler\tools\report-verified-unified-minute-progress.py --out $out --verify-existing-sha-only; if ($LASTEXITCODE -ne 0) { throw "一分钟/五分钟既存私有Parquet SHA验收或重复来源冲突，请保留原SAFE排查" }; $r=Get-Content -LiteralPath $out -Raw -Encoding UTF8 | ConvertFrom-Json; Write-Host "已验收唯一行情日=$($r.unique_nonempty_date_count)，1min=$($r.verified_physical_rows_by_period.'1min')，5min=$($r.verified_physical_rows_by_period.'5min')，总行数=$($r.verified_physical_rows_total)，报告=$out"
+```
+
+**P2：高周期。** 原购买Parquet自带1/5/15/30/60分钟、day、week、month（及复权因子），在分区盘点后**直接引用/复制原有权威记录**，不应机械地从H5构造本就不存在的15/30/60分钟和周/月。**只对证实有缺口的周期/股票日**，在时间桶、交易日历、复权及OHLCVA量纲验收通过后，用统一较低周期合成新补缺分区，绝不覆盖购买原值。必须将“原有购买周期完整可读”和“高周期合成补齐完成”分开登记。
+
+**P3：正式统一 Parquet 入口与验收。** 对所有目标周期发布不可变分区目录+SHA清单+原子版本指针；查询默认购买优先、候选和隔离分层，公开统一键/时间标签/SHA/来源覆盖的只读接口；逐周期给出实际时间范围、交易日、股日、分钟条数和异常占比，再称“完整”。
+
+**P4：镜像与增量。** 待Parquet完成后，再做独立全历史 Hikyuu H5 镜像及C++原生读取、范围与定点金额误差验收；用原生TDX盘后增量先写统一 Parquet 再同步独立 H5。原商业H5/Parquet始终不可覆盖，H5本身无法无损表示的购买浮点数据要明示量化误差。
+
+## 4. 当前门槛与避免无效工作
+
+- 1990—2010 价格÷1000、量×100、额×1000只是现代交叉样本推导的**候选**；RAW VWAP候选F=10000的内部算术命中不能证明1990年代的交易制度或供应商字段单位。
+- 已知2026-07-16的5个日线异常键、10月若干分钟格异常须保持隔离；不能以“最快”为由跳过可追溯性。
+- 本地有数据，GitHub仅有代码、脱敏日志与验收描述，**远程无法替用户机器执行真实市场落盘**。上面的命令是本阶段最短的真实数据下一步；脚本新入口仍待Windows首次测试，不得标记已实机PASS。
+- 每次工作应以“新增并完整验收的实际Parquet行数/日期/周期及未决异常数量”报告进度。只做计划、索引、离线测试和独立H5不计入已完成Parquet行情覆盖。

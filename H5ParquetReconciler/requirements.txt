@@ -2,3 +2,5 @@
 numpy>=1.24,<3
 h5py>=3.9,<4
 pyarrow>=17,<27
+# Native Hikyuu /data/<symbol> TABLE writer; h5py generic datasets lack native TABLE marker.
+tables>=3.9,<4

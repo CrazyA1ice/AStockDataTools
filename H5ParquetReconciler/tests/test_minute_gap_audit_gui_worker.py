@@ -68,12 +68,38 @@ class MinuteAuditDashboardWorkerTests(unittest.TestCase):
         text=data.decode("ascii")
         self.assertIn("Start-Process",text)
         self.assertIn("minute-gap-audit-gui.py",text)
+        self.assertIn("preflight-minute-gap-audit-gui.py",text)
+        self.assertNotIn("& $py -B -c",text)
         self.assertNotIn("minute-private-parquet-worker.py",text)
 
     def test_python_gui_module_is_syntax_valid_before_pythonw_launch(self):
         import ast
         path=TOOLS/"minute-gap-audit-gui.py"
         ast.parse(path.read_text(encoding="utf-8"),filename=str(path))
+
+    def test_separate_gui_preflight_succeeds_without_powershell_c_quoting(self):
+        import subprocess
+        import sys
+        preflight=TOOLS/"preflight-minute-gap-audit-gui.py"
+        gui=TOOLS/"minute-gap-audit-gui.py"
+        result=subprocess.run(
+            [sys.executable,"-B",str(preflight),"--gui",str(gui)],
+            cwd=str(HERE.parent),capture_output=True,text=True,
+            encoding="utf-8",timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+"\n"+result.stderr)
+        self.assertIn("GUI_PREFLIGHT_OK",result.stdout)
+
+    def test_preflight_rejects_unrelated_python_file(self):
+        import subprocess
+        import sys
+        preflight=TOOLS/"preflight-minute-gap-audit-gui.py"
+        wrong=TOOLS/"minute-gap-audit-gui-worker.py"
+        result=subprocess.run(
+            [sys.executable,"-B",str(preflight),"--gui",str(wrong)],
+            cwd=str(HERE.parent),capture_output=True,text=True,
+            encoding="utf-8",timeout=30)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("safe source-key audit GUI",result.stderr)
 
     def test_only_uncovered_dates_get_new_index_shard(self):
         before=self.sources()

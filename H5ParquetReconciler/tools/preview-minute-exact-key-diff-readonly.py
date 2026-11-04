@@ -64,6 +64,7 @@ def inspect_exact_period(root,day,period,*,max_purchased_rows=6000000,
     normalized=normalized_native_keys(day,period)
     lower=int(day.strftime("%Y%m%d"))*10000
     upper=int((day+timedelta(days=1)).strftime("%Y%m%d"))*10000
+    purchase_0930_key=I.day_epoch_ms(day)+(9*60+30)*60000
     found_markets=0
     missing_markets=[]
     h5_native_rows=0
@@ -120,12 +121,23 @@ def inspect_exact_period(root,day,period,*,max_purchased_rows=6000000,
                 totals["overlapping_exact_keys"]+=len(both)
                 totals["h5_only_candidate_keys_on_partial_purchased_stockdays"]+=len(missing)
                 totals["purchased_only_keys_on_native_complete_H5_stockdays"]+=len(bought_only)
+                # A purchased-only minute often reflects a distinct vendor
+                # timestamp label (e.g. 09:30 vs native 1min 09:31 END).
+                # Check the actual normalized timestamp, never assume it.
+                at_0930=int(purchase_0930_key in bought_only)
+                totals["purchased_only_0930_keys_on_complete_H5_stockdays"]+=at_0930
+                totals["purchased_only_other_time_keys_on_complete_H5_stockdays"]+=(
+                    len(bought_only)-at_0930)
                 if missing:
                     totals["partial_purchased_stockdays_with_h5_only_candidate_keys"]+=1
                 if bought_only:
                     totals["purchased_stockdays_with_keys_not_in_H5"]+=1
     if not found_markets:
         raise ValueError("No original H5 minute source files found")
+    if (totals["purchased_only_0930_keys_on_complete_H5_stockdays"]+
+        totals["purchased_only_other_time_keys_on_complete_H5_stockdays"]!=
+            totals["purchased_only_keys_on_native_complete_H5_stockdays"]):
+        raise ValueError("Purchased-only exact minute time bucket conservation failed")
     return {
         "period":period,
         "source_purchased_stockdays":len(bought),
@@ -150,6 +162,10 @@ def inspect_exact_period(root,day,period,*,max_purchased_rows=6000000,
             totals["purchased_stockdays_with_keys_not_in_H5"],
         "purchased_only_keys_on_native_complete_H5_stockdays":
             totals["purchased_only_keys_on_native_complete_H5_stockdays"],
+        "purchased_only_0930_keys_on_complete_H5_stockdays":
+            totals["purchased_only_0930_keys_on_complete_H5_stockdays"],
+        "purchased_only_other_time_keys_on_complete_H5_stockdays":
+            totals["purchased_only_other_time_keys_on_complete_H5_stockdays"],
         "quarantined_h5_stockdays_by_reason":dict(sorted(excluded.items())),
         "missing_h5_market_files":missing_markets,
         "purchased_bars_rematerialized":0,

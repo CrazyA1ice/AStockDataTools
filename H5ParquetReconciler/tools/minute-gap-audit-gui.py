@@ -290,6 +290,12 @@ class App(tk.Tk):
         """Read completed private receipts: date/period/reason/count only."""
         try:
             job=self._selected_job()
+            cfg=load_json(job/"config.json")
+            if cfg.get("audit_mode","minute")=="day":
+                messagebox.showinfo("日线历史普查",
+                    "本模式只统计各年份H5日线覆盖记录，没有执行日线净差集。"
+                    "请在任务日志和已生成的audit-day-*.json中查看逐年统计。")
+                return
             entries=[]
             for p in sorted(job.glob("audit-*.json")):
                 if p.is_symlink() or not p.is_file():
@@ -342,6 +348,13 @@ class App(tk.Tk):
                 f"分段：{state['windows_done']}/{state['windows_total']}    "+
                 f"当前：{state.get('current_day') or state.get('current_window') or '—'}")
             summary=state.get("summary_by_period",{})
+            if config.get("audit_mode","minute")=="day":
+                info=summary.get("day",{})
+                self.recent_summary.set(
+                    "日线H5原生候选记录："+str(info.get(
+                        "h5_a_share_candidate_daily_rows",0))+
+                    "   |   净补缺尚未计算   |   购买行情复制：0")
+                summary={}
             pieces=[]
             for period in ("1min","5min"):
                 d=summary.get(period,{})
@@ -349,7 +362,8 @@ class App(tk.Tk):
                     d.get("h5_only_candidate_keys_on_partial_purchased_stockdays",0))
                 exceptions=sum(int(v) for k,v in d.items() if k.startswith("quarantined_"))
                 pieces.append(f"{period}：候选缺口{gaps}，隔离股日{exceptions}")
-            self.recent_summary.set("   |   ".join(pieces)+"   |   购买数据复制0条")
+            if config.get("audit_mode","minute")!="day":
+                self.recent_summary.set("   |   ".join(pieces)+"   |   购买数据复制0条")
             path=job/"activity.log"
             if path.is_file() and not path.is_symlink():
                 # Only read the newest 200 kB of log for a responsive GUI.
@@ -387,10 +401,13 @@ class App(tk.Tk):
                            for p in ("1min","5min")
                            for k,v in summary.get(p,{}).items()
                            if k.startswith("quarantined_"))
-            cells=(config.get("from_day","")+" → "+config.get("through_day",""),
+            is_day=config.get("audit_mode","minute")=="day"
+            cells=(("日线 " if is_day else "分钟 ")+
+                   config.get("from_day","")+" → "+config.get("through_day",""),
                    state.get("status","?"),
                    f'{state.get("days_done",0)}/{state.get("days_total",0)}',
-                   str(gaps),str(exceptions))
+                   "未计算" if is_day else str(gaps),
+                   "—" if is_day else str(exceptions))
             if self.table.exists(directory.name):
                 self.table.item(directory.name,values=cells)
             else:

@@ -45,7 +45,8 @@ FIELDS=(
 )
 
 
-def audit(root,index,first,last,*,include_weekends=False,max_days=31):
+def audit(root,index,first,last,*,include_weekends=False,max_days=31,
+          progress=None):
     root=Path(root)
     index=Path(index)
     days=I.make_days(first,last)
@@ -95,6 +96,8 @@ def audit(root,index,first,last,*,include_weekends=False,max_days=31):
             audit_row["source_coverage_status"]="SOME_SOURCE_EVIDENCE_NOT_FULLY_CERTIFIED"
         days_report.append(audit_row)
         audited+=1
+        if progress is not None:
+            progress(day,audit_row,audited)
         print("READONLY "+day.isoformat()+
               " 1min H5_full_gap="+str(audit_row["periods"]["1min"][
                   "h5_only_keys_on_full_purchased_absence_days"])+

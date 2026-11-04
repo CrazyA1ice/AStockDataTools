@@ -38,17 +38,16 @@ def load(tag,name):
 
 E=load("gui_minute_index_ensure","ensure-minute-key-index-window.py")
 B=load("gui_minute_index_exact_batch","audit-minute-index-window-readonly.py")
+D=load("gui_historical_daily_h5_coverage","inspect-daily-h5-coverage-readonly.py")
 I=E.I
 
 
 def date_range(first,last):
+    """Validate user input without imposing a global artificial history cap."""
     first=date.fromisoformat(first) if isinstance(first,str) else first
     last=date.fromisoformat(last) if isinstance(last,str) else last
-    if (not isinstance(first,date) or not isinstance(last,date)
-            or first>last or first<date(2025,1,1)
-            or last>date(2026,10,13)
-            or (last-first).days>366):
-        raise ValueError("Choose a bounded 2025/2026 date range <=367 calendar days")
+    if not isinstance(first,date) or not isinstance(last,date) or first>last:
+        raise ValueError("Dates must use YYYY-MM-DD with start <= end")
     return first,last
 
 
@@ -75,7 +74,7 @@ def inventory(root):
     return found
 
 
-def plan(root,first,last,*,allow_build=False):
+def plan(root,first,last,*,allow_build=False,mode="minute"):
     """Partition requested range into reused existing indexes and new gaps.
 
     Prefer existing index windows even if they cover only part of a month.
@@ -83,6 +82,18 @@ def plan(root,first,last,*,allow_build=False):
     day cause a fail-closed conflict, not silent selection.
     """
     first,last=date_range(first,last)
+    if mode=="day":
+        return D.plan(root,first,last)
+    if mode!="minute":
+        raise ValueError("Unknown audit mode")
+    # The verified exact MINUTE key engine is currently bounded to source
+    # 2025..2026-10-13. This is NOT a global H5 daily-history cutoff.
+    # A future source-aware minute engine can extend coverage safely.
+    if first<date(2025,1,1) or last>date(2026,10,13):
+        raise ValueError(
+            "Verified 1/5min exact-key engine currently supports "
+            "2025-01-01..2026-10-13; choose historical DAY coverage mode "
+            "for older H5 daily data")
     items=inventory(root)
     days=[]
     day=first
@@ -132,14 +143,17 @@ def dump(path,obj):
     os.replace(tmp,path)
 
 
-def start_job(root,first,last,allow_build,jobid):
+def start_job(root,first,last,allow_build,jobid,*,mode="minute"):
     if not isinstance(jobid,str) or not JOB_ID.fullmatch(jobid):
         raise ValueError("Job identifier must be 12 hex characters")
     root=Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("Original market root missing or unsafe")
-    I.N.validate(root,first,"000000000000")
-    windows=plan(root,first,last,allow_build=allow_build)
+    if mode=="minute":
+        I.N.validate(root,first,"000000000000")
+    elif mode!="day":
+        raise ValueError("Unknown audit mode")
+    windows=plan(root,first,last,allow_build=allow_build,mode=mode)
     job=JOBS/jobid
     if job.is_symlink() or job.exists() or JOBS.is_symlink():
         raise ValueError("Audit job ID already exists / unsafe job path")
@@ -147,6 +161,7 @@ def start_job(root,first,last,allow_build,jobid):
     dump(job/"config.json",{
         "job_id":jobid,"root":str(root.resolve()),
         "from_day":str(first),"through_day":str(last),
+        "audit_mode":mode,
         "allow_create_private_key_indexes":bool(allow_build),
         "audit_only_no_market_data_writes":True,
         "windows":windows,
@@ -187,18 +202,52 @@ def run(jobid):
     # index builders running in the same repo. Old legacy writer is retired.
     with I.N.W.exclusive_lock(LOCK):
         root=Path(config["root"])
+        mode=config.get("audit_mode","minute")
         windows=plan(root,config["from_day"],config["through_day"],
-                     allow_build=config["allow_create_private_key_indexes"])
+                     allow_build=config["allow_create_private_key_indexes"],
+                     mode=mode)
         if windows!=config["windows"]:
             raise ValueError("Index inventory changed between GUI plan and execution")
         state["status"]="running"
         dump(job/"state.json",state)
-        total={period:Counter() for period in ("1min","5min")}
+        total={period:Counter() for period in
+               (("1min","5min") if mode=="minute" else ("day",))}
         for w in windows:
             first,last=w["first"],w["last"]
             state["current_window"]=first+".."+last
             dump(job/"state.json",state)
             print("AUDIT WINDOW "+state["current_window"]+" "+w["mode"],flush=True)
+            if mode=="day":
+                summary=D.inspect_year(root,first,last)
+                receipt=job/("audit-day-"+first+"-"+last+".json")
+                if receipt.exists() or receipt.is_symlink():
+                    raise ValueError("Historical day inventory receipt would be overwritten")
+                dump(receipt,summary)
+                total["day"]["h5_a_share_candidate_daily_rows"]+=summary[
+                    "h5_a_share_candidate_daily_rows"]
+                total["day"]["h5_candidate_symbols_present"]+=summary[
+                    "h5_candidate_symbols_present"]
+                total["day"]["purchased_annual_files_checked"]+=summary[
+                    "purchased_day_parquet_year_file_count"]
+                state["latest_day"]={
+                    "year":summary["year"],"h5_daily_candidate_rows":summary[
+                        "h5_a_share_candidate_daily_rows"],
+                    "net_day_gap_certified":False,
+                }
+                state["days_done"]+=1
+                state["windows_done"]+=1
+                state["summary_by_period"]={"day":dict(sorted(total["day"].items()))}
+                state["current_day"]=str(summary["year"])
+                dump(job/"state.json",state)
+                print("H5 DAILY HISTORY "+str(summary["year"])+
+                      " native_candidate_rows="+str(summary[
+                          "h5_a_share_candidate_daily_rows"])+
+                      " actual_gap_not_certified",flush=True)
+                if (job/"pause_after_window.flag").exists():
+                    state["status"]="paused"
+                    print("SAFE PAUSE after completed daily year window",flush=True)
+                    break
+                continue
             if w["existing_index"] is not None:
                 idx=Path(w["existing_index"])
                 # Query both bounds/periods to recheck index source metadata

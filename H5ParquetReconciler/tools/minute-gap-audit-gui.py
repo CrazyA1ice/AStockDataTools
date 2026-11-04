@@ -131,6 +131,9 @@ class App(tk.Tk):
         self.mode_tip=tk.StringVar(value="")
         ttk.Label(options,textvariable=self.mode_tip,foreground="#586e7b",
                   wraplength=960).grid(row=4,column=0,columnspan=5,sticky="w",pady=(8,0))
+        ttk.Button(options,text="读取H5实际日线起止日期",
+                   command=self._detect_day_bounds).grid(row=5,column=0,columnspan=3,
+                   sticky="w",pady=(8,0))
         self._mode_changed()
         options.columnconfigure(1,weight=2)
         options.columnconfigure(3,weight=1)
@@ -178,6 +181,26 @@ class App(tk.Tk):
     def _browse(self):
         path=filedialog.askdirectory(initialdir=self.source.get())
         if path:self.source.set(path)
+
+    def _detect_day_bounds(self):
+        try:
+            result=W.D.detect_h5_day_bounds(Path(self.source.get()))
+            first=result["h5_earliest_candidate_day"]
+            last=result["h5_latest_candidate_day"]
+            if not messagebox.askyesno(
+                    "H5日线实际覆盖范围",
+                    "已从H5原生股票日线读取到候选时间范围：\\n"+
+                    first+" 至 "+last+"\\n覆盖"+
+                    str(result["h5_candidate_series_examined"])+
+                    "条候选证券序列。\\n这是原生覆盖清查，不代表购买Parquet缺失。"+
+                    "\\n是否切换到日线模式并填入这些日期？"):
+                return
+            self.audit_mode.set("day")
+            self.start.set(first)
+            self.end.set(last)
+            self._mode_changed()
+        except Exception as e:
+            messagebox.showerror("无法读取H5日线日期",str(e))
 
     def _mode_changed(self):
         if self.audit_mode.get()=="day":

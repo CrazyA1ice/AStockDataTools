@@ -17,7 +17,7 @@ $through='2026-01-31'
 foreach($f in @($py,$ensure,$audit)){
     if(-not (Test-Path -LiteralPath $f -PathType Leaf)){throw "Missing prerequisite: $f"}
 }
-$tests=@('test_build_minute_purchased_key_index.py','test_audit_minute_index_window_readonly.py','test_ensure_minute_key_index_window.py')
+$tests=@('test_preview_minute_exact_key_diff_readonly.py','test_build_minute_purchased_key_index.py','test_audit_minute_index_window_readonly.py','test_ensure_minute_key_index_window.py')
 foreach($test in $tests){
     & $py -B -m unittest discover -s (Join-Path $module 'tests') -p $test -v
     if($LASTEXITCODE -ne 0){throw "Minute monthly-index synthetic tests FAILED: $test. Real market not accessed."}

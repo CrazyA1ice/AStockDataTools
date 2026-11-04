@@ -59,6 +59,22 @@ class MinuteAuditDashboardWorkerTests(unittest.TestCase):
                 for dirname in ("AllCycleAStockData","HikyuuData")
                 for p in (self.root/dirname).rglob("*") if p.is_file()}
 
+    def test_powershell_launcher_is_ascii_for_windows_powershell_51(self):
+        # Windows PowerShell 5.1 interprets UTF-8 without BOM as the active
+        # ANSI code page; non-ASCII single-quoted text can break parsing.
+        launcher=HERE.parent/"start-minute-gap-audit-gui.ps1"
+        data=launcher.read_bytes()
+        self.assertTrue(data.isascii(), "PowerShell launcher must stay ASCII")
+        text=data.decode("ascii")
+        self.assertIn("Start-Process",text)
+        self.assertIn("minute-gap-audit-gui.py",text)
+        self.assertNotIn("minute-private-parquet-worker.py",text)
+
+    def test_python_gui_module_is_syntax_valid_before_pythonw_launch(self):
+        import ast
+        path=TOOLS/"minute-gap-audit-gui.py"
+        ast.parse(path.read_text(encoding="utf-8"),filename=str(path))
+
     def test_only_uncovered_dates_get_new_index_shard(self):
         before=self.sources()
         with self.patched():

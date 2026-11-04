@@ -10,6 +10,7 @@ this mode deliberately does not claim H5-only net gaps or fill anything.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 from collections import Counter
@@ -116,6 +117,25 @@ def detect_h5_day_bounds(root):
             "source_date_bounds_from_actual_H5":True}
 
 
+def daily_source_snapshot(root,year=None):
+    """Fast path/size/mtime/inode drift detector; NOT full content SHA."""
+    root=Path(root)
+    paths=[root/"HikyuuData"/(market+"_day.h5") for market in MARKETS]
+    if year is not None:
+        paths+=CORE.year_files(root,"day",year)
+    observed={}
+    for path in paths:
+        if path.exists():
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Unsafe daily source file")
+            stat=path.stat()
+            observed[str(path.relative_to(root))]=[
+                stat.st_size,stat.st_mtime_ns,stat.st_ino]
+    return hashlib.sha256(json.dumps(
+        observed,sort_keys=True,separators=(",",":")).encode("utf-8")
+        ).hexdigest()
+
+
 def inspect_year(root,first,last):
     import h5py
     first,last=bounds(first,last)
@@ -124,6 +144,7 @@ def inspect_year(root,first,last):
     root=Path(root)
     # Validate the actual files; no static 1990 cutoff is assumed.
     plan(root,first,last)
+    before=daily_source_snapshot(root,first.year)
     lower=int(first.strftime("%Y%m%d"))*10000
     # End-of-day exclusive bound without date+1 overflow at year 9999.
     upper=int(last.strftime("%Y%m%d"))*10000+2400
@@ -164,6 +185,8 @@ def inspect_year(root,first,last):
                     candidates+=1
     year=first.year
     parquet_files=CORE.year_files(root,"day",year)
+    if daily_source_snapshot(root,year)!=before:
+        raise RuntimeError("Original daily H5/Parquet source metadata changed during inventory")
     return {
         "year":year,
         "from_day":first.isoformat(),
@@ -176,6 +199,8 @@ def inspect_year(root,first,last):
         "purchased_annual_files_prove_day_coverage":False,
         "h5_only_net_day_key_count":None,
         "daily_exact_parquet_key_diff_completed":False,
+        "source_metadata_unchanged_during_read":True,
+        "source_fingerprint_is_content_sha":False,
         "quarantined_h5_datasets_by_reason":dict(sorted(excluded.items())),
         "market_parquet_or_h5_written":False,
         "status":"H5_DAILY_HISTORICAL_COVERAGE_ONLY_NOT_GAP_CERTIFIED",

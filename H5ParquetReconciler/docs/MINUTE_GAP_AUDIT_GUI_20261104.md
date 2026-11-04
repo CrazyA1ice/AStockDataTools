@@ -2,6 +2,16 @@
 
 > **独立新工具**。不复用已停用的`minute-private-parquet-gui.py`购买Parquet整日复制按钮；原始`D:\stock\AllCycleAStockData`和`D:\stock\HikyuuData`始终只读。**本文件描述的是已提交、待用户Windows运行新回归测试的代码，不能视为全部实机验收完成。**
 
+## 2026-11-04 Windows首次启动解析失败与修复（等待复验）
+
+用户实际执行首次GUI启动，GitHub快速更新到 `a98a8ee` 已成功，但 `start-minute-gap-audit-gui.ps1` 在Windows PowerShell 5.1解析阶段出现 `TerminatorExpectedAtEndOfString`，错误指向`Start-Process`行，**尚未运行任何Python测试或GUI进程**。仓库文件是无BOM UTF-8，含非ASCII中文单引号提示，Windows PowerShell 5.1可能当作本地ANSI编码读取，导致引号被破坏。原始市场数据及已验私有索引没有任何修改。
+
+修复：
+- 将启动`.ps1`脚本中的提示全部替换为**纯ASCII**，从根本规避无BOM UTF-8与本地ANSI兼容问题；中文仍放在Python GUI界面中，其他PowerShell脚本暂不受此次修改影响。
+- 加入Python GUI源码AST语法检查与Tkinter/worker真实导入检查，**先在PowerShell普通python.exe中完成，再用pythonw.exe打开GUI**，避免GUI导入异常导致无提示退出。
+- `tests/test_minute_gap_audit_gui_worker.py`增加`test_powershell_launcher_is_ascii_for_windows_powershell_51`与`test_python_gui_module_is_syntax_valid_before_pythonw_launch`两项。现在一键启动应运行**7+5+4+4+8=28项**合成测试，而不是原来的26项。
+- **新修复已提交GitHub，尚未获得用户Windows复验输出**。如果测试或import预检失败，先查看PowerShell错误并修正，不要跳过测试、重启旧购买数据复制GUI或更改原始行情。
+
 ## 一、为什么做这个GUI，而不是继续每月手工跑PS脚本
 
 购买的1分钟、5分钟Parquet是权威来源；H5只有在确定缺失的规范分钟键存在、时标/单位/证券身份通过额外认证时才可能提供补差。之前的整日物化错误导致对01-05—08重复写出632万余购买行情，净H5新增0，旧任务`0625f02019fe`已安全暂停。之后的分钟键/SQLite索引只读流程证明可以在不重写任何购买OHLCVA的情况下精确比较H5。
@@ -37,7 +47,7 @@
 cd D:\ChatGPT\AStockDataTools; git -c http.version=HTTP/1.1 pull --ff-only origin feat/private-2011-2025-purchased-physical-year-20261031; if ($LASTEXITCODE -ne 0) { throw "GitHub更新失败，未打开新核对GUI" }; powershell.exe -NoProfile -ExecutionPolicy Bypass -File H5ParquetReconciler\start-minute-gap-audit-gui.ps1; if ($LASTEXITCODE -ne 0) { throw "GUI后端安全回归失败，未启动界面" }
 ```
 
-启动脚本先跑`test_preview_minute_exact_key_diff_readonly.py`、`test_build_minute_purchased_key_index.py`、`test_audit_minute_index_window_readonly.py`、`test_ensure_minute_key_index_window.py`、`test_minute_gap_audit_gui_worker.py`，共**7+5+4+4+6=26项**合成测试。**新增6项GUI worker测试与界面尚未有真实Windows PASS回执。** 通过后使用venv的`pythonw.exe`打开GUI；关GUI不影响已启动的后台审计进程。
+启动脚本先跑`test_preview_minute_exact_key_diff_readonly.py`、`test_build_minute_purchased_key_index.py`、`test_audit_minute_index_window_readonly.py`、`test_ensure_minute_key_index_window.py`、`test_minute_gap_audit_gui_worker.py`，共**7+5+4+4+8=28项**合成测试。**新增8项GUI worker/启动兼容性测试与界面尚未有真实Windows PASS回执。** 通过后使用venv的`pythonw.exe`打开GUI；关GUI不影响已启动的后台审计进程。
 
 ## 四、下一阶段边界
 

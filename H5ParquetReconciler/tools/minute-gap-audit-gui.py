@@ -81,13 +81,14 @@ def available_jobs():
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AStockDataTools · 分钟数据核对控制台（源数据只读）")
+        self.title("AStockDataTools · 行情历史覆盖与分钟缺口核对（源数据只读）")
         self.geometry("1120x760")
         self.minsize(900,620)
         self.source=tk.StringVar(value=r"D:\stock")
         self.start=tk.StringVar(value="2026-02-01")
         self.end=tk.StringVar(value="2026-02-28")
         self.allow_index=tk.BooleanVar(value=True)
+        self.audit_mode=tk.StringVar(value="minute")
         self.selected=tk.StringVar(value="")
         self.status=tk.StringVar(value="就绪 · 仅核对分钟时间键，不修改市场Parquet/H5")
         self.indicators=tk.StringVar(value="无已选任务")
@@ -100,8 +101,8 @@ class App(tk.Tk):
     def _layout(self):
         pad=ttk.Frame(self,padding=14)
         pad.pack(fill="both",expand=True)
-        ttk.Label(pad,text="分钟数据缺口核对",font=("Microsoft YaHei UI",18,"bold")).pack(anchor="w")
-        ttk.Label(pad,text="购买Parquet为主 · 复用分钟键索引 · H5精确差集 · 只读市场数据",
+        ttk.Label(pad,text="行情数据覆盖与缺口核对",font=("Microsoft YaHei UI",18,"bold")).pack(anchor="w")
+        ttk.Label(pad,text="日线：历史H5覆盖清查（可选1990年等早期日期） · 分钟：1/5min精确差集",
                   foreground="#285478").pack(anchor="w",pady=(2,3))
         ttk.Label(pad,text="安全边界：允许写入私有SQLite索引与核对报告；禁止复制购买OHLCVA、覆盖源H5、自动补缺或启用生产指针。",
                   foreground="#a13e17",wraplength=1040).pack(anchor="w",pady=(0,10))
@@ -110,12 +111,27 @@ class App(tk.Tk):
         ttk.Label(options,text="原始行情目录").grid(row=0,column=0,sticky="w")
         ttk.Entry(options,textvariable=self.source).grid(row=0,column=1,columnspan=3,sticky="ew",padx=8)
         ttk.Button(options,text="浏览…",command=self._browse).grid(row=0,column=4,sticky="e")
-        ttk.Label(options,text="开始").grid(row=1,column=0,sticky="w",pady=(8,0))
-        ttk.Entry(options,textvariable=self.start,width=16).grid(row=1,column=1,sticky="ew",padx=8,pady=(8,0))
-        ttk.Label(options,text="结束").grid(row=1,column=2,sticky="w",pady=(8,0))
-        ttk.Entry(options,textvariable=self.end,width=16).grid(row=1,column=3,sticky="ew",padx=8,pady=(8,0))
-        ttk.Checkbutton(options,text="允许创建缺少的私有键索引（仅ts/symbol，不存OHLCVA）",
-                        variable=self.allow_index).grid(row=2,column=0,columnspan=5,sticky="w",pady=(10,0))
+        ttk.Label(options,text="检查类型").grid(row=1,column=0,sticky="w",pady=(9,0))
+        modes=ttk.Frame(options)
+        modes.grid(row=1,column=1,columnspan=4,sticky="w",pady=(9,0))
+        ttk.Radiobutton(modes,text="分钟精确缺口（1/5min）",
+                        variable=self.audit_mode,value="minute",
+                        command=self._mode_changed).pack(side="left",padx=(0,20))
+        ttk.Radiobutton(modes,text="日线历史H5覆盖清查（暂不计算净补缺）",
+                        variable=self.audit_mode,value="day",
+                        command=self._mode_changed).pack(side="left")
+        ttk.Label(options,text="开始").grid(row=2,column=0,sticky="w",pady=(8,0))
+        ttk.Entry(options,textvariable=self.start,width=16).grid(row=2,column=1,sticky="ew",padx=8,pady=(8,0))
+        ttk.Label(options,text="结束").grid(row=2,column=2,sticky="w",pady=(8,0))
+        ttk.Entry(options,textvariable=self.end,width=16).grid(row=2,column=3,sticky="ew",padx=8,pady=(8,0))
+        self.index_checkbox=ttk.Checkbutton(
+            options,text="分钟模式：允许创建缺少的私有键索引（仅ts/symbol，不存OHLCVA）",
+            variable=self.allow_index)
+        self.index_checkbox.grid(row=3,column=0,columnspan=5,sticky="w",pady=(10,0))
+        self.mode_tip=tk.StringVar(value="")
+        ttk.Label(options,textvariable=self.mode_tip,foreground="#586e7b",
+                  wraplength=960).grid(row=4,column=0,columnspan=5,sticky="w",pady=(8,0))
+        self._mode_changed()
         options.columnconfigure(1,weight=2)
         options.columnconfigure(3,weight=1)
         actions=ttk.Frame(pad)
@@ -156,31 +172,44 @@ class App(tk.Tk):
         self.log=scrolledtext.ScrolledText(lower,wrap="word",height=12,font=("Consolas",10))
         self.log.pack(fill="both",expand=True)
         self.log.configure(state="disabled")
-        ttk.Label(pad,text="注意：本工具仅核对已知2025—2026分钟源；异常H5记录保持隔离，不能将0候选等同于行情质量全部认证。",
+        ttk.Label(pad,text="日期范围由检查类型和真实数据源决定；长范围由后台自动分月/分年。日线覆盖普查不代表完成日线净差集、数值质量或正式补齐。",
                   foreground="#697580",wraplength=1050).pack(anchor="w",pady=(8,0))
 
     def _browse(self):
         path=filedialog.askdirectory(initialdir=self.source.get())
         if path:self.source.set(path)
 
+    def _mode_changed(self):
+        if self.audit_mode.get()=="day":
+            self.index_checkbox.state(["disabled"])
+            self.mode_tip.set(
+                "日线仅清查H5原生历史覆盖：可选择1990年左右至当前或其他日期；"
+                "逐年分段，不执行分钟索引，不计算与购买Parquet的精确日线净差集。")
+        else:
+            self.index_checkbox.state(["!disabled"])
+            self.mode_tip.set(
+                "分钟精确差集：现有已验证引擎支持2025-01-01至2026-10-13；"
+                "可跨任意数量月份，后台每段最多31日。")
     def _request(self):
         return (Path(self.source.get()),self.start.get().strip(),
-                self.end.get().strip(),self.allow_index.get())
+                self.end.get().strip(),self.allow_index.get(),self.audit_mode.get())
 
     def _preview(self):
         try:
-            root,a,b,allow=self._request()
-            W.I.N.validate(root,a,"000000000000")
-            windows=W.plan(root,a,b,allow_build=allow)
+            root,a,b,allow,mode=self._request()
+            windows=W.plan(root,a,b,allow_build=allow,mode=mode)
             reused=sum(x["mode"]=="reuse_existing_index" for x in windows)
             created=len(windows)-reused
             weekdays=sum(x["eligible_weekdays"] for x in windows)
             lines=[f'{x["first"]} 至 {x["last"]} · '+
-                   ("复用已建索引" if x["existing_index"] else "只建缺失私有键索引")
+                   ("日线原生H5覆盖普查（不计算补缺）" if mode=="day" else
+                    "复用已建索引" if x["existing_index"] else
+                    "只建缺失私有键索引")
                    for x in windows]
+            headline=(f"合计 {len(windows)} 个年度清查分段；不计算净H5缺口。" if mode=="day"
+                      else f"合计 {len(windows)} 个分钟分段；复用 {reused}，新建 {created}；候选工作日 {weekdays} 个。")
             messagebox.showinfo("只读核对计划",
-                f"合计 {len(windows)} 个分段；复用 {reused}，新建 {created}；"+
-                f"候选工作日 {weekdays} 个。\n\n"+
+                headline+"\n\n"+
                 "\n".join(lines[:30])+
                 ("\n…其余分段略" if len(lines)>30 else "")+
                 "\n\n不会修改原始Parquet/H5，也不会写入任何行情文件。")
@@ -189,20 +218,21 @@ class App(tk.Tk):
 
     def _start(self):
         try:
-            root,a,b,allow=self._request()
-            windows=W.plan(root,a,b,allow_build=allow)
+            root,a,b,allow,mode=self._request()
+            windows=W.plan(root,a,b,allow_build=allow,mode=mode)
             if any(x[1].get("status") in ("created","running")
                    for x in available_jobs()):
                 raise ValueError("已有准备中/运行中的核对任务。请先等待它完成，或安全暂停当前分段。")
-            if not any(w["eligible_weekdays"] for w in windows):
+            if mode=="minute" and not any(w["eligible_weekdays"] for w in windows):
                 raise ValueError("所选范围没有候选工作日。")
-            msg=(f"核对 {a} 至 {b}；共{len(windows)}个分段。\n"+
-                 f"索引不足时{'允许新建私有键索引' if allow else '拒绝新建任何索引'}。\n"+
-                 "所有原始行情严格只读；生成的结果仅用于缺口审计。\n确认开始？")
+            msg=(f"{'日线H5历史覆盖清查' if mode=='day' else '分钟精确差集核对'}：{a} 至 {b}；共{len(windows)}个分段。\n"+
+                 (("日线只读普查，不计算日线净补缺。\n") if mode=="day" else
+                  f"索引不足时{'允许新建私有键索引' if allow else '拒绝新建任何索引'}。\n")+
+                 "所有原始行情严格只读；生成的结果仅用于覆盖/缺口审计。\n确认开始？")
             if not messagebox.askyesno("确认只读核对",msg):
                 return
             identifier=secrets.token_hex(6)
-            W.start_job(root,a,b,allow,identifier)
+            W.start_job(root,a,b,allow,identifier,mode=mode)
             try:
                 launch(identifier)
             except Exception as e:
@@ -250,6 +280,8 @@ class App(tk.Tk):
             self.end.set(cfg["through_day"])
             self.source.set(cfg["root"])
             self.allow_index.set(cfg["allow_create_private_key_indexes"])
+            self.audit_mode.set(cfg.get("audit_mode","minute"))
+            self._mode_changed()
             self.status.set("已填入未完成的日期范围。请先查看计划，再启动新任务；旧任务报告保留。")
         except Exception as e:
             messagebox.showerror("无法选择剩余范围",str(e))

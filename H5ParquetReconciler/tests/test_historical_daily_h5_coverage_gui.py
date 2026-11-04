@@ -58,6 +58,7 @@ class HistoricalDailySourceCoverageGuiTests(unittest.TestCase):
     def patched(self):
         c=contextlib.ExitStack()
         for mod,key,val in (
+            (W.I,"STORE",self.root/"work"/"unified_parquet"/"minute_key_index"),
             (W,"BASE",self.jobroot),
             (W,"JOBS",self.jobroot/"jobs"),
             (W,"LOCK",self.jobroot/"audit.lock"),
@@ -108,8 +109,9 @@ class HistoricalDailySourceCoverageGuiTests(unittest.TestCase):
     def test_minute_plan_no_global_367day_limit_but_bounded_shards(self):
         # Previous GUI rejected 2025-01-01 through 2026-10-13 because it
         # imposed an arbitrary <=367 day full-task limit.
-        plan=W.plan(self.root,"2025-01-01","2026-10-13",
-                    allow_build=True,mode="minute")
+        with self.patched():
+            plan=W.plan(self.root,"2025-01-01","2026-10-13",
+                        allow_build=True,mode="minute")
         self.assertGreater(len(plan),12)
         self.assertTrue(all((date.fromisoformat(p["last"])-
                              date.fromisoformat(p["first"])).days <31

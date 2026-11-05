@@ -144,7 +144,14 @@ def query_bars(root, period, first, last, *,
                 underlying["safe_summary"]["physical_ohlcva_source_rows_read"],
             "source_ohlcva_budget":
                 underlying["safe_summary"]["physical_ohlcva_rows_budget"],
-            "key_only_to_ohlcva_exact_key_verified": True,
+            "key_only_to_ohlcva_exact_key_verified":
+                underlying["safe_summary"]["keys_equal_between_key_probe_and_ohlcva"],
+            "native_session_grid_checked_before_ohlcva":
+                underlying["safe_summary"]["native_session_grid_checked_before_ohlcva"],
+            "generic_purchased_query_budget_unchanged":
+                underlying["safe_summary"]["generic_purchased_query_budget_unchanged"],
+            "physical_ohlcva_exception_scope":
+                underlying["safe_summary"]["physical_ohlcva_exception_scope"],
         },
     }
 

@@ -187,7 +187,7 @@ class EightCycleDayOverlayContracts(unittest.TestCase):
             self._run(response=fake)
 
     def test_both_private_permission_types_cannot_mix(self):
-        with self.assertRaisesRegex(ValueError, "exclusively day"):
+        with self.assertRaisesRegex(ValueError, "only for 1min/5min|exclusively day"):
             M.query_bars(self.root, "SH600000", "day",
                          "2026-10-09", "2026-10-13",
                          allow_verified_private_h5=True,

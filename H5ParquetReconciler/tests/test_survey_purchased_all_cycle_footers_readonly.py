@@ -85,7 +85,12 @@ class AllCycleFooterSurveyTests(unittest.TestCase):
             M.inventory(self.root, years=(2025,), max_total_files=2)
 
     def test_no_ohlcva_column_batch_reader_called(self):
-        with patch.object(M.F, "year_period_footer", wraps=M.F.year_period_footer) as footer:
+        with patch.object(self.pq.ParquetFile, "iter_batches",
+                          side_effect=AssertionError("Row batch read forbidden")), \
+             patch.object(self.pq.ParquetFile, "read_row_group",
+                          side_effect=AssertionError("OHLCVA group read forbidden")), \
+             patch.object(M.F, "year_period_footer",
+                          wraps=M.F.year_period_footer) as footer:
             out = M.inventory(self.root, years=(2025,))
         self.assertTrue(out["only_original_parquet_file_footers_read"])
         self.assertEqual(footer.call_count, len(self.periods))

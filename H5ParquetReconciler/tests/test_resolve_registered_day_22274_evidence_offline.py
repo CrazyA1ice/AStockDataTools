@@ -129,7 +129,7 @@ class RegisteredDayEvidenceResolverTests(unittest.TestCase):
 
     def test_changed_source_annual_report_is_rejected_by_sha(self):
         self.year[2016][0].write_text('{"changed":true}')
-        with self.assertRaisesRegex(ValueError,"Annual report SHA mismatch"):
+        with self.assertRaisesRegex(ValueError,r"^Original annual report SHA mismatch$"):
             M.prepare(self.version)
 
     def test_changed_live_safe_is_rejected_before_private_open(self):

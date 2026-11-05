@@ -37,13 +37,13 @@ foreach($period in @('1min','5min')){
                 throw "H5-only private source routing mismatch: $symbol $period $day"
             }
         }
-        $expected=$buyExpected+4*$gapExpected
+        $expected=$buyExpected + (4 * $gapExpected)
         if($item.matching_bar_count -ne $expected -or $item.h5_private_physical_SHA_checked -ne $true){
             throw "Per-security SHA/rows mismatch: $symbol $period"
         }
     }
-    $expectedTotal=2*($buyExpected+4*$gapExpected)
-    if($report.matching_bar_count -ne $expectedTotal -or $report.bars_by_source.purchased_parquet -ne 2*$buyExpected -or $report.bars_by_source.verified_private_h5_gap -ne 2*4*$gapExpected){
+    $expectedTotal=2 * ($buyExpected + (4 * $gapExpected))
+    if($report.matching_bar_count -ne $expectedTotal -or $report.bars_by_source.purchased_parquet -ne (2 * $buyExpected) -or $report.bars_by_source.verified_private_h5_gap -ne (8 * $gapExpected)){
         throw "Batch aggregate provenance or total count mismatch: $period"
     }
     Write-Host ("PASS PERIOD="+$period+" SECURITIES="+($Symbols -join ',')+" PURCHASED="+$report.bars_by_source.purchased_parquet+" VERIFIED_H5="+$report.bars_by_source.verified_private_h5_gap+" TOTAL="+$report.matching_bar_count)

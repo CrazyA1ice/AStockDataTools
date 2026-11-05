@@ -80,11 +80,12 @@ def _unique_sha_match(files, digest, label):
             continue
         if _hash(file) == digest:
             matches.append(_safe(file))
-            if len(matches) > 1:
-                raise ValueError("Ambiguous SHA-identical SAFE reports for " + label)
-    if len(matches) != 1:
+    if not matches:
         raise ValueError("Missing SHA-linked SAFE report for " + label)
-    return matches[0]
+    # Multiple historical receipt filenames with IDENTICAL SHA bytes are
+    # equivalent evidence (repeated read-only attestations). Pick the stable
+    # basename order; never select by mtime or apparent freshness.
+    return sorted(matches, key=lambda x: x.name)[0]
 
 
 def resolve(version_sha, *, files=None):

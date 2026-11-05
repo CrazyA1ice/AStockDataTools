@@ -215,5 +215,86 @@ class PrivateGapPhysicalChecks(unittest.TestCase):
                     self.day, self.period, self.symbol, max_result_bars=100)
 
 
+
+class MultiSecurityContracts(unittest.TestCase):
+    """Batch wrapper must preserve original single-security routing guarantees."""
+
+    def setUp(self):
+        self.base = Path("D:/stock")
+        self.first = "2026-10-13"
+        self.last = "2026-10-13"
+        self.stamp = M.D.I.day_epoch_ms(date(2026, 10, 13)) + 571 * 60000
+
+    def _mocked(self, symbol, *, period="1min", **kwargs):
+        source = ("purchased_parquet" if symbol == "SH600000"
+                  else "verified_private_h5_gap")
+        return {
+            "bars": [{
+                "symbol": symbol, "source_timestamp_ms": self.stamp,
+                "trading_date": self.first, "value_source": source,
+            }],
+            "safe_summary": {
+                "matching_bar_count": 1, "bars_by_source": {source: 1}
+            },
+        }
+
+    def test_two_security_batch_keeps_source_provenance(self):
+        with patch.object(M, "query_bars", side_effect=self._mocked):
+            r = M.query_many(
+                self.base, ["SH600000", "SZ000001"], "1min",
+                self.first, self.last, allow_verified_private_h5=True)
+        self.assertEqual(r["safe_summary"]["matching_bar_count"], 2)
+        self.assertEqual(r["safe_summary"]["bars_by_source"],
+                         {"purchased_parquet": 1,
+                          "verified_private_h5_gap": 1})
+        self.assertEqual([row["symbol"] for row in r["bars"]],
+                         ["SH600000", "SZ000001"])
+        self.assertTrue(r["safe_summary"]["no_raw_ohlcva_in_safe_summary"])
+
+    def test_duplicate_security_rejected_before_source_access(self):
+        with patch.object(M, "query_bars", side_effect=AssertionError(
+                "Purchased should not be read")):
+            with self.assertRaisesRegex(ValueError, "Duplicate symbol"):
+                M.query_many(
+                    self.base, ["SH600000", "SH600000"], "1min",
+                    self.first, self.last)
+
+    def test_batch_budget_cannot_silently_truncate(self):
+        with patch.object(M, "query_bars", side_effect=self._mocked):
+            with self.assertRaisesRegex(ValueError, "budget exhausted"):
+                M.query_many(
+                    self.base, ["SH600000", "SZ000001"], "1min",
+                    self.first, self.last, max_total_result_bars=1)
+
+    def test_wrong_security_result_rejected(self):
+        def wrong(*args, **kwargs):
+            response = self._mocked(*args, **kwargs)
+            response["bars"][0]["symbol"] = "SH600001"
+            return response
+        with patch.object(M, "query_bars", side_effect=wrong):
+            with self.assertRaisesRegex(ValueError, "does not belong"):
+                M.query_many(
+                    self.base, ["SH600000"], "1min",
+                    self.first, self.last)
+
+    def test_bad_symbol_or_too_many_symbols_fails_closed(self):
+        with self.assertRaises(ValueError):
+            M.query_many(self.base, ["600000"], "1min",
+                         self.first, self.last)
+        with self.assertRaisesRegex(ValueError, "1..8 symbols"):
+            M.query_many(self.base, ["SH600000"]*9, "1min",
+                         self.first, self.last)
+
+    def test_batch_keeps_h5_opt_in_disabled_by_default(self):
+        seen = []
+        def capture(*args, **kwargs):
+            seen.append(kwargs["allow_verified_private_h5"])
+            return self._mocked(*args, **kwargs)
+        with patch.object(M, "query_bars", side_effect=capture):
+            M.query_many(self.base, ["SH600000"], "1min",
+                         self.first, self.last)
+        self.assertEqual(seen, [False])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

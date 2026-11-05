@@ -71,14 +71,23 @@ def _check_report(obj, month, fingerprint):
             or a.get("purchased_market_bars_copied") != 0
             or a.get("production_query_activated") is not False
             or a.get("source_metadata_stable_during_audit") is not True
+            or a.get("full_exchange_calendar_coverage_certified") is not False
+            or a.get("ohlcva_vendor_unit_certified") is not False
             or set(a.get("periods", {})) != {"1min", "5min"}):
         raise ValueError("Unverified, incomplete or unsafe 2025 minute grid receipt: " + month)
+    if (not isinstance(a.get("index_windows"), list)
+            or not a["index_windows"]
+            or not all(isinstance(w, dict) and "from_day" in w
+                       and "through_day" in w for w in a["index_windows"])):
+        raise ValueError("Receipt lacks verified month index windows: " + month)
     for period, expected in (("1min", 241), ("5min", 48)):
         p = a["periods"][period]
         n, keys = p.get("stockdays"), p.get("keys")
         if (type(n) is not int or n < 0 or type(keys) is not int
                 or keys != expected * n
-                or p.get("nonstandard_stockdays", 0) != 0):
+                or p.get("nonstandard_stockdays", 0) != 0
+                or p.get("missing_expected_keys", 0) != 0
+                or p.get("extra_unexpected_keys", 0) != 0):
             raise ValueError("Receipt stockday/key conservation mismatch: " + month)
     return a
 

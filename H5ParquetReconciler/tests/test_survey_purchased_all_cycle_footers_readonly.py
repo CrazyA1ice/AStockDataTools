@@ -55,7 +55,7 @@ class AllCycleFooterSurveyTests(unittest.TestCase):
             self.assertEqual(out["period_years"][p]["2026"]["source_files"], 0)
             self.assertFalse(out["period_years"][p]["2026"][
                 "full_calendar_coverage_certified"])
-        self.assertFalse(out["no_ohlcva_rows_read_or_exported"] is False)
+        self.assertTrue(out["no_ohlcva_rows_read_or_exported"])
         self.assertFalse(out["actual_stockday_and_full_exchange_calendar_coverage_certified"])
 
     def test_source_files_are_never_rewritten(self):
@@ -85,8 +85,7 @@ class AllCycleFooterSurveyTests(unittest.TestCase):
             M.inventory(self.root, years=(2025,), max_total_files=2)
 
     def test_no_ohlcva_column_batch_reader_called(self):
-        with patch.object(M.F.F, "year_period_footer", wraps=M.F.year_period_footer) if False else patch.object(
-                M.F, "year_period_footer", wraps=M.F.year_period_footer) as footer:
+        with patch.object(M.F, "year_period_footer", wraps=M.F.year_period_footer) as footer:
             out = M.inventory(self.root, years=(2025,))
         self.assertTrue(out["only_original_parquet_file_footers_read"])
         self.assertEqual(footer.call_count, len(self.periods))

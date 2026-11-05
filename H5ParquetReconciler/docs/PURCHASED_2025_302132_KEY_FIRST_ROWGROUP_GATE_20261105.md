@@ -11,9 +11,9 @@
 - **阶段二：精准行组行情读取**。仅在确切含目标原始代码/日期的RowGroup上打开`ts,symbol,open,high,low,close,volume,amount`。必须在打开任何OHLCVA列之前，证明这些RowGroup物理总行数不超过硬上限**2,250,000**，且不高于原调用的`max_candidate_rows`。绝不直接把大于30m的候选行组输入原通用查询。所有实际返回键必须与阶段一的准确键集合一致，重复、缺漏、量价几何异常和源统计漂移均失败关闭。
 - 该修复**没有改变其他八周期查询器的默认行为**，没有修改A股前缀规则、私有索引/H5补缺，不保存OHLCVA缓存或生成市场文件；本机Python返回的授权原始量价仅用于受限研究查询，CLI仅显示来源计数。
 - `tools/query-purchased-2025-302132-asof-identity-readonly.py` 现在复用独立键先行查询并附加历史时点身份标注：官方证券代码变更前`SZ300114`，自2025-02-17起`SZ302132`；始终保存供应商原始标签`SZ302132`，绝不重写源代码。
-- 新增`tests/test_query_purchased_2025_302132_key_first_bounded_readonly.py` 7项合成测试：强制原始行组元数据无法有效剪枝、验证只打开目标RowGroup的OHLCVA、物理行组预算拒绝、键扫描预算拒绝、空目标不读取OHLCVA、重复时间键拒绝、无缓存/市场源不变。
-- Windows验收`run-purchased-2025-302132-asof-identity-smoke.ps1` 现在依次运行原18项+新7项+原12项测试，并对2025-01-02 5min、2025-02-17 5min与1min实盘进行单日研究查询。每条实盘打印`SOURCE_KEY_ONLY_ROWS`、`OHLCVA_ROWS_DECODED`与`TARGET_ROWGROUPS`。
-- **以上新修改尚待用户Windows实机验证**。如果实际选中源行组仍超过2m行，工具会报错而不会扩大行情预算。需先查看具体源布局再设计更窄索引/读取方案。
+- 新增`tests/test_query_purchased_2025_302132_key_first_bounded_readonly.py` 9项合成测试：强制原始行组元数据无法有效剪枝、验证只打开目标RowGroup的OHLCVA、物理行组预算拒绝、键扫描预算拒绝、空目标不读取OHLCVA、重复时间键拒绝、无缓存/市场源不变。
+- Windows验收`run-purchased-2025-302132-asof-identity-smoke.ps1` 现在依次运行原18项+新9项+原12项测试，并对2025-01-02 5min、2025-02-17 5min与1min实盘进行单日研究查询。每条实盘打印`SOURCE_KEY_ONLY_ROWS`、`OHLCVA_ROWS_DECODED`与`TARGET_ROWGROUPS`。
+- **2025-01-02的旧版本已Windows实机验证，2025-02-17的225万新上限尚待实机验收**。如果实际选中源行组仍超过225万行，工具会报错而不会扩大行情预算。需先查看具体源布局再设计更窄索引/读取方案。
 
 ## Windows 2025-02-17 真值与本轮精确收紧后的上限修复
 

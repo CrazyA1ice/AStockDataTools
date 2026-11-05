@@ -91,7 +91,11 @@ def scan_5min_sources(root, paths, *, expected_total, expected_selected,
     stockday_masks = {}
     grid_cache = {}
     groups = Counter()
-    category_counts = Counter()
+    # A missing category is a valid zero, not an absent report contract.
+    category_counts = Counter({
+        "recognized_code_but_not_selected_ashare": 0,
+        "unrecognized_raw_symbol": 0,
+    })
     symbols_by_group = defaultdict(set)
     stockdays_by_group = defaultdict(set)
     all_unselected_symbols = set()
@@ -181,6 +185,8 @@ def scan_5min_sources(root, paths, *, expected_total, expected_selected,
         raise ValueError("Selected stockday source keys or full footer row count disagree")
     if sum(groups.values()) != total_rows - selected_rows:
         raise ValueError("Unselected security prefix row conservation mismatch")
+    if sum(category_counts.values()) != sum(groups.values()):
+        raise ValueError("Unselected recognized/unknown categories do not conserve")
     full = 0
     nonstandard = Counter()
     for (symbol, day_str), bits in stockday_masks.items():

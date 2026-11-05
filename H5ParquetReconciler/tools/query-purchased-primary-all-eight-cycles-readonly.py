@@ -13,6 +13,7 @@ non-5m cycle labels or weekly/monthly date semantics is implied.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import importlib.util
 import json
 import re
@@ -130,8 +131,10 @@ def _registered_private_day_query(root, canonical, first, last,
                 "matched_private_mixed_day_stockday_bars"]
         for period in DAY_PROVENANCE
     }
+    observed = Counter(row.get("value_source") for row in bars)
     if (any(type(n) is not int or n < 0 for n in sources.values())
             or sum(sources.values()) != len(bars)
+            or any(observed[key] != sources[key] for key in DAY_PROVENANCE)
             or any(row.get("value_source") not in DAY_PROVENANCE for row in bars)):
         raise ValueError("Private daily per-stockday provenance does not conserve")
     return bars, sources, "explicit_immutable_22274_day_live_verified_purchased_first"

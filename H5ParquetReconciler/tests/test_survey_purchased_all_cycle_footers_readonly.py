@@ -95,9 +95,39 @@ class AllCycleFooterSurveyTests(unittest.TestCase):
         self.assertTrue(out["only_original_parquet_file_footers_read"])
         self.assertEqual(footer.call_count, len(self.periods))
 
-    def test_unrecognised_folder_label_rejected(self):
+    def test_spaces_and_noncanonical_folder_names_are_discovered_but_unmapped(self):
         (self.base / "NOT A PERIOD").mkdir()
-        with self.assertRaisesRegex(ValueError, "label"):
+        out = M.inventory(self.root, years=(2025,))
+        self.assertIn("NOT A PERIOD", out["source_root_period_directories"])
+        self.assertIn("NOT A PERIOD",
+                      out["noncanonical_period_directory_labels_semantics_unverified"])
+        self.assertTrue(out["noncanonical_directory_names_not_automatically_mapped"])
+        self.assertEqual(out["period_years"]["NOT A PERIOD"]["2025"]["source_files"], 0)
+
+    def test_chinese_named_real_parquet_cycle_is_not_dropped(self):
+        name = "十五分钟 数据"
+        folder = self.base / name
+        folder.mkdir()
+        sample = self.base / "15min" / "2025.parquet"
+        import shutil
+        shutil.copyfile(sample, folder / "2025.parquet")
+        out = M.inventory(self.root, years=(2025,))
+        self.assertIn(name, out["source_root_period_directories"])
+        self.assertIn(name,
+                      out["noncanonical_period_directory_labels_semantics_unverified"])
+        self.assertEqual(out["period_years"][name]["2025"]["source_files"], 1)
+        self.assertEqual(out["period_years"][name]["2025"][
+            "source_rows_from_parquet_footers"], 1)
+        self.assertFalse(out["period_years"][name]["2025"][
+            "full_calendar_coverage_certified"])
+
+    def test_root_symlink_cycle_is_not_traversed(self):
+        folder = self.base / "symlink_cycle"
+        try:
+            folder.symlink_to(self.base / "15min", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows symlink creation is not permitted")
+        with self.assertRaisesRegex(ValueError, "Symlink"):
             M.inventory(self.root, years=(2025,))
 
 

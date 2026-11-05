@@ -19,7 +19,11 @@ $json=@(& $py -B $script --root 'D:\stock' --years 2025 2026)
 if($LASTEXITCODE -ne 0){throw 'Read-only 2025/2026 source footer inventory failed'}
 $info=($json -join [Environment]::NewLine) | ConvertFrom-Json
 if($info.only_original_parquet_file_footers_read -ne $true -or $info.original_h5_opened -ne $false -or $info.original_market_files_modified -ne $false -or $info.new_market_or_index_files_written -ne $false -or $info.actual_stockday_and_full_exchange_calendar_coverage_certified -ne $false){throw 'Unsafe or overclaimed footer-only inventory'}
+if($info.noncanonical_directory_names_not_automatically_mapped -ne $true){throw 'Unverified period-label mapping safety contract absent'}
 Write-Host ("PERIOD_DIRECTORIES="+($info.source_root_period_directories -join ',')+" YEAR_ASSIGNED_FILES="+$info.total_year_assigned_parquet_files)
+if(@($info.noncanonical_period_directory_labels_semantics_unverified).Count -gt 0){
+    Write-Host ("UNMAPPED_PERIOD_LABELS="+($info.noncanonical_period_directory_labels_semantics_unverified -join ',')+" (inventories only; NO period semantic mapping)")
+}
 foreach($name in $info.source_root_period_directories){
     $annual=$info.period_years.PSObject.Properties[$name].Value
     foreach($year in @('2025','2026')){

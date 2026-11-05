@@ -90,6 +90,30 @@ class KeyFirstSourceProbeTests(unittest.TestCase):
              self.assertRaisesRegex(ValueError, "OHLCVA rowgroup budget"):
             self.q(max_ohlcva_rows=40)
 
+    def test_nonstandard_target_keys_fail_before_ohlcva_columns(self):
+        # A source day with only 47 purchased five-minute keys must NEVER
+        # advance to paid bar values, even if its full physical RG fits.
+        self.rows.remove((self.keys[-1], "SZ302132"))
+        self.write()
+        original = pq.ParquetFile.iter_batches
+        def refuse_paid(pf, *args, **kwargs):
+            if "open" in kwargs.get("columns", []):
+                raise AssertionError("Paid columns opened before native session grid")
+            yield from original(pf, *args, **kwargs)
+        with patch.object(pq.ParquetFile, "iter_batches", refuse_paid), \\
+             self.assertRaisesRegex(ValueError, "nonstandard time keys before OHLCVA"):
+            self.q()
+
+    def test_evidence_scoped_2250000_cap_is_not_unbounded(self):
+        self.assertEqual(M.MAX_OHLCVA_ROWS, 2250000)
+        result = self.q()
+        safe = result["safe_summary"]
+        self.assertTrue(safe["native_session_grid_checked_before_ohlcva"])
+        self.assertTrue(safe["generic_purchased_query_budget_unchanged"])
+        self.assertEqual(safe["physical_ohlcva_rows_budget"], 2000)
+        with self.assertRaisesRegex(ValueError, "bounded"):
+            self.q(max_ohlcva_rows=M.MAX_OHLCVA_ROWS+1)
+
     def test_key_only_preflight_budget_fails_before_any_value_read(self):
         with self.assertRaisesRegex(ValueError, "key-only metadata budget"):
             self.q(max_key_only_rows=50)

@@ -50,7 +50,8 @@ class PurchasedFirstRoutingTests(unittest.TestCase):
                                 max_result_bars=limit)
 
     def _bar(self):
-        return {"trading_date": str(self.day), "source_timestamp_ms": self.stamp,
+        return {"symbol": self.sym, "period": "1min",
+                "trading_date": str(self.day), "source_timestamp_ms": self.stamp,
                 "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5,
                 "volume": 100.0, "amount": 1000.0}
 
@@ -60,6 +61,8 @@ class PurchasedFirstRoutingTests(unittest.TestCase):
         self.assertEqual(res["safe_summary"]["dates"][str(self.day)]["source"],
                          "purchased_parquet")
         self.assertEqual(res["bars"][0]["value_source"], "purchased_parquet")
+        self.assertEqual(res["bars"][0]["h5_native_datetime"], None)
+        self.assertEqual(res["bars"][0]["symbol"], self.sym)
         self.assertFalse(res["safe_summary"]["production_query_activated"])
 
     def test_partial_purchased_stockday_still_owns_day(self):

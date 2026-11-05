@@ -118,9 +118,13 @@ def inventory(root, *, max_rows=30000000, chunk_rows=16384):
                     raise ValueError("Malformed or duplicated cross-market H5 symbol key")
                 seen_symbols.add(symbol)
                 ds = group.get(symbol)
-                if (not isinstance(ds, h5py.Dataset)
+                if (not isinstance(ds, h5py.Dataset) or ds.ndim != 1
                         or not set(CORE.H5_FIELDS).issubset(ds.dtype.names or ())):
                     raise ValueError("Original H5 daily dataset/schema invalid")
+                native_time_dtype = np.dtype(ds.dtype.fields["datetime"][0])
+                if (not np.issubdtype(native_time_dtype, np.integer)
+                        or native_time_dtype.itemsize > 8):
+                    raise ValueError("Nonintegral original daily native time key")
                 if len(ds) == 0:
                     inspected["empty_source_datasets"] += 1
                     continue

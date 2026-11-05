@@ -5,7 +5,10 @@ Do not weaken the baseline Parquet query's RowGroup budget. Original 2025
 Parquet files can have overbroad year-long RowGroup timestamp envelopes.
 First stream only ts/symbol, map exact matching (file, RowGroup, epoch-ms)
 keys, then allow OHLCVA decoding ONLY from matching RowGroups if their
-combined physical row count fits a separate hard 2-million-row ceiling.
+combined physical row count fits a separate hard 2.25-million-row ceiling.
+The new narrow ceiling is evidence-driven: the 2025-02-17 5m source's
+exactly matched RowGroup contains 2,088,988 physical rows. This is NOT
+a relaxation of the generic Parquet query or a permitted year-wide read.
 
 Source key-only scanning may touch a full purchased 2025 year of symbol/ts
 columns. Its distinct budget is capped at 350 million (1m source 321.7m,
@@ -17,7 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -27,7 +30,7 @@ SOURCE = "SZ302132"
 YEAR = 2025
 FIELDS = ("open", "high", "low", "close", "volume", "amount")
 MAX_KEY_ONLY_ROWS = 350000000
-MAX_OHLCVA_ROWS = 2000000
+MAX_OHLCVA_ROWS = 2250000
 MAX_FILES = 12
 MAX_ROW_GROUPS = 5000
 
@@ -41,6 +44,17 @@ def _load(tag, file):
 
 Q = _load("302132_baseline_purchased_query_contract",
           "query-parquet-primary-readonly.py")
+GRID = _load("302132_purchased_native_session_grid_for_preflight",
+             "preview-minute-exact-key-diff-readonly.py")
+
+
+def _expected_keys(day, period):
+    keys = set(GRID.normalized_native_keys(day, period).values())
+    if period == "1min":
+        keys.add(GRID.I.day_epoch_ms(day) + 570 * 60000)
+    if len(keys) != (241 if period == "1min" else 48):
+        raise ValueError("Untrusted session grid reference")
+    return keys
 
 
 def query_bars(root, symbol, period, first, last, *,
@@ -148,15 +162,26 @@ def query_bars(root, symbol, period, first, last, *,
                         selected += 1
                 if source_keys_here:
                     candidate_full_rowgroup_rows += rg.num_rows
-                    if (candidate_full_rowgroup_rows > min(
-                            max_ohlcva_rows, max_candidate_rows)):
-                        raise ValueError(
-                            "Exact target keys found, but OHLCVA rowgroup budget "
-                            f"would require {candidate_full_rowgroup_rows:,} physical rows; "
-                            "no paid OHLCVA columns opened")
                     for ts in source_keys_here:
                         target_keys[ts] = (path, rg_id)
                     group_reads.append((path, rg_id))
+    # Fail before OHLCVA on a missing/extra target minute. In particular a
+    # large physical RG cannot be used to read bad/incomplete target days.
+    observed_days = defaultdict(set)
+    for ts in target_keys:
+        day = datetime.fromtimestamp(ts / 1000, tz=Q.core.UTC8).date()
+        observed_days[day].add(ts)
+    for day, observed in observed_days.items():
+        if observed != _expected_keys(day, period):
+            raise ValueError(
+                "Observed 2025 SZ302132 source stockday has nonstandard time keys "
+                "before OHLCVA decoding")
+    if candidate_full_rowgroup_rows > min(
+            max_ohlcva_rows, max_candidate_rows):
+        raise ValueError(
+            "Exact target keys found, but OHLCVA rowgroup budget "
+            f"would require {candidate_full_rowgroup_rows:,} physical rows; "
+            "no paid OHLCVA columns opened")
     # Before exposing OHLCVA, check the scanned source files remained stable.
     for path, st in file_before.items():
         now = path.stat()
@@ -233,6 +258,10 @@ def query_bars(root, symbol, period, first, last, *,
             "physical_ohlcva_source_rows_read": source_rows_ohlcva_read,
             "physical_ohlcva_rows_budget": min(max_ohlcva_rows, max_candidate_rows),
             "keys_equal_between_key_probe_and_ohlcva": True,
+            "native_session_grid_checked_before_ohlcva": True,
+            "physical_ohlcva_exception_scope":
+                "2025_SZ302132_only_exact_matching_rowgroups",
+            "generic_purchased_query_budget_unchanged": True,
             "source_stat_checked_before_and_after": True,
             "source_original_preserved": True,
             "H5_used": False,

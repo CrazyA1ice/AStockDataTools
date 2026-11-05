@@ -12,11 +12,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-NAME = re.compile(r"[A-Za-z0-9_-]{1,48}\Z")
+CANONICAL_PERIODS = frozenset(("day", "1min", "5min", "15min", "30min", "60min", "week", "month"))
 
 
 def _load():
@@ -32,7 +31,12 @@ F = _load()
 
 
 def discover_periods(root):
-    """Only actual ordinary source period directories, no invented labels."""
+    """Discover ordinary direct children, allowing Unicode/space folder labels.
+
+    A folder name does not certify its trading-cycle semantics. Unknown labels
+    remain separate and are explicitly flagged in the output, never silently
+    mapped to day/1min/5min/etc.
+    """
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("Original market root missing or unsafe")
@@ -45,8 +49,11 @@ def discover_periods(root):
             raise ValueError("Symlink in purchased cycle root; audit manually")
         if not path.is_dir():
             continue
-        if not NAME.fullmatch(path.name):
-            raise ValueError("Unexpected source cycle directory label")
+        # These names come from a direct iterdir() child, not caller input;
+        # permitting spaces, dots and Chinese characters is not path traversal.
+        # Reject genuinely unsafe control/overlong labels, not ordinary labels.
+        if not 1 <= len(path.name) <= 128 or any(ord(ch) < 32 or ord(ch) == 127 for ch in path.name):
+            raise ValueError("Unsafe source cycle directory label")
         result.append(path.name)
     if not result or len(result) > 24:
         raise ValueError("Require 1..24 ordinary purchased period folders")
@@ -104,6 +111,9 @@ def inventory(root, years=(2025, 2026), *,
         "format": "AStockDataTools purchased all-cycle source footer survey v1",
         "status": "read_only_purchased_parquet_footer_envelopes_not_exact_coverage",
         "source_root_period_directories": list(periods),
+        "noncanonical_period_directory_labels_semantics_unverified": [
+            name for name in periods if name not in CANONICAL_PERIODS],
+        "noncanonical_directory_names_not_automatically_mapped": True,
         "requested_years": list(years),
         "total_year_assigned_parquet_files": total_files,
         "period_years": results,

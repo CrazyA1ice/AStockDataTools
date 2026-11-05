@@ -147,6 +147,10 @@ def _read_verified_private_gap(day, period, symbol, *, max_result_bars):
                     "source_timestamp_ms": stamp,
                     "source_beijing_time": normalized.strftime("%Y-%m-%d %H:%M"),
                     "value_source": "h5_only_complete_stockday",
+                    "source_file_relative_path":
+                        path.relative_to(W.MODULE).as_posix(),
+                    "source_row_group": None,
+                    "h5_native_datetime": native,
                     **dict(zip(FIELDS, values)),
                 })
                 if len(result) > max_result_bars:
@@ -206,7 +210,17 @@ def query_bars(root, symbol, period, first, last, *,
             keys = [x["source_timestamp_ms"] for x in original]
             if len(keys) != len(set(keys)) or set(keys) != purchased_keys:
                 raise ValueError("Purchased query disagrees with indexed stock-day")
-            bars = [dict(row, value_source="purchased_parquet") for row in original]
+            bars = [{
+                "symbol": row["symbol"], "period": row["period"],
+                "trading_date": row["trading_date"],
+                "source_timestamp_ms": row["source_timestamp_ms"],
+                "source_beijing_time": row.get("source_beijing_time"),
+                "value_source": "purchased_parquet",
+                "source_file_relative_path": row.get("source_file_relative_path"),
+                "source_row_group": row.get("source_row_group"),
+                "h5_native_datetime": None,
+                **{name: row[name] for name in FIELDS},
+            } for row in original]
             kind = "purchased_parquet"
         elif allow_verified_private_h5:
             bars = _read_verified_private_gap(

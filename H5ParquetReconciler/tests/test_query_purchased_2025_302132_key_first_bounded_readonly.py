@@ -100,7 +100,7 @@ class KeyFirstSourceProbeTests(unittest.TestCase):
             if "open" in kwargs.get("columns", []):
                 raise AssertionError("Paid columns opened before native session grid")
             yield from original(pf, *args, **kwargs)
-        with patch.object(pq.ParquetFile, "iter_batches", refuse_paid), \\
+        with patch.object(pq.ParquetFile, "iter_batches", refuse_paid), \
              self.assertRaisesRegex(ValueError, "nonstandard time keys before OHLCVA"):
             self.q()
 
@@ -111,7 +111,7 @@ class KeyFirstSourceProbeTests(unittest.TestCase):
         self.assertTrue(safe["native_session_grid_checked_before_ohlcva"])
         self.assertTrue(safe["generic_purchased_query_budget_unchanged"])
         self.assertEqual(safe["physical_ohlcva_rows_budget"], 2000)
-        with self.assertRaisesRegex(ValueError, "bounded"):
+        with self.assertRaisesRegex(ValueError, "Bounded"):
             self.q(max_ohlcva_rows=M.MAX_OHLCVA_ROWS+1)
 
     def test_key_only_preflight_budget_fails_before_any_value_read(self):

@@ -126,9 +126,15 @@ def scan_5min_sources(root, paths, *, expected_total, expected_selected,
                 if batch.num_columns != 2 or batch.column(0).null_count:
                     raise ValueError("Untrusted timestamp projection")
                 stamps, symbols = batch.column(0), batch.column(1)
+                # Decode Arrow dictionary-encoded symbols to the validated
+                # underlying string width when necessary. Keep the 2-column
+                # projection and do not open licensed OHLCVA.
+                names_array = (pc.cast(symbols, symbol_type)
+                               if pa.types.is_dictionary(symbols.type)
+                               else symbols)
                 # Classify each DISTINCT source symbol once, vectorized
                 # Arrow mask removes selected A shares before Python rows.
-                unique = pc.unique(symbols).to_pylist()
+                unique = pc.unique(names_array).to_pylist()
                 approved = []
                 for raw in unique:
                     key = raw if raw is not None else None
@@ -136,7 +142,7 @@ def scan_5min_sources(root, paths, *, expected_total, expected_selected,
                         code_cache[key] = code_group(raw)
                     if code_cache[key][0] and raw is not None:
                         approved.append(raw)
-                mask = pc.is_in(symbols, value_set=pa.array(
+                mask = pc.is_in(names_array, value_set=pa.array(
                     approved, type=symbol_type))
                 selected_rows += int(pc.sum(pc.cast(mask, pa.int64())).as_py() or 0)
                 excluded = batch.filter(pc.invert(mask)).to_pylist()

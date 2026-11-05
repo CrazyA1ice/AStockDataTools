@@ -33,7 +33,8 @@ foreach($period in @('1min','5min')){
             throw "Purchased source routing mismatch: $symbol $period"
         }
         foreach($day in @('2026-10-08','2026-10-09','2026-10-12','2026-10-13')){
-            if($item.dates.PSObject.Properties[$day].Value.source -ne 'verified_private_h5_gap' -or $item.dates.PSObject.Properties[$day].Value.bars -ne $gapExpected){
+            $dateResult=$item.dates.PSObject.Properties[$day].Value
+            if($null -eq $dateResult -or $dateResult.source -ne 'verified_private_h5_gap' -or $dateResult.bars -ne $gapExpected){
                 throw "H5-only private source routing mismatch: $symbol $period $day"
             }
         }

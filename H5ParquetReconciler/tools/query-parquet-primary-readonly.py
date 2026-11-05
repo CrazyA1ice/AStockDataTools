@@ -31,7 +31,7 @@ private_cache=importlib.util.module_from_spec(CACHE_SPEC)
 CACHE_SPEC.loader.exec_module(private_cache)
 core=validator.core
 diagnose=validator.diagnose
-PERIODS=("day","1min","5min")
+PERIODS=("day","1min","5min","15min","30min","60min","week","month")
 NEEDED=tuple(core.NEEDED)
 MAX_RANGE_DAYS=31
 
@@ -39,7 +39,7 @@ MAX_RANGE_DAYS=31
 def request_dates(symbol, period, first, last, max_candidate_rows,
                   max_result_bars):
     if period not in PERIODS:
-        raise ValueError("period must be one of day, 1min, 5min")
+        raise ValueError("period must be a supported purchased Parquet K-line cycle")
     start=date.fromisoformat(str(first))
     end=date.fromisoformat(str(last))
     if start>end or (end-start).days+1>MAX_RANGE_DAYS:
@@ -155,11 +155,16 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
         "end":end,"aliases":aliases,"low_ms":low_ms,"high_ms":high_ms,
         "pending":pending,"metadata":metadata,"sources":sources,
         "max_result_bars":max_result_bars,
-        "time_policy":("daily_source_day_with_raw_intraday_clock"
-                       if period=="day" else
-                       "one_minute_end_label_with_separate_0930_opening_key"
-                       if period=="1min" else
-                       "five_minute_start_label"),
+        "time_policy":(
+            "daily_source_day_with_raw_intraday_clock"
+            if period=="day" else
+            "one_minute_end_label_with_separate_0930_opening_key"
+            if period=="1min" else
+            "five_minute_start_label"
+            if period=="5min" else
+            "purchased_intraday_raw_start_label_semantics_not_vendor_certified"
+            if period in ("15min","30min","60min") else
+            "purchased_week_or_month_raw_date_label_not_normalized"),
     }
 
 

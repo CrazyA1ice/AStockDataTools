@@ -30,7 +30,13 @@ if($safe.status -ne '2025_5min_unselected_source_code_prefixes_audited_not_secur
     throw '2025 excluded-code source totals, security-master caveats or safety invariant failed'
 }
 Write-Host ("PASS 5MIN_ALL="+$safe.scanned_source_rows+" A_SHARE_SELECTED="+$safe.selected_ashare_code_candidate_rows+" UNSELECTED="+$safe.unselected_source_rows+" UNSELECTED_STOCKDAYS="+$safe.unselected_observed_stockdays+" FULL_48_KEY_STOCKDAYS="+$safe.unselected_complete_48_key_stockdays)
-Write-Host ("GROUP_COUNT="+@($safe.unselected_code_groups.PSObject.Properties).Count+" DISTINCT_UNSELECTED_RAW_SYMBOLS="+$safe.unselected_distinct_raw_symbols+" UNKNOWN_OR_UNRECOGNIZED_ROWS="+$safe.unselected_recognized_or_unknown_code_categories.unrecognized_raw_symbol+" CLASS_MASTER_CERTIFIED=False")
+# A missing optional category is a legitimate zero under StrictMode.
+$unknownProperty=$safe.unselected_recognized_or_unknown_code_categories.PSObject.Properties['unrecognized_raw_symbol']
+$unknownCount=if($null -eq $unknownProperty){0}else{[long]$unknownProperty.Value}
+$knownProperty=$safe.unselected_recognized_or_unknown_code_categories.PSObject.Properties['recognized_code_but_not_selected_ashare']
+$knownCount=if($null -eq $knownProperty){0}else{[long]$knownProperty.Value}
+if(($unknownCount + $knownCount) -ne [long]$safe.unselected_source_rows){throw 'Unselected recognized/unknown category counts do not conserve'}
+Write-Host ("GROUP_COUNT="+@($safe.unselected_code_groups.PSObject.Properties).Count+" DISTINCT_UNSELECTED_RAW_SYMBOLS="+$safe.unselected_distinct_raw_symbols+" UNKNOWN_OR_UNRECOGNIZED_ROWS="+$unknownCount+" RECOGNIZED_BUT_UNSELECTED_ROWS="+$knownCount+" CLASS_MASTER_CERTIFIED=False")
 $groups=@($safe.unselected_code_groups.PSObject.Properties | Sort-Object { $_.Value.source_rows } -Descending)
 foreach($g in $groups){
     Write-Host ("RAW_CODE_PREFIX="+$g.Name+" ROWS="+$g.Value.source_rows+" STOCKDAYS="+$g.Value.observed_unselected_stockday_count+" DISTINCT_CODES="+$g.Value.distinct_raw_symbol_count+" ASSET_CLASS_UNCERTIFIED=True")

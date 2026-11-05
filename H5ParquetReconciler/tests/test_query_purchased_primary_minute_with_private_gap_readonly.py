@@ -225,7 +225,7 @@ class MultiSecurityContracts(unittest.TestCase):
         self.last = "2026-10-13"
         self.stamp = M.D.I.day_epoch_ms(date(2026, 10, 13)) + 571 * 60000
 
-    def _mocked(self, symbol, *, period="1min", **kwargs):
+    def _mocked(self, root, symbol, period, first, last, **kwargs):
         source = ("purchased_parquet" if symbol == "SH600000"
                   else "verified_private_h5_gap")
         return {

@@ -70,6 +70,44 @@ class ExcludedFiveMinuteCodePrefixes(unittest.TestCase):
         self.assertFalse("SH510300" in str(data))
         self.assertTrue(data["no_ohlcva_columns_opened"])
 
+    def test_absent_unrecognized_category_reported_as_zero(self):
+        self.rows = [
+            (stamp, raw)
+            for raw in ("SH600000", "SH510300")
+            for stamp in self.regular
+        ]
+        self.save()
+        result = self.audit(selected=48)
+        self.assertEqual(result["unselected_source_rows"], 48)
+        self.assertEqual(result[
+            "unselected_recognized_or_unknown_code_categories"
+        ], {
+            "recognized_code_but_not_selected_ashare": 48,
+            "unrecognized_raw_symbol": 0,
+        })
+
+    def test_both_unselected_categories_zero_when_none_exist(self):
+        self.rows = [(stamp, "SH600000") for stamp in self.regular]
+        self.save()
+        result = self.audit(selected=48)
+        self.assertEqual(result["unselected_source_rows"], 0)
+        self.assertEqual(result[
+            "unselected_recognized_or_unknown_code_categories"
+        ], {
+            "recognized_code_but_not_selected_ashare": 0,
+            "unrecognized_raw_symbol": 0,
+        })
+
+    def test_windows_report_uses_safe_optional_property_access(self):
+        ps = (HERE.parent /
+              "run-purchased-2025-unselected-5min-code-prefixes-audit.ps1")
+        script = ps.read_text(encoding="utf-8")
+        self.assertIn("PSObject.Properties['unrecognized_raw_symbol']", script)
+        self.assertIn("PSObject.Properties['recognized_code_but_not_selected_ashare']", script)
+        self.assertNotIn(
+            "unselected_recognized_or_unknown_code_categories.unrecognized_raw_symbol",
+            script)
+
     def test_source_read_never_requests_ohlcva(self):
         original = pq.ParquetFile.iter_batches
         seen = []

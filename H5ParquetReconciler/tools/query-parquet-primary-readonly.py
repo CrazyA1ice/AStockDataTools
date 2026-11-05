@@ -37,7 +37,7 @@ MAX_RANGE_DAYS=31
 
 
 def request_dates(symbol, period, first, last, max_candidate_rows,
-                  max_result_bars):
+                  max_result_bars, *, allow_2025_302132_source=False):
     if period not in PERIODS:
         raise ValueError("period must be a supported purchased Parquet K-line cycle")
     start=date.fromisoformat(str(first))
@@ -47,8 +47,15 @@ def request_dates(symbol, period, first, last, max_candidate_rows,
     canonical=core.symbol_id(symbol)
     if canonical is None or canonical != symbol.upper():
         raise ValueError("Supply a canonical symbol like SH600000 or SZ000001")
-    if any(not core.is_a_share_candidate(canonical, y)
-           for y in range(start.year,end.year+1)):
+    if type(allow_2025_302132_source) is not bool:
+        raise ValueError("Research-only source-code exception must be boolean")
+    special = (canonical == "SZ302132" and start.year == end.year == 2025
+               and period in ("1min","5min"))
+    if allow_2025_302132_source and not special:
+        raise ValueError("Opt-in source-code exception is strictly SZ302132 in 2025 1/5min")
+    if not (special and allow_2025_302132_source) and any(
+            not core.is_a_share_candidate(canonical, y)
+            for y in range(start.year,end.year+1)):
         raise ValueError("This first-stage interface supports A-share candidate "
                          "symbols only; no B-shares or unverified BJ transitions")
     if (type(max_candidate_rows) is not int or
@@ -91,11 +98,12 @@ def monthly_filename_overlaps_query(path, period_directory, first, last):
 
 
 def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
-                  max_result_bars=25000):
+                  max_result_bars=25000, *, allow_2025_302132_source=False):
     """Preflight ALL source rowgroup costs before any licensed bar value read."""
     import pyarrow.parquet as pq
     symbol,start,end=request_dates(
-        symbol,period,start,end,max_candidate_rows,max_result_bars)
+        symbol,period,start,end,max_candidate_rows,max_result_bars,
+        allow_2025_302132_source=allow_2025_302132_source)
     root=Path(root).resolve()
     purchased=root/"AllCycleAStockData"
     if not root.is_dir() or not purchased.is_dir():
@@ -169,7 +177,8 @@ def prepare_query(root,symbol,period,start,end,max_candidate_rows=30000000,
 
 
 def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
-               max_result_bars=25000,local_cache=False):
+               max_result_bars=25000,local_cache=False,*,
+               allow_2025_302132_source=False):
     """Return locally requested actual bars plus safe metadata.
 
     All bar data stay in Python memory and are never written to a file by this
@@ -179,6 +188,8 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
     # Explicit opt-in: storing paid OHLCVA has a local privacy/storage
     # cost, and is OFF by default. Warm repeats avoid Parquet bar reads.
     started=time.perf_counter()
+    if allow_2025_302132_source and local_cache:
+        raise ValueError("Documented historical source-code research must not cache OHLCVA")
     signature_before=None
     cache_file=None
     if local_cache:
@@ -198,7 +209,8 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
                 time.perf_counter()-started,6)
             return hit
     context=prepare_query(
-        root,symbol,period,start,end,max_candidate_rows,max_result_bars)
+        root,symbol,period,start,end,max_candidate_rows,max_result_bars,
+        allow_2025_302132_source=allow_2025_302132_source)
     import pyarrow as pa
     import pyarrow.compute as pc
     aliases_pa=pa.array(sorted(context["aliases"]),type=pa.string())
@@ -289,6 +301,8 @@ def query_bars(root,symbol,period,start,end,max_candidate_rows=30000000,
         "no_h5_read":True,"source_market_files_modified":False,
         "no_automatic_gaps_fill":True,"no_source_market_truth_certification":True,
         "no_raw_ohlcva_in_safe_summary":True,
+        "documented_2025_302132_source_exception":bool(allow_2025_302132_source),
+        "historical_asof_symbol_mapping_applied_here":False,
         "query_delivery":"parquet_source_scan",
         "source_rows_scanned_this_invocation":meta["source_rows_scanned"],
         "source_file_footers_opened_this_invocation":meta[

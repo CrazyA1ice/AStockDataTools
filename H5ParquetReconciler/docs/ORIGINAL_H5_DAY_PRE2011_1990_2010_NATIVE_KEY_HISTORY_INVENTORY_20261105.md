@@ -46,14 +46,14 @@
 ## Windows验收
 
 - `tests/test_inventory_original_h5_1990_2010_day_keys_readonly.py`：
-  10项全虚构临时H5测试，覆盖A股/指数/B股/BJ分流、1990年前
+  11项全虚构临时H5测试，覆盖A股/指数/B股/BJ分流、1990年前
   原生首键、源文件不变、2011以后数据跳过、日历非法、非午夜、
-  重复/无序日期、budget超限及缺失/符号链接数据源。
+  重复/无序日期、浮点datetime字段拒绝、budget超限及缺失/符号链接数据源。
 - 单条入口：
   `H5ParquetReconciler/run-original-h5-pre2011-day-history-inventory-readonly.ps1`。
   先运行上述测试，再执行一次完整**时间键单列**盘点，只打印
   有覆盖的年度总计、最早原生首键、分类计数和原始文件stat SHA。
-- **新工具与10项测试尚待用户真实Windows验收**。这次会读取
+- **新工具与11项测试尚待用户真实Windows验收**。这次会读取
   源H5的原始datetime，可能比轻量文件头审计耗时，但不会读取量价。
   错误时不创建部分历史Parquet，也不会有未经验收的生产回写。
 

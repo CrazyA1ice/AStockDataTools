@@ -24,6 +24,15 @@
 - 在解码OHLCVA之前，额外对目标日期检查完整标准键集（5min=48，1min=241）；实际读取阶段再次核对行组物理数量与键先行阶段一致，并限制累计行组物理记录总数不超新专项上限。超过仍保持拒绝，不静默扩大许可。
 - 此轮安全修复新增2项合成测试（专项键先行测试增至9项，含完整时间键前置门禁和边界上限），Windows启动脚本同步校验最多2.25m行。**最新修复仍待用户真实Windows验收**。若1分钟源目标行组仍大于225万，需记录候选布局后设计进一步选页优化，而不是继续盲目放宽。
 
+
+## Windows 225万安全预算后续验收：上层摘要字段遗漏（2026-11-05）
+
+- 用户Win实机：购买原位18/18、键先行9/9、身份映射12/12，**39项合成测试全部PASS**。
+- 实盘样本的Python命令已经返回摘要，但在PowerShell输出校验阶段遇到`native_session_grid_checked_before_ohlcva`缺失属性，StrictMode报`PropertyNotFoundStrict`并终止。**这并不表示实盘三个样本均已验收**，因为日志没有保留Python的完整安全摘要/实体日指标。
+- 根因：底层`query-purchased-2025-302132-key-first-bounded-readonly.py`已经提供`native_session_grid_checked_before_ohlcva=True`，而上层`query-purchased-2025-302132-asof-identity-readonly.py`此前没有转发该证据字段。现上层也原样转发底层`generic_purchased_query_budget_unchanged`与`physical_ohlcva_exception_scope`，不再虚构键一致标记。
+- 新增2项带真实合成Parquet的回归测试（历史时点组由12增至14），覆盖证据转发和证据缺失时失败关闭；PowerShell在读取这些属性前会先显式检查完整性，并提供明确的字段名提示。
+- 为避免无谓重扫已通过的2025-01-02 5min 来源，Windows脚本下轮仅验证2025-02-17的5min和1min真实记录。若1min目标匹配RowGroup仍超过225万，仍应安全停止并记录物理预算，**绝不扩大授权源的OHLCVA读取上限或修改购买数据**。
+
 ## 原始来源与历史身份限制
 - 2025原供应商5min记录：`SZ302132` 243个完整交易日，2025-02-17生效日前有26个该新标签交易日。原始购买Parquet不改；官方历史交易时点标签仅作为研究元数据补充，生产统一证券身份路由仍未启用。
 - 数据商历史代码回填不等于交易日历、公司行为、证券主数据、量价单位或复权因子已认证。

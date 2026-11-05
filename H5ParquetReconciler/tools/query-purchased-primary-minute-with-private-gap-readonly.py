@@ -261,20 +261,101 @@ def query_bars(root, symbol, period, first, last, *,
     }
 
 
+
+def query_many(root, symbols, period, first, last, *,
+               allow_verified_private_h5=False,
+               max_candidate_rows=30000000, max_total_result_bars=20000):
+    """Bounded multi-security research API with the SAME purchased-first gate.
+
+    V1 intentionally reuses the single-security proven query for each symbol.
+    It does not imply a shared Parquet batch scan or a speedup; all records are
+    delivered only to the in-process caller and not written to disk.
+    """
+    if (not isinstance(symbols, (tuple, list)) or
+            not 1 <= len(symbols) <= 8 or
+            type(max_total_result_bars) is not int or
+            not 1 <= max_total_result_bars <= 50000 or
+            type(allow_verified_private_h5) is not bool):
+        raise ValueError("Require 1..8 symbols and bounded total results")
+    canonical = []
+    for symbol in symbols:
+        value, _, _ = Q.request_dates(
+            symbol, period, first, last,
+            max_candidate_rows, max_total_result_bars)
+        canonical.append(value)
+    if len(set(canonical)) != len(canonical):
+        raise ValueError("Duplicate symbol in multi-security query")
+    combined = []
+    by_symbol = {}
+    source_totals = Counter()
+    for symbol in canonical:
+        remaining = max_total_result_bars - len(combined)
+        if remaining < 1:
+            raise ValueError("Multi-security result budget exhausted")
+        result = query_bars(
+            root, symbol, period, first, last,
+            allow_verified_private_h5=allow_verified_private_h5,
+            max_candidate_rows=max_candidate_rows,
+            max_result_bars=remaining)
+        bars = result["bars"]
+        if any(row["symbol"] != symbol for row in bars):
+            raise ValueError("Returned bar does not belong to requested symbol")
+        combined.extend(bars)
+        safe = result["safe_summary"]
+        if safe["matching_bar_count"] != len(bars):
+            raise ValueError("Single-security safe count mismatch")
+        by_symbol[symbol] = safe
+        source_totals.update(safe["bars_by_source"])
+    keys = [(row["symbol"], row["source_timestamp_ms"]) for row in combined]
+    if len(keys) != len(set(keys)):
+        raise ValueError("Duplicate symbol/timestamp in multi-security query")
+    combined.sort(key=lambda row: (row["source_timestamp_ms"], row["symbol"]))
+    return {
+        "bars": combined,
+        "safe_summary": {
+            "format": "AStockDataTools bounded multi-security purchased-primary minute research query v1",
+            "period": period,
+            "from_day": str(first), "through_day": str(last),
+            "symbols": canonical, "symbol_count": len(canonical),
+            "matching_bar_count": len(combined),
+            "bars_by_source": dict(sorted(source_totals.items())),
+            "per_symbol": by_symbol,
+            "purchased_parquet_is_authoritative_per_stockday": True,
+            "h5_fallback_explicitly_enabled": allow_verified_private_h5,
+            "original_market_files_modified": False,
+            "new_market_files_written": False,
+            "production_query_activated": False,
+            "h5_minute_vendor_physical_units_certified": False,
+            "no_raw_ohlcva_in_safe_summary": True,
+            "no_multi_security_scan_speedup_claimed": True,
+        },
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
-    parser.add_argument("--symbol", required=True)
+    selected = parser.add_mutually_exclusive_group(required=True)
+    selected.add_argument("--symbol")
+    selected.add_argument("--symbols", nargs="+")
     parser.add_argument("--period", required=True, choices=PERIODS)
     parser.add_argument("--from-day", required=True)
     parser.add_argument("--through-day", required=True)
     parser.add_argument("--allow-verified-private-h5", action="store_true")
     parser.add_argument("--max-result-bars", type=int, default=10000)
     args = parser.parse_args(argv)
-    result = query_bars(
-        args.root, args.symbol, args.period, args.from_day, args.through_day,
-        allow_verified_private_h5=args.allow_verified_private_h5,
-        max_result_bars=args.max_result_bars)
+    options = dict(
+        allow_verified_private_h5=args.allow_verified_private_h5)
+    if args.symbols:
+        result = query_many(
+            args.root, args.symbols, args.period, args.from_day,
+            args.through_day,
+            max_total_result_bars=args.max_result_bars, **options)
+    else:
+        result = query_bars(
+            args.root, args.symbol, args.period, args.from_day,
+            args.through_day,
+            max_result_bars=args.max_result_bars, **options)
     # No licensed OHLCVA, file paths or market values are emitted.
     print(json.dumps(result["safe_summary"], indent=2, sort_keys=True,
                      ensure_ascii=False))

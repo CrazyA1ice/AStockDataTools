@@ -19,7 +19,11 @@ foreach($f in @($py,$tool)){
 if($LASTEXITCODE -ne 0){throw 'Synthetic 2025 purchased-minute grid tests FAILED; original source not scanned'}
 Write-Host ("===== 2025 purchased minute source grid: "+$Month+" =====")
 $raw=@(& $py -B $tool --root 'D:\stock' --month $Month --build-missing-private-index)
-if($LASTEXITCODE -ne 0){throw '2025 purchased-minute key grid audit failed; original market files remain read-only'}
+$auditExitCode=$LASTEXITCODE
+if($auditExitCode -ne 0){
+    $raw | Out-Host
+    throw '2025 purchased-minute key grid audit reported exceptions; original market files remain read-only'
+}
 $safe=($raw -join [Environment]::NewLine) | ConvertFrom-Json
 if($safe.original_purchased_parquet_ohlcva_opened -ne $false -or $safe.h5_source_row_data_opened -ne $false -or $safe.purchased_market_bars_copied -ne 0 -or $safe.new_market_parquet_or_h5_files_written -ne $false -or $safe.production_query_activated -ne $false -or $safe.source_metadata_stable_during_audit -ne $true){
     throw '2025 purchased-minute key audit violated source-only contract'

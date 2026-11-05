@@ -112,7 +112,7 @@ class ExcludedFiveMinuteCodePrefixes(unittest.TestCase):
 
     def test_bounded_scan_budget_and_missing_file_fail_closed(self):
         with self.assertRaisesRegex(ValueError, "budget"):
-            self.audit(selected=48) if False else M.scan_5min_sources(
+            M.scan_5min_sources(
                 self.root, [self.file], expected_total=len(self.rows),
                 expected_selected=48, max_source_rows=150)
         with self.assertRaisesRegex(ValueError, "Unsafe"):

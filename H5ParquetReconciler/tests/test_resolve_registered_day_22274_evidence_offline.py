@@ -137,11 +137,12 @@ class RegisteredDayEvidenceResolverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Missing SHA-linked"):
             M.prepare(self.version)
 
-    def test_duplicate_sha_equal_evidence_is_ambiguous(self):
-        duplicate=self.reports/"copied-fictional-live.json"
+    def test_repeated_sha_identical_safe_is_resolved_deterministically(self):
+        duplicate=self.reports/"aaa-copied-fictional-live.json"
         duplicate.write_bytes(self.live.read_bytes())
-        with self.assertRaisesRegex(ValueError,"Ambiguous SHA-identical"):
-            M.prepare(self.version)
+        resolved=M.resolve(self.version)
+        self.assertEqual(Path(resolved["live_safe"]),duplicate.resolve())
+        self.assertEqual(Path(resolved["private_keys"]),self.private.resolve())
 
     def test_wrong_registered_candidate_count_fails_closed(self):
         self.entry["candidate_total_new_stockday_rows"]=22273

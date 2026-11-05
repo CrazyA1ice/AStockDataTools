@@ -137,7 +137,7 @@ def scan_5min_sources(root, paths, *, expected_total, expected_selected,
                     if code_cache[key][0] and raw is not None:
                         approved.append(raw)
                 mask = pc.is_in(symbols, value_set=pa.array(
-                    approved, type=pa.string()))
+                    approved, type=symbol_type))
                 selected_rows += int(pc.sum(pc.cast(mask, pa.int64())).as_py() or 0)
                 excluded = batch.filter(pc.invert(mask)).to_pylist()
                 for item in excluded:

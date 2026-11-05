@@ -89,6 +89,7 @@ def query_bars(root, symbol, period, first, last, *,
     low, high = Q.day_bounds(start, end)
     file_before = {}
     group_reads = []
+    planned_group_sizes = {}
     key_only_rows = 0
     source_rg_examined = 0
     source_footers = 0
@@ -162,6 +163,7 @@ def query_bars(root, symbol, period, first, last, *,
                         selected += 1
                 if source_keys_here:
                     candidate_full_rowgroup_rows += rg.num_rows
+                    planned_group_sizes[(path, rg_id)] = rg.num_rows
                     for ts in source_keys_here:
                         target_keys[ts] = (path, rg_id)
                     group_reads.append((path, rg_id))
@@ -195,8 +197,13 @@ def query_bars(root, symbol, period, first, last, *,
     src_type = pa.array(aliases, type=pa.string())
     for path, rg_id in group_reads:
         with pq.ParquetFile(path, memory_map=False, pre_buffer=False) as pf:
+            current_group_rows = pf.metadata.row_group(rg_id).num_rows
+            if current_group_rows != planned_group_sizes[(path, rg_id)]:
+                raise ValueError("Purchased RowGroup count changed after key-first preflight")
             rowgroups_opened += 1
-            source_rows_ohlcva_read += pf.metadata.row_group(rg_id).num_rows
+            source_rows_ohlcva_read += current_group_rows
+            if source_rows_ohlcva_read > min(max_ohlcva_rows, max_candidate_rows):
+                raise ValueError("Physical OHLCVA rowgroup budget exceeded during guarded read")
             for batch in pf.iter_batches(
                     row_groups=[rg_id], columns=list(Q.NEEDED),
                     batch_size=65536, use_threads=False):

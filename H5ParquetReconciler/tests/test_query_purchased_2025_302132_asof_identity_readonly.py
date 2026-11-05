@@ -69,6 +69,28 @@ class AsOfIssuerSourceIdentityTests(unittest.TestCase):
         self.assertFalse(safe["raw_ohlcva_in_safe_summary"])
         self.assertNotIn("open", safe)
 
+    def test_keyfirst_safety_evidence_is_forwarded_not_invented(self):
+        result = M.query_bars(self.root, "5min", "2025-02-17", "2025-02-17")
+        safe = result["safe_summary"]
+        self.assertTrue(safe["native_session_grid_checked_before_ohlcva"])
+        self.assertTrue(safe["key_only_to_ohlcva_exact_key_verified"])
+        self.assertTrue(safe["generic_purchased_query_budget_unchanged"])
+        self.assertEqual(
+            safe["physical_ohlcva_exception_scope"],
+            "2025_SZ302132_only_exact_matching_rowgroups")
+        self.assertEqual(safe["source_ohlcva_rows_read"], 60)
+        self.assertEqual(safe["source_ohlcva_rowgroups_read"], 1)
+        self.assertEqual(safe["source_ohlcva_budget"], 2000000)
+
+    def test_missing_keyfirst_evidence_fails_closed(self):
+        expected = M.KEY_FIRST.query_bars(
+            self.root, "SZ302132", "5min",
+            "2025-02-17", "2025-02-17")
+        expected["safe_summary"].pop("native_session_grid_checked_before_ohlcva")
+        with patch.object(M.KEY_FIRST, "query_bars", return_value=expected):
+            with self.assertRaises(KeyError):
+                M.query_bars(self.root, "5min", "2025-02-17", "2025-02-17")
+
     def test_original_1min_241_grid_checked_without_changing_source(self):
         file = self.files["1min"]
         before = (file.stat().st_size, file.stat().st_mtime_ns)

@@ -80,7 +80,7 @@ class AsOfIssuerSourceIdentityTests(unittest.TestCase):
             "2025_SZ302132_only_exact_matching_rowgroups")
         self.assertEqual(safe["source_ohlcva_rows_read"], 96)
         self.assertEqual(safe["source_ohlcva_rowgroups_read"], 2)
-        self.assertEqual(safe["source_ohlcva_budget"], 2000000)
+        self.assertEqual(safe["source_ohlcva_budget"], 2250000)
 
     def test_missing_keyfirst_evidence_fails_closed(self):
         expected = M.KEY_FIRST.query_bars(

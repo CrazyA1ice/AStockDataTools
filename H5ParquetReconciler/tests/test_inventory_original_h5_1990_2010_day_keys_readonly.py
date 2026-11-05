@@ -139,6 +139,16 @@ class HistoricalDailyH5NativeInventoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Duplicate or unsorted|descending"):
                     M.inventory(new_root)
 
+    def test_float_native_datetime_rejected_before_any_key_cast(self):
+        wrong = np.dtype([("datetime", "<f8"),
+                          *DTYPE.descr[1:]])
+        arr = np.zeros(1, dtype=wrong)
+        arr["datetime"] = float(stamp("1990-12-19"))
+        with h5py.File(self.sources["sh"], "a") as f:
+            f["data"].create_dataset("SH600000", data=arr)
+        with self.assertRaisesRegex(ValueError, "Nonintegral"):
+            M.inventory(self.root)
+
     def test_scan_budget_fails_closed_without_partial_report(self):
         self.put("sh", "SH600000", [stamp("1990-01-02"),
                                    stamp("1990-01-03")])

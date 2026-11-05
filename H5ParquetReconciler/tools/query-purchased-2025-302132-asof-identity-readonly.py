@@ -44,6 +44,8 @@ Q = _load("302132_purchased_original_bounded_query",
           "query-parquet-primary-readonly.py")
 GRID = _load("302132_exact_source_session_key_grid",
              "preview-minute-exact-key-diff-readonly.py")
+KEY_FIRST = _load("302132_two_phase_original_source_key_first",
+                  "query-purchased-2025-302132-key-first-bounded-readonly.py")
 
 
 def official_code_asof(trading_day):
@@ -71,11 +73,10 @@ def query_bars(root, period, first, last, *,
         max_result_bars, allow_2025_302132_source=True)
     if from_day.year != 2025 or through_day.year != 2025:
         raise ValueError("Source-code change mapping must stay in 2025")
-    underlying = Q.query_bars(
+    underlying = KEY_FIRST.query_bars(
         root, SOURCE_CODE, period, first, last,
         max_candidate_rows=max_candidate_rows,
-        max_result_bars=max_result_bars, local_cache=False,
-        allow_2025_302132_source=True)
+        max_result_bars=max_result_bars)
     original = underlying["bars"]
     days = defaultdict(set)
     annotated = []
@@ -135,6 +136,15 @@ def query_bars(root, period, first, last, *,
             "official_identity_asof_code_is_not_original_source_label": True,
             "source_timestamp_semantics_not_rewritten": True,
             "raw_ohlcva_in_safe_summary": False,
+            "source_key_only_rows_scanned":
+                underlying["safe_summary"]["key_only_source_rows_scanned"],
+            "source_ohlcva_rowgroups_read":
+                underlying["safe_summary"]["physical_ohlcva_rowgroups_read"],
+            "source_ohlcva_rows_read":
+                underlying["safe_summary"]["physical_ohlcva_source_rows_read"],
+            "source_ohlcva_budget":
+                underlying["safe_summary"]["physical_ohlcva_rows_budget"],
+            "key_only_to_ohlcva_exact_key_verified": True,
         },
     }
 

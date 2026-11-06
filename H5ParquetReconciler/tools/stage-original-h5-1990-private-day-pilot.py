@@ -246,6 +246,14 @@ def stage(root,*,write=False):
         "private_parquet_written":write,
     }
     if write:
+        # Validate the complete ignored output ancestry BEFORE any private file
+        # is created. In synthetic tests MODULE and PARENT are rebased together.
+        expected_parent=MODULE/"work"/"unified_parquet"/"historical_pre2011_daily_pilots"
+        if (PARENT!=expected_parent
+                or not PARENT.resolve().is_relative_to(MODULE.resolve())
+                or any(p.is_symlink() for p in (
+                    MODULE/"work",MODULE/"work"/"unified_parquet",PARENT))):
+            raise ValueError("Private historical pilot must stay inside module ignored work")
         if (PARENT.is_symlink() or not PARENT.parent.is_dir()
                 or PARENT.parent.is_symlink()):
             raise ValueError("Private history output root missing or symlinked")

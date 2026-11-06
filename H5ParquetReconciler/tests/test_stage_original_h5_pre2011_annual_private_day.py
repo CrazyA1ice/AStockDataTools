@@ -130,27 +130,27 @@ class AnnualPre2011PrivateStageTests(unittest.TestCase):
     def test_duplicate_native_day_rejected(self):
         self.put("sh","SH600000",[199101020000,199101020000])
         with self.assertRaisesRegex(ValueError,"Duplicate or unsorted"):
-            M._source_rows(self.root,1991,2)
+            M._source_rows(self.root,1991,2043)
 
     def test_nonmidnight_day_rejected(self):
         self.put("sh","SH600000",[199101020930])
         with self.assertRaisesRegex(ValueError,"Non-midnight"):
-            M._source_rows(self.root,1991,2)
+            M._source_rows(self.root,1991,2043)
 
     def test_invalid_calendar_date_rejected(self):
         self.put("sh","SH600000",[199102300000])
         with self.assertRaisesRegex(ValueError,"Noncalendar"):
-            M._source_rows(self.root,1991,2)
+            M._source_rows(self.root,1991,2043)
 
     def test_negative_original_h5_amount_rejected(self):
         self.put("sh","SH600000",[199101020000],transAmount=-1)
         with self.assertRaisesRegex(ValueError,"Negative"):
-            M._source_rows(self.root,1991,2)
+            M._source_rows(self.root,1991,2043)
 
     def test_bad_high_low_geometry_rejected(self):
         self.put("sh","SH600000",[199101020000],highPrice=8000)
         with self.assertRaisesRegex(ValueError,"geometry"):
-            M._source_rows(self.root,1991,2)
+            M._source_rows(self.root,1991,2043)
 
     def test_historical_other_code_is_never_staged(self):
         self.prepare();self.fixture()
@@ -170,7 +170,7 @@ class AnnualPre2011PrivateStageTests(unittest.TestCase):
         outside=self.base/"other"/"annual"
         outside.parent.mkdir()
         with patch.object(M,"PARENT",outside):
-            with self.assertRaisesRegex(ValueError,"inside ignored module work"):
+            with self.assertRaisesRegex(ValueError,"ignored module work"):
                 M.annual(self.root,1991,write=True)
         self.assertFalse(outside.exists())
 

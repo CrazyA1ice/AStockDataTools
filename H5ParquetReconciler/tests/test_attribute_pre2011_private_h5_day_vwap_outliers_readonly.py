@@ -178,6 +178,19 @@ class Pre2011PrivateH5VWAPAttributionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"source changed"):
                 self.audit()
 
+    def test_windows_powershell_51_entry_is_ascii_and_preserves_fail_closed_checks(self):
+        # Windows PowerShell 5.1 treats a UTF-8 no-BOM .ps1 as legacy ANSI;
+        # non-ASCII double-quoted throw text previously broke parsing.
+        wrapper=(HERE.parent /
+            "run-pre2011-private-h5-day-vwap-1990-1996-outlier-attribution-readonly.ps1")
+        payload=wrapper.read_bytes()
+        self.assertTrue(payload)
+        self.assertTrue(payload.isascii(), "Windows PowerShell 5.1 wrapper must be ASCII-only")
+        self.assertIn(b"foreach($line in $annual)",payload)
+        self.assertIn(b"outliers_that_session",payload)
+        self.assertIn(b"day_sha256_prefix12.Length -ne 12",payload)
+        self.assertIn(b"UNIT_CERTIFIED=FALSE PRODUCTION_MERGED=FALSE",payload)
+
     def test_too_many_years_or_out_of_range_rejected_before_sources(self):
         with patch.object(M.FULL,"_source_gate",
                           side_effect=AssertionError("Sources accessed")):

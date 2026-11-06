@@ -183,12 +183,18 @@ def inventory(root, *, max_rows=30000000, chunk_rows=16384):
                             summary["other_symbols"].add(symbol)
                             summary["other_dates"].update(
                                 np.unique(days[mask]).tolist())
+                            summary["market_other_stockdays"][market.upper()] += n
     after = {market: _file_state(path) for market, path in paths}
     if after != before:
         raise ValueError("Original H5 market source stat changed during inventory")
     annual = []
     for y in years:
         v = years[y]
+        if (sum(v["market_candidate_stockdays"].values()) !=
+                v["a_share_candidate_stockdays"]
+                or sum(v["market_other_stockdays"].values()) !=
+                v["other_code_stockdays"]):
+            raise ValueError("Historical H5 yearly market source counts do not conserve")
         annual.append({
             "year":y,
             "h5_a_share_code_candidate_stockdays":v["a_share_candidate_stockdays"],
@@ -198,10 +204,10 @@ def inventory(root, *, max_rows=30000000, chunk_rows=16384):
             "a_share_candidate_distinct_dates":len(v["candidate_dates"]),
             "other_code_distinct_dates":len(v["other_dates"]),
             "candidate_stockdays_by_market":{
-                m.upper():v["market_candidate_stockdays"][m]
+                m.upper():v["market_candidate_stockdays"][m.upper()]
                 for m in MARKETS},
             "other_code_stockdays_by_market":{
-                m.upper():v["market_other_stockdays"][m]
+                m.upper():v["market_other_stockdays"][m.upper()]
                 for m in MARKETS},
         })
     stamp_state = hashlib.sha256(json.dumps(

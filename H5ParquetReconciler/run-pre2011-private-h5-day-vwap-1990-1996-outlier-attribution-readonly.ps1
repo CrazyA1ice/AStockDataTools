@@ -24,6 +24,20 @@ if($totals.Count -ne 1){throw 'Expected one valid terminal root-cause attributio
 $proof=([string]$totals[0]).Substring('PRIVATE_H5_VWAP_ATTRIBUTION_SUMMARY='.Length)|ConvertFrom-Json
 $agg=$proof.aggregate
 if($proof.state -ne 'pre2011_private_h5_vwap_outlier_readonly_attribution_not_unit_certification' -or $proof.first_year -ne 1990 -or $proof.last_year -ne 1996 -or $proof.years_verified -ne 7 -or $agg.candidate_stockdays_checked -ne 215238 -or $agg.positive_volume_and_amount -ne 215173 -or $agg.vwap_inside_bar -ne 207650 -or $agg.vwap_below_low -ne 4509 -or $agg.vwap_above_high -ne 3014 -or $agg.outliers_total -ne 7523 -or $proof.factors_are_competing_hypotheses_not_auto_repair -ne $true -or $proof.all_source_stats_and_private_sha_rechecked -ne $true -or $proof.original_h5_redecoded_again_by_attribution -ne $false -or $proof.h5_volume_amount_price_units_certified -ne $false -or $proof.official_adjustment_semantics_certified -ne $false -or $proof.historical_security_master_certified -ne $false -or $proof.source_or_private_files_modified -ne $false -or $proof.production_activated -ne $false -or $proof.ready_for_production_merge -ne $false){throw '1990-1996 private H5 VWAP anomaly root-cause SAFE summary disagrees with previous full history'}
-foreach($line in $annual){ $year=([string]$line).Substring('PRIVATE_H5_VWAP_ATTRIBUTION_YEAR='.Length) | ConvertFrom-Json; if($year.outliers_total -gt 0){ if($year.number_of_sessions_with_outliers -le 0 -or @($year.top_anomalous_sessions).Count -le 0){throw "异常交易日集中度缺失"}; foreach($session in @($year.top_anomalous_sessions)){if($session.outliers_that_session -gt $session.positive_volume_amount_that_session -or $session.positive_volume_amount_that_session -gt $session.candidate_stockdays_that_session -or $session.day_sha256_prefix12.Length -ne 12){throw "单日异常集中度守恒失败"}}} }
+# ASCII-only strings: Windows PowerShell 5.1 treats UTF-8 without BOM as ANSI.
+foreach($line in $annual){
+    $payload=([string]$line).Substring('PRIVATE_H5_VWAP_ATTRIBUTION_YEAR='.Length)
+    $year=$payload | ConvertFrom-Json
+    if($year.outliers_total -gt 0){
+        if($year.number_of_sessions_with_outliers -le 0 -or @($year.top_anomalous_sessions).Count -eq 0){
+            throw 'Missing anomalous trading-session concentration'
+        }
+        foreach($session in @($year.top_anomalous_sessions)){
+            if($session.outliers_that_session -gt $session.positive_volume_amount_that_session -or $session.positive_volume_amount_that_session -gt $session.candidate_stockdays_that_session -or $session.day_sha256_prefix12.Length -ne 12){
+                throw 'Anomalous trading-session counts or date fingerprint invalid'
+            }
+        }
+    }
+}
 Write-Host ('PASS_PRIVATE_H5_VWAP_1990_1996_ATTRIBUTION=215238 OUTLIERS='+$agg.outliers_total+' COMPETING_FACTOR_HYPOTHESES_ONLY=TRUE UNIT_CERTIFIED=FALSE PRODUCTION_MERGED=FALSE')
 Write-Host 'Examine PRIVATE_H5_VWAP_ATTRIBUTION_YEAR summaries for month/prefix concentration and high-outlier hashed source groups; no source or candidate changes performed.'

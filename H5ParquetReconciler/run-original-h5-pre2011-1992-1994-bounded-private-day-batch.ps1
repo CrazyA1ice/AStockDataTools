@@ -19,9 +19,9 @@ Write-Host '===== 1992-2010 bounded batch / restart / SHA safety contract regres
 & $python -B -m unittest discover -s $tests -p 'test_run_h5_pre2011_private_annual_batch.py' -v
 if($LASTEXITCODE -ne 0){throw 'Private annual batch safety tests failed; no market source opened'}
 Write-Host '===== ONE PRIVATE BATCH ONLY: 1992..1994 (3 audited annual stages) ====='
-$lines=@(& $python -B $runner --source-root 'D:\stock' --from-year 1992 --through-year 1994 --max-years 3 --stage-private)
+$lines=@()
+& $python -B $runner --source-root 'D:\stock' --from-year 1992 --through-year 1994 --max-years 3 --stage-private | Tee-Object -Variable lines
 $exit=$LASTEXITCODE
-$lines|ForEach-Object {Write-Host $_}
 if($exit -ne 0){throw 'Controlled 1992-1994 private H5 historical day batch failed closed; already verified earlier year checkpoints remain in local ignored work'}
 $summaryLine=@($lines|Where-Object {$_ -like 'PRIVATE_H5_BATCH_SUMMARY=*'})
 if($summaryLine.Count -ne 1){throw 'Private H5 annual batch did not emit exactly one terminal aggregate SAFE proof'}

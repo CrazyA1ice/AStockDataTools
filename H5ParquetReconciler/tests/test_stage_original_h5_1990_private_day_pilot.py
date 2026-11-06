@@ -187,6 +187,16 @@ class Private1990ResearchStageContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"overlaps"):
                 M.stage(self.root)
 
+    def test_private_stage_external_module_root_rejected_before_write(self):
+        self.rows()
+        self.fixtures()
+        outside=self.container/"outside"/"historical_pre2011_daily_pilots"
+        outside.parent.mkdir(parents=True)
+        with patch.object(M,"PARENT",outside):
+            with self.assertRaisesRegex(ValueError,"inside module ignored work"):
+                M.stage(self.root,write=True)
+        self.assertFalse(outside.exists())
+
     def test_different_native_h5_file_stat_digest_not_staged(self):
         self.rows()
         self.fixtures()

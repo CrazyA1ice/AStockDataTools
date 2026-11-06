@@ -270,6 +270,7 @@ def stage(root,*,write=False):
             raise ValueError("1990 private stage full row/field roundtrip failed")
         manifest["private_parquet_sha256"]=_digest(parquet)
         manifest["private_parquet_row_count"]=check.num_rows
+        manifest["private_stage_relative_dir"]=target.relative_to(MODULE).as_posix()
         if (h5_state(root)!=before or purchased_gate(root)[
                 "source_file_size_mtime_state_sha256"]!=
                 pq_proof["source_file_size_mtime_state_sha256"]):

@@ -22,6 +22,7 @@ SPEC=importlib.util.spec_from_file_location(
     HERE.parent/"tools"/"stage-original-h5-1990-private-day-pilot.py")
 M=importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
+ORIGINAL_PURCHASED_GATE=M.purchased_gate
 DT=np.dtype([
     ("datetime","<i8"),
     ("openPrice","<i8"),("highPrice","<i8"),
@@ -184,14 +185,14 @@ class Private1990ResearchStageContracts(unittest.TestCase):
     def test_different_native_h5_file_stat_digest_not_staged(self):
         self.rows()
         self.fixtures()
-        with patch.object(M,"h5_state",side_effect=["a"*64,"c"*64]):
+        with patch.object(M,"h5_state",side_effect=[M.EXPECTED_H5_STATE,"c"*64]):
             with self.assertRaisesRegex(ValueError,"source drift"):
                 M.stage(self.root)
 
     def test_pre2011_purchased_absence_requires_explicit_24_139_footer_proof(self):
         self.rows()
         self.fixtures()
-        with patch.object(M.PQ,"audit",return_value={
+        with patch.object(M,"purchased_gate",ORIGINAL_PURCHASED_GATE), patch.object(M.PQ,"audit",return_value={
             "state":"pre2011_purchased_parquet_original_day_keys_audited_readonly",
             "source_file_size_mtime_state_sha256":M.EXPECTED_PQ_STATE,
             "source_files":24,"rowgroups_total":139,

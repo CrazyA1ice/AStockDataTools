@@ -35,14 +35,14 @@ class Full21YearPrivateH5ReadOnlyAuditTests(unittest.TestCase):
         self.root=self.base/"orig-market"
         self.root.mkdir()
         self.patches=[]
-        audit={(y):(2,1,1,1) for y in range(1991,2011)}
+        audit={(y):(2,1,2,1) for y in range(1991,2011)}
         for p in (
             patch.object(M,"MODULE",self.module),
             patch.object(M,"PARENT",self.parent),
             patch.dict(M.ANNUAL.EXPECTED,audit,clear=True),
             patch.object(M.P90,"EXPECT_A_STOCKDAYS",2),
             patch.object(M.P90,"EXPECT_OTHER_STOCKDAYS",1),
-            patch.object(M.P90,"EXPECT_A_SYMBOLS",1),
+            patch.object(M.P90,"EXPECT_A_SYMBOLS",2),
             patch.object(M.P90,"EXPECT_A_DATES",1),
             patch.object(M,"EXPECTED_ALL_STOCKDAYS",42),
             patch.object(M,"EXPECTED_ALL_OTHER",21),

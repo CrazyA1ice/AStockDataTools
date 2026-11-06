@@ -69,3 +69,11 @@
 
 当前坚持：**购买Parquet为主、H5补缺；先只读证据，再私有候选与SHA验收，
 最后才考虑生产合并及Parquet→H5镜像。**
+
+## 首轮Windows验收发现的跨平台测试及统计修复（2026-11-06）
+
+- 实机Git拉取到`7b37eff`成功；11项虚构H5合成测试中9 PASS，1 FAIL，1 ERROR；因测试门禁停止，**尚未读取真实D:\\stock历史H5记录**。
+- 统计失败根因有两处：其他证券按年份计入总量时，遗漏了按市场`market_other_stockdays[market.upper()]`累加；输出市场字典时用小写`sh/sz/bj`索引大写`SH/SZ/BJ`的Counter，误将市场分项归零。已补全累加并统一大写访问。
+- 增加Python内部以及Windows PowerShell的年度守恒门禁：对任意年份，`SH+SZ+BJ`分别必须等于当年A股代码候选和其他证券代码的年度总量，不能只靠一个合成样本比较。
+- `test_root_symlink_input_does_not_write_market_file`直接调用Windows受限制的`symlink_to()`触发`WinError 1314`。现改为用`unittest.mock.patch.object(Path, "is_symlink", ...)`仿真一个被拒绝的来源路径，断言依旧失败关闭，同时检查临时H5在测试前后的size/mtime一致。**不要求管理员权限，也不禁用原程序的真实符号链接检查。**
+- 未调整日线来源A股代码筛选规则、市场OHLCVA读取权限或生产数据库开关；私有22,274候选与历史来源完全未改动。新修复尚待Windows再次执行同一只读验收命令。

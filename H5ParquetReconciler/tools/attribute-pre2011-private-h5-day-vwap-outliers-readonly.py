@@ -60,7 +60,11 @@ def _yearly(year,folder,source_state):
     by_month=defaultdict(Counter)
     by_prefix=defaultdict(Counter)
     by_symbol=defaultdict(Counter)
+    by_day=defaultdict(Counter)
+    day_candidate=Counter()
+    day_positive=Counter()
     factors=Counter()
+    by_prefix_factors=defaultdict(Counter)
     checked=0
     for batch in pf.iter_batches(batch_size=BATCH,
             columns=["ts","symbol","low","high","close","volume","amount"],
@@ -81,6 +85,11 @@ def _yearly(year,folder,source_state):
                 or np.any(volume<0) or np.any(amount<0)):
             raise ValueError("Anomaly attribution encountered invalid daily OHLCVA/key")
         positive=(volume>0)&(amount>0)
+        for key,n in zip(*np.unique(dates,return_counts=True)):
+            day_candidate[int(key)]+=int(n)
+        if np.any(positive):
+            for key,n in zip(*np.unique(dates[positive],return_counts=True)):
+                day_positive[int(key)]+=int(n)
         totals["positive_volume_and_amount"]+=int(np.count_nonzero(positive))
         totals["both_zero"]+=int(np.count_nonzero((volume==0)&(amount==0)))
         totals["only_volume_zero"]+=int(np.count_nonzero((volume==0)&(amount>0)))
@@ -116,6 +125,7 @@ def _yearly(year,folder,source_state):
                 by_month[month][direction]+=1
                 by_prefix[_symbol_prefix(s)][direction]+=1
                 by_symbol[s][direction]+=1
+                by_day[int(dates[int(sub_index)])][direction]+=1
                 # Independent scale hypotheses on ONLY the outlier records.
                 # Several factors can fit a wide bar; no auto-picking or writes.
                 candidates=[]
@@ -127,12 +137,18 @@ def _yearly(year,folder,source_state):
                     if low_price-eps<=scaled<=high_price+eps:
                         candidates.append(label)
                         factors[label]+=1
+                prefix=_symbol_prefix(s)
+                for factor in candidates:
+                    by_prefix_factors[prefix][factor]+=1
                 if not candidates:
                     factors["none_fit"]+=1
+                    by_prefix_factors[prefix]["none_fit"]+=1
                 elif len(candidates)>1:
                     factors["multiple_fit"]+=1
+                    by_prefix_factors[prefix]["multiple_fit"]+=1
                 else:
                     factors["one_fit"]+=1
+                    by_prefix_factors[prefix]["one_fit"]+=1
         checked+=batch.num_rows
     expected_positive=totals["positive_volume_and_amount"]
     outliers=totals["below_low"]+totals["above_high"]
@@ -144,10 +160,38 @@ def _yearly(year,folder,source_state):
             or sum(sum(item.values()) for item in by_symbol.values())!=outliers
             or sum(sum(item.values()) for item in by_month.values())!=outliers
             or sum(sum(item.values()) for item in by_prefix.values())!=outliers
+            or sum(sum(item.values()) for item in by_day.values())!=outliers
+            or sum(day_candidate.values())!=checked
+            or sum(day_positive.values())!=expected_positive
+            or set(by_day)-set(day_candidate)
+            or sum(counter["none_fit"] for counter in by_prefix_factors.values())!=factors["none_fit"]
+            or sum(counter["one_fit"] for counter in by_prefix_factors.values())!=factors["one_fit"]
+            or sum(counter["multiple_fit"] for counter in by_prefix_factors.values())!=factors["multiple_fit"]
             or FULL.P90._digest(parquet)!=manifest["private_parquet_sha256"]):
         raise ValueError("Anomaly attribution full annual count/SHA/conservation failed")
     group_symbols=sorted(by_symbol.items(),
                          key=lambda pair:(-sum(pair[1].values()),pair[0]))
+    busiest_days=sorted(by_day.items(),
+                       key=lambda pair:(-sum(pair[1].values()),pair[0]))
+    top_days=[]
+    for native_ts,counts in busiest_days[:TOP]:
+        dt=datetime.fromtimestamp(native_ts/1000,UTC8)
+        anomalies=sum(counts.values())
+        possible=day_positive[native_ts]
+        if not 0<anomalies<=possible<=day_candidate[native_ts]:
+            raise ValueError("Invalid same-day anomalous stockday concentration")
+        top_days.append({
+            "month":f"{year:04d}-{dt.month:02d}",
+            "day_sha256_prefix12":hashlib.sha256(
+                dt.strftime("%Y%m%d").encode("ascii")).hexdigest()[:12],
+            "candidate_stockdays_that_session":day_candidate[native_ts],
+            "positive_volume_amount_that_session":possible,
+            "outliers_that_session":anomalies,
+            "below_low":counts["below_low"],
+            "above_high":counts["above_high"],
+            "outlier_share_among_positive_pct_2dp":round(
+                anomalies*100.0/possible,2),
+        })
     return {
         "year":year,"candidate_stockdays_checked":checked,
         "positive_volume_and_amount":expected_positive,
@@ -159,6 +203,9 @@ def _yearly(year,folder,source_state):
             "both_zero","only_volume_zero","only_amount_zero")},
         "outliers_by_month":{k:dict(v) for k,v in sorted(by_month.items())},
         "outliers_by_code_prefix":{k:dict(v) for k,v in sorted(by_prefix.items())},
+        "outlier_multipliers_by_code_prefix":{k:dict(sorted(v.items())) for k,v in sorted(by_prefix_factors.items())},
+        "number_of_sessions_with_outliers":len(by_day),
+        "top_anomalous_sessions":top_days,
         "candidate_multipliers_fitting_outliers":dict(sorted(factors.items())),
         "unique_symbols_with_outliers":len(by_symbol),
         "top_anomalous_symbols":[

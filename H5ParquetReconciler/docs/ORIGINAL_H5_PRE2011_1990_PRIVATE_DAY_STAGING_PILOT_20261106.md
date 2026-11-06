@@ -74,3 +74,22 @@
   守恒、单位候选标记和私有源SHA验收扩展至1991—2010各年度；
   不应重复开展大量单只股票的零散演示。**未来的私有21年
   物化仍应逐年逐批、可恢复、可核验，禁止一次性不设预算写入。**
+
+## 2026-11-06 Windows合成测试路径修复（待实机复测）
+
+- Windows实机首轮执行：14项合成测试中13 PASS、1 ERROR，失败在
+  `test_explicit_private_write_keeps_market_unmodified_and_roundtrip`：
+  合成测试将私有`PARENT`模拟为系统临时目录，却未将`MODULE`
+  同步模拟为对应的临时项目根。生产代码记录
+  `target.relative_to(MODULE)`时正确拒绝了外部路径。
+- 本轮在测试fixture中同步patch `MODULE`和`PARENT`，
+  添加回读manifest相对路径严格一致断言；没有为测试放宽
+  生产目录限制。
+- 进一步在真实stage写任何候选文件**之前**校验输出目录必须为
+  `MODULE/work/unified_parquet/historical_pre2011_daily_pilots`，
+  拒绝其祖先目录符号链接，避免发现路径异常时先误写后失败。
+- 新增针对跳出MODULE路径的失败关闭测试，合计
+  **15项合成测试**；尚未在用户Windows实机重新验收。
+- 之前失败的测试门禁明确发生在打开用户真实H5/Parquet之前；
+  已登记的1990年24条候选尚未在用户本机私有目录写入，
+  也没有任何原始来源修改。

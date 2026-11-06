@@ -10,7 +10,7 @@ $python=Join-Path $repo '.venv\Scripts\python.exe'
 $tests=Join-Path $module 'tests'
 $tool=Join-Path $module 'tools\attribute-pre2011-private-h5-day-vwap-outliers-readonly.py'
 if(-not (Test-Path -LiteralPath $python -PathType Leaf) -or -not (Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Historical H5 private VWAP anomaly attribution prerequisites missing'}
-Write-Host '===== 12 fictional read-only root-cause attribution safety tests ====='
+Write-Host '===== 13 fictional read-only root-cause attribution safety tests ====='
 & $python -B -m unittest discover -s $tests -p 'test_attribute_pre2011_private_h5_day_vwap_outliers_readonly.py' -v
 if($LASTEXITCODE -ne 0){throw 'Private VWAP root-cause attribution synthetic safety tests failed, no originals modified'}
 Write-Host '===== REAL 1990..1996 private history READONLY month/prefix/hashed-stock exception attribution ====='
@@ -36,6 +36,14 @@ foreach($line in $annual){
             if($session.outliers_that_session -gt $session.positive_volume_amount_that_session -or $session.positive_volume_amount_that_session -gt $session.candidate_stockdays_that_session -or $session.day_sha256_prefix12.Length -ne 12){
                 throw 'Anomalous trading-session counts or date fingerprint invalid'
             }
+            $p=@($session.prefix_diagnostic)
+            if($p.Count -lt 1){throw 'Missing same-day per-prefix market attribution'}
+            $candidates=0; $positive=0; $outliers=0
+            foreach($group in $p){
+                if($group.outliers -gt $group.positive_volume_amount -or $group.positive_volume_amount -gt $group.candidate_stockdays -or $group.outliers -ne ($group.below_low+$group.above_high)){throw 'Bad same-day market stockday conservation'}
+                $candidates+=$group.candidate_stockdays; $positive+=$group.positive_volume_amount; $outliers+=$group.outliers
+            }
+            if($candidates -ne $session.candidate_stockdays_that_session -or $positive -ne $session.positive_volume_amount_that_session -or $outliers -ne $session.outliers_that_session){throw 'Per-session market prefixes do not conserve candidate stockdays'}
         }
     }
 }

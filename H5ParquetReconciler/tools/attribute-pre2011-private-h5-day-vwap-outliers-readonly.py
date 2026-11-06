@@ -63,6 +63,9 @@ def _yearly(year,folder,source_state):
     by_day=defaultdict(Counter)
     day_candidate=Counter()
     day_positive=Counter()
+    day_prefix_candidate=Counter()
+    day_prefix_positive=Counter()
+    day_prefix_outliers=defaultdict(Counter)
     factors=Counter()
     by_prefix_factors=defaultdict(Counter)
     checked=0
@@ -90,6 +93,19 @@ def _yearly(year,folder,source_state):
         if np.any(positive):
             for key,n in zip(*np.unique(dates[positive],return_counts=True)):
                 day_positive[int(key)]+=int(n)
+        # For each selected historical session, retain the denominator
+        # by market/code prefix; never guess unit factors or write rows.
+        for ts,sym,is_positive in zip(dates,syms,positive):
+            if not isinstance(sym,str):
+                raise ValueError("Noncanonical symbol encountered in source denominator")
+            import re
+            if not re.fullmatch(r"\\d{6}\\.(XSHG|XSHE|XBSE)",sym):
+                raise ValueError("Invalid daily security key in market denominator")
+            prefix=_symbol_prefix(sym)
+            group=(int(ts),prefix)
+            day_prefix_candidate[group]+=1
+            if is_positive:
+                day_prefix_positive[group]+=1
         totals["positive_volume_and_amount"]+=int(np.count_nonzero(positive))
         totals["both_zero"]+=int(np.count_nonzero((volume==0)&(amount==0)))
         totals["only_volume_zero"]+=int(np.count_nonzero((volume==0)&(amount>0)))
@@ -126,6 +142,8 @@ def _yearly(year,folder,source_state):
                 by_prefix[_symbol_prefix(s)][direction]+=1
                 by_symbol[s][direction]+=1
                 by_day[int(dates[int(sub_index)])][direction]+=1
+                day_prefix_outliers[
+                    (int(dates[int(sub_index)]),_symbol_prefix(s))][direction]+=1
                 # Independent scale hypotheses on ONLY the outlier records.
                 # Several factors can fit a wide bar; no auto-picking or writes.
                 candidates=[]
@@ -163,6 +181,9 @@ def _yearly(year,folder,source_state):
             or sum(sum(item.values()) for item in by_day.values())!=outliers
             or sum(day_candidate.values())!=checked
             or sum(day_positive.values())!=expected_positive
+            or sum(day_prefix_candidate.values())!=checked
+            or sum(day_prefix_positive.values())!=expected_positive
+            or sum(sum(item.values()) for item in day_prefix_outliers.values())!=outliers
             or set(by_day)-set(day_candidate)
             or sum(counter["none_fit"] for counter in by_prefix_factors.values())!=factors["none_fit"]
             or sum(counter["one_fit"] for counter in by_prefix_factors.values())!=factors["one_fit"]
@@ -180,7 +201,29 @@ def _yearly(year,folder,source_state):
         possible=day_positive[native_ts]
         if not 0<anomalies<=possible<=day_candidate[native_ts]:
             raise ValueError("Invalid same-day anomalous stockday concentration")
+        prefix_stats=[]
+        for (ts,prefix),day_count in sorted(day_prefix_candidate.items()):
+            if ts!=native_ts:
+                continue
+            eligible=day_prefix_positive[(ts,prefix)]
+            anomalous=day_prefix_outliers[(ts,prefix)]
+            affected=sum(anomalous.values())
+            if not 0<=affected<=eligible<=day_count:
+                raise ValueError("Invalid market/code-prefix session denominators")
+            prefix_stats.append({
+                "code_prefix":prefix,
+                "candidate_stockdays":day_count,
+                "positive_volume_amount":eligible,
+                "outliers":affected,
+                "below_low":anomalous["below_low"],
+                "above_high":anomalous["above_high"],
+            })
+        if (sum(x["candidate_stockdays"] for x in prefix_stats)!=day_candidate[native_ts]
+                or sum(x["positive_volume_amount"] for x in prefix_stats)!=possible
+                or sum(x["outliers"] for x in prefix_stats)!=anomalies):
+            raise ValueError("Market/session breakdown did not conserve stockdays")
         top_days.append({
+            "prefix_diagnostic":prefix_stats,
             "month":f"{year:04d}-{dt.month:02d}",
             "day_sha256_prefix12":hashlib.sha256(
                 dt.strftime("%Y%m%d").encode("ascii")).hexdigest()[:12],

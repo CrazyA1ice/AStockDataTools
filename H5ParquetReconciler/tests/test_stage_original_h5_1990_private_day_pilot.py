@@ -186,7 +186,7 @@ class Private1990ResearchStageContracts(unittest.TestCase):
         self.rows()
         self.fixtures()
         with patch.object(M,"h5_state",side_effect=[M.EXPECTED_H5_STATE,"c"*64]):
-            with self.assertRaisesRegex(ValueError,"source drift"):
+            with self.assertRaisesRegex(ValueError,"state drift"):
                 M.stage(self.root)
 
     def test_pre2011_purchased_absence_requires_explicit_24_139_footer_proof(self):

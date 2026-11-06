@@ -104,9 +104,35 @@ class Pre2011PrivateH5VWAPAttributionTests(unittest.TestCase):
         self.assertEqual(result["outliers_by_code_prefix"]["SH600"]["below_low"],1)
         self.assertEqual(result["outliers_by_code_prefix"]["SH600"]["above_high"],1)
         self.assertEqual(result["unique_symbols_with_outliers"],2)
+        self.assertEqual(result["number_of_sessions_with_outliers"],1)
+        self.assertEqual(len(result["top_anomalous_sessions"]),1)
+        session=result["top_anomalous_sessions"][0]
+        self.assertEqual(session["month"],"1990-12")
+        self.assertEqual(session["candidate_stockdays_that_session"],4)
+        self.assertEqual(session["positive_volume_amount_that_session"],3)
+        self.assertEqual(session["outliers_that_session"],2)
+        self.assertEqual(session["below_low"],1)
+        self.assertEqual(session["above_high"],1)
+        self.assertEqual(session["outlier_share_among_positive_pct_2dp"],66.67)
+        self.assertEqual(len(session["day_sha256_prefix12"]),12)
+        self.assertEqual(result["outlier_multipliers_by_code_prefix"]["SH600"]["10"],1)
+        self.assertEqual(result["outlier_multipliers_by_code_prefix"]["SH600"]["0.1"],1)
         self.assertEqual(len(result["top_anomalous_symbols"]),2)
         self.assertTrue(all(len(item["symbol_sha256_prefix12"])==12
                             for item in result["top_anomalous_symbols"]))
+
+    def test_dated_same_day_marketwide_cluster_counts_conserve(self):
+        # Two different anomalous securities on one fictional session.
+        with patch.object(M.FULL,"_check_manifest",
+                return_value=(self.parquet,{"private_parquet_sha256":self.sha})):
+            report=M._yearly(1990,self.folder,("a"*64,"b"*64))
+        top=report["top_anomalous_sessions"][0]
+        self.assertEqual(sum(row["outliers_that_session"]
+                for row in report["top_anomalous_sessions"]),2)
+        self.assertLessEqual(top["outliers_that_session"],
+                             top["positive_volume_amount_that_session"])
+        self.assertLessEqual(top["positive_volume_amount_that_session"],
+                             top["candidate_stockdays_that_session"])
 
     def test_no_alternative_factor_fit_is_not_suppressed(self):
         self.rows[1]["amount"]=300.0  # 3.0: x10 overshoots, x0.1 too low

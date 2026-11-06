@@ -137,7 +137,9 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
             self.run()
 
     def test_private_byte_sha_tamper_rejected(self):
-        self.file.write_bytes(self.file.read_bytes()+b"bad")
+        self.rows[0]["amount"]=1400.0
+        self.write()
+        self.sha="f"*64  # Simulate retained manifest hash, not new bytes.
         with self.assertRaisesRegex(ValueError,"manifest drift"):
             self.run()
 

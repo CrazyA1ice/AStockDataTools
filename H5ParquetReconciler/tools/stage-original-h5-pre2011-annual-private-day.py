@@ -112,13 +112,19 @@ def _source_rows(root,year,max_rows):
                     other_count+=len(native_stamps)
                     continue
                 symbols.add(symbol)
+                # Only approved A-code data is read with OHLCVA fields.
+                # This ONE bounded compound slice (max 366 rows per symbol)
+                # avoids tens of thousands of random H5 record requests.
+                records=ds[left:right]
+                if len(records)!=len(native_stamps):
+                    raise ValueError("Incomplete bounded historical H5 annual OHLCVA slice")
                 for offset,(stamp,d) in enumerate(zip(native_stamps,decoded_days)):
                     key=(symbol,stamp)
                     if key in seen:
                         raise ValueError("Duplicate historical H5 candidate stockday")
                     seen.add(key)
                     # Bounded record (one original OHLCVA record, no full-history import).
-                    record=ds[left+offset]
+                    record=records[offset]
                     if int(record["datetime"])!=stamp:
                         raise ValueError("Historical original H5 record timestamp drift")
                     raw=[int(record[k]) for k in (

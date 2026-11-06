@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import math
 import re
 from collections import Counter
 from datetime import date, timedelta
@@ -120,9 +119,8 @@ def _check_manifest(year,folder,h5_sha,pq_sha):
         raise ValueError("Private annual files missing, unexpected or symlinked")
     info=json.loads(manifest.read_text(encoding="utf-8"))
     stockdays,other,symbols,days=_expected(year)
-    expected_format=(P90.FORMAT if year==1990 and hasattr(P90,"FORMAT")
-                     else ("AStockDataTools isolated uncertified 1990 H5 candidate day private v1"
-                           if year==1990 else ANNUAL.FORMAT))
+    expected_format=("AStockDataTools isolated uncertified 1990 H5 candidate day private v1"
+                     if year==1990 else ANNUAL.FORMAT)
     if (info.get("format")!=expected_format
             or info.get("state")!="verified_private_candidate_not_promoted"
             or info.get("year")!=year or info.get("period")!="day"
@@ -159,7 +157,6 @@ def _check_manifest(year,folder,h5_sha,pq_sha):
 
 def _check_parquet(year,parquet,info):
     """Stream exact private typed OHLCVA, symbol/day keys, and annual totals."""
-    import pyarrow as pa
     import pyarrow.parquet as pq
     import numpy as np
 
@@ -203,7 +200,7 @@ def _check_parquet(year,parquet,info):
             stamp=int(x)
             if stamp not in date_cache:
                 d=LOWER_DATE+timedelta(days=(stamp+28800000)//86400000)
-                if d.year!=year or d.strftime("%Y%m%d")!=str(d.year).zfill(4)+d.strftime("%m%d"):
+                if d.year!=year:
                     raise ValueError(f"Private {year} timestamp outside original native day year")
                 date_cache[stamp]=d
                 days.add(stamp)

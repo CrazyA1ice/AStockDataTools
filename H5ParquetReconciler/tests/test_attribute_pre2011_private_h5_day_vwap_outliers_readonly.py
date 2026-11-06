@@ -186,10 +186,21 @@ class Pre2011PrivateH5VWAPAttributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"invalid daily OHLCVA/key"):
             self.audit()
 
-    def test_invalid_symbol_on_outlier_rejected(self):
+    def test_invalid_symbol_on_outlier_rejected_by_early_market_denominator_gate(self):
+        # New per-market stockday denominator validates ALL codes before
+        # the older outlier-only loop is entered. Still fails closed.
         self.rows[1]["symbol"]="noncanonical"
         self.write()
-        with self.assertRaisesRegex(ValueError,"source code invalid"):
+        with self.assertRaisesRegex(
+                ValueError,"Invalid daily security key in market denominator"):
+            self.audit()
+
+    def test_invalid_symbol_on_normal_bar_also_rejected_by_early_gate(self):
+        # A normal VWAP cannot exempt an invalid code from source validation.
+        self.rows[0]["symbol"]="noncanonical"
+        self.write()
+        with self.assertRaisesRegex(
+                ValueError,"Invalid daily security key in market denominator"):
             self.audit()
 
     def test_source_change_detected_after_scan(self):

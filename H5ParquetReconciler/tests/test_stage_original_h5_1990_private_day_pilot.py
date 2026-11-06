@@ -70,6 +70,7 @@ class Private1990ResearchStageContracts(unittest.TestCase):
         proof={
             "source_file_size_mtime_state_sha256":"b"*64,
         }
+        p0=patch.object(M,"MODULE",self.container/"gitignored")
         p1=patch.object(M,"PARENT",self.private)
         p2=patch.object(M,"EXPECTED_H5_STATE",M.h5_state(self.root))
         p3=patch.object(M,"EXPECTED_PQ_STATE","b"*64)
@@ -78,7 +79,7 @@ class Private1990ResearchStageContracts(unittest.TestCase):
         p6=patch.object(M,"EXPECT_OTHER_STOCKDAYS",2)
         p7=patch.object(M,"EXPECT_A_SYMBOLS",1)
         p8=patch.object(M,"EXPECT_A_DATES",2)
-        for p in (p1,p2,p3,p4,p5,p6,p7,p8):
+        for p in (p0,p1,p2,p3,p4,p5,p6,p7,p8):
             p.start()
 
     def test_plan_has_two_private_candidate_rows_no_files_written(self):
@@ -113,6 +114,10 @@ class Private1990ResearchStageContracts(unittest.TestCase):
         manifest=json.loads((runs[0]/"manifest.json").read_text("utf-8"))
         self.assertEqual(table.num_rows,2)
         self.assertEqual(manifest["private_parquet_row_count"],2)
+        self.assertEqual(manifest["private_stage_relative_dir"],
+                         runs[0].relative_to(M.MODULE).as_posix())
+        self.assertEqual(summary["private_stage_relative_dir"],
+                         manifest["private_stage_relative_dir"])
         self.assertEqual(table.column("source").to_pylist(),[
             "hikyuu_h5_1990_uncertified_private_candidate"]*2)
         self.assertTrue(manifest["private_parquet_sha256"])

@@ -69,7 +69,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
             self.file,compression="snappy")
         self.sha=M.FULL.P90._digest(self.file)
 
-    def run(self):
+    def run_audit(self):
         with patch.object(M.FULL,"_check_manifest",
                           return_value=(self.file,{"private_parquet_sha256":self.sha})):
             with redirect_stdout(StringIO()) as report:
@@ -78,7 +78,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
 
     def test_exact_four_rows_one_zero_two_inside_one_missing_volume(self):
         before=(self.file.stat().st_size,self.file.stat().st_mtime_ns)
-        output,log=self.run()
+        output,log=self.run_audit()
         totals=output["aggregate"]
         self.assertEqual(output["candidate_stockdays_checked"],4)
         self.assertEqual(output["years_checked"],1)
@@ -98,7 +98,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
     def test_ratio_ten_and_above_bar_is_evidence_not_exception(self):
         self.rows[0]["amount"]=10000.0
         self.write()
-        data,_=self.run()
+        data,_=self.run_audit()
         self.assertEqual(data["aggregate"]["vwap_above_high"],1)
         self.assertEqual(data["aggregate"]["ratio_near_factors_within_5pct"]["10"],1)
         self.assertFalse(data["production_merge_authorized"])
@@ -106,7 +106,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
     def test_ratio_below_price_range_is_anomaly_not_conversion(self):
         self.rows[0]["amount"]=100.0
         self.write()
-        data,_=self.run()
+        data,_=self.run_audit()
         self.assertEqual(data["aggregate"]["vwap_below_low"],1)
         self.assertEqual(data["aggregate"]["ratio_near_factors_within_5pct"]["0.1"],1)
         self.assertEqual(data["aggregate"]["vwap_inside_bar"],1)
@@ -114,7 +114,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
     def test_only_amount_zero_is_independent_missingness_category(self):
         self.rows[1]["amount"]=0.0
         self.write()
-        data,_=self.run()
+        data,_=self.run_audit()
         self.assertEqual(data["aggregate"]["only_amount_zero"],1)
         self.assertEqual(data["aggregate"]["positive_volume_and_amount"],1)
 
@@ -122,37 +122,37 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
         self.rows[0]["volume"]=-100.0
         self.write()
         with self.assertRaisesRegex(ValueError,"Unsafe OHLCVA"):
-            self.run()
+            self.run_audit()
 
     def test_nonfinite_amount_is_rejected(self):
         self.rows[0]["amount"]=float("nan")
         self.write()
         with self.assertRaisesRegex(ValueError,"Unsafe OHLCVA"):
-            self.run()
+            self.run_audit()
 
     def test_bad_close_outside_high_low_rejected(self):
         self.rows[0]["close"]=20.0
         self.write()
         with self.assertRaisesRegex(ValueError,"Unsafe OHLCVA"):
-            self.run()
+            self.run_audit()
 
     def test_private_byte_sha_tamper_rejected(self):
         self.rows[0]["amount"]=1400.0
         self.write()
         self.sha="f"*64  # Simulate retained manifest hash, not new bytes.
         with self.assertRaisesRegex(ValueError,"manifest drift"):
-            self.run()
+            self.run_audit()
 
     def test_source_state_drift_before_market_scan_fails(self):
         with patch.object(M.FULL,"_source_gate",side_effect=ValueError("source-state drift")):
             with self.assertRaisesRegex(ValueError,"source-state drift"):
-                self.run()
+                self.run_audit()
 
     def test_source_state_drift_after_scan_fails(self):
         with patch.object(M.FULL,"_source_gate",side_effect=[
             ("a"*64,"b"*64),("z"*64,"b"*64)]):
             with self.assertRaisesRegex(ValueError,"states drifted"):
-                self.run()
+                self.run_audit()
 
     def test_wrong_requested_range_fails_before_market_read(self):
         with patch.object(M.FULL,"_source_gate",side_effect=AssertionError("source opened")):
@@ -165,7 +165,7 @@ class HistoricalPrivateVWAPDiagnosticTests(unittest.TestCase):
         pq.write_table(pa.table({"close":[10.0]}),self.file)
         self.sha=M.FULL.P90._digest(self.file)
         with self.assertRaisesRegex(ValueError,"schema/rows"):
-            self.run()
+            self.run_audit()
 
 
 if __name__=="__main__":

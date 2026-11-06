@@ -43,7 +43,18 @@ if($minute.status -ne 'unique_minute_dates_existing_private_physical_parquet_sha
 }
 Write-Host "PASS: bounded 1990-2026 local historical/modern research DAY view; historical units remain UNVERIFIED"
 Write-Host "DAY SAFE: $dayOut"
-Write-Host "Minute verified unique nonempty dates: $($minute.unique_nonempty_date_count)"
-Write-Host "Minute Parquet rows: 1min=$($minute.verified_physical_rows_by_period.'1min') 5min=$($minute.verified_physical_rows_by_period.'5min') total=$($minute.verified_physical_rows_total)"
+# A verified physical receipt is not necessarily net NEW source coverage.
+# The retired minute GUI copied original purchased Parquet bars on prior dates.
+# Report the SHA-verified private physical evidence and explicitly keep
+# source-only H5 gap key counts UNKNOWN until an indexed source comparison.
+$keys=@($minute.verified_unique_date_rows.PSObject.Properties.Name | Sort-Object)
+if($keys.Count -ne [int]$minute.unique_nonempty_date_count){throw 'Minute physical receipt date-count conservation failed'}
+$months=@($keys | ForEach-Object {$_.Substring(0,7)} | Group-Object | Sort-Object Name | ForEach-Object {"$($_.Name)=$($_.Count)"})
+Write-Host "Minute SHA-verified private physical receipt dates: $($minute.unique_nonempty_date_count)"
+Write-Host "Minute receipt span: $($minute.first_verified_day)..$($minute.last_verified_day)"
+Write-Host "Minute receipt month counts: $($months -join ', ')"
+Write-Host "Minute private PHYSICAL rows (NOT net new coverage): 1min=$($minute.verified_physical_rows_by_period.'1min') 5min=$($minute.verified_physical_rows_by_period.'5min') total=$($minute.verified_physical_rows_total)"
+Write-Host 'Minute net new H5-only exact keys: NOT ESTABLISHED by physical receipt totals.'
 Write-Host "MINUTE SAFE: $minuteOut"
-Write-Host 'Next: use H5ParquetReconciler\start-minute-converter.bat to fill missing real source dates; previous accepted days are SHA-reused.'
+Write-Host 'NEXT read-only key-delta source audit: H5ParquetReconciler/run-minute-jan2026-tail-index-audit.ps1 (2026-01-08..31).'
+Write-Host 'DO NOT start the retired full-purchased-minute rewrite worker or GUI for bulk conversion.'

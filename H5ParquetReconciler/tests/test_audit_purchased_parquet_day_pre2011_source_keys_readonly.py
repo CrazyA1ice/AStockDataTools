@@ -79,6 +79,23 @@ class PurchasedPre2011SourceKeyAuditTests(unittest.TestCase):
         self.assertEqual(res["physical_rows_key_projected"],1)
         self.assertFalse(res["all_rowgroups_have_trusted_min_ts_ge_2011"])
 
+    def test_reversed_source_schema_order_still_uses_named_ts(self):
+        pq.write_table(pa.table({
+            "symbol":pa.array(["600000.XSHG"],type=pa.string()),
+            "ts":pa.array([stamp("1993-06-01")],type=pa.int64()),
+        }),self.day/"reversed-order.parquet")
+        result=M.audit(self.root)
+        self.assertEqual(result["purchased_1990_2010_a_share_code_candidate_stockdays"],1)
+        self.assertFalse(result["no_1990_2010_purchased_keys_in_audited_files"])
+
+    def test_null_source_timestamps_are_not_silently_skipped(self):
+        pq.write_table(pa.table({
+            "ts":pa.array([None,stamp("2026-10-09")],type=pa.int64()),
+            "symbol":pa.array(["600000.XSHG","600000.XSHG"],type=pa.string()),
+        }),self.day/"nullable.parquet",write_statistics=False)
+        with self.assertRaisesRegex(ValueError,"Null purchased day timestamp"):
+            M.audit(self.root)
+
     def test_other_instrument_classified_separately(self):
         self.make("1991.parquet",[
             (stamp("1991-01-02"),"000001.XSHG"),

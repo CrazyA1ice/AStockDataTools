@@ -144,9 +144,17 @@ def audit(root, *, max_projected_rows=MAX_ROWS_TO_PROJECT,
                     row_groups=[rg_id], columns=["ts", "symbol"],
                     batch_size=65536, use_threads=False):
                 scanned += batch.num_rows
+                # Check the physical projected schema instead of relying on
+                # column order: Parquet can store symbol before ts.
+                index = batch.schema.get_field_index("ts")
+                if index < 0:
+                    raise ValueError("Missing projected native ts column")
+                physical_ts = batch.column(index)
+                if physical_ts.null_count:
+                    raise ValueError("Null purchased day timestamp in projected source")
                 # Only materialize rows whose ts is earlier than 2011:
                 # irrelevant 2011+ security identities never leave Arrow.
-                old = batch.filter(pc.less(batch.column(0),
+                old = batch.filter(pc.less(physical_ts,
                                            pa.scalar(HIGH_MS, type=pa.int64())))
                 for record in old.to_pylist():
                     ts, raw_symbol = record["ts"], record["symbol"]

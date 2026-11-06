@@ -67,6 +67,16 @@ class ExistingMinuteProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Unrecognized"):
             mod.build(self.worker({}))
 
+    def test_mainline_wrapper_keeps_private_minute_receipts_distinct_from_net_source_gaps(self):
+        script=TOOL.parent.parent/"run-tiered-day-and-minute-progress.ps1"
+        body=script.read_bytes()
+        self.assertTrue(body.isascii(), "Windows PowerShell 5.1 wrapper should be ASCII")
+        self.assertIn(b"Minute private PHYSICAL rows (NOT net new coverage)",body)
+        self.assertIn(b"Minute net new H5-only exact keys: NOT ESTABLISHED",body)
+        self.assertIn(b"run-minute-jan2026-tail-index-audit.ps1",body)
+        self.assertIn(b"DO NOT start the retired full-purchased-minute rewrite worker",body)
+        self.assertNotIn(b"Next: use H5ParquetReconciler\\start-minute-converter.bat",body)
+
     def test_no_receipts_cannot_claim_progress(self):
         with self.assertRaisesRegex(ValueError,"No daily"):
             mod.build(self.worker({}))

@@ -10,7 +10,7 @@ $python=Join-Path $repo '.venv\Scripts\python.exe'
 $tests=Join-Path $module 'tests'
 $tool=Join-Path $module 'tools\attribute-pre2011-private-h5-day-vwap-outliers-readonly.py'
 if(-not (Test-Path -LiteralPath $python -PathType Leaf) -or -not (Test-Path -LiteralPath $tool -PathType Leaf)){throw 'Historical H5 private VWAP anomaly attribution prerequisites missing'}
-Write-Host '===== 11 fictional read-only root-cause attribution safety tests ====='
+Write-Host '===== 12 fictional read-only root-cause attribution safety tests ====='
 & $python -B -m unittest discover -s $tests -p 'test_attribute_pre2011_private_h5_day_vwap_outliers_readonly.py' -v
 if($LASTEXITCODE -ne 0){throw 'Private VWAP root-cause attribution synthetic safety tests failed, no originals modified'}
 Write-Host '===== REAL 1990..1996 private history READONLY month/prefix/hashed-stock exception attribution ====='

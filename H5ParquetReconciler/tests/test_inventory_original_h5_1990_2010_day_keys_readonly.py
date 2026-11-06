@@ -8,6 +8,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import h5py
 import numpy as np
@@ -80,7 +81,17 @@ class HistoricalDailyH5NativeInventoryTests(unittest.TestCase):
         self.assertEqual(byyear[1991]["a_share_candidate_distinct_dates"], 1)
         self.assertEqual(byyear[1991]["h5_other_code_stockdays"], 1)
         self.assertEqual(byyear[2009]["other_code_stockdays_by_market"]["BJ"], 1)
+        self.assertEqual(byyear[1992]["other_code_stockdays_by_market"]["SH"], 1)
+        self.assertEqual(byyear[1991]["other_code_stockdays_by_market"]["SH"], 1)
+        self.assertEqual(byyear[2009]["candidate_stockdays_by_market"]["SZ"], 1)
         self.assertEqual(byyear[1990]["candidate_stockdays_by_market"]["SH"], 1)
+        for annual in result["annual_coverage"]:
+            self.assertEqual(
+                sum(annual["candidate_stockdays_by_market"].values()),
+                annual["h5_a_share_code_candidate_stockdays"])
+            self.assertEqual(
+                sum(annual["other_code_stockdays_by_market"].values()),
+                annual["h5_other_code_stockdays"])
         self.assertEqual(byyear[2010]["candidate_stockdays_by_market"]["SH"], 1)
         self.assertFalse(result["market_ohlcva_read"])
         self.assertFalse(result["purchased_parquet_pre2011_overlap_verified"])
@@ -160,14 +171,20 @@ class HistoricalDailyH5NativeInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing or symlinked"):
             M.inventory(self.root)
 
-    def test_root_symlink_input_does_not_write_market_file(self):
-        outside = self.root/"alt"
-        outside.symlink_to(self.sources["sh"])
-        # Source itself is a symlink -> fail closed.
-        self.sources["sh"].unlink()
-        self.sources["sh"].symlink_to(outside)
-        with self.assertRaisesRegex(ValueError, "missing or symlinked"):
-            M.inventory(self.root)
+    def test_source_symlink_rejected_without_windows_symlink_privileges(self):
+        # Windows default accounts may not have SeCreateSymbolicLinkPrivilege.
+        # Simulate a flagged source path without creating or deleting H5 files.
+        original = Path.is_symlink
+        def report_source_link(path):
+            return path == self.sources["sh"] or original(path)
+        before = {market: (p.stat().st_size, p.stat().st_mtime_ns)
+                  for market, p in self.sources.items()}
+        with patch.object(Path, "is_symlink", report_source_link):
+            with self.assertRaisesRegex(ValueError, "missing or symlinked"):
+                M.inventory(self.root)
+        self.assertEqual(before, {
+            market: (p.stat().st_size, p.stat().st_mtime_ns)
+            for market, p in self.sources.items()})
 
 
 if __name__ == "__main__":

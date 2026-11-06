@@ -99,7 +99,7 @@ def _yearly(year,folder,source_state):
             if not isinstance(sym,str):
                 raise ValueError("Noncanonical symbol encountered in source denominator")
             import re
-            if not re.fullmatch(r"\\d{6}\\.(XSHG|XSHE|XBSE)",sym):
+            if not re.fullmatch(r"\d{6}\.(XSHG|XSHE|XBSE)",sym):
                 raise ValueError("Invalid daily security key in market denominator")
             prefix=_symbol_prefix(sym)
             group=(int(ts),prefix)

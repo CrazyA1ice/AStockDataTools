@@ -121,6 +121,26 @@ class Pre2011PrivateH5VWAPAttributionTests(unittest.TestCase):
         self.assertTrue(all(len(item["symbol_sha256_prefix12"])==12
                             for item in result["top_anomalous_symbols"]))
 
+    def test_market_prefix_daily_denominators_separate_sh_from_sz(self):
+        self.rows[2]["symbol"]="000001.XSHE"
+        self.write()
+        with patch.object(M.FULL,"_check_manifest",
+                return_value=(self.parquet,{"private_parquet_sha256":self.sha})):
+            report=M._yearly(1990,self.folder,("a"*64,"b"*64))
+        day=report["top_anomalous_sessions"][0]
+        groups={x["code_prefix"]:x for x in day["prefix_diagnostic"]}
+        self.assertEqual(set(groups),{"SH600","SZ000"})
+        self.assertEqual(groups["SH600"]["candidate_stockdays"],3)
+        self.assertEqual(groups["SH600"]["positive_volume_amount"],2)
+        self.assertEqual(groups["SH600"]["outliers"],1)
+        self.assertEqual(groups["SH600"]["below_low"],1)
+        self.assertEqual(groups["SZ000"]["candidate_stockdays"],1)
+        self.assertEqual(groups["SZ000"]["positive_volume_amount"],1)
+        self.assertEqual(groups["SZ000"]["outliers"],1)
+        self.assertEqual(groups["SZ000"]["above_high"],1)
+        self.assertEqual(sum(x["outliers"] for x in groups.values()),
+                         day["outliers_that_session"])
+
     def test_dated_same_day_marketwide_cluster_counts_conserve(self):
         # Two different anomalous securities on one fictional session.
         with patch.object(M.FULL,"_check_manifest",

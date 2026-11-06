@@ -95,11 +95,18 @@ class Pre2011PrivateH5VWAPAttributionTests(unittest.TestCase):
         self.assertNotIn("10000.0",logs)
         self.assertEqual(before,(self.parquet.stat().st_mtime_ns,self.parquet.stat().st_size))
 
-    def test_year_month_output_has_exception_counts(self):
-        out,_=self.audit()
-        # Validate private per-month totals without exposure of raw timestamps
-        yearrow=M._yearly(1990,self.folder,("a"*64,"b"*64)) if False else None
-        self.assertEqual(out["aggregate"]["outliers_total"],2)
+    def test_year_month_prefix_and_hashed_symbol_attribution(self):
+        with patch.object(M.FULL,"_check_manifest",
+                return_value=(self.parquet,{"private_parquet_sha256":self.sha})):
+            result=M._yearly(1990,self.folder,("a"*64,"b"*64))
+        self.assertEqual(result["outliers_by_month"]["1990-12"]["below_low"],1)
+        self.assertEqual(result["outliers_by_month"]["1990-12"]["above_high"],1)
+        self.assertEqual(result["outliers_by_code_prefix"]["SH600"]["below_low"],1)
+        self.assertEqual(result["outliers_by_code_prefix"]["SH600"]["above_high"],1)
+        self.assertEqual(result["unique_symbols_with_outliers"],2)
+        self.assertEqual(len(result["top_anomalous_symbols"]),2)
+        self.assertTrue(all(len(item["symbol_sha256_prefix12"])==12
+                            for item in result["top_anomalous_symbols"]))
 
     def test_no_alternative_factor_fit_is_not_suppressed(self):
         self.rows[1]["amount"]=300.0  # 3.0: x10 overshoots, x0.1 too low

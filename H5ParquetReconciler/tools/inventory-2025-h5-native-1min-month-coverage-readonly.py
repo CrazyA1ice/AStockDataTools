@@ -79,12 +79,12 @@ def inspect(root,*,max_datasets=MAX_DATASETS,max_probes=MAX_PROBES):
     seen_datasets=0
     probes=0
 
-    def stamp(ds,index):
+    def stamp(datetime_only,index):
         nonlocal probes
         probes+=1
         if probes>max_probes:
             raise ValueError("H5 datetime-only bounded probe budget exceeded")
-        return int(ds[index]["datetime"])
+        return int(datetime_only[index])
 
     def lower(ds,target,lo,hi):
         while lo<hi:
@@ -121,22 +121,25 @@ def inspect(root,*,max_datasets=MAX_DATASETS,max_probes=MAX_PROBES):
                 if not len(ds):
                     continue
                 with_records+=1
-                left=stamp(ds,0)
-                right=stamp(ds,len(ds)-1)
+                # H5 compound-field selector reads native datetime ONLY,
+                # not full scalar records containing licensed OHLCVA fields.
+                dt=ds.fields("datetime")
+                left=stamp(dt,0)
+                right=stamp(dt,len(ds)-1)
                 if left>right or left<190000000000:
                     raise ValueError("Unsorted or malformed original H5 source endpoints")
                 if right<start or left>=end:
                     continue
-                lo=0 if left>=start else lower(ds,start,0,len(ds))
-                hi=len(ds) if right<end else lower(ds,end,lo,len(ds))
+                lo=0 if left>=start else lower(dt,start,0,len(ds))
+                hi=len(ds) if right<end else lower(dt,end,lo,len(ds))
                 if not 0<=lo<=hi<=len(ds):
                     raise ValueError("Bad original H5 2025 date slice")
                 if lo==hi:
                     continue
                 source_with_2025+=1
                 rows+=hi-lo
-                first_in_year=stamp(ds,lo)
-                last_in_year=stamp(ds,hi-1)
+                first_in_year=stamp(dt,lo)
+                last_in_year=stamp(dt,hi-1)
                 if not start<=first_in_year<=last_in_year<end:
                     raise ValueError("Invalid bounded H5 native source 2025 edges")
                 first2025=(first_in_year if first2025 is None else
@@ -150,7 +153,7 @@ def inspect(root,*,max_datasets=MAX_DATASETS,max_probes=MAX_PROBES):
                     elif cutoff>last_in_year:
                         upper=hi
                     else:
-                        upper=lower(ds,cutoff,cursor,hi)
+                        upper=lower(dt,cutoff,cursor,hi)
                     n=upper-cursor
                     if n<0:
                         raise ValueError("Nonmonotone native month boundary")

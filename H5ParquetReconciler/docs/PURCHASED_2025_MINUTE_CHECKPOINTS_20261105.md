@@ -36,3 +36,23 @@ Next mainline reuses the **EXISTING** accepted 2025 source month receipt and its
 - `run-purchased-2025-vs-h5-exact-minute-gap-months-readonly.ps1`: Windows PowerShell 5.1 ASCII-only wrapper, tests first, then 2025-01..2025-02 real source exact-key audit by default; `-FromMonth 2025-03 -ThroughMonth 2025-04` etc. Default only two months to limit disk I/O and preserve bounded audit scope.
 
 **Important:** The new H5 exact-key tool and tests are committed but **not yet verified with user's Windows H5 and licensed Parquet sources**. Its outcome for 2025 is unknown until run. `new_source_key_indexes_created=0`, `purchased_ohlcva_read_or_copied=false`, `production_activated=false`, `h5_candidate_keys_automatically_accepted=0` by contract. Existing H5 session grid, normalized 1min END / 5min START labels and H5 quarantines remain unchanged. Do not treat this as a vendor price/volume/amount unit certification, official listing/exchange calendar certification, or permission to merge original-market sources.
+
+## 2026-11-07: real January-February 2025 H5 source-evidence asymmetry
+
+User's Windows log for `run-purchased-2025-vs-h5-exact-minute-gap-months-readonly.ps1 -FromMonth 2025-01 -ThroughMonth 2025-02`: **10/10 synthetic tests PASS**, 43 candidate weekdays examined, accepted January and February purchased month receipts and both existing SQLite indexes reused, **no vendor Parquet/H5 writes**.
+
+| Jan+Feb 2025 source-key audit | 1min | 5min |
+| --- | ---: | ---: |
+| Purchased A-share exact minute keys | 46,755,205 | 9,312,240 |
+| Original H5 native rows examined | **0** | 9,206,928 |
+| H5/purchased overlap | **0** | 9,206,928 |
+| H5-only full purchased-stockday keys | 0 | 0 |
+| H5-only partial purchased-stockday candidate keys | 0 | 0 |
+
+**Critical interpretation:** no original 1min H5 native records were encountered for Jan-Feb (within the strict original H5 A-share candidate rules). Therefore the `0` H5-only 1min difference is **vacuous**: it is NOT independent confirmation that purchased 1min source is complete, and it does not imply that `sh_1min.h5`, `sz_1min.h5` or `bj_1min.h5` are absent for all dates. In contrast, 5min H5 actually has ~9.2 million comparable native records and zero additional keys in complete source stockdays. This remains a comparison of **keys** only, not OHLCVA vendor units or verified exchange trade truth.
+
+The monthly key comparator now explicitly returns `h5_native_source_observed_during_audit_by_period`, and each month returns `h5_native_source_evidence_by_period`. It also prints a warning when no native 1min rows were examined and adds a synthetic negative-evidence regression test (11 tests in the monthly tool). Existing passed 10-test Windows result remains valid; new tests have **not** been executed on Windows yet.
+
+**Next mainline** is **NOT** to rescan all remaining 2025 months blindly. Existing, already implemented `tools/probe-original-minute-source-ends-readonly.py` reads only each H5 per-symbol table's first and last native datetime, plus purchased Parquet footer times (no OHLCVA). New ASCII-only `run-2025-h5-minute-native-source-boundaries-readonly.ps1` runs this tool's two synthetic tests and the updated 11 monthly-regression tests, then prints each sh/sz/bj 1m/5m H5 source file first and last observed native timestamp and saves an aggregate-only new SAFE under `reports/`. If 1min H5 begins significantly later than 2025-02, prioritize the verified source overlap month rather than 2025-03..12 scans which contain no eligible H5 1m rows. Neither earliest/latest per-symbol envelope nor a 0-gap result proves full intraday source coverage, listing, trading calendar, adjustment regime, or amount units.
+
+All operations preserve purchased-first precedence and do not authorize production merge or restart the retired purchased-source-copy GUI.

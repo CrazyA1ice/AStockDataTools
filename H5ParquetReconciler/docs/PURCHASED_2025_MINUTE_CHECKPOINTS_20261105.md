@@ -113,3 +113,22 @@ eligible securities' coverage.
 The 2025 1min native monthly inventory reports **raw timestamp rows by month**,
 not unique valid 240-minute stockdays, trading days, verified H5 purchase
 gaps, or proof of continuous source coverage within a month.
+
+## 2026-11-07: Windows verified November-December 2025 exact H5/purchased key overlap
+
+The user ran the existing strict read-only monthly wrapper with `-FromMonth 2025-11 -ThroughMonth 2025-12` and confirmed **11/11 synthetic fail-closed tests PASS** and **both real months PASS**. The original 2025 purchased key indexes and both accepted grid receipts were reused; no new index, copied purchased bar, original H5/Parquet mutation or production activation occurred.
+
+| Real 2025-11..12 exact-key audit | 1min | 5min |
+|---|---:|---:|
+| Purchased A-share minute keys | 56,513,777 | 11,255,856 |
+| Native H5 minute rows examined | 40,548,000 | 11,219,856 |
+| Exact H5/purchased key overlap | **40,548,000** | **11,219,856** |
+| H5 only full purchased-stockday minute keys | **0** | **0** |
+| H5 only partial purchased-stockday candidate minute keys | **0** | **0** |
+| Purchased-only 09:30 keys on complete H5 stockdays | 168,950 | 0 |
+| Purchased-only other-minute keys on complete H5 stockdays | 0 | 0 |
+| Quarantined H5 session stockdays | 0 | 0 |
+
+These are **exact native minute TIME-KEY** comparisons, not certification of OHLCVA/amount units, listing status, adjustment, complete exchange calendar or all purchased securities. The presence of 168,950 purchased-only 09:30 minute keys is a time-label difference in the comparator; it is not an H5 gap. All H5 1min source rows seen in these two months are already covered by purchased Parquet. Do NOT materialize duplicate purchased/H5 bars or call the retired full purchased minute converter.
+
+**Next bounded mainline:** finish 2025-03..10 in four independent 2-month read-only calls to the same `run-purchased-2025-vs-h5-exact-minute-gap-months-readonly.ps1`, first verifying the source-grid receipts/indexes for each month and then checking true H5-only full/partial keys. The previously completed Jan-Feb and Nov-Dec windows must NOT be rescanned. For Jan-Aug 1min, absence of eligible native H5 source rows is *not* cross-source certification; do not skip March-Aug **5min** H5 gap auditing. For September-October only small volumes of native 1min rows exist and require exact comparison. Stop on any source drift, index mismatch, ambiguous keys or other error. No automatically accepted H5 fills or production merge.

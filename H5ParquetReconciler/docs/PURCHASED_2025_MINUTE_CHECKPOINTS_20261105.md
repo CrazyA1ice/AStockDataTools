@@ -77,3 +77,39 @@ These edges **do not contradict** the Jan/Feb 2025 1min zero native rows found b
 `tests/test_inventory_2025_h5_native_1min_month_coverage_readonly.py` adds **9 synthetic cases** including early 2021 SH record but zero 2025 Jan/Feb, nonconsecutive source months, SZ/BJ listing-era filtration, missing H5 file, bad budgets, bad first/last order, original market file hashes unchanged. ASCII-only `run-2025-h5-native-1min-month-coverage-readonly.ps1` runs these 9 + previously validated 2 original source-edge tests, then prints 12 aggregate market-month counts.
 
 **No user-Windows real run has yet certified this new 2025 monthly 1min source inventory.** Interpret real output before scheduling any additional purchased-vs-H5 exact scans. Prioritize H5 native 1min months that actually have candidate source rows; where a market/month has no H5 1min evidence, the purchased-only data remains authoritative and there is no meaningful 1min H5 cross-validation. Keep possible 5min source-only deltas separate, retain zero accepted gap keys, no production merge.
+
+## 2026-11-07 Windows verified true native H5 2025 1min monthly distribution
+
+Real Windows run of `run-2025-h5-native-1min-month-coverage-readonly.ps1`:
+**9 new synthetic tests + 2 prior source-boundary tests PASS**.
+The new inventory used 170,178 native datetime-only scalar probes across
+5,579 conservatively screened A-share candidate datasets in the three original
+H5 market files; all original market files were unchanged, original purchased
+Parquet was not opened, no H5 OHLCVA was decoded, and no production merge
+was activated.
+
+| Month 2025 | SH native 1min rows | SZ native 1min rows | BJ native 1min rows |
+| --- | ---: | ---: | ---: |
+| Jan-Aug (each month) | 0 | 0 | 0 |
+| Sep | 1,920 | 3,600 | 0 |
+| Oct | 21,360 | 15,600 | 0 |
+| Nov | 5,355,600 | 6,737,520 | 0 |
+| Dec | 12,626,160 | 15,828,720 | 0 |
+| **2025 total** | **18,005,040** | **22,585,440** | **0** |
+
+November+December account for 40,548,000 out of 40,590,480 observed
+2025 eligible native H5 1min rows (about 99.9%). This **explains why
+the earlier Jan-Feb original H5 1min-vs-purchased exact-key audit saw
+zero H5 source records** despite a Shanghai 2021 all-time H5 file
+first-record date: first/last file edges do not prove continuous monthly
+eligible securities' coverage.
+
+**Next real-data mainline**:
+1. Run existing index-reuse-only `run-purchased-2025-vs-h5-exact-minute-gap-months-readonly.ps1 -FromMonth 2025-11 -ThroughMonth 2025-12` to inspect the major actual 1min H5 overlap; do NOT rebuild the accepted 2025 source-only monthly SQLite indexes.
+2. Then run the same source-safe program on Sep-Oct 2025 for sparse earlier source 1min observations; if extra H5 keys are found, they are candidates only, not automatically accepted rows.
+3. 2025 Jan-Aug original H5 **1min has zero eligible native records** under the 2025 A-share code filter, so any 1min H5 exact-key gap comparison is vacuous and should not be called cross-verification. **Do not skip corresponding 5min analysis**, since earlier Jan-Feb 5min source did have about 9.2 million observed native records and its zero H5-only key delta was actually measured. Mar-Aug 5min differences remain to be checked or accounted for separately.
+4. Purchased Parquet is authoritative wherever a purchased stockday already exists; original vendor Parquet/H5 remain read-only; historical H5 units, listing, time-label semantics and exchange-calendar certification remain separate gates. Date coverage audit reports are private, with no new market OHLCVA and no active production pointer.
+
+The 2025 1min native monthly inventory reports **raw timestamp rows by month**,
+not unique valid 240-minute stockdays, trading days, verified H5 purchase
+gaps, or proof of continuous source coverage within a month.

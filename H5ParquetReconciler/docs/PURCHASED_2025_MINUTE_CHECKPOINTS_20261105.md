@@ -56,3 +56,24 @@ The monthly key comparator now explicitly returns `h5_native_source_observed_dur
 **Next mainline** is **NOT** to rescan all remaining 2025 months blindly. Existing, already implemented `tools/probe-original-minute-source-ends-readonly.py` reads only each H5 per-symbol table's first and last native datetime, plus purchased Parquet footer times (no OHLCVA). New ASCII-only `run-2025-h5-minute-native-source-boundaries-readonly.ps1` runs this tool's two synthetic tests and the updated 11 monthly-regression tests, then prints each sh/sz/bj 1m/5m H5 source file first and last observed native timestamp and saves an aggregate-only new SAFE under `reports/`. If 1min H5 begins significantly later than 2025-02, prioritize the verified source overlap month rather than 2025-03..12 scans which contain no eligible H5 1m rows. Neither earliest/latest per-symbol envelope nor a 0-gap result proves full intraday source coverage, listing, trading calendar, adjustment regime, or amount units.
 
 All operations preserve purchased-first precedence and do not authorize production merge or restart the retired purchased-source-copy GUI.
+
+## 2026-11-07 H5 source-edge confirmation, then one 2025 1min monthly source inventory
+
+Latest Windows real source-edge probe passed **11 revised 2025-gap tests + 2 original edge tests**. Source earliest observed per H5 native file (one security's first row; NOT continuous market-wide coverage):
+
+| Venue | Native 1min first observed | Native 5min first observed | Native last (both) |
+|---|---|---|---|
+| Shanghai | 2021-05-17 09:31 | 2019-03-27 09:35 | 2026-10-13 15:00 |
+| Shenzhen | 2025-08-07 09:31 | 2012-03-28 09:35 | 2026-10-13 15:00 |
+| Beijing | 2026-01-08 09:31 | 2024-03-07 09:35 | 2026-10-13 15:00 |
+
+2025 purchased 1min+5min footer maximums: 2025-12-31 (1min 15:00, 5min 14:55);
+2026 purchased footer maximums: 2026-09-30. H5 native latest 2026-10-13.
+These edges **do not contradict** the Jan/Feb 2025 1min zero native rows found by actual exact-key audits; a single 2021 Shanghai stock series might not represent 2025 Jan coverage. No company/symbol, licensed OHLCVA or source contents were exported.
+
+**New bounded follow-up for the gap mainline:**
+`tools/inventory-2025-h5-native-1min-month-coverage-readonly.py` uses the conservative existing 2025 A-share code filter and **native datetime-only bounded binary searches** over each `sh/sz/bj_1min.h5` candidate stock dataset to count true 2025 source rows by month and market, plus source series with observed rows. It does **not** open purchased Parquet, decode native OHLCVA or infer that month endpoints prove continuous daily coverage. Exact monthly row-count conservation, source metadata stability, input security-code filter, upper dataset/probe budget and only aggregate output are enforced. No per-security symbols or prices are emitted. A monthly positive row count does not imply a complete 240-minute session or certifiable H5 incremental value.
+
+`tests/test_inventory_2025_h5_native_1min_month_coverage_readonly.py` adds **9 synthetic cases** including early 2021 SH record but zero 2025 Jan/Feb, nonconsecutive source months, SZ/BJ listing-era filtration, missing H5 file, bad budgets, bad first/last order, original market file hashes unchanged. ASCII-only `run-2025-h5-native-1min-month-coverage-readonly.ps1` runs these 9 + previously validated 2 original source-edge tests, then prints 12 aggregate market-month counts.
+
+**No user-Windows real run has yet certified this new 2025 monthly 1min source inventory.** Interpret real output before scheduling any additional purchased-vs-H5 exact scans. Prioritize H5 native 1min months that actually have candidate source rows; where a market/month has no H5 1min evidence, the purchased-only data remains authoritative and there is no meaningful 1min H5 cross-validation. Keep possible 5min source-only deltas separate, retain zero accepted gap keys, no production merge.

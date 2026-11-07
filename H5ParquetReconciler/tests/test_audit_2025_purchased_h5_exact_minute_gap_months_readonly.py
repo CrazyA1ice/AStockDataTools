@@ -158,10 +158,10 @@ class Existing2025MinuteGapMonthlyReadOnlyTests(unittest.TestCase):
                     M.audit(self.root,a,b)
         self.assertFalse(self.calls)
 
-    def test_original_market_source_symlink_root_rejected(self):
-        fake=self.root/"source-link"
-        fake.symlink_to(self.root,target_is_directory=True)
-        with self.assertRaisesRegex(ValueError,"non-symlink"):
+    def test_original_market_source_file_instead_of_directory_rejected(self):
+        fake=self.root/"not-a-source-root"
+        fake.write_text("synthetic",encoding="utf-8")
+        with self.assertRaisesRegex(ValueError,"non-symlink source market root"):
             M.audit(fake,"2025-01","2025-01")
 
 

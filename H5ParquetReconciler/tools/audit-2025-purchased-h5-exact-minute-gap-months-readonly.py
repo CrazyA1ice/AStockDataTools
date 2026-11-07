@@ -114,6 +114,15 @@ def audit(root,from_month="2025-01",through_month="2025-02",*,max_months=2):
                 } for period in PERIODS
             },
             "accepted_purchased_month_receipt_reused":True,
+            "h5_native_source_evidence_by_period":{
+                period:{
+                    "native_rows_examined":int(per_period[period][
+                        "h5_date_native_rows_examined"]),
+                    "any_native_rows_observed":bool(per_period[period][
+                        "h5_date_native_rows_examined"]),
+                    "zero_candidate_keys_proves_full_h5_coverage":False,
+                } for period in PERIODS
+            },
             "existing_source_key_index_windows_reused":len(windows),
             "purchased_ohlcva_copied":0,
             "new_market_gap_keys_accepted":0,
@@ -135,6 +144,11 @@ def audit(root,from_month="2025-01",through_month="2025-02",*,max_months=2):
                     dict(sorted(quarantines[period].items()))
             } for period in PERIODS
         },
+        "h5_native_source_observed_during_audit_by_period":{
+            period:bool(totals[period]["h5_date_native_rows_examined"])
+            for period in PERIODS
+        },
+        "zero_h5_candidate_keys_without_native_source_evidence_is_not_cross_validation":True,
         "all_purchased_month_grid_receipts_preverified_and_reused":True,
         "all_source_key_indexes_existing_and_reused":True,
         "new_source_key_indexes_created":0,

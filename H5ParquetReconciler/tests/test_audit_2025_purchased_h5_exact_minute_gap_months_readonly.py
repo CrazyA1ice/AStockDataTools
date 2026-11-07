@@ -98,11 +98,36 @@ class Existing2025MinuteGapMonthlyReadOnlyTests(unittest.TestCase):
         self.assertEqual(result["summaries"]["5min"][
             "purchased_a_share_date_key_count"],48)
         self.assertEqual(result["summaries"]["1min"]["overlapping_exact_keys"],240)
+        self.assertTrue(result["h5_native_source_observed_during_audit_by_period"]["1min"])
+        self.assertTrue(result["h5_native_source_observed_during_audit_by_period"]["5min"])
+        self.assertTrue(result["zero_h5_candidate_keys_without_native_source_evidence_is_not_cross_validation"])
         self.assertFalse(result["new_market_parquet_or_h5_written"])
         self.assertFalse(result["production_activated"])
         self.assertFalse(result["h5_price_volume_amount_units_certified"])
         self.assertIn("H5_2025_EXACT_MONTH_GAP_SUMMARY=",log)
         self.assertEqual(before,set(self.root.iterdir()))
+
+    def test_2025_zero_1min_h5_native_observation_is_not_reported_as_cross_validation(self):
+        original=self.fake_exact_audit
+        def only_five_minute_h5(root,index,first,last):
+            result=original(root,index,first,last)
+            result["summaries"]["1min"]["h5_date_native_rows_examined"]=0
+            result["summaries"]["1min"]["overlapping_exact_keys"]=0
+            result["summaries"]["1min"]["purchased_only_0930_keys_on_complete_H5_stockdays"]=0
+            return result
+        result,_=self.audited(extra=patch.object(
+            M.EXACT,"audit",side_effect=only_five_minute_h5))
+        self.assertFalse(result[
+            "h5_native_source_observed_during_audit_by_period"]["1min"])
+        self.assertTrue(result[
+            "h5_native_source_observed_during_audit_by_period"]["5min"])
+        self.assertTrue(result[
+            "zero_h5_candidate_keys_without_native_source_evidence_is_not_cross_validation"])
+        self.assertEqual(result["summaries"]["1min"][
+            "h5_only_keys_on_full_purchased_absence_days"],0)
+        self.assertEqual(result["summaries"]["1min"][
+            "h5_only_candidate_keys_on_partial_purchased_stockdays"],0)
+        self.assertEqual(len(self.calls),1)
 
     def test_two_months_conserve_purchased_membership(self):
         result,_=self.audited("2025-01","2025-02")

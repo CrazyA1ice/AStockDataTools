@@ -54,9 +54,16 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
     def test_bad_clock_grid_and_repeated_keys_rejected(self):
         offgrid=fake5()
         offgrid[0]["source_timestamp_ms"]+=60000
-        for rows in (offgrid,
-                     fake5()[:-1]+[dict(fake5()[-1])]):
-            with self.subTest(case=len(rows)):
+        repeated=fake5()
+        # The previous fixture replaced the last row with the *same* last
+        # row and accidentally produced a fully valid 48-bar session.
+        # Replace it with the penultimate key: one duplicate, one missing.
+        repeated[-1]=dict(repeated[-2])
+        cases=(("offgrid",offgrid),("duplicate_last_missing",repeated))
+        self.assertEqual(len({r["source_timestamp_ms"] for r in offgrid}),48)
+        self.assertEqual(len({r["source_timestamp_ms"] for r in repeated}),47)
+        for name,rows in cases:
+            with self.subTest(case=name):
                 with self.assertRaisesRegex(ValueError,"grid|repeated"):
                     M.aggregate_complete_5min(
                         M.CANDIDATE,"SH600000",rows,

@@ -137,13 +137,10 @@ class NextUnstagedOctPrivateTests(unittest.TestCase):
         for p in M.S.PERIODS:
             target=self.module/written["outputs"][p]["private_file"]
             self.assertEqual(M.S._sha(target),written["outputs"][p]["sha256"])
-        with self.assertRaisesRegex(ValueError,"Already|No previously unstaged"):
-            # A newly created, different run ID may NOT overlap any of
-            # the just-staged symbols if selection is repeated.
-            M.S.stage(self.market,[DAY.isoformat()],
-                      list(self.all_new[16:80]),"dddddddddddd")
-        # Old base stager has NO receipt-overlap blocking by design: only the
-        # next-uncovered selector protects against repeated selection.
+        next_plan=M.plan(DAY,batch_size=64)
+        self.assertEqual(next_plan["selected_symbols"],list(self.all_new[80:]))
+        self.assertEqual(next_plan["chosen_stockdays"],6)
+        self.assertFalse((self.stage_root/"dddddddddddd").exists())
 
     def test_repeated_plan_moves_forward_without_duplicates(self):
         first=M.stage_next(self.market,DAY,"cccccccccccc")

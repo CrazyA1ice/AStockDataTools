@@ -40,6 +40,13 @@ $r=Join-Path $module ('work\unified_parquet\oct_high_cycle_staging\'+$run+'\rece
 if(-not (Test-Path -LiteralPath $r -PathType Leaf)){throw 'No private autobatch receipt'}
 $record=Get-Content -LiteralPath $r -Encoding UTF8 -Raw|ConvertFrom-Json
 if($record.run_id -ne $run -or $record.verified_source_stockdays -ne $o.selected_stockdays){throw 'Private autobatch receipt identity mismatch'}
-Write-Host ('OCT_13_H5_SOURCE_INVENTORY ROWS_SCANNED='+$i.private_h5_five_minute_source_rows_scanned+' COMPLETE_ELIGIBLE='+$o.eligible_stockdays_total_for_day+' EXCLUDED_CANARY='+$i.excluded_by_reason.already_staged_canary_symbol+' EXCLUDED_PURCHASED='+$i.excluded_by_reason.purchased_five_minute_priority+' EXCLUDED_INCOMPLETE='+$i.excluded_by_reason.incomplete_or_invalid_h5_five_minute_grid)
+# Python Counter omits zero-valued keys; StrictMode must NOT treat absence as a failure.
+$reasonCounts=@{}
+foreach($key in @('already_staged_canary_symbol','purchased_five_minute_priority','incomplete_or_invalid_h5_five_minute_grid')){
+    $reasonCounts[$key]=0
+    $property=$i.excluded_by_reason.PSObject.Properties[$key]
+    if($null -ne $property){$reasonCounts[$key]=[int]$property.Value}
+}
+Write-Host ('OCT_13_H5_SOURCE_INVENTORY ROWS_SCANNED='+$i.private_h5_five_minute_source_rows_scanned+' COMPLETE_ELIGIBLE='+$o.eligible_stockdays_total_for_day+' EXCLUDED_CANARY='+$reasonCounts['already_staged_canary_symbol']+' EXCLUDED_PURCHASED='+$reasonCounts['purchased_five_minute_priority']+' EXCLUDED_INCOMPLETE='+$reasonCounts['incomplete_or_invalid_h5_five_minute_grid'])
 Write-Host ('PASS_OCT_13_AUTO_BATCH_PRIVATE_HIGH_CYCLE_PARQUET RUN_ID='+$run+' STOCKDAYS='+$o.selected_stockdays+' TOTAL_ROWS='+$total+' ORIGINAL_MARKET_WRITES=FALSE PRODUCTION_MERGED=FALSE')
 Write-Host ('PRIVATE_RECEIPT='+$r)

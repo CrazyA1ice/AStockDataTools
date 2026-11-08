@@ -33,10 +33,17 @@ def inspect(root,*,max_files=MAX_FILES,max_rowgroups=MAX_ROWGROUPS):
         raise ValueError("Require bounded nonempty original adjustment Parquet source list")
     before={}
     for source in sources:
+        # Check ACTUAL folder-anchored parents, not Path-relative components.
+        # Never traverse a nested source folder symlink.
+        parents=[]
+        parent=source.parent
+        while parent!=folder:
+            if not parent.is_relative_to(folder):
+                raise ValueError("Factor Parquet source path escaped source folder")
+            parents.append(parent)
+            parent=parent.parent
         if (source.is_symlink() or not source.is_file()
-                or any(parent.is_symlink() for parent in
-                       source.relative_to(folder).parents
-                       if parent!=Path("."))):
+                or any(p.is_symlink() for p in parents)):
             raise ValueError("Unsafe original factor parquet file or subfolder")
         stat=source.stat()
         before[str(source)]=(stat.st_size,stat.st_mtime_ns,stat.st_ino)

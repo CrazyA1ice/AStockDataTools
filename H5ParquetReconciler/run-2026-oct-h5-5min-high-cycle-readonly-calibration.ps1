@@ -29,6 +29,11 @@ foreach($s in $j.per_security){
         $x=$s.private_derived_target_day.PSObject.Properties[$period].Value
         if($x.five_minute_H5_SHA_checked_by_existing_query -ne $true -or $x.candidate_source_full_native_session_grid -ne $true -or $x.not_materialized_and_not_vendor_unit_certified -ne $true){throw "Unsafe source provenance for $period"}
         Write-Host ('OCT_HIGH_CYCLE SYMBOL='+$s.symbol+' PERIOD='+$period+' REFERENCE_PURCHASED='+$a.original_purchased_rows+' REFERENCE_HYPOTHESIS='+$a.candidate_buckets+' MATCH_RAW_LABELS='+$a.matched_raw_label_keys+' MATCH_ALL_SIX_FIELDS='+$a.bars_matching_all_six_fields+' OCT_PURCHASED='+$x.existing_original_purchased_target_day_bars+' OCT_POTENTIAL_H5_DERIVED='+$x.candidate_derived_buckets_when_purchased_absent+' VENDOR_UNITS_CERTIFIED=FALSE')
+        if($a.full_reference_count_and_keys_agree -eq $true -and $a.bars_matching_all_six_fields -lt $a.candidate_buckets){
+            $fields=@('open','high','low','close','volume','amount')
+            $parts=@($fields | ForEach-Object { $_+'='+[string]$a.matching_fields_count.PSObject.Properties[$_].Value })
+            Write-Host ('OCT_HIGH_CYCLE_REFERENCE_FIELD_DIAGNOSTIC SYMBOL='+$s.symbol+' PERIOD='+$period+' PURCHASED_AND_DERIVED_FIELD_MATCH_COUNTS='+($parts -join ',')+' RAW_SOURCE_VALUES_NOT_PRINTED=TRUE')
+        }
     }
 }
 Write-Host 'PASS_2026_OCT_HIGH_CYCLE_5MIN_CANDIDATE_SOURCE_CALIBRATION_READONLY NO_MARKET_WRITES=TRUE PRODUCTION_MERGED=FALSE'

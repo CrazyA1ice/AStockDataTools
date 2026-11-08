@@ -52,7 +52,9 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
                 expected_source="h5_only_complete_stockday",period="15min")
 
     def test_bad_clock_grid_and_repeated_keys_rejected(self):
-        for rows in (fake5()[1:]+[dict(fake5()[0])],
+        offgrid=fake5()
+        offgrid[0]["source_timestamp_ms"]+=60000
+        for rows in (offgrid,
                      fake5()[:-1]+[dict(fake5()[-1])]):
             with self.subTest(case=len(rows)):
                 with self.assertRaisesRegex(ValueError,"grid|repeated"):

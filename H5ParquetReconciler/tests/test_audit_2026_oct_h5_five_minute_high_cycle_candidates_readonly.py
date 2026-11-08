@@ -178,10 +178,11 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
     def test_four_day_october_intraday_sweep_keeps_sha_gated_5min_source_only(self):
         calls=[]
         def only_source(root,symbol,period,day,*,private=False):
+            self.assertIsInstance(day,date)  # production _query takes date, not str
             calls.append((symbol,period,day,private))
             if period=="5min":
                 self.assertTrue(private)
-                return fake5(date.fromisoformat(day),symbol)
+                return fake5(day,symbol)
             self.assertIn(period,M.INTRADAY)
             self.assertFalse(private)
             return []
@@ -196,7 +197,7 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
         self.assertEqual(out["total_candidate_buckets_by_cycle"],
                          {"15min":128,"30min":64,"60min":32})
         self.assertEqual(len(calls),32)
-        self.assertFalse(out["daily_candidate_not_certified_or_materialized"] is False)
+        self.assertTrue(out["daily_candidate_not_certified_or_materialized"])
         self.assertTrue(out["week_month_not_derived"])
         self.assertTrue(out["no_licensed_OHLCVA_values_exported"])
         self.assertFalse(out["new_market_or_index_files_written"])
@@ -206,8 +207,8 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
     def test_four_day_sweep_existing_even_partial_purchased_wins(self):
         def source(root,symbol,period,day,*,private=False):
             if period=="5min":
-                return fake5(date.fromisoformat(day),symbol)
-            if day=="2026-10-09" and period=="15min":
+                return fake5(day,symbol)
+            if day==date(2026,10,9) and period=="15min":
                 return [{"already_purchased_partial":True}]
             return []
         with patch.object(M,"_query",side_effect=source):
@@ -224,8 +225,8 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
     def test_four_day_sweep_missing_h5_receipt_does_not_invent_candidates(self):
         def source(root,symbol,period,day,*,private=False):
             if period=="5min":
-                bars=fake5(date.fromisoformat(day),symbol)
-                return bars[:-1] if day=="2026-10-09" else bars
+                bars=fake5(day,symbol)
+                return bars[:-1] if day==date(2026,10,9) else bars
             return []
         with patch.object(M,"_query",side_effect=source):
             with patch.object(M.Path,"is_dir",return_value=True):

@@ -67,3 +67,20 @@ and securities/date coverage checks with the already available
 establish separate numerical unit, corporate action/adjustment and calendar
 certification before production release. Do not interpret raw week/month
 timestamps as proven exchange aggregation boundaries.
+
+## 2026-11-08 Windows real all-eight-cycle query acceptance PASS
+
+User's real Windows output accepted the already-present `run-purchased-primary-all-eight-cycles-smoke.ps1`: **18 direct-source + 19 minute-source-priority + 10 all-eight-cycle synthetic tests PASS (47 total)**, and ALL real original-source queries succeeded, with zero original-market or production writes.
+
+| Cycle | 2025 purchased `SH600000` real query | 2026 purchased `SH600000` real query |
+| --- | ---: | ---: |
+| 15min | 16 bars | 16 bars |
+| 30min | 8 bars | 8 bars |
+| 60min | 4 bars | 4 bars |
+| day | 1 bar | 1 bar |
+| week | 5 bars (September bounded window) | 5 bars |
+| month | 1 bar (September bounded window) | 1 bar |
+
+The minute delegation real sample was 2026-09-30..2026-10-13 for `SH600000`: 1min purchased=241 plus SHA-checked existing private H5=960 (total 1201); 5min purchased=48 plus private H5=192 (total 240). Original purchased source wins whenever its stockday has rows, and H5 fallback requires explicit research opt-in. No purchased bar copies, H5 mirror changes, new market/index artifacts, or production activation occurred. All period timestamps are preserved in original source conventions, not verified cross-cycle/session semantics. This is a bounded **research query acceptance**, not all-market/all-history coverage or unit/adjustment certification.
+
+**Already available next step without new code or data rewrites:** `tools/survey-purchased-all-cycle-footers-readonly.py` accepts `--years 2011 2012 ... 2026`; run a single original-Parquet-FOOTER-only 2011-2026 eight-cycle source-year audit, printing condensed year-level counts/envelopes. Identify missing named years, unassigned filenames, unknown/noncanonical source directories and absent rowgroup timestamps; avoid rescanning OHLCVA or claiming independent exchange calendar. The older `run-purchased-2025-cycle-footer-survey.ps1` is only a 2025/2026 convenience wrapper; do not mistake it for 2011-2026 coverage certification. Once source-year ranges are known, finish per-security coverage / corporate action / price volume amount gates before considering a production active version.

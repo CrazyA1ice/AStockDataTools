@@ -120,6 +120,38 @@ def discover(day,*,exclude=CANARY):
         "vendor_physical_units_certified":False,
     }
 
+def refuse_previously_staged(day,selected):
+    """Stop re-staging the same stockday when re-running a partly failed launcher.
+
+    Only a successful original receipt establishes completion. An unsafe
+    receipt is an error, not permission to overwrite or duplicate stockdays.
+    """
+    private_root=S._safe_stage_root()
+    if not private_root.exists():
+        return
+    if private_root.is_symlink() or not private_root.is_dir():
+        raise ValueError("Unsafe pre-existing private candidate workspace")
+    seen=0
+    selected=set(selected)
+    for receipt in private_root.glob("*/receipt.json"):
+        seen+=1
+        if seen>10000:
+            raise ValueError("Too many private stage receipts for duplicate audit")
+        parent=receipt.parent
+        if (parent.is_symlink() or receipt.is_symlink()
+                or not S.RUNID.fullmatch(parent.name)
+                or not receipt.is_file()):
+            raise ValueError("Unsafe existing private candidate receipt")
+        doc=json.loads(receipt.read_text(encoding="utf-8"))
+        if doc.get("status")!=(
+                "research_only_private_oct_h5_5min_highcycle_candidates_written_readback"):
+            raise ValueError("Untrusted existing private candidate receipt")
+        if day.isoformat() in doc.get("source_days",[]):
+            found=selected.intersection(doc.get("symbols",[]))
+            if found:
+                raise ValueError("Already-staged private high-cycle stockdays; "+
+                                 "verify existing run or choose next batch index")
+
 def run(root,day,run_id,*,batch_index=0,batch_size=16,exclude=CANARY):
     if (type(batch_index) is not int or not 0<=batch_index<=10000
             or type(batch_size) is not int or not 1<=batch_size<=100):
@@ -130,6 +162,7 @@ def run(root,day,run_id,*,batch_index=0,batch_size=16,exclude=CANARY):
                                        (batch_index+1)*batch_size]
     if not selected:
         raise ValueError("No complete SHA-verified H5 stockdays in requested batch")
+    refuse_previously_staged(day,selected)
     manifest=S.stage(root,[day.isoformat()],selected,run_id)
     expected={
         "15min":16*len(selected),"30min":8*len(selected),

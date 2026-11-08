@@ -111,8 +111,8 @@ class PrivateOctHighCycleStagingTests(unittest.TestCase):
             self.assertFalse(any(x["time_label_and_vendor_units_certified"] for x in rows))
         receipt=self.stage_root/"111111111111"/"receipt.json"
         self.assertEqual(json.loads(receipt.read_text("utf-8")),result)
-        self.assertEqual([x.name for x in receipt.parent.iterdir()
-                          if x.suffix==".parquet"],
+        self.assertEqual(sorted(x.name for x in receipt.parent.iterdir()
+                                if x.suffix==".parquet"),
                          ["15min.parquet","30min.parquet","60min.parquet"])
 
     def test_any_purchased_15_30_60min_block_refuses_entire_batch_before_disk(self):

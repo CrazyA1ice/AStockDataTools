@@ -29,6 +29,26 @@ def fake5(day=M.CANDIDATE,symbol="SH600000",source="h5_only_complete_stockday"):
     return rows
 
 
+
+def fake1(day=M.CANDIDATE, symbol="SH600000", source="h5_only_complete_stockday"):
+    """End-labelled 1m fixtures whose 5m windows reproduce fake5 exactly."""
+    result=[]
+    for five in fake5(day,symbol):
+        for j in range(1,6):
+            op=five["open"]
+            cl=five["close"] if j==5 else op
+            result.append({
+                "source_timestamp_ms":five["source_timestamp_ms"]+60000*j,
+                "symbol":symbol,"period":"1min",
+                "trading_date":day.isoformat(),"value_source":source,
+                "open":op,
+                "high":five["high"] if j==1 else max(op,cl),
+                "low":five["low"] if j==1 else min(op,cl),
+                "close":cl,"volume":20.0,"amount":200.0,
+            })
+    return result
+
+
 class HighCycleSyntheticSourceGateTests(unittest.TestCase):
     def test_complete_48_start_grid_aggregates_into_16_8_4_1(self):
         rows=fake5()
@@ -237,6 +257,99 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
             M.sweep_verified_october_intraday(
                 Path("D:/synthetic"),symbols=("SH600000",),
                 days=(date(2026,10,13),))
+
+
+    def test_one_to_five_h5_exact_48_window_conservation(self):
+        checked=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",fake1(),fake5())
+        self.assertEqual(checked["status"],"same_h5_source_diagnostic_only")
+        self.assertEqual(checked["source_1min_rows"],240)
+        self.assertEqual(checked["complete_5min_windows"],48)
+        self.assertEqual(checked["incomplete_5min_windows"],0)
+        self.assertEqual(checked["matched_six_field_windows"],48)
+        self.assertEqual(checked["matching_fields_count"],{f:48 for f in M.FIELDS})
+        self.assertFalse(checked["vendor_physical_units_certified"])
+        self.assertTrue(checked["no_licensed_OHLCVA_values_exported"])
+        self.assertNotIn("1000.0",str(checked))
+
+    def test_one_to_five_one_missing_minute_excludes_only_own_window(self):
+        checked=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",fake1()[1:],fake5())
+        self.assertEqual(checked["source_1min_rows"],239)
+        self.assertEqual(checked["complete_5min_windows"],47)
+        self.assertEqual(checked["incomplete_5min_windows"],1)
+        self.assertEqual(checked["matched_six_field_windows"],47)
+
+    def test_one_to_five_amount_discrepancy_is_reported_not_normalized(self):
+        minute=fake1()
+        minute[0]["amount"]+=5.0
+        checked=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",minute,fake5())
+        self.assertEqual(checked["complete_5min_windows"],48)
+        self.assertEqual(checked["matched_six_field_windows"],47)
+        self.assertEqual(checked["matching_fields_count"]["amount"],47)
+        self.assertEqual(checked["matching_fields_count"]["volume"],48)
+        self.assertFalse(checked["vendor_physical_units_certified"])
+
+    def test_one_to_five_rejects_duplicate_offgrid_and_broken_ohlcva(self):
+        duplicated=fake1()
+        duplicated[-1]=dict(duplicated[-2])
+        offgrid=fake1()
+        offgrid[0]["source_timestamp_ms"]+=30000
+        geometry=fake1()
+        geometry[0]["high"]=geometry[0]["open"]-1
+        for rows in (duplicated,offgrid,geometry):
+            with self.subTest(kind=rows[0]["source_timestamp_ms"]):
+                with self.assertRaisesRegex(ValueError,"grid|OHLCVA"):
+                    M.compare_same_h5_one_to_five(
+                        M.CANDIDATE,"SH600000",rows,fake5())
+
+    def test_one_to_five_unavailable_or_purchased_priority_not_comparable(self):
+        absent=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",[],fake5())
+        self.assertEqual(absent["status"],"no_one_minute_source_not_comparable")
+        self.assertEqual(absent["complete_5min_windows"],0)
+        purchased=fake1(source="purchased_parquet")
+        purchased.append(dict(purchased[0]))
+        bypass=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",purchased,fake5())
+        self.assertEqual(bypass["source_1min_rows"],241)
+        self.assertEqual(bypass["status"],
+                         "purchased_first_one_minute_not_same_h5_source")
+        self.assertEqual(bypass["matched_six_field_windows"],0)
+        mixed=fake1()
+        mixed[0]["value_source"]="purchased_parquet"
+        with self.assertRaisesRegex(ValueError,"provenance"):
+            M.compare_same_h5_one_to_five(
+                M.CANDIDATE,"SH600000",mixed,fake5())
+
+    def test_four_day_one_to_five_diagnostic_is_strictly_opt_in(self):
+        queried=[]
+        def source(root,symbol,period,day,*,private=False):
+            queried.append((period,private))
+            if period=="5min":
+                return fake5(day,symbol)
+            if period=="1min":
+                self.assertTrue(private)
+                return fake1(day,symbol)[1:]
+            return []
+        with patch.object(M,"_query",side_effect=source):
+            with patch.object(M.Path,"is_dir",return_value=True):
+                output=M.sweep_verified_october_intraday(
+                    Path("D:/synthetic"),symbols=("SH600000",),
+                    check_one_to_five=True)
+        self.assertEqual(
+            output["total_candidate_buckets_by_cycle"],
+            {"15min":64,"30min":32,"60min":16})
+        self.assertEqual(sum(period=="1min" for period,_ in queried),4)
+        self.assertEqual(len(queried),20)
+        self.assertTrue(output["one_to_five_crosscheck_opted_in"])
+        self.assertTrue(output["one_to_five_same_vendor_not_independent_certification"])
+        for day in output["per_security"][0]["verified_days"]:
+            evidence=day["one_to_five_crosscheck"]
+            self.assertEqual(evidence["complete_5min_windows"],47)
+            self.assertEqual(evidence["matched_six_field_windows"],47)
+        self.assertFalse(output["production_activated"])
 
 
 

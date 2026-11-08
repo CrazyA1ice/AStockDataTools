@@ -24,6 +24,11 @@ HIGH={"15min":3,"30min":6,"60min":12,"day":48}
 FIELDS=("open","high","low","close","volume","amount")
 ANCHOR=date(2026,9,30)
 CANDIDATE=date(2026,10,13)
+OCTOBER_VERIFIED_DAYS=(
+    date(2026,10,8),date(2026,10,9),
+    date(2026,10,12),date(2026,10,13))
+INTRADAY=("15min","30min","60min")
+
 
 
 def _load():
@@ -240,13 +245,85 @@ def audit(root,symbols=("SH600000","SZ000001")):
     }
 
 
+
+def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),
+                                    days=OCTOBER_VERIFIED_DAYS):
+    """Check ONLY 4 previously vetted H5 dates, without writing derived rows.
+
+    Purchased 15/30/60min source has strict priority, even if partial.
+    Any absent private receipt, invalid SHA, unexpected clock/provenance,
+    or incomplete source stockday fails closed rather than counting a gap.
+    """
+    if (type(days) not in (tuple,list)
+            or tuple(days)!=OCTOBER_VERIFIED_DAYS
+            or type(symbols) not in (tuple,list)
+            or not 1<=len(symbols)<=2
+            or len(set(symbols))!=len(symbols)):
+        raise ValueError("Require exact four verified Oct days and one/two unique symbols")
+    root=Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Original source root unavailable for Oct four-day sweep")
+    per_stock=[]
+    total=Counter()
+    for symbol in symbols:
+        days_out=[]
+        for day in days:
+            private=_query(root,symbol,"5min",day,private=True)
+            if len(private)!=48:
+                raise ValueError("Missing complete existing 48-bar H5 5min stockday receipt")
+            records={}
+            for period in INTRADAY:
+                buckets=aggregate_complete_5min(
+                    day,symbol,private,
+                    expected_source="h5_only_complete_stockday",period=period)
+                existing=_query(root,symbol,period,day,private=False)
+                # No market write even when purchased high cycle is absent.
+                count=len(buckets) if not existing else 0
+                records[period]={
+                    "original_purchased_target_bars":len(existing),
+                    "source_h5_complete_5min_bars":len(private),
+                    "candidate_buckets_if_purchased_absent":count,
+                    "purchased_has_priority_even_if_partial":True,
+                    "all_candidates_discarded_after_readonly_inspection":True,
+                }
+                total[period]+=count
+                if existing:
+                    total["purchased_high_cycle_source_blocks"]+=1
+            days_out.append({"day":day.isoformat(),"cycles":records})
+        per_stock.append({"symbol":symbol,"verified_days":days_out})
+    result={
+        "status":"oct_2026_four_sha_verified_h5_5min_days_intraday_only_research_candidates",
+        "requested_days":[d.isoformat() for d in OCTOBER_VERIFIED_DAYS],
+        "security_count":len(symbols),
+        "per_security":per_stock,
+        "total_candidate_buckets_by_cycle":{p:total[p] for p in INTRADAY},
+        "purchased_high_cycle_source_blocks":total["purchased_high_cycle_source_blocks"],
+        "only_complete_48_5min_source_stockdays_accepted":True,
+        "existing_minute_source_receipt_and_sha_gate_reused":True,
+        "daily_candidate_not_certified_or_materialized":True,
+        "week_month_not_derived":True,
+        "original_market_files_modified":False,
+        "new_market_or_index_files_written":False,
+        "verified_private_5min_vendor_units_certified":False,
+        "no_licensed_OHLCVA_values_exported":True,
+        "production_activated":False,
+    }
+    return result
+
+
 def main(argv=None):
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root",required=True,type=Path)
     ap.add_argument("--symbols",nargs="+",default=["SH600000","SZ000001"])
+    ap.add_argument("--oct-four-day-intraday-sweep",action="store_true",
+                    help="Only 2026-10-08/09/12/13; keep 15/30/60m in memory")
     args=ap.parse_args(argv)
+    report=audit(args.root,tuple(args.symbols))
+    if args.oct_four_day_intraday_sweep:
+        report["october_intraday_source_sweep"]=sweep_verified_october_intraday(
+            args.root,tuple(args.symbols))
     print("HIGH_CYCLE_2026_OCT_SOURCE_GATE="+json.dumps(
-        audit(args.root,tuple(args.symbols)),ensure_ascii=False,
+        report,ensure_ascii=False,
         separators=(",",":"),sort_keys=True),flush=True)
 
 

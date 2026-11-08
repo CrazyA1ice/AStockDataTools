@@ -60,7 +60,20 @@ foreach($item in $sweep.per_security){
             $match=$m.matching_fields_count.PSObject.Properties[$f].Value
             if($null -eq $match -or $match -lt 0 -or $match -gt $m.complete_5min_windows -or ($m.status -ne 'same_h5_source_diagnostic_only' -and $match -ne 0)){throw 'Invalid H5 1-to-5 per-field match count'}
         }
-        Write-Host ('OCT_H5_ONE_TO_FIVE_DIAGNOSTIC SYMBOL='+$item.symbol+' DAY='+$d.day+' STATUS='+$m.status+' SOURCE_1MIN='+$m.source_1min_rows+' COMPLETE_WINDOWS='+$m.complete_5min_windows+' SIX_FIELD_MATCH='+$m.matched_six_field_windows+' AMOUNT_MATCH='+$m.matching_fields_count.amount+' VOLUME_MATCH='+$m.matching_fields_count.volume+' SAME_VENDOR_ONLY=TRUE CERTIFIED=FALSE')
+        $a=$m.amount_mismatch_diagnostic
+        $relativeLabels=@('at_most_1e_minus_7','up_to_1e_minus_6','up_to_1e_minus_5','up_to_1e_minus_4','up_to_1e_minus_3','up_to_1e_minus_2','over_1e_minus_2')
+        if($null -eq $a -or $a.only_original_tolerance_mismatches_counted -ne $true -or $a.relative_error_denominator -ne 'max(abs(sum_1min_amount),abs(source_5min_amount))' -or $a.different_complete_windows -ne ($m.complete_5min_windows-$m.matching_fields_count.amount) -or $a.different_complete_windows -lt 0 -or $a.different_complete_windows -gt 48 -or $a.minute_sum_greater_than_five -lt 0 -or $a.minute_sum_less_than_five -lt 0 -or ($a.minute_sum_greater_than_five+$a.minute_sum_less_than_five) -ne $a.different_complete_windows -or $a.morning -lt 0 -or $a.afternoon -lt 0 -or ($a.morning+$a.afternoon) -ne $a.different_complete_windows -or $a.one_side_zero -lt 0 -or $a.one_side_zero -gt $a.different_complete_windows){throw 'Amount residual session/sign accounting invalid'}
+        if(@($a.relative_error_bins.PSObject.Properties.Name).Count -ne $relativeLabels.Count){throw 'Unknown amount residual relative-error tier'}
+        $counts=@()
+        $buckets=0
+        foreach($key in $relativeLabels){
+            $p=$a.relative_error_bins.PSObject.Properties[$key]
+            if($null -eq $p -or $p.Value -lt 0 -or $p.Value -gt $a.different_complete_windows){throw 'Invalid H5 amount relative-error tier'}
+            $buckets+=$p.Value
+            $counts+=($key+'='+$p.Value)
+        }
+        if($buckets -ne $a.different_complete_windows){throw 'H5 amount mismatch relative-error bins do not conserve'}
+        Write-Host ('OCT_H5_ONE_TO_FIVE_DIAGNOSTIC SYMBOL='+$item.symbol+' DAY='+$d.day+' STATUS='+$m.status+' SOURCE_1MIN='+$m.source_1min_rows+' COMPLETE_WINDOWS='+$m.complete_5min_windows+' SIX_FIELD_MATCH='+$m.matched_six_field_windows+' OPEN_MATCH='+$m.matching_fields_count.open+' HIGH_MATCH='+$m.matching_fields_count.high+' LOW_MATCH='+$m.matching_fields_count.low+' CLOSE_MATCH='+$m.matching_fields_count.close+' VOLUME_MATCH='+$m.matching_fields_count.volume+' AMOUNT_MATCH='+$m.matching_fields_count.amount+' AMOUNT_FAIL='+$a.different_complete_windows+' SUM_GT_5MIN='+$a.minute_sum_greater_than_five+' SUM_LT_5MIN='+$a.minute_sum_less_than_five+' ONE_SIDE_ZERO='+$a.one_side_zero+' AM='+$a.morning+' PM='+$a.afternoon+' AMOUNT_REL_BINS='+($counts -join ',')+' SAME_VENDOR_ONLY=TRUE CERTIFIED=FALSE')
     }
 }
 $all=$sweep.total_candidate_buckets_by_cycle

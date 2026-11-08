@@ -160,7 +160,7 @@ class AutobatchHighCycleTests(unittest.TestCase):
                     M.discover(day)
         for n,idx in ((0,0),(101,0),(16,-1),(16,10001)):
             with self.subTest(size=n,index=idx):
-                with self.assertRaisesRegex(ValueError,"bounded batch"):
+                with self.assertRaisesRegex(ValueError,"Bounded batch"):
                     M.run(self.market,DAY,"444444444444",
                           batch_size=n,batch_index=idx)
         self.assertFalse(self.stage_root.exists())

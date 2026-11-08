@@ -83,7 +83,52 @@ class OriginalHfqFactorKeyAuditTests(unittest.TestCase):
         self.assertEqual(r["counts"]["null_or_invalid_symbols"],1)
         self.assertEqual(r["counts"]["null_or_invalid_dates"],1)
         self.assertEqual(r["distinct_raw_symbol_date_keys"],0)
+        self.assertEqual(r["factor_health_rows_classified"],2)
+        self.assertEqual(r["counts"]["null_date_rows"],1)
+        self.assertEqual(r["distinct_symbols_with_any_valid_symbol_field"],1)
         self.assertFalse(r["factor_row_day_keys_verified_against_official_actions"])
+
+    def test_null_date_record_one_per_stock_is_only_an_uninterpreted_candidate(self):
+        self.write([
+            ("SH600000",None,1.0),
+            ("SH600000",date(2025,1,2),1.2),
+            ("SZ000001",None,float("nan")),
+            ("SZ000001",date(2025,1,3),2.0),
+            ("BJ920000",None,0.0),
+        ])
+        r=M.audit(self.root)
+        self.assertEqual(r["factor_rows_examined"],5)
+        self.assertEqual(r["factor_health_rows_classified"],5)
+        self.assertEqual(r["counts"]["null_date_rows"],3)
+        self.assertEqual(r["counts"]["non_null_invalid_date_rows"],0)
+        self.assertEqual(r["distinct_symbols_with_any_valid_symbol_field"],3)
+        self.assertEqual(r["distinct_raw_source_symbols"],2)
+        self.assertEqual(r["distinct_symbols_with_null_date_rows"],3)
+        self.assertEqual(r["symbols_with_multiple_null_date_rows"],0)
+        self.assertEqual(r["symbols_with_both_null_and_valid_dates"],2)
+        self.assertEqual(r["symbols_with_only_null_dates"],1)
+        self.assertEqual(r["counts"]["nonfinite_factors"],1)
+        self.assertEqual(r["counts"]["nonpositive_factors"],1)
+        self.assertTrue(r["invalid_date_rows_preserved_as_uninterpreted_source"])
+        self.assertFalse(r["null_date_rows_treated_as_initial_factor"])
+        self.assertFalse(r["factor_direction_base_date_and_adjustment_semantics_certified"])
+
+    def test_multiple_null_dates_and_out_of_range_day_separately_counted(self):
+        self.write([
+            ("SH600000",None,1.0),
+            ("SH600000",None,2.0),
+            ("SH600000",date(1800,1,1),3.0),
+            ("SH600000",date(2025,1,2),4.0),
+        ])
+        r=M.audit(self.root)
+        self.assertEqual(r["counts"]["null_date_rows"],2)
+        self.assertEqual(r["counts"]["non_null_invalid_date_rows"],1)
+        self.assertEqual(r["counts"]["null_or_invalid_dates"],3)
+        self.assertEqual(r["symbols_with_multiple_null_date_rows"],1)
+        self.assertEqual(r["distinct_symbols_with_other_invalid_date_rows"],1)
+        self.assertEqual(r["factor_health_rows_classified"],4)
+        self.assertEqual(r["distinct_raw_symbol_date_keys"],1)
+        self.assertEqual(r["counts"]["duplicate_exact_symbol_day_keys"],0)
 
     def test_wrong_vendor_factor_field_type_fails_closed(self):
         self.pq.write_table(self.pa.table({

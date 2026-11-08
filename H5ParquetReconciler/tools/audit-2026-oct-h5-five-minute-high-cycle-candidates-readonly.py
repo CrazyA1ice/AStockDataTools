@@ -246,14 +246,118 @@ def audit(root,symbols=("SH600000","SZ000001")):
 
 
 
+
+def compare_same_h5_one_to_five(day, symbol, one_rows, five_rows):
+    """Count-only same-H5 1m(end-labelled) -> 5m(start-labelled) check.
+
+    A missing 1m bar invalidates its five-minute comparison window, not
+    the entire stockday. Purchased-first 1m may override H5 for a day:
+    never falsely label that as a same-source H5 check or a unit certificate.
+    """
+    if type(day) is not date or not isinstance(symbol, str):
+        raise ValueError("Invalid minute crosscheck day/security")
+    # Validate the separately SHA-gated five-minute input with the
+    # existing strict 48-slot/provenance/OHLCVA checks.
+    aggregate_complete_5min(
+        day, symbol, five_rows,
+        expected_source="h5_only_complete_stockday", period="15min")
+    five_by_start={row["source_timestamp_ms"]:row for row in five_rows}
+    start_grid=grid_timestamps(day)
+    expected_minute={start+60000*i for start in start_grid for i in range(1,6)}
+
+    def summary(status, checked=0, full_match=0, fields=None):
+        return {
+            "status":status,
+            "source_1min_rows":len(one_rows),
+            "source_5min_rows":len(five_rows),
+            "expected_1min_grid_slots":240,
+            "complete_5min_windows":checked,
+            "incomplete_5min_windows":48-checked,
+            "matched_six_field_windows":full_match,
+            "matching_fields_count":dict(fields or {f:0 for f in FIELDS}),
+            "assumed_1min_end_5min_start_label_only":True,
+            "same_vendor_not_independent_unit_certification":True,
+            "vendor_physical_units_certified":False,
+            "original_market_files_modified":False,
+            "new_market_or_index_files_written":False,
+            "no_licensed_OHLCVA_values_exported":True,
+            "production_activated":False,
+        }
+
+    if not one_rows:
+        return summary("no_one_minute_source_not_comparable")
+    sources={row.get("value_source") for row in one_rows}
+    if sources=={"purchased_parquet"}:
+        return summary("purchased_first_one_minute_not_same_h5_source")
+    if sources!={"h5_only_complete_stockday"}:
+        raise ValueError("Mixed/invalid one-minute source provenance")
+    if len(one_rows)>240:
+        raise ValueError("More than 240 native H5 1min rows")
+    by_time={}
+    for row in one_rows:
+        stamp=row.get("source_timestamp_ms")
+        if (type(stamp) is not int or stamp in by_time
+                or stamp not in expected_minute
+                or row.get("period")!="1min"
+                or row.get("symbol")!=symbol
+                or row.get("trading_date")!=day.isoformat()):
+            raise ValueError("Invalid/duplicate H5 1min end-label grid or provenance")
+        values=[]
+        for field in FIELDS:
+            value=row.get(field)
+            if type(value) not in (int,float) or not math.isfinite(value):
+                raise ValueError("Bad H5 1min OHLCVA")
+            values.append(float(value))
+        if (values[1]<max(values[0],values[3])
+                or values[2]>min(values[0],values[3])
+                or values[4]<0 or values[5]<0):
+            raise ValueError("Invalid H5 1min OHLCVA geometry")
+        by_time[stamp]=dict(zip(FIELDS,values))
+    checked=0
+    all_six=0
+    matches=Counter()
+    for start in start_grid:
+        stamps=(start+60000*i for i in range(1,6))
+        stamps=tuple(stamps)
+        if any(stamp not in by_time for stamp in stamps):
+            continue
+        sub=[by_time[stamp] for stamp in stamps]
+        derived={
+            "open":sub[0]["open"],
+            "high":max(r["high"] for r in sub),
+            "low":min(r["low"] for r in sub),
+            "close":sub[-1]["close"],
+            "volume":math.fsum(r["volume"] for r in sub),
+            "amount":math.fsum(r["amount"] for r in sub),
+        }
+        checked+=1
+        good=True
+        for field in FIELDS:
+            real=five_by_start[start][field]
+            matched=math.isclose(
+                derived[field], float(real), rel_tol=1e-8, abs_tol=1e-7)
+            if matched:
+                matches[field]+=1
+            else:
+                good=False
+        if good:
+            all_six+=1
+    return summary(
+        "same_h5_source_diagnostic_only", checked, all_six,
+        {field:matches[field] for field in FIELDS})
+
+
 def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),
-                                    days=OCTOBER_VERIFIED_DAYS):
+                                    days=OCTOBER_VERIFIED_DAYS, *,
+                                    check_one_to_five=False):
     """Check ONLY 4 previously vetted H5 dates, without writing derived rows.
 
     Purchased 15/30/60min source has strict priority, even if partial.
     Any absent private receipt, invalid SHA, unexpected clock/provenance,
     or incomplete source stockday fails closed rather than counting a gap.
     """
+    if type(check_one_to_five) is not bool:
+        raise ValueError("Cross-period minute audit requires explicit boolean")
     if (type(days) not in (tuple,list)
             or tuple(days)!=OCTOBER_VERIFIED_DAYS
             or type(symbols) not in (tuple,list)
@@ -271,6 +375,9 @@ def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),
             private=_query(root,symbol,"5min",day,private=True)
             if len(private)!=48:
                 raise ValueError("Missing complete existing 48-bar H5 5min stockday receipt")
+            minute_evidence=(compare_same_h5_one_to_five(
+                day,symbol,_query(root,symbol,"1min",day,private=True),private)
+                if check_one_to_five else None)
             records={}
             for period in INTRADAY:
                 buckets=aggregate_complete_5min(
@@ -289,7 +396,10 @@ def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),
                 total[period]+=count
                 if existing:
                     total["purchased_high_cycle_source_blocks"]+=1
-            days_out.append({"day":day.isoformat(),"cycles":records})
+            day_evidence={"day":day.isoformat(),"cycles":records}
+            if check_one_to_five:
+                day_evidence["one_to_five_crosscheck"]=minute_evidence
+            days_out.append(day_evidence)
         per_stock.append({"symbol":symbol,"verified_days":days_out})
     result={
         "status":"oct_2026_four_sha_verified_h5_5min_days_intraday_only_research_candidates",
@@ -298,6 +408,8 @@ def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),
         "per_security":per_stock,
         "total_candidate_buckets_by_cycle":{p:total[p] for p in INTRADAY},
         "purchased_high_cycle_source_blocks":total["purchased_high_cycle_source_blocks"],
+        "one_to_five_crosscheck_opted_in":check_one_to_five,
+        "one_to_five_same_vendor_not_independent_certification":True,
         "only_complete_48_5min_source_stockdays_accepted":True,
         "existing_minute_source_receipt_and_sha_gate_reused":True,
         "daily_candidate_not_certified_or_materialized":True,
@@ -317,11 +429,16 @@ def main(argv=None):
     ap.add_argument("--symbols",nargs="+",default=["SH600000","SZ000001"])
     ap.add_argument("--oct-four-day-intraday-sweep",action="store_true",
                     help="Only 2026-10-08/09/12/13; keep 15/30/60m in memory")
+    ap.add_argument("--oct-four-day-one-to-five-consistency",action="store_true",
+                    help="Optional in-memory, same-H5 1m->5m count-only checks")
     args=ap.parse_args(argv)
+    if args.oct_four_day_one_to_five_consistency and not args.oct_four_day_intraday_sweep:
+        ap.error("One-to-five diagnostic requires the bounded four-day sweep")
     report=audit(args.root,tuple(args.symbols))
     if args.oct_four_day_intraday_sweep:
         report["october_intraday_source_sweep"]=sweep_verified_october_intraday(
-            args.root,tuple(args.symbols))
+            args.root,tuple(args.symbols),
+            check_one_to_five=args.oct_four_day_one_to_five_consistency)
     print("HIGH_CYCLE_2026_OCT_SOURCE_GATE="+json.dumps(
         report,ensure_ascii=False,
         separators=(",",":"),sort_keys=True),flush=True)

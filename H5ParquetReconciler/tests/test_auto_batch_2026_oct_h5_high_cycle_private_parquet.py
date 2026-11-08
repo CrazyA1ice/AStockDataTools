@@ -130,6 +130,18 @@ class AutobatchHighCycleTests(unittest.TestCase):
         r=self.stage_root/"111111111111"/"receipt.json"
         self.assertEqual(json.loads(r.read_text("utf-8")),stage)
 
+    def test_repeated_batch_fails_without_generating_duplicate_private_files(self):
+        first=M.run(self.market,DAY,"111111111111",batch_size=16)
+        self.assertEqual(first["selected_stockdays"],16)
+        before=sorted(str(p.relative_to(self.stage_root)) for p in
+                      self.stage_root.rglob("*") if p.is_file())
+        with self.assertRaisesRegex(ValueError,"Already-staged"):
+            M.run(self.market,DAY,"222222222222",batch_size=16,batch_index=0)
+        self.assertFalse((self.stage_root/"222222222222").exists())
+        after=sorted(str(p.relative_to(self.stage_root)) for p in
+                     self.stage_root.rglob("*") if p.is_file())
+        self.assertEqual(after,before)
+
     def test_second_deterministic_batch_and_exhaustion(self):
         result=M.run(self.market,DAY,"222222222222",batch_size=16,
                      batch_index=1)

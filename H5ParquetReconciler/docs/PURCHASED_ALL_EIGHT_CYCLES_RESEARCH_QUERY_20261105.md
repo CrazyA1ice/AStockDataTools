@@ -90,3 +90,22 @@ The minute delegation real sample was 2026-09-30..2026-10-13 for `SH600000`: 1mi
 为避免重复实现导入器，已新增 ASCII Windows PowerShell 5.1 入口 `run-purchased-2011-2026-all-eight-cycle-footer-coverage-readonly.ps1`。它复用**已有**的 `tools/survey-purchased-all-cycle-footers-readonly.py`，先跑旧九项合成回归，再对2011—2026连续16个年份的原购买Parquet元数据执行单次只读盘点，按照八周期分别输出：文件名年份实际存在数量、源文件数、页脚原始行数、分组数、最早与最晚原始时间戳、未见来源文件的年份、失效ts统计组数、跨文件名年份组数。非K线 `复权因子` 保留为独立的未映射目录。仅输出汇总，不生成新的行情文件或数据库索引。
 
 **此新入口尚待用户Windows实机验收**；支持的源签名是源文件元数据而非全内容SHA。报告中的命名年份与元数据日期包络不能作为该年份每一笔行情、每一证券、交易所交易日或数值量纲经认证的证据，也不保证所有24个物理文件各自对应不同年份。验收后再决定需要对哪些具体年份/周期做更细粒度的缺口验证，不要开启旧全量购买数据重物化worker。
+
+## 2026-11-08 Windows real 2011-2026 purchased eight-cycle footer envelopes PASS
+
+The real Windows 2011..2026 footer-only acceptance wrapper completed: `Ran 9 tests ... OK (skipped=1)` (8 passed, one skipped), all eight purchased K-line folders show **16/16 filename-assigned years and 24 files per folder**. No source file-year gaps, nonempty RowGroups with missing/unusable `ts` bounds, or bounds outside the filename-assigned year; **0 original OHLCVA copied and 0 market files altered**. Each entry is *Parquet footer row count*, not a census of A-share unique valid keys.
+
+| Purchased source period | Footer rows (16 named years) | RowGroups | First observed raw source timestamp | Latest observed raw source timestamp |
+| --- | ---: | ---: | --- | --- |
+| 1min | 3,447,422,899 | 28,035 | 2011-01-04 09:30 | 2026-09-30 15:00 |
+| 5min | 686,623,649 | 5,572 | 2011-01-04 09:30 | 2026-09-30 14:55 |
+| 15min | 228,874,552 | 1,876 | 2011-01-04 09:30 | 2026-09-30 14:45 |
+| 30min | 114,437,276 | 951 | 2011-01-04 09:30 | 2026-09-30 14:30 |
+| 60min | 57,218,640 | 484 | 2011-01-04 09:30 | 2026-09-30 14:00 |
+| day | 14,115,707 | 139 | 2011-01-04 08:00 | 2026-09-30 08:00 |
+| week | 2,996,956 | 47 | 2011-01-04 08:00 | 2026-09-30 08:00 |
+| month | 711,331 | 24 | 2011-01-06 08:00 | 2026-09-30 08:00 |
+
+**Critical scope:** 16/16 is evidence for **named-year source availability only**, not the full set of trading dates, unique per-security K-lines, session/weekly/monthly labeling, physical units, corporate adjustments, or continuous market availability. The monthly first source label `2011-01-06` must be preserved, not forcibly treated as a universal month-end. Do not equate purchased row footer counts with candidate A-share filtered row counts.
+
+There is an additional **`复权因子`** source folder with one Parquet file unassigned to a year by filename. Its schema, date range, adjustment sign/direction and applicability are **unverified**, and its missing filename year is NOT proof of no data. The next small gate should inspect only its Parquet footers/schema (no row decoding and no implicit price adjustment). Independent coverage for post-2026-09-30 15/30/60min/day/week/month remains a separate source gap/synthesis candidate and is not made complete by this inventory.

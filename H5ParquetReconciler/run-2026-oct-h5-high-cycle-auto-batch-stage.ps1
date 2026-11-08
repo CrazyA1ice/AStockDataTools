@@ -27,7 +27,7 @@ if($o.status -ne 'oct_2026_private_h5_highcycle_autobatch_staged_readback' -or $
 foreach($sym in $s.symbols){if($sym -in @('SH600000','SZ000001')){throw 'Previously materialized canary selected again'}}
 $total=0
 foreach($period in @('15min','30min','60min')){
-    $factor=@{'15min'=16;'30min'=8;'60min'=4}[$period]
+    if($period -eq '15min'){$factor=16}elseif($period -eq '30min'){$factor=8}else{$factor=4}
     $expected=$factor*$o.selected_stockdays
     $v=$s.outputs.PSObject.Properties[$period].Value
     if($null -eq $v -or $v.rows -ne $expected -or $v.private_file -ne ('work/unified_parquet/oct_high_cycle_staging/'+$run+'/'+$period+'.parquet') -or $v.complete_row_by_row_readback_exact -ne $true -or $v.sha256 -notmatch '^[a-f0-9]{64}$'){throw 'Private autobatch output count/path/checksum gate failed'}

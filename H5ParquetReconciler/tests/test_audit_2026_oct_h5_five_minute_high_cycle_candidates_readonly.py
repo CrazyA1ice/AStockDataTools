@@ -323,6 +323,75 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
             M.compare_same_h5_one_to_five(
                 M.CANDIDATE,"SH600000",mixed,fake5())
 
+
+    def test_amount_residual_classifier_conserves_morning_afternoon_and_sign(self):
+        minute=fake1()
+        minute[0]["amount"]+=5.0       # morning five-minute window
+        minute[120]["amount"]-=5.0     # afternoon five-minute window
+        result=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",minute,fake5())
+        amount=result["amount_mismatch_diagnostic"]
+        self.assertEqual(result["complete_5min_windows"],48)
+        self.assertEqual(result["matched_six_field_windows"],46)
+        self.assertEqual(result["matching_fields_count"]["amount"],46)
+        for field in ("open","high","low","close","volume"):
+            self.assertEqual(result["matching_fields_count"][field],48)
+        self.assertEqual(amount["different_complete_windows"],2)
+        self.assertEqual(amount["minute_sum_greater_than_five"],1)
+        self.assertEqual(amount["minute_sum_less_than_five"],1)
+        self.assertEqual(amount["morning"],1)
+        self.assertEqual(amount["afternoon"],1)
+        self.assertEqual(amount["one_side_zero"],0)
+        self.assertEqual(amount["relative_error_bins"]["up_to_1e_minus_2"],2)
+        self.assertEqual(sum(amount["relative_error_bins"].values()),2)
+        self.assertNotIn("1005",str(result))
+        self.assertTrue(result["no_licensed_OHLCVA_values_exported"])
+
+    def test_amount_residual_relative_tiers_keep_original_strict_threshold(self):
+        minute=fake1()
+        # A roughly 1e-5 relative discrepancy is not a baseline match;
+        # it is merely classified in the 1e-5 diagnostic tier.
+        minute[0]["amount"]+=0.01
+        result=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",minute,fake5())
+        amount=result["amount_mismatch_diagnostic"]
+        self.assertEqual(result["matching_fields_count"]["amount"],47)
+        self.assertEqual(amount["relative_error_bins"]["up_to_1e_minus_5"],1)
+        self.assertEqual(result["matched_six_field_windows"],47)
+        self.assertTrue(amount["only_original_tolerance_mismatches_counted"])
+
+    def test_amount_residual_zero_counter_and_absent_window_exclusion(self):
+        five=fake5()
+        five[0]["amount"]=0.0
+        zero=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",fake1(),five)
+        amount=zero["amount_mismatch_diagnostic"]
+        self.assertEqual(amount["different_complete_windows"],1)
+        self.assertEqual(amount["one_side_zero"],1)
+        self.assertEqual(amount["relative_error_bins"]["over_1e_minus_2"],1)
+        minute=fake1()[1:]
+        five=fake5()
+        five[0]["amount"]=0.0
+        missing=M.compare_same_h5_one_to_five(
+            M.CANDIDATE,"SH600000",minute,five)
+        self.assertEqual(missing["complete_5min_windows"],47)
+        self.assertEqual(missing["matching_fields_count"]["amount"],47)
+        self.assertEqual(missing["amount_mismatch_diagnostic"]["different_complete_windows"],0)
+        self.assertEqual(sum(missing["amount_mismatch_diagnostic"]
+                             ["relative_error_bins"].values()),0)
+
+    def test_amount_residual_not_comparable_always_zero_without_source_leak(self):
+        for rows in ([],fake1(source="purchased_parquet")):
+            with self.subTest(rows=len(rows)):
+                summary=M.compare_same_h5_one_to_five(
+                    M.CANDIDATE,"SH600000",rows,fake5())
+                amount=summary["amount_mismatch_diagnostic"]
+                self.assertEqual(amount["different_complete_windows"],0)
+                self.assertEqual(sum(amount["relative_error_bins"].values()),0)
+                self.assertEqual(summary["matching_fields_count"]["amount"],0)
+                self.assertFalse(summary["vendor_physical_units_certified"])
+                self.assertTrue(summary["no_licensed_OHLCVA_values_exported"])
+
     def test_four_day_one_to_five_diagnostic_is_strictly_opt_in(self):
         queried=[]
         def source(root,symbol,period,day,*,private=False):

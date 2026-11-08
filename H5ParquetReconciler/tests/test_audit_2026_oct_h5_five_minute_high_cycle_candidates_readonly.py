@@ -175,5 +175,69 @@ class HighCycleSyntheticSourceGateTests(unittest.TestCase):
                          ["candidate_derived_buckets_when_purchased_absent"],16)
 
 
+    def test_four_day_october_intraday_sweep_keeps_sha_gated_5min_source_only(self):
+        calls=[]
+        def only_source(root,symbol,period,day,*,private=False):
+            calls.append((symbol,period,day,private))
+            if period=="5min":
+                self.assertTrue(private)
+                return fake5(date.fromisoformat(day),symbol)
+            self.assertIn(period,M.INTRADAY)
+            self.assertFalse(private)
+            return []
+        with patch.object(M,"_query",side_effect=only_source):
+            with patch.object(M.Path,"is_dir",return_value=True):
+                out=M.sweep_verified_october_intraday(
+                    Path("D:/synthetic"),
+                    symbols=("SH600000","SZ000001"))
+        self.assertEqual(out["requested_days"],
+                         ["2026-10-08","2026-10-09","2026-10-12","2026-10-13"])
+        self.assertEqual(out["security_count"],2)
+        self.assertEqual(out["total_candidate_buckets_by_cycle"],
+                         {"15min":128,"30min":64,"60min":32})
+        self.assertEqual(len(calls),32)
+        self.assertFalse(out["daily_candidate_not_certified_or_materialized"] is False)
+        self.assertTrue(out["week_month_not_derived"])
+        self.assertTrue(out["no_licensed_OHLCVA_values_exported"])
+        self.assertFalse(out["new_market_or_index_files_written"])
+        self.assertFalse(out["production_activated"])
+        self.assertNotIn("1000.0",str(out))
+
+    def test_four_day_sweep_existing_even_partial_purchased_wins(self):
+        def source(root,symbol,period,day,*,private=False):
+            if period=="5min":
+                return fake5(date.fromisoformat(day),symbol)
+            if day=="2026-10-09" and period=="15min":
+                return [{"already_purchased_partial":True}]
+            return []
+        with patch.object(M,"_query",side_effect=source):
+            with patch.object(M.Path,"is_dir",return_value=True):
+                out=M.sweep_verified_october_intraday(
+                    Path("D:/synthetic"),symbols=("SH600000",))
+        self.assertEqual(out["total_candidate_buckets_by_cycle"],
+                         {"15min":48,"30min":32,"60min":16})
+        self.assertEqual(out["purchased_high_cycle_source_blocks"],1)
+        blocked=out["per_security"][0]["verified_days"][1]["cycles"]["15min"]
+        self.assertEqual(blocked["original_purchased_target_bars"],1)
+        self.assertEqual(blocked["candidate_buckets_if_purchased_absent"],0)
+
+    def test_four_day_sweep_missing_h5_receipt_does_not_invent_candidates(self):
+        def source(root,symbol,period,day,*,private=False):
+            if period=="5min":
+                bars=fake5(date.fromisoformat(day),symbol)
+                return bars[:-1] if day=="2026-10-09" else bars
+            return []
+        with patch.object(M,"_query",side_effect=source):
+            with patch.object(M.Path,"is_dir",return_value=True):
+                with self.assertRaisesRegex(ValueError,"48-bar"):
+                    M.sweep_verified_october_intraday(
+                        Path("D:/synthetic"),symbols=("SH600000",))
+        with self.assertRaisesRegex(ValueError,"exact four"):
+            M.sweep_verified_october_intraday(
+                Path("D:/synthetic"),symbols=("SH600000",),
+                days=(date(2026,10,13),))
+
+
+
 if __name__=="__main__":
     unittest.main(verbosity=2)

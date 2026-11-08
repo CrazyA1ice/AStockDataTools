@@ -265,7 +265,10 @@ def compare_same_h5_one_to_five(day, symbol, one_rows, five_rows):
     start_grid=grid_timestamps(day)
     expected_minute={start+60000*i for start in start_grid for i in range(1,6)}
 
-    def summary(status, checked=0, full_match=0, fields=None):
+    # Only relative-error buckets, direction and time-of-session counts leave
+    # this process; no original/derived licensed OHLCVA or raw differences.
+    amount_size_labels=["at_most_1e_minus_7","up_to_1e_minus_6","up_to_1e_minus_5","up_to_1e_minus_4","up_to_1e_minus_3","up_to_1e_minus_2","over_1e_minus_2"]
+    def summary(status, checked=0, full_match=0, fields=None, *, mismatch=None):
         return {
             "status":status,
             "source_1min_rows":len(one_rows),
@@ -275,6 +278,16 @@ def compare_same_h5_one_to_five(day, symbol, one_rows, five_rows):
             "incomplete_5min_windows":48-checked,
             "matched_six_field_windows":full_match,
             "matching_fields_count":dict(fields or {f:0 for f in FIELDS}),
+            "amount_mismatch_diagnostic":dict(mismatch or {
+                "different_complete_windows":0,
+                "minute_sum_greater_than_five":0,
+                "minute_sum_less_than_five":0,
+                "one_side_zero":0,
+                "morning":0,"afternoon":0,
+                "relative_error_bins":{label:0 for label in amount_size_labels},
+                "relative_error_denominator":"max(abs(sum_1min_amount),abs(source_5min_amount))",
+                "only_original_tolerance_mismatches_counted":True,
+            }),
             "assumed_1min_end_5min_start_label_only":True,
             "same_vendor_not_independent_unit_certification":True,
             "vendor_physical_units_certified":False,
@@ -316,7 +329,9 @@ def compare_same_h5_one_to_five(day, symbol, one_rows, five_rows):
     checked=0
     all_six=0
     matches=Counter()
-    for start in start_grid:
+    amount_bad=Counter()
+    amount_bins=Counter()
+    for window_idx,start in enumerate(start_grid):
         stamps=(start+60000*i for i in range(1,6))
         stamps=tuple(stamps)
         if any(stamp not in by_time for stamp in stamps):
@@ -340,11 +355,37 @@ def compare_same_h5_one_to_five(day, symbol, one_rows, five_rows):
                 matches[field]+=1
             else:
                 good=False
+                if field=="amount":
+                    amount_bad["different_complete_windows"]+=1
+                    delta=derived["amount"]-float(real)
+                    amount_bad["minute_sum_greater_than_five" if delta>0
+                               else "minute_sum_less_than_five"]+=1
+                    amount_bad["morning" if window_idx<24 else "afternoon"]+=1
+                    if derived["amount"]==0 or float(real)==0:
+                        amount_bad["one_side_zero"]+=1
+                    denom=max(abs(derived["amount"]),abs(float(real)))
+                    relative=abs(delta)/denom
+                    thresholds=(1e-7,1e-6,1e-5,1e-4,1e-3,1e-2)
+                    chosen=next((label for limit,label in zip(
+                        thresholds,amount_size_labels) if relative<=limit),
+                        amount_size_labels[-1])
+                    amount_bins[chosen]+=1
         if good:
             all_six+=1
     return summary(
         "same_h5_source_diagnostic_only", checked, all_six,
-        {field:matches[field] for field in FIELDS})
+        {field:matches[field] for field in FIELDS},
+        mismatch={
+            "different_complete_windows":amount_bad["different_complete_windows"],
+            "minute_sum_greater_than_five":amount_bad["minute_sum_greater_than_five"],
+            "minute_sum_less_than_five":amount_bad["minute_sum_less_than_five"],
+            "one_side_zero":amount_bad["one_side_zero"],
+            "morning":amount_bad["morning"],
+            "afternoon":amount_bad["afternoon"],
+            "relative_error_bins":{label:amount_bins[label] for label in amount_size_labels},
+            "relative_error_denominator":"max(abs(sum_1min_amount),abs(source_5min_amount))",
+            "only_original_tolerance_mismatches_counted":True,
+        })
 
 
 def sweep_verified_october_intraday(root,symbols=("SH600000","SZ000001"),

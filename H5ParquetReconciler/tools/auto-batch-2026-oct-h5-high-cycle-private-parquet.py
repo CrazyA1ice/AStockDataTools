@@ -42,6 +42,8 @@ def discover(day,*,exclude=CANARY):
     path,expected_sha=S.source_receipt(day)
     if not path.is_file() or path.is_symlink():
         raise ValueError("Unsafe private H5 minute source")
+    if S._sha(path)!=expected_sha:
+        raise ValueError("Private H5 five-minute SHA changed before inventory")
     available={}
     purchased=set()
     inspected=0

@@ -23,3 +23,47 @@
 2. 按月复用或建立2025分钟键索引，验证逐股票完整性，不能用文件页脚当作缺口自动填充授权。
 3. 独立检查复权因子目录文件格式和复权规则；禁止在缺乏原数据授权/语义认证时进行默认调整。
 4. 完成完整日期/量纲/来源质量门禁后再考虑正式生产入口及H5镜像。
+
+## 2026-11-08 Windows physical inventory: existing 15/30/60min and day/week/month files
+
+User's latest Windows read-only inventory of original `D:\stock\AllCycleAStockData` shows six original PURCHASED source folders, **24 Parquet files in each**, 144 in total. Approximate `GB=bytes/1GiB` sizes below are rounded to three decimal places:
+
+| Native purchased cycle folder | Parquet files | Reported GiB |
+| --- | ---: | ---: |
+| 15min | 24 | 3.941 |
+| 30min | 24 | 2.030 |
+| 60min | 24 | 1.049 |
+| day | 24 | 0.226 |
+| week | 24 | 0.059 |
+| month | 24 | 0.015 |
+| **Six-cycle total** | **144** | **7.320** |
+
+This is **filesystem inventory only**, not evidence that all 24 files
+represent 24 distinct years, or that any stockday/calendar/source schema
+is certified. No file data or price values were opened or changed.
+
+**Avoid reimplementation:** The branch already contains
+`tools/query-purchased-primary-all-eight-cycles-readonly.py` and the
+ASCII Windows one-command gate
+`run-purchased-primary-all-eight-cycles-smoke.ps1`, which:
+- runs previously developed synthetic original Parquet query checks, the
+  19-tested 1/5minute purchased/H5 opt-in routing checks, and 10 independent
+  eight-cycle synthetic tests;
+- directly queries existing **2025/2026** original purchased Parquet for
+  15/30/60-minute, day, week, month using bounded real `SH600000`
+  date windows, **without** copying or resampling any purchased bars;
+- separately exercises the existing purchased-first and explicitly opt-in
+  SHA-verified PRIVATE H5 fallback for 1/5minute on 2026-09-30..10-13;
+- emits only aggregate counts and provenance, retains existing raw
+  purchased time labels, and refuses any production activation.
+
+**The six-cycle 144-file inventory has passed on Windows; the combined
+eight-cycle *real-market smoke* has not yet been reported as passed.**
+The next command should be the existing
+`run-purchased-primary-all-eight-cycles-smoke.ps1`, not another materialization
+or manual 144-file reader. After this real sample passes, continue year-range
+and securities/date coverage checks with the already available
+`run-purchased-2025-cycle-footer-survey.ps1` (footer evidence only), then
+establish separate numerical unit, corporate action/adjustment and calendar
+certification before production release. Do not interpret raw week/month
+timestamps as proven exchange aggregation boundaries.

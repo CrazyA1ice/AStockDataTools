@@ -172,3 +172,20 @@ The already Windows-verified eight-cycle research query remains the only accepte
 The user pulled the initial `3f9d90e` revision and ran `run-2026-oct-h5-5min-high-cycle-readonly-calibration.ps1`. The existing eight-cycle synthetic set **10/10 PASS**, but the new source-calibration synthetic set **7/8 PASS, 1 FAIL** before any real licensed market source opened. Failing test: `test_bad_clock_grid_and_repeated_keys_rejected`. The purported duplicate case `fake5()[:-1] + [dict(fake5()[-1])]` was in fact the original 48 bars unchanged, so the validator correctly did NOT raise an exception. This is a bad test fixture, **not** evidence of a source-data corruption or a successful/failed real September-vs-October calibration.
 
 Commit `be43c7c` repairs **only** the synthetic fixture: replace the final 5min bar with a second copy of the penultimate bar, and independently assert exactly 47 distinct timestamps for 48 rows; retain a separate off-grid case with 48 distinct times. No market parsing, aggregation, routing, production logic, previously verified minute sources, or original source files changed. The synthetic and actual Windows real-data calibration must be rerun on a revision with `be43c7c` as an ancestor. Until the user reports it, the `PASS_2026_OCT_HIGH_CYCLE_5MIN_CANDIDATE_SOURCE_CALIBRATION_READONLY` status is **NOT** accepted.
+
+## 2026-11-08 Windows 2026-10-13 high-cycle candidate gate PASS: isolated SZ000001 daily divergence
+
+User ran revision `5b22451`, verified with Git ancestor gate, on the local originals. The existing eight-cycle synthetic checks **10/10 PASS**, new clock-grid and aggregation tests **8/8 PASS**; then real `PASS_2026_OCT_HIGH_CYCLE_5MIN_CANDIDATE_SOURCE_CALIBRATION_READONLY` with 0 original market writes or production activation.
+
+Original purchased **2026-09-30** per-stockday calibration:
+
+| Stock | 15min full OHLCVA bars / source | 30min | 60min | day |
+| --- | --- | --- | --- | --- |
+| SH600000 | 16/16 | 8/8 | 4/4 | 1/1 |
+| SZ000001 | 16/16 | 8/8 | 4/4 | **0/1** |
+
+Each high-cycle reference had its expected original-source rows and the aggregated purchased 5min **raw timestamp labels match**. Six-field OHLCVA equality uses the existing tolerance; **SZ000001 2026-09-30 original purchased daily is an observed discrepancy**, not an absent stockday or a failed source read. Do not infer its cause until the actual per-field agreement is shown. Do NOT weaken the tolerance, normalize vendor units speculatively, or change the original daily source to make the test pass. All original purchased higher-cycle OHLCVA records still win.
+
+On **2026-10-13**, for both sample stocks, 48 SHA-checked verified H5 5min start-label bars form the complete expected 48-slot day, and the original purchased high-cycle 15/30/60min/day **has zero rows**. Each stock therefore yields **16/8/4/1 potential buckets** in process memory (29 each, 58 across two stocks). No physical high-cycle Parquet has been created; no extrapolation to additional securities or 2026 Oct days, nor production unit, corporate-action, or independent source certification.
+
+To avoid additional modules or new duplicated reports, the EXISTING `run-2026-oct-h5-5min-high-cycle-readonly-calibration.ps1` now prints a supplementary `OCT_HIGH_CYCLE_REFERENCE_FIELD_DIAGNOSTIC` line **only** for a source high-cycle with valid matching raw keys but fewer than expected full six-field matches. That line contains per-field counts for `OPEN/HIGH/LOW/CLOSE/VOLUME/AMOUNT`, **not** proprietary prices/quantities. Source computation, synthesis hypotheses, SHA gates and original market files are unchanged. This print-only change **is newly committed and not yet rerun on Windows**. Once diagnosed, prioritize only fully evidenced intraday cycles; daily derived values remain separate research candidates until the independent price-volume-amount and cross-source unit gates pass. Never manufacture weekly/monthly from these isolated dates.

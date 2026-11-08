@@ -71,7 +71,7 @@ class PurchasedFactorOnlyFooterTests(unittest.TestCase):
             M.inspect(self.root)
 
     def test_file_budget_fails_before_any_data_read(self):
-        with self.assertRaisesRegex(ValueError,"bounded nonempty"):
+        with self.assertRaisesRegex(ValueError,"resource budgets"):
             M.inspect(self.root,max_files=0)
         with self.assertRaisesRegex(ValueError,"resource budgets"):
             M.inspect(self.root,max_rowgroups=0)

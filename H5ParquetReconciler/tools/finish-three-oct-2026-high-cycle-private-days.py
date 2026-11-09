@@ -86,7 +86,7 @@ def finish(root,*,preview_only=False,emit=print,rollout=R.rollout,audit=A.audit)
              for d in (*TARGETS,BASELINE_DAY)}
     last=initial[BASELINE_DAY]
     if (not last["this_date_coverage_complete"]
-            or last["this_date_staged_complete_stockdays"]!=5549):
+            or last["this_date_staged_complete_stockdays"]!=SOURCE_ELIGIBLE[BASELINE_DAY]):
         raise ValueError("Previously completed 2026-10-13 must remain SHA-verified")
     counts=[initial[d]["stage_stockdays_all_october_sha_verified"]
             for d in (*TARGETS,BASELINE_DAY)]

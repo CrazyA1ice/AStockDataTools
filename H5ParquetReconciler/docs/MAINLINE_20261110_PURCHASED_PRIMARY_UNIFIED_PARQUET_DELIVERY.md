@@ -137,3 +137,28 @@
 及 1990—2010 历史 RAW 日线通过各自的严格独立资格 gate 编目，
 逐周期按键级别做异常/缺口清单，再建立安全生产准入与
 独立原生 H5 镜像，不复写购买原件。
+
+## 2026-11-10 版本绑定查询真实运行：前五分钟周期 PASS，PowerShell 空来源计数已修复
+
+用户 Windows 已执行提交 `4534f0a` 的八周期目录 SHA 绑定只读查询：
+原版本 SHA `7f4a84f07d519e317d6b51049004d937acd8cba4cf561a3312fe457c5bed68df`。
+此前四组合成测试 10+11+7+12 = **40 项全部 OK**，且真实前五分钟
+周期购买/H5 结果 PASS：1min 241+960=1201、5min 48+192=240、
+15min 16+64=80、30min 8+32=40、60min 4+16=20。未产生新的行情
+Parquet/H5、未切换任何生产指针。**不能仅凭这五项说八周期最终通过。**
+
+原 Windows PowerShell 验收脚本在日线/周线/月线来源统计时，尝试对空的
+非购买来源集合结果 `[0]` 取值，引发 `IndexOutOfRangeException`。
+此错误发生在 Python 返回聚合数据之后的脚本 SAFE 验收层，
+不是已观察到的 Parquet 数据损坏或 SHA 校验失败；三周期的最终
+PowerShell PASS 因此未取得。
+
+修复：独立 `verify-catalog-bound-eight-cycle-sources.ps1`
+新增 `Get-CatalogBoundEightCycleSourceCounts`，枚举有效来源值相加，
+不再对空 `Measure-Object` 结果强行取 `[0]`，对小于零、
+非整数、来源加总不守恒、day/week/month 偷带私有补缺统一拒绝。
+测试脚本 `tests/test_catalog_bound_eight_cycle_safe_summary.ps1`
+增加 9 项纯合成用例，修改原一键入口在实机八周期只读查询前先
+运行这九项。**修复提交之后的 Windows 复验尚待用户执行**。
+继续使用原不可变目录 SHA，不重新生成来源 catalog、原始购买
+Parquet 或四天 621348 条高周期私有候选。

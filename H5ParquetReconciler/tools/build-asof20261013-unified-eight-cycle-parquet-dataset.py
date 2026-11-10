@@ -195,6 +195,34 @@ def assemble(root,catalog_sha,*,day_version_sha=SOURCE_DAY_VERSION_SHA,
                 "h5_5min_derived_unverified_units",
                 sha256=item["content_sha256"],rows=item["rows"]))
     parts["day"]=modern_day_files(day_version_safe,day_version_sha)
+    # This is a DATASET, not merely a filename manifest. Verify EVERY
+    # physical Parquet fragment exposes the same eight raw Arrow fields.
+    # Exclude vendor extra columns in the exposed common projection, retain
+    # originals untouched, and check typed footer counts where known.
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    expected={"ts":pa.int64(),"symbol":pa.string(),
+              **{name:pa.float64() for name in RAW_COLS[2:]}}
+    seen_files=set()
+    for period in PERIODS:
+        for item in parts[period]:
+            pair=(item["root_kind"],item["relative_file"])
+            if pair in seen_files:
+                raise ValueError("Duplicated physical Parquet fragment in dataset")
+            seen_files.add(pair)
+            file=checked(item["root_kind"],item["relative_file"],root,MODULE,
+                         item.get("content_sha256"),
+                         purchased_stat=item.get("source_stat"))
+            with pq.ParquetFile(file,memory_map=False) as pf:
+                schema=pf.schema_arrow
+                if (any(name not in schema.names or
+                        schema.field(name).type!=dtype
+                        for name,dtype in expected.items())
+                        or pf.metadata.num_rows<=0):
+                    raise ValueError("Parquet dataset fragment schema invalid")
+                if ("source_rows" in item and
+                        item["source_rows"]!=pf.metadata.num_rows):
+                    raise ValueError("Dataset source fragment row counts differ")
     if (sum(x["source_rows"] for p in ("15min","30min","60min")
             for x in parts[p] if x["source_class"]==
             "h5_5min_derived_unverified_units")!=621348
@@ -334,6 +362,22 @@ def open_period_dataset(manifest_path,root,period,*,expected_sha,
                 if observed.field(field.name).type!=field.type:
                     raise ValueError("Uncoercible original purchased/H5 schema")
     return ds.dataset([str(p) for p in files],format="parquet",schema=schema)
+
+def scan_period_asof(manifest_path,root,period,*,expected_sha,
+                     allow_research_unverified_units=False,batch_size=32768):
+    """Return a bounded streaming Arrow Scanner, with an enforced end cutoff."""
+    import pyarrow.dataset as ds
+    if type(batch_size) is not int or not 1<=batch_size<=32768:
+        raise ValueError("Unsafe Arrow scan batch size")
+    dataset=open_period_dataset(
+        manifest_path,root,period,expected_sha=expected_sha,
+        allow_research_unverified_units=allow_research_unverified_units)
+    after=ASOF+timedelta(days=1)
+    high=int(datetime(after.year,after.month,after.day,
+                      tzinfo=timezone(timedelta(hours=8))).timestamp()*1000)
+    return dataset.scanner(
+        columns=list(RAW_COLS),filter=ds.field("ts")<high,
+        batch_size=batch_size,use_threads=False)
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)

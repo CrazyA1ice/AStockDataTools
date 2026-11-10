@@ -213,6 +213,33 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
                 M.load_manifest(file,self.market,expected_sha=digest,
                                 verify_sources=True)
 
+    def test_batch_open_all_eight_one_validation_call(self):
+        file,version=self.write_version()
+        payload=self.pseudo_payload()
+        with patch.object(M,"load_manifest",return_value=(payload,version)) as verify:
+            datasets,returned=M.open_eight_cycle_dataset_bundle(
+                file,self.market,expected_sha=version,
+                allow_research_unverified_units=True)
+            self.assertEqual(len(datasets),8)
+            self.assertEqual(set(datasets),set(M.PERIODS))
+            self.assertEqual(datasets["5min"].to_table(
+                columns=["symbol","close"]).num_rows,1)
+            self.assertEqual(returned,payload)
+        verify.assert_called_once_with(
+            file,self.market,expected_sha=version,verify_sources=True)
+
+    def test_full_history_h5_requires_separate_opt_in_and_all_21_year_files(self):
+        file,version=self.write_version()
+        with self.assertRaisesRegex(ValueError,"UNVERIFIED historical"):
+            M.open_historical_1990_2010_research_day_dataset(
+                file,self.market,expected_sha=version)
+        with patch.object(M,"load_manifest",
+                          return_value=(self.pseudo_payload(),version)):
+            with self.assertRaisesRegex(ValueError,"No 21-year"):
+                M.open_historical_1990_2010_research_day_dataset(
+                    file,self.market,expected_sha=version,
+                    allow_historical_unverified=True)
+
     def test_cutoff_is_fixed_not_october_end(self):
         self.assertEqual(M.DATE_CUTOFF,"2026-10-13")
         self.assertEqual(M.ASOF.isoformat(),"2026-10-13")

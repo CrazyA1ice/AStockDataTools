@@ -39,10 +39,12 @@ ALL=BOUND.ALL
 
 def paired_version(catalog_sha,day_version_sha):
     """A deterministic *research* pair identity, NOT a published production pointer."""
-    BOUND.CATALOG_SHA.fullmatch(catalog_sha) or (_ for _ in ()).throw(
-        ValueError("Invalid original catalog SHA256"))
-    RESOLVE.SHA.fullmatch(day_version_sha) or (_ for _ in ()).throw(
-        ValueError("Invalid registered day version SHA256"))
+    if (type(catalog_sha) is not str or
+            BOUND.CATALOG_SHA.fullmatch(catalog_sha) is None):
+        raise ValueError("Invalid original catalog SHA256")
+    if (type(day_version_sha) is not str or
+            RESOLVE.SHA.fullmatch(day_version_sha) is None):
+        raise ValueError("Invalid registered day version SHA256")
     body={
         "format":FORMAT,
         "purchased_primary_catalog_sha256":catalog_sha,

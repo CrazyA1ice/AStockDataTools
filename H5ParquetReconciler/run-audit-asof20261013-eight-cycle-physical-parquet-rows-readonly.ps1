@@ -22,14 +22,14 @@ if($reports.Count -ne 1){throw 'Missing uniquely identified all-eight-cycle sour
 $r=([string]$reports[0]).Substring('EIGHT_CYCLE_PHYSICAL_PARQUET_FOOTER_CENSUS='.Length)|ConvertFrom-Json
 if($r.status -ne 'asof_20261013_eight_cycle_physical_arrow_parquet_footer_row_census_v1' -or $r.dataset_sha256 -ne $datasetSha -or $r.dataset_coverage_end_inclusive -ne '2026-10-13' -or $r.period_count -ne 8 -or $r.source_rowgroup_timestamp_bounds_all_before_2026_10_14 -ne $true -or $r.source_rows_counted_from_actual_Parquet_footers -ne $true -or $r.original_purchased_sources_checked_by_stat_not_full_content_SHA -ne $true -or $r.private_parquet_bytes_rechecked_by_content_SHA -ne $true -or $r.separate_historical_1990_2010_unverified_rows -ne 3682327 -or $r.historical_source_not_merged_into_standard_day -ne $true -or $r.exact_stockday_time_key_coverage_certified -ne $false -or $r.exchange_trading_calendar_certified -ne $false -or $r.vendor_physical_units_or_adjustments_certified -ne $false -or $r.new_market_or_source_files_written -ne $false -or $r.ready_for_production_query -ne $false){throw 'Unsafe or incomplete actual eight-period Parquet row census'}
 $expected=[ordered]@{
-    '1min'=3452748739L
-    '5min'=687688817L
-    '15min'=229229608L
-    '30min'=114614804L
-    '60min'=57307404L
-    'day'=14137981L
-    'week'=2996956L
-    'month'=711331L
+    '1min'=[long]3452748739
+    '5min'=[long]687688817
+    '15min'=[long]229229608
+    '30min'=[long]114614804
+    '60min'=[long]57307404
+    'day'=[long]14137981
+    'week'=[long]2996956
+    'month'=[long]711331
 }
 $sum=[long]0
 foreach($cycle in $expected.Keys){

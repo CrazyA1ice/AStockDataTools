@@ -85,6 +85,7 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
             "modern_16year_day_physical_version_sha256":M.SOURCE_DAY_VERSION_SHA,
             "historical_1990_2010_day":{"historical_files":[]},
             "asof_inclusive":"2026-10-13",
+            "strict_cutoff_next_day":"2026-10-14",
             "periods":list(M.PERIODS),
             "period_physical_files":entries,
             "ready_for_production_query":False,
@@ -206,6 +207,22 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
             M.open_period_dataset(file,self.market,"day",
                                   expected_sha=digest)
         self.assertTrue(file.is_file())
+
+    def test_incomplete_source_identity_rejected_before_assembling_market(self):
+        for missing in ("modern_16year_day_physical_version_sha256",
+                        "source_catalog_sha256","historical_1990_2010_day",
+                        "strict_cutoff_next_day"):
+            with self.subTest(missing=missing):
+                payload=self.pseudo_payload()
+                del payload[missing]
+                file,digest=self.write_version(payload)
+                with patch.object(M,"assemble") as audit:
+                    with self.assertRaisesRegex(ValueError,"mandatory source identity"):
+                        M.load_manifest(file,self.market,expected_sha=digest,
+                                        verify_sources=True)
+                    audit.assert_not_called()
+                # Separate temp-root per subtest is not needed; the prior
+                # immutable manifest remains a distinct content SHA version.
 
     def test_source_catalog_change_prevents_manifest_use(self):
         file,digest=self.write_version()

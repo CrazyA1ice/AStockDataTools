@@ -82,6 +82,8 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
         return {
             "format":M.MANIFEST_VERSION,
             "source_catalog_sha256":self.catalog,
+            "modern_16year_day_physical_version_sha256":M.SOURCE_DAY_VERSION_SHA,
+            "historical_1990_2010_day":{"historical_files":[]},
             "asof_inclusive":"2026-10-13",
             "periods":list(M.PERIODS),
             "period_physical_files":entries,

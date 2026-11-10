@@ -379,6 +379,31 @@ def load_manifest(path,root,*,expected_sha=None,verify_sources=True):
             raise ValueError("Parquet dataset references stale underlying source")
     return doc["payload"],version
 
+def validate_eight_arrow_dataset_metadata(payload,root):
+    """All 8 PyArrow DATASET instances, no K-line batches, no new bar files.
+
+    assemble() has already checked physical SHA and every field/row footer;
+    this only makes the actual eight Arrow multi-file datasets from that
+    validated list and proves the fragment enumeration is identical.
+    """
+    import pyarrow as pa
+    import pyarrow.dataset as ds
+    schema=pa.schema([pa.field("ts",pa.int64()),
+                      pa.field("symbol",pa.string()),
+                      *(pa.field(k,pa.float64()) for k in RAW_COLS[2:])])
+    counts={}
+    for period in PERIODS:
+        records=payload["period_physical_files"][period]
+        paths=[]
+        for row in records:
+            base=Path(root).resolve() if row["root_kind"]=="purchased_root" else MODULE
+            paths.append(str(base.joinpath(*row["relative_file"].split("/"))))
+        dataset=ds.dataset(paths,format="parquet",schema=schema)
+        if (dataset.schema!=schema or len(dataset.files)!=len(paths)):
+            raise ValueError("Physical Arrow dataset missing a Parquet fragment")
+        counts[period]=len(paths)
+    return counts
+
 def open_period_dataset(manifest_path,root,period,*,expected_sha,
                         allow_research_unverified_units=False):
     """A real pyarrow.dataset.Dataset, zero bar duplication, no new index.
@@ -464,6 +489,7 @@ def main(argv=None):
                          day_version_safe=a.modern_day_version_safe,
                          with_historical_1990_2010=not a.skip_historical_research_layer)
         file,created=write_manifest(payload)
+        opened=validate_eight_arrow_dataset_metadata(payload,a.root)
         print("UNIFIED_20261013_EIGHT_CYCLE_PARQUET_DATASET="+json.dumps({
             "status":MANIFEST_VERSION,
             "dataset_sha256":fingerprint(payload),
@@ -471,6 +497,9 @@ def main(argv=None):
             "file_count_by_period":{p:len(payload["period_physical_files"][p])
                                     for p in PERIODS},
             "all_eight_cycles_physically_addressable":True,
+            "actual_pyarrow_datasets_opened":len(opened),
+            "arrow_fragment_counts":opened,
+            "market_bar_batches_read_during_arrow_open":False,
             "modern_day_physical_rows":MODERN_ROWS,
             "h5_gap_day_rows":PRIVATE_DAY_ROWS,
             "h5_derived_highcycle_candidate_rows":621348,

@@ -438,6 +438,35 @@ def open_period_dataset(manifest_path,root,period,*,expected_sha,
                     raise ValueError("Uncoercible original purchased/H5 schema")
     return ds.dataset([str(p) for p in files],format="parquet",schema=schema)
 
+def open_eight_cycle_dataset_bundle(manifest_path,root,*,expected_sha,
+                                    allow_research_unverified_units=False):
+    """One SHA/source verification, return eight actual physical Arrow Datasets.
+
+    Period file lists + provenance remain in the immutable payload; the
+    PyArrow datasets expose the common raw eight-column schema. Consumers
+    MUST apply their own key policy and cutoff, or use scan_period_asof.
+    """
+    if allow_research_unverified_units is not True:
+        raise ValueError("Explicit research-only source-unit opt-in required")
+    payload,_=load_manifest(
+        manifest_path,root,expected_sha=expected_sha,verify_sources=True)
+    import pyarrow as pa
+    import pyarrow.dataset as ds
+    schema=pa.schema([pa.field("ts",pa.int64()),
+                      pa.field("symbol",pa.string()),
+                      *(pa.field(k,pa.float64()) for k in RAW_COLS[2:])])
+    datasets={}
+    for period in PERIODS:
+        files=[
+            checked(item["root_kind"],item["relative_file"],
+                    Path(root).resolve(),MODULE,
+                    item.get("content_sha256"),
+                    purchased_stat=item.get("source_stat"))
+            for item in payload["period_physical_files"][period]]
+        datasets[period]=ds.dataset(
+            [str(f) for f in files],format="parquet",schema=schema)
+    return datasets,payload
+
 def open_historical_1990_2010_research_day_dataset(manifest_path,root,*,
                          expected_sha,allow_historical_unverified=False):
     """Standalone historical H5-candidate Parquet dataset, NEVER modern DAY."""

@@ -109,6 +109,8 @@ def _validated_private_rowset(root,day,symbol,period,registry):
         raise ValueError("Private highcycle derived source provenance is unsafe")
     if S._sha(file)!=metadata["sha256"]:
         raise ValueError("Private highcycle Parquet changed during read")
+    for row in actual:
+        row["_private_file_relative_path"]=metadata["private_file"]
     return actual
 
 def query_bars(root,symbol,period,first,last,*,
@@ -160,7 +162,7 @@ def query_bars(root,symbol,period,first,last,*,
                     "source_timestamp_ms":ts,
                     "source_beijing_time":clock.strftime("%Y-%m-%d %H:%M"),
                     "value_source":SOURCE_VALUE,
-                    "source_file_relative_path":r["source_5min_private_sha256"],
+                    "source_file_relative_path":r["_private_file_relative_path"],
                     "source_row_group":None,"h5_native_datetime":None,
                     **{f:r[f] for f in ALL.FIELDS},
                 })

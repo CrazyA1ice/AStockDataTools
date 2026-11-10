@@ -534,8 +534,11 @@ def main(argv=None):
                          day_version_sha=a.modern_day_version_sha256,
                          day_version_safe=a.modern_day_version_safe,
                          with_historical_1990_2010=not a.skip_historical_research_layer)
-        file,created=write_manifest(payload)
+        # Do not publish even an immutable metadata version if one of the
+        # eight real PyArrow datasets cannot be opened. Safe to retry after
+        # fixing a source; no incomplete success manifest is left behind.
         opened=validate_eight_arrow_dataset_metadata(payload,a.root)
+        file,created=write_manifest(payload)
         print("UNIFIED_20261013_EIGHT_CYCLE_PARQUET_DATASET="+json.dumps({
             "status":MANIFEST_VERSION,
             "dataset_sha256":fingerprint(payload),

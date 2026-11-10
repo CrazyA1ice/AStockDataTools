@@ -10,6 +10,9 @@ Set-Location -LiteralPath $repo
 $py=Join-Path $repo '.venv\Scripts\python.exe'
 $tool=Join-Path $module 'tools\query-catalog-bound-purchased-primary-eight-cycles-readonly.py'
 $tests=Join-Path $module 'tests'
+$helper=Join-Path $module 'verify-catalog-bound-eight-cycle-sources.ps1'
+if(-not (Test-Path -LiteralPath $helper -PathType Leaf)){throw 'Missing safe eight-cycle provenance-count helper'}
+. $helper
 foreach($path in @($py,$tool)){if(-not (Test-Path -LiteralPath $path -PathType Leaf)){throw ('Missing catalog-bound query prerequisite: '+$path)}}
 foreach($pattern in @(
     'test_query_purchased_primary_all_eight_cycles_readonly.py',
@@ -20,6 +23,8 @@ foreach($pattern in @(
     & $py -B -m unittest discover -s $tests -p $pattern -q
     if($LASTEXITCODE -ne 0){throw ('Catalog-bound eight-cycle query safety tests failed: '+$pattern)}
 }
+& (Join-Path $tests 'test_catalog_bound_eight_cycle_safe_summary.ps1')
+if($LASTEXITCODE -ne 0){throw 'Eight-cycle PowerShell zero-private-source regression failed'}
 # ONE invocation, ONE catalog source SHA/receipt preflight, EIGHT periods.
 # Live prices never go to stdout. Only bound aggregate source counts are shown.
 $lines=@(& $py -B $tool --root 'D:\stock' --catalog-sha256 $CatalogSha256 --symbol SH600000 --periods 1min 5min 15min 30min 60min day week month --from-day 2026-09-30 --through-day 2026-10-13 --max-result-bars 5000 --max-candidate-rows 30000000 --allow-private-gap)
@@ -44,15 +49,14 @@ foreach($item in @($r.periods)){
     if($item.production_activated -ne $false -or $item.candidate_vendor_units_certified -ne $false -or $item.matching_bar_count -lt 0){throw ('Unsafe cycle: '+$cycle)}
     $sum+=[int]$item.matching_bar_count
     if($expected.ContainsKey($cycle)){
-        $paid=$item.bars_by_source.PSObject.Properties['purchased_parquet']
-        $h5=@($item.bars_by_source.PSObject.Properties | Where-Object {$_.Name -ne 'purchased_parquet'} | Measure-Object -Property Value -Sum)[0].Sum
+        $totals=Get-CatalogBoundEightCycleSourceCounts -PeriodSummary $item -AllowPrivate $true
         $want=$expected[$cycle]
-        if($null -eq $paid -or $paid.Value -ne $want[0] -or $h5 -ne $want[1] -or $item.matching_bar_count -ne $want[2] -or $item.private_gap_requested -ne $true){throw ('Purchased-first/catalog H5 source counts changed: '+$cycle)}
-        Write-Host ('PASS_SHA_BOUND_PERIOD CYCLE='+$cycle+' PURCHASED='+$paid.Value+' VERIFIED_H5_PRIVATE='+$h5+' ROWS='+$item.matching_bar_count)
+        if(-not $totals.HasPurchasedSource -or $totals.Purchased -ne $want[0] -or $totals.Private -ne $want[1] -or $item.matching_bar_count -ne $want[2] -or $item.private_gap_requested -ne $true){throw ('Purchased-first/catalog H5 source counts changed: '+$cycle)}
+        Write-Host ('PASS_SHA_BOUND_PERIOD CYCLE='+$cycle+' PURCHASED='+$totals.Purchased+' VERIFIED_H5_PRIVATE='+$totals.Private+' ROWS='+$item.matching_bar_count)
     }else{
         if($cycle -notin @('day','week','month') -or $item.private_gap_requested -ne $false){throw ('Unknown or private day/week/month source: '+$cycle)}
-        $h5=(@($item.bars_by_source.PSObject.Properties | Where-Object {$_.Name -ne 'purchased_parquet'} | Measure-Object -Property Value -Sum)[0].Sum)
-        if($h5 -ne 0){throw ('Unregistered day/week/month H5 overlay: '+$cycle)}
+        $totals=Get-CatalogBoundEightCycleSourceCounts -PeriodSummary $item -AllowPrivate $false
+        if($totals.Private -ne 0){throw ('Unregistered day/week/month H5 overlay: '+$cycle)}
         Write-Host ('PASS_SHA_BOUND_PURCHASED_NATIVE_PERIOD CYCLE='+$cycle+' ROWS='+$item.matching_bar_count)
     }
 }

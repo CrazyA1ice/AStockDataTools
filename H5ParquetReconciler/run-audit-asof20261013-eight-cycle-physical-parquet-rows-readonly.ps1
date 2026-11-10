@@ -14,7 +14,7 @@ $datasetSha='a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01'
 $manifest=Join-Path $module 'work\unified_parquet\datasets\eight_cycle_asof_20261013_a4987bba0ce3a1f6\manifest.json'
 foreach($item in @($py,$tool,$manifest)){if(-not (Test-Path -LiteralPath $item -PathType Leaf)){throw ('Missing actual accepted dataset input: '+$item)}}
 & $py -B -m unittest discover -s $testDir -p $testName -q
-if($LASTEXITCODE -ne 0){throw 'Physical all-market eight-cycle row census nine regression cases failed'}
+if($LASTEXITCODE -ne 0){throw 'Physical all-market eight-cycle row census regression tests failed'}
 $lines=@(& $py -B $tool --root 'D:\stock' --manifest $manifest --dataset-sha256 $datasetSha)
 if($LASTEXITCODE -ne 0){throw 'Real existing eight-cycle Parquet row/source/time cutoff census failed'}
 $reports=@($lines|Where-Object {$_ -like 'EIGHT_CYCLE_PHYSICAL_PARQUET_FOOTER_CENSUS=*'})

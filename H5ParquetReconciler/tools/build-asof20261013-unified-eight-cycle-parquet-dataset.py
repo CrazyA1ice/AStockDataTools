@@ -474,8 +474,9 @@ def open_historical_1990_2010_research_day_dataset(manifest_path,root,*,
         raise ValueError("Explicit UNVERIFIED historical H5 unit-hypothesis opt-in required")
     payload,_=load_manifest(
         manifest_path,root,expected_sha=expected_sha,verify_sources=True)
-    records=payload["historical_1990_2010_day"]["historical_files"]
-    if len(records)!=21:
+    records=payload.get("historical_1990_2010_day",{}).get(
+        "historical_files",[])
+    if not isinstance(records,list) or len(records)!=21:
         raise ValueError("No 21-year physically verified historical research layer")
     import pyarrow.dataset as ds
     import pyarrow as pa

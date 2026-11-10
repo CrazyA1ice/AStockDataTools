@@ -259,6 +259,17 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
                     file,self.market,expected_sha=version,
                     allow_historical_unverified=True)
 
+    def test_no_manifest_published_if_eight_real_arrow_datasets_fail(self):
+        payload=self.pseudo_payload()
+        with patch.object(M,"assemble",return_value=payload),patch.object(
+                M,"validate_eight_arrow_dataset_metadata",
+                side_effect=ValueError("Unopenable synthetic Arrow fragment")):
+            with self.assertRaises(SystemExit):
+                M.main(["--root",str(self.market),
+                        "--source-catalog-sha256",self.catalog])
+        self.assertFalse((self.work/"datasets").exists(),
+                         "A failed PyArrow fragment check must not publish a manifest")
+
     def test_cutoff_is_fixed_not_october_end(self):
         self.assertEqual(M.DATE_CUTOFF,"2026-10-13")
         self.assertEqual(M.ASOF.isoformat(),"2026-10-13")

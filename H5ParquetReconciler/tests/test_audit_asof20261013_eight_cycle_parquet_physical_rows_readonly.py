@@ -123,6 +123,26 @@ class EightCyclePhysicalParquetFooterCensus(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"Duplicate physical"):
             M.audit(self.payload,self.market,periods=("1min",))
 
+    def test_full_eight_cycle_missing_historical_tier_refuses_before_market_reads(self):
+        # A bounded period may omit 21-year history, but the full eight-period
+        # published census MUST fail before scanning any source fragment.
+        with patch.object(M,"physical_file_stats",
+                          side_effect=AssertionError("unexpected market read")):
+            with self.assertRaisesRegex(ValueError,"historical research source registry"):
+                M.audit(self.payload,self.market,periods=M.D.PERIODS)
+
+    def test_full_eight_cycle_invalid_historical_source_list_refused(self):
+        self.payload["historical_1990_2010_day"]={"historical_files":[]}
+        with self.assertRaisesRegex(ValueError,"21-year research layer absent"):
+            M.audit(self.payload,self.market,periods=M.D.PERIODS)
+
+    def test_partial_period_ignores_unneeded_historical_source_registry(self):
+        self.payload["historical_1990_2010_day"]={"historical_files":"not a list"}
+        result=M.audit(self.payload,self.market,periods=("1min",))
+        self.assertEqual(result["period_count"],1)
+        self.assertEqual(result["separate_historical_1990_2010_unverified_rows"],0)
+        self.assertFalse(result["exact_stockday_time_key_coverage_certified"])
+
     def test_no_unsupported_missing_timestamp_statistics_accepted(self):
         path=self.market/"AllCycleAStockData"/"5min"/"2026.parquet"
         path.parent.mkdir(parents=True,exist_ok=True)

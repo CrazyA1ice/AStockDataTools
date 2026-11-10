@@ -115,8 +115,19 @@ def _purchased(root):
             relevant=paths[period][year]
             if len(relevant)!=yearly[period][str(year)]["source_files"]:
                 raise ValueError("Purchased file metadata count changed during catalog")
-            files[period+"|"+str(year)]=[
-                _safe_file_ref(file,Path(root)) for file in relevant]
+            refs=[_safe_file_ref(file,Path(root)) for file in relevant]
+            original_identity=[{
+                "relative_source_path":item["relative_path"],
+                "size_bytes":item["size_bytes"],"mtime_ns":item["mtime_ns"]}
+                for item in refs]
+            original_identity.sort(key=lambda x:x["relative_source_path"])
+            rechecked=hashlib.sha256(json.dumps(
+                original_identity,ensure_ascii=False,sort_keys=True,
+                separators=(",",":")).encode("utf-8")).hexdigest()
+            if rechecked!=yearly[period][str(year)][
+                    "source_file_stat_identity_sha256_not_content_digest"]:
+                raise ValueError("Purchased original file identity changed since footer scan")
+            files[period+"|"+str(year)]=refs
     return {
         "period_years":yearly,
         "original_source_files_by_period_year":files,

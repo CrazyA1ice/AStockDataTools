@@ -75,3 +75,17 @@
 
 该工具与 11 项新增合成测试已经提交 GitHub；截至提交时还未获得
 用户 Windows 的本机真实查询 PASS。
+
+## 2026-11-10 购买+H5高周期真实统一查询通过
+
+用户 Windows 在提交 6b251ec 上通过所有 10+6+11 项测试。真实查询 SH600000，2026-09-30..10-13：15min 购买16+H5私有64=80；30min 购买8+H5私有32=40；60min 购买4+H5私有16=20。全部来源购买优先，H5 只在明确无购买股票日时按研究开关使用。未修改原 Parquet/H5，生产未启用。
+
+## 新增可版本化统一来源目录（仍待 Windows 实机验收）
+
+- 新工具 tools/build-purchased-primary-eight-cycle-private-source-catalog.py：基于已有 2011—2026 八周期 Parquet 页脚审计，按源文件相对路径、文件大小和 mtime_ns 引用全部购买原文件，既不复制也不扫描商业 OHLCVA。每个年份/周期的 stat identity SHA 在页脚审计后再次计算，若文件状态漂移就失败。**此来源指纹不是购买 Parquet 全内容 SHA；页脚计数不是证券/交易日唯一键认证**。
+- 复用之前已经过实机验收的高周期 SHA 注册表，完整重验四日 22,191 个股票交易日、621,348 根 15/30/60 分钟私有候选行，以及每份独立 run 的 receipt SHA 和 Parquet 内容 SHA。另纳入相同四日的 8 份 H5 1/5min 私有补缺 Parquet 的已验证内容 SHA。候选始终附带物理量纲、时间标签及复权语义未认证状态。
+- 只在 work/unified_parquet/source_catalog/ 下写一份不可变的 catalog_<metadata-sha256>.json **元数据文件**，不会新建购买 K 线镜像，也不会切换生产消费者。相同来源再运行是幂等读回；旧文件若被篡改即失败。
+- 已提交 7 项合成测试与 PowerShell 一键入口 run-purchased-primary-eight-cycle-private-source-catalog.ps1；此新增实现的 Windows 回归仍待验收。
+- 原始 1990—2010 H5 RAW 日线与 2011—2026 日线 22,274 条注册候选，由各自独立可追溯版本管理，不因本轮编目自动提升为已认证生产数据。
+
+**后续主线**：让本地查询端显式绑定 catalog_sha256，逐请求检查源文件版本；继续从源实体键而不是 footer 行数做全周期差集，独立核准量价金额、时间标记、复权与证券历史身份。生产合并/Hikyuu 镜像需要之后的单独门禁与明确准入。

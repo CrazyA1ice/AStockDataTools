@@ -49,6 +49,8 @@ CAT=_load("asof_eight_cycle_sha_bound_catalog",
           "query-catalog-bound-purchased-primary-eight-cycles-readonly.py")
 DAY=_load("asof_modern_physical_16_year_day_sha_version",
           "query-private-2011-2026-all16-coverage-readonly.py")
+HIST=_load("asof_historical_21_year_source_and_sha_verifier",
+           "audit-original-h5-pre2011-private-21-year-day-readonly.py")
 
 def canonical(value):
     return (json.dumps(value,ensure_ascii=False,sort_keys=True,
@@ -94,7 +96,8 @@ def checked(root_kind,rel,root,mod,expected=None,*,purchased_stat=None):
 def _item(kind,relative,source,*,sha256=None,rows=None,stat=None):
     if source not in ("purchased_original", "modern_16yr_purchased_first_day",
                       "h5_only_verified_complete_stockday",
-                      "h5_5min_derived_unverified_units"):
+                      "h5_5min_derived_unverified_units",
+                      "historical_1990_2010_h5_uncertified_candidate"):
         raise ValueError("Unknown source class")
     item={"root_kind":kind,"relative_file":relative,"source_class":source}
     if sha256 is not None:
@@ -143,8 +146,38 @@ def modern_day_files(version_safe=SOURCE_DAY_VERSION_SAFE,
         raise ValueError("2011-2026 purchased-first physical day row count wrong")
     return entries
 
+def historical_day_files(root):
+    """Full independent 21-year real physical/keys/OHLC geometry audit."""
+    report=HIST.audit(root)
+    if (report.get("state")!=
+            "full_1990_2010_private_h5_day_21_year_files_shas_schema_keys_quality_verified_readonly_not_promoted"
+            or report.get("years_verified")!=21
+            or report.get("private_a_code_stockday_rows_verified")!=3682327
+            or report.get("h5_price_volume_amount_units_certified") is not False
+            or report.get("historical_security_master_certified") is not False
+            or report.get("original_market_sources_modified") is not False
+            or report.get("ready_for_production_merge") is not False):
+        raise ValueError("Uncertified historical 1990-2010 private day audit failed")
+    annual=HIST._private_paths()
+    rows=[]
+    for year in range(1990,2011):
+        folder=annual[year]
+        manifest=json.loads((folder/"manifest.json").read_bytes())
+        rel=(folder/"day.parquet").relative_to(MODULE).as_posix()
+        digest=manifest["private_parquet_sha256"]
+        checked("private_module",rel,root,MODULE,digest)
+        rows.append(_item(
+            "private_module",rel,
+            "historical_1990_2010_h5_uncertified_candidate",
+            sha256=digest,rows=manifest["candidate_stockday_rows"]))
+    if (len(rows)!=21 or
+            sum(x["source_rows"] for x in rows)!=3682327):
+        raise ValueError("Missing historical private H5-only Parquet candidates")
+    return rows
+
 def assemble(root,catalog_sha,*,day_version_sha=SOURCE_DAY_VERSION_SHA,
-             day_version_safe=SOURCE_DAY_VERSION_SAFE):
+             day_version_safe=SOURCE_DAY_VERSION_SAFE,
+             with_historical_1990_2010=True):
     root=Path(root).resolve()
     if type(catalog_sha) is not str or SHA_RE.fullmatch(catalog_sha) is None:
         raise ValueError("Expected explicit previously accepted catalog SHA")
@@ -195,6 +228,8 @@ def assemble(root,catalog_sha,*,day_version_sha=SOURCE_DAY_VERSION_SHA,
                 "h5_5min_derived_unverified_units",
                 sha256=item["content_sha256"],rows=item["rows"]))
     parts["day"]=modern_day_files(day_version_safe,day_version_sha)
+    historic=(historical_day_files(root)
+              if with_historical_1990_2010 else [])
     # This is a DATASET, not merely a filename manifest. Verify EVERY
     # physical Parquet fragment exposes the same eight raw Arrow fields.
     # Exclude vendor extra columns in the exposed common projection, retain
@@ -223,6 +258,17 @@ def assemble(root,catalog_sha,*,day_version_sha=SOURCE_DAY_VERSION_SHA,
                 if ("source_rows" in item and
                         item["source_rows"]!=pf.metadata.num_rows):
                     raise ValueError("Dataset source fragment row counts differ")
+    # Historical records are a separate Arrow dataset, NOT a silent
+    # append to purchase-normalized modern DAY.
+    for item in historic:
+        file=checked(item["root_kind"],item["relative_file"],root,MODULE,
+                     item["content_sha256"])
+        with pq.ParquetFile(file,memory_map=False) as pf:
+            if (pf.metadata.num_rows!=item["source_rows"]
+                    or any(name not in pf.schema_arrow.names or
+                            pf.schema_arrow.field(name).type!=dtype
+                            for name,dtype in expected.items())):
+                raise ValueError("Historical uncertified candidate is not a valid Parquet fragment")
     if (sum(x["source_rows"] for p in ("15min","30min","60min")
             for x in parts[p] if x["source_class"]==
             "h5_5min_derived_unverified_units")!=621348
@@ -256,9 +302,11 @@ def assemble(root,catalog_sha,*,day_version_sha=SOURCE_DAY_VERSION_SHA,
         "known_oct_h5_1min_5min_candidate_files":8,
         "historical_1990_2010_day":{
             "physical_legacy_raw_candidate_rows":3682327,
-            "status":"separate_H5_RAW_not_vendor_normalized_or_security_master_certified",
+            "historical_files":historic,
+            "historical_source_staged_and_sha_validated":len(historic)==21,
+            "status":"separate_1990_2010_H5_unit_hypothesis_not_vendor_or_security_master_certified",
             "included_as_standard_day":False,
-            "next_step":"independently_audit_and_register_21_year_raw_candidate_tier"},
+            "original_raw_native_h5_records_retained_in_source_archive":True},
         "other_missing_stockdays_and_partial_minute_keys_certified":False,
         "purchased_stockday_priority_in_source_staging":True,
         "source_symbol_spellings_may_differ_in_original_purchased":True,
@@ -324,7 +372,9 @@ def load_manifest(path,root,*,expected_sha=None,verify_sources=True):
     if verify_sources:
         actual=assemble(root,doc["payload"]["source_catalog_sha256"],
                         day_version_sha=doc["payload"][
-                            "modern_16year_day_physical_version_sha256"])
+                            "modern_16year_day_physical_version_sha256"],
+                        with_historical_1990_2010=bool(doc["payload"][
+                            "historical_1990_2010_day"]["historical_files"]))
         if actual!=doc["payload"]:
             raise ValueError("Parquet dataset references stale underlying source")
     return doc["payload"],version
@@ -363,6 +413,25 @@ def open_period_dataset(manifest_path,root,period,*,expected_sha,
                     raise ValueError("Uncoercible original purchased/H5 schema")
     return ds.dataset([str(p) for p in files],format="parquet",schema=schema)
 
+def open_historical_1990_2010_research_day_dataset(manifest_path,root,*,
+                         expected_sha,allow_historical_unverified=False):
+    """Standalone historical H5-candidate Parquet dataset, NEVER modern DAY."""
+    if allow_historical_unverified is not True:
+        raise ValueError("Explicit UNVERIFIED historical H5 unit-hypothesis opt-in required")
+    payload,_=load_manifest(
+        manifest_path,root,expected_sha=expected_sha,verify_sources=True)
+    records=payload["historical_1990_2010_day"]["historical_files"]
+    if len(records)!=21:
+        raise ValueError("No 21-year physically verified historical research layer")
+    import pyarrow.dataset as ds
+    import pyarrow as pa
+    schema=pa.schema([pa.field("ts",pa.int64()),
+                      pa.field("symbol",pa.string()),
+                      *(pa.field(name,pa.float64()) for name in RAW_COLS[2:])])
+    paths=[checked(x["root_kind"],x["relative_file"],Path(root).resolve(),
+                   MODULE,x["content_sha256"]) for x in records]
+    return ds.dataset([str(p) for p in paths],format="parquet",schema=schema)
+
 def scan_period_asof(manifest_path,root,period,*,expected_sha,
                      allow_research_unverified_units=False,batch_size=32768):
     """Return a bounded streaming Arrow Scanner, with an enforced end cutoff."""
@@ -383,6 +452,8 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--root",type=Path,required=True)
     p.add_argument("--source-catalog-sha256",required=True)
+    p.add_argument("--skip-historical-research-layer",action="store_true",
+                   help="Create 2011-2026 core first; 1990-2010 remains excluded until a separate audited version")
     p.add_argument("--modern-day-version-sha256",default=SOURCE_DAY_VERSION_SHA)
     p.add_argument("--modern-day-version-safe",type=Path,
                    default=SOURCE_DAY_VERSION_SAFE)
@@ -390,7 +461,8 @@ def main(argv=None):
     try:
         payload=assemble(a.root,a.source_catalog_sha256,
                          day_version_sha=a.modern_day_version_sha256,
-                         day_version_safe=a.modern_day_version_safe)
+                         day_version_safe=a.modern_day_version_safe,
+                         with_historical_1990_2010=not a.skip_historical_research_layer)
         file,created=write_manifest(payload)
         print("UNIFIED_20261013_EIGHT_CYCLE_PARQUET_DATASET="+json.dumps({
             "status":MANIFEST_VERSION,
@@ -403,6 +475,9 @@ def main(argv=None):
             "h5_gap_day_rows":PRIVATE_DAY_ROWS,
             "h5_derived_highcycle_candidate_rows":621348,
             "historical_1990_2010_raw_day_cannot_be_silently_normalized":True,
+            "historical_research_files":len(payload["historical_1990_2010_day"]["historical_files"]),
+            "historical_research_rows_not_in_modern_standard_day":3682327
+                if payload["historical_1990_2010_day"]["historical_files"] else 0,
             "market_data_copied":False,
             "new_metadata_only_manifest_created":created,
             "original_market_files_modified":False,

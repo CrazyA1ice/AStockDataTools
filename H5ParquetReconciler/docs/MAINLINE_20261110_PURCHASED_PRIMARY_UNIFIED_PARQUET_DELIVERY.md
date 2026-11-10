@@ -89,3 +89,51 @@
 - 原始 1990—2010 H5 RAW 日线与 2011—2026 日线 22,274 条注册候选，由各自独立可追溯版本管理，不因本轮编目自动提升为已认证生产数据。
 
 **后续主线**：让本地查询端显式绑定 catalog_sha256，逐请求检查源文件版本；继续从源实体键而不是 footer 行数做全周期差集，独立核准量价金额、时间标记、复权与证券历史身份。生产合并/Hikyuu 镜像需要之后的单独门禁与明确准入。
+
+## 2026-11-10 Windows 八周期来源目录构建真实 PASS，已推进到 catalog SHA 绑定查询
+
+用户 Windows 已验收此前来源编目工具：11 项高周期回归与 7 项 catalog 测试全部 OK，
+生成不可变私有元数据版本
+`7f4a84f07d519e317d6b51049004d937acd8cba4cf561a3312fe457c5bed68df`，
+只引用 192 个购买 Parquet 原文件、四日 SHA 检验 621,348 根高周期候选、
+8 份 1/5min H5 补缺 Parquet。市场行情新拷贝 0、生产合并 0。
+此目录是 **metadata manifest**，不是源内容的全 SHA、
+证券交易日完整性或官方供应商字段认证。
+
+**本次新增绑定查询（新代码，仍待 Windows 实机验收）**：
+- `tools/query-catalog-bound-purchased-primary-eight-cycles-readonly.py`
+  要求显式 `--catalog-sha256`；拒绝按 latest/mtime 自动选择源。
+  首先检查严格路径、无符号链接目录、文件唯一精确格式和
+  `sha256(canonical_payload)`，然后只读重新构造 catalog 以验证当前全部
+  购买来源页脚/stat 身份及已登记 H5 候选的 receipt/物理 Parquet SHA；
+  **不一致立即拒绝所有周期读取**，不会用旧版本静默读取变更市场源。
+  文件本身在查询完成后再检查字节未变化。
+- 单次请求可指定八周期任意不重复子集；八周期全取也只做**一次**
+  完整 catalog 版本前置验收。复用既有购买原位八周期查询，
+  1/5min 既有已购股票日优先 + 已验证私有 H5 补缺，
+  15/30/60min 既有已购股票日优先 + 经 H5 5m 重算的研究候选
+  查询。H5 模式必须显式 `--allow-private-gap`，否则一律原位
+  购买数据；day/week/month 仍只返回原购买 Parquet，
+  22,274 条日线注册研究 overlay **尚未包含在该 catalog**，
+  不自动回退、不能冒充八周期全市场完整无缺。
+- 本地 Python API 的 `bars_by_period` 提供八周期 OHLCVA，仅留在
+  用户本机内存；命令行仅输出聚合计数/来源/目录版本，
+  不含商业价格原值。所有 `ready_for_production_query`、
+  `ready_for_h5_mirror`、`production_query_activated` 强制 false。
+  原购买文件参考指纹是文件 size+mtime+footer，不是商业文件全内容 SHA。
+  不是跨进程写盘事务；下游使用前仍应重新验证来源状态。
+- `tests/test_query_catalog_bound_purchased_primary_eight_cycles_readonly.py`
+  增加 12 项合成回归：八周期一调用、默认不开启补缺、
+  catalog 缺失或改写、购买文件引用漂移、私有文件 SHA 漂移、
+  下游生产标志篡改、未注册的日线候选误入、查询期间 catalog 变更、
+  重复周期及布尔开关错误等。新增 Windows 一键实测入口：
+  `run-catalog-bound-purchased-primary-eight-cycle-readonly.ps1 -CatalogSha256 <64hex>`。
+  它执行原有回归后单次对 SH600000 查询 2026-09-30..10-13 八周期，
+  15/30/60min 期待 16+64、8+32、4+16；1/5min 期待
+  241+960、48+192；day/week/month 只要求原购买数据。
+  **该新增源码和 12 项测试尚未取得 Windows 实测 PASS**。
+
+**后续主线**：完成 SHA 绑定查询验收后，将 22,274 条已注册日线候选
+及 1990—2010 历史 RAW 日线通过各自的严格独立资格 gate 编目，
+逐周期按键级别做异常/缺口清单，再建立安全生产准入与
+独立原生 H5 镜像，不复写购买原件。

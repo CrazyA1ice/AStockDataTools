@@ -170,6 +170,41 @@ class PrivateHighcycleEightCycleReadTests(unittest.TestCase):
         self.assertEqual(len(recovered),16)
         self.assertEqual(recovered,rows)
 
+
+    def test_four_day_canary_receipt_uses_matching_day_source_not_first_day(self):
+        import json
+        with tempfile.TemporaryDirectory() as base:
+            module=Path(base)/"H5ParquetReconciler"
+            run=module/"work"/"unified_parquet"/"oct_high_cycle_staging"/"aaaaaaaaaaaa"
+            run.mkdir(parents=True)
+            file=run/"15min.parquet"
+            file.write_bytes(b"test candidate physical output")
+            record=private(D2)
+            record.pop("_private_file_relative_path")
+            all_dates=["2026-10-08","2026-10-09","2026-10-12","2026-10-13"]
+            doc={
+                "source_days":all_dates,
+                "symbols":["SH600000","SZ000001"],
+                "outputs":{"15min":{
+                    "sha256":"e"*64,
+                    "complete_row_by_row_readback_exact":True,
+                    "private_file":file.relative_to(module).as_posix()}},
+                "sources":[{"day":day,"sha256":"b"*64 if day==D2 else "c"*64}
+                           for day in all_dates]}
+            (run/"receipt.json").write_text(json.dumps(doc),encoding="utf-8")
+            with (patch.object(M.S,"MODULE",module),
+                  patch.object(M.S,"_safe_stage_root",return_value=run.parent),
+                  patch.object(M.S,"_sha",return_value="e"*64),
+                  patch.object(M.S,"build_candidates",
+                               return_value=({"15min":[record]},
+                                             {D2:(file,"b"*64)})),
+                  patch.object(M,"_private_subset",return_value=[dict(record)])):
+                result=M._validated_private_rowset(
+                    self.root,D2,"SH600000","15min",frozenset({(D2,"SH600000")}))
+            self.assertEqual(len(result),1)
+            self.assertEqual(result[0]["_private_file_relative_path"],
+                             doc["outputs"]["15min"]["private_file"])
+
     def test_wrong_arrow_schema_refused(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"15min.parquet"

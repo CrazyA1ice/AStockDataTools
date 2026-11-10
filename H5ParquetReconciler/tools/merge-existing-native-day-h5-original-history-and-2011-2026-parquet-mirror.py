@@ -136,6 +136,8 @@ def verified_modern_sources(mirror_safe,mirror_root):
     sha_map=doc.get("private_h5_files_sha256")
     if (doc.get("status")!=
             "private_day_native_h5_40byte_tables_written_all_integer_rows_readback_not_activated"
+            or doc.get("source_16year_private_version_sha256")!=
+               "bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05"
             or doc.get("total_h5_native_integer_records")!=MODERN_COUNT
             or doc.get("total_private_parquet_rows")!=MODERN_COUNT
             or doc.get("year_range")!=[2011,2026]

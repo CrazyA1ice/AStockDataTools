@@ -222,3 +222,15 @@ week=1、month=1（均当时仅源购买），所有读取不修改原市场文�
 差集审计**（而非 footer 估计），确定 H5-only 缺口能否满足已购来源
 优先、时间网格、金额/成交量单位和复权验证；符合独立证据资格后再
 批准可回滚的统一正式 Parquet 与 Hikyuu 原生 H5 镜像。
+
+## 2026-11-10：用户确认最终截止2026-10-13，停止未来窗口盘点，直接交付已有八周期Parquet物理数据集
+
+用户明确2026-10-14—10-31没有行情，不再反复审计，也不为这些日期写任何缺口记录。当前唯一时间上限为2026-10-13（含）。
+
+新增 tools/build-asof20261013-unified-eight-cycle-parquet-dataset.py，run-build-asof20261013-unified-eight-cycle-parquet-dataset.ps1，以及15项合成Parquet/Arrow/来源SHA测试；参阅 docs/ASOF_20261013_ALL_EIGHT_CYCLE_PARQUET_DATASET.md。
+
+现有八周期来源目录SHA=7f4a84f07d519e317d6b51049004d937acd8cba4cf561a3312fe457c5bed68df；现代2011—2026购买+H5补缺的物理日线16年版本SHA=bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05，已经落盘14,137,981条，不再重做；四个已验收来源日的高周期私有Parquet共621,348根、不重复合成；私有1/5分钟8份只引用。
+
+新工具对所有 1/5/15/30/60min,day,week,month 真实原购买/已落地私有Parquet片段逐一做SHA/Arrow型/行数门禁，并实际创建8个PyArrow Dataset。只新建Git忽略的内容寻址meta JSON manifest，无价格行情拷贝。1990—2010年已存在的21份H5研究候选Parquet（3,682,327条）会做独立完整内容/唯一键审计，并登记为相同manifest的**独立未认证历史研究层**，不冒充单位和历史身份已验证的标准日线。
+
+新入口 Windows 实机仍待首次执行；在得到对应 PASS 之前，不宣称全八周期数据集物理片段整合完成。物理数据集构建之后仍需要按2011—2026证券/周期/盘中时间键建立精确差集（页脚行数不是完整性证明）、做供应商量纲与复权证据门禁，才谈可回滚正式发布和独立H5镜像。

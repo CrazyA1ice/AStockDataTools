@@ -100,7 +100,9 @@ def _validated_private_rowset(root,day,symbol,period,registry):
     if actual!=expected:
         raise ValueError("Private highcycle candidate differs from verified 5min source")
     verified_sha=sources[day][1]
-    if (doc["sources"][0]["sha256"]!=verified_sha
+    matching_sources=[item for item in doc["sources"] if item.get("day")==day]
+    if (len(matching_sources)!=1
+            or matching_sources[0]["sha256"]!=verified_sha
             or any(row["source_5min_private_sha256"]!=verified_sha
                    or row["value_source"]!=SOURCE_VALUE
                    or row["time_label_and_vendor_units_certified"] is not False

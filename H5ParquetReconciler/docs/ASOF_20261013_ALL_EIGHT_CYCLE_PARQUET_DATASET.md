@@ -29,3 +29,20 @@ Windows脚本 run-build-asof20261013-unified-eight-cycle-parquet-dataset.ps1 执
 Windows 提交 9c0507f 首次运行：既有7项来源目录测试、12项八周期SHA查询测试均通过；新增15项中14项通过，唯一报错 test_source_catalog_change_prevents_manifest_use 的模拟payload漏写 modern_16year_day_physical_version_sha256，导致 load_manifest 在虚构测试数据上 KeyError。**真实数据集构建并未开始**，不能把此错误解释成原购买Parquet损坏。
 
 修复在当前开发分支完成：模拟payload补齐现代DAY版本SHA、历史层空列表和固定10-14后界；load_manifest 在实际重核前主动检查全部必需SHA与截止日字段，对缺失/畸形manifest明确拒绝而不是KeyError；加入源身份不完整与8个真实Arrow Dataset打不开就不能发布manifest的回归。新增测试数现为17，**待用户下一次Windows验收**。并已调整先打开全部8个实际Arrow Dataset、最后才写不可变成功manifest，防止失败后留下伪成功版本。原行情不重新物化，截止2026-10-13不变。
+## 2026-11-10 Windows 真实物理数据集验收：PASS
+
+用户 Windows 运行仓库版本 46f2b9c，来源目录/版本绑定/构建器 **7+12+17=36 项合成测试全部 OK**。新增合成中的 `python.exe -m unittest ... error: Unopenable synthetic Arrow fragment` 是预期模拟失败门禁，整个测试进程最终 OK，不是实际源损坏。
+
+全部 1990—2010 私有历史日线21年的真实 `READONLY_PRIVATE_H5_YEAR_PASS`、唯一键/Arrow/H5源stat和SHA最终成功，3,682,327条独立历史候选存续，原631,281条非候选代码完整隔离。最终 **8 个实际 PyArrow Dataset 全部成功打开**；物理文件数 1min=28、5min=28、15min=250、30min=250、60min=250、day=26、week=24、month=24，合计880个实体文件引用。没有改写或复制原付费行情、没有H5镜像或生产指针。统一实际物理数据集SHA256：
+
+`a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01`
+
+manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a1f6/manifest.json`。版本只读保留，不需要再次执行21年全值历史审计或重建880个物理引用。
+
+## 下一步代码：真实八周期物理行数总账（Windows 待运行）
+
+新增 `tools/audit-asof20261013-eight-cycle-parquet-physical-rows-readonly.py`、9项临时PyArrow真实页脚测试和 `run-audit-asof20261013-eight-cycle-physical-parquet-rows-readonly.ps1`：读取**上面已经成功生成的不可变数据集**，逐一检查全部实际原购买/私有Parquet片段的物理行组计数、时间上界和来源SHA；不读取OHLCVA行、不新建行情文件、不重新执行1990—2010年逐行历史审计。逐周期统计真实物理行数、源类别与文件数，仅输出合计。
+
+既有实测原购买页脚各周期行数（不是股票日唯一键）加已核对候选行数预测审计目标：1min=3,452,748,739；5min=687,688,817；15min=229,229,608；30min=114,614,804；60min=57,307,404；day=14,137,981；week=2,996,956；month=711,331，总计4,559,435,640个**物理Parquet行**，另有3,682,327个独立未认证历史研究候选。前两期1/5min H5四天按22,191股票日×240/48推导，15/30/60min按×16/8/4，必须以用户本机实际footer结果为准，不能提前声称完全一致。
+
+此门禁是每周期**总物理行数与来源结构**验证，仍不是按(symbol,ts)精确去重、交易所交易日或完整分时格证明；原vendor全文件SHA、价格量额/复权语义尚有独立未完成认证。验证后下一步转向按年份/月份的真实键集合差异，区分已购源相同股票日、私有H5 only、部分分钟格和无真实可用源，不再回头查询2026-10-14～31。

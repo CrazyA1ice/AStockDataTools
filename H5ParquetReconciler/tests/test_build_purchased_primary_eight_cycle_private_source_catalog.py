@@ -102,7 +102,14 @@ class PurchasedPrimarySourceCatalogTests(unittest.TestCase):
             "row_groups_with_bounds_outside_filename_year":0,
             "source_rows_from_parquet_footers":100,
             "row_groups":1,
-            "source_file_stat_identity_sha256_not_content_digest":"a"*64,
+            "source_file_stat_identity_sha256_not_content_digest":
+                sha(M._json([{
+                    "relative_source_path":(
+                        self.purchased/p/(str(y)+".parquet")).relative_to(
+                            self.market).as_posix(),
+                    "size_bytes":(self.purchased/p/(str(y)+".parquet")).stat().st_size,
+                    "mtime_ns":(self.purchased/p/(str(y)+".parquet")).stat().st_mtime_ns,
+                }]).rstrip(b"\n")),
         } for y in M.YEARS} for p in M.PERIODS}
         return {
             "status":"read_only_purchased_parquet_footer_envelopes_not_exact_coverage",

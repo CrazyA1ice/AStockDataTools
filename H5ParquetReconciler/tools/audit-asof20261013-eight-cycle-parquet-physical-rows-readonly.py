@@ -78,6 +78,22 @@ def audit(payload,root,*,periods=None):
             or payload.get("no_purchased_parquet_copy") is not True
             or payload.get("ready_for_production_query") is not False):
         raise ValueError("Invalid bounded research-only physical dataset version")
+    if (type(payload.get("period_physical_files")) is not dict or
+            type(payload.get("period_purchased_footer_rows_except_day"))
+            is not dict):
+        raise ValueError("Missing physical Parquet source registry")
+    # Only the full eight-period census must audit the separate 21-year
+    # historical tier. A deliberately bounded single-period test/query has
+    # no reason to require its presence or re-hash historical sources.
+    full_eight=periods==D.PERIODS
+    historic=[]
+    if full_eight:
+        hist=payload.get("historical_1990_2010_day")
+        if type(hist) is not dict or type(hist.get("historical_files")) is not list:
+            raise ValueError("Missing independent 21-year historical research source registry")
+        historic=hist["historical_files"]
+        if len(historic)!=21:
+            raise ValueError("Previously verified independent 21-year research layer absent")
     upper=datetime(2026,10,14,tzinfo=timezone(timedelta(hours=8)))
     upper_ms=int(upper.timestamp()*1000)
     history_start=int(datetime(2011,1,1,tzinfo=timezone(
@@ -136,11 +152,8 @@ def audit(payload,root,*,periods=None):
             "source_raw_latest_timestamp_ms":hi,
             "physical_rows_not_exact_unique_stockday_or_bar_key_count":True,
         }
-    historic=payload["historical_1990_2010_day"]["historical_files"]
     hist_count=0
-    if periods==D.PERIODS:
-        if type(historic) is not list or len(historic)!=21:
-            raise ValueError("Previously verified independent 21-year research layer absent")
+    if full_eight:
         for entry in historic:
             if (entry.get("source_class")!=
                     "historical_1990_2010_h5_uncertified_candidate"):

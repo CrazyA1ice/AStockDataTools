@@ -82,6 +82,7 @@ class FullNativeDayMirrorTests(unittest.TestCase):
         self.safe=self.reports/"full-2011-2026-native-h5-day-3dc5044a4122.json"
         self.doc={
             "status":"private_day_native_h5_40byte_tables_written_all_integer_rows_readback_not_activated",
+            "source_16year_private_version_sha256":"bd64abcd0580cbed404c31bc2db3a05f9b2411880fa24d6bf3b14ecabcdb0c05",
             "total_h5_native_integer_records":4,
             "total_private_parquet_rows":4,
             "year_range":[2011,2026],

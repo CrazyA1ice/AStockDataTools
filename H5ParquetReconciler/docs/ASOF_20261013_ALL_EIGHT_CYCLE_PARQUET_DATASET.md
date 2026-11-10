@@ -52,3 +52,13 @@ manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a
 用户在提交 e0f5944 的 Windows 执行中，首次新审计的9个合成测试有7个通过、2个错误，均发生在测试用单周期模拟来源（只有1min）上：`audit()` 过去无条件索引 `payload["historical_1990_2010_day"]["historical_files"]`，触发 KeyError。这次测试停止在启动真实 `D:\\stock` 页脚扫描之前，**不能因此判定已存在880份源Parquet和先前验收的数据集有问题**。真实物理Parquet Dataset 构建成功仍由此前的 SHA `a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01` 标识。
 
 修复后：仅在 `periods==D.PERIODS` 的完整八周期路径加载并预检21年历史层，保证必需历史记录不存在时立即显式拒绝；指定单周期/子集统计不触碰历史，返回 `separate_historical_1990_2010_unverified_rows=0` 仅表示该*子集*没有被统计历史，并不表示原历史分区缺失。另增加完整八周期缺历史来源/空历史列表、子集忽略不必要历史注册三项回归，累计12项合成测试。Windows新版测试与实源全行数核对尚待首次验收，未产生新行情、索引、数据集指针或镜像。
+
+## 2026-11-10 按用户要求立即调整优先级：Parquet→完整原生H5，不再做连续物理总账/重复键扫描
+
+用户最新明确要求尽快利用已完成的统一 Parquet 补齐 H5；停止把重复的页脚统计、2026-10-14～31空来源查询、继续构建购买分钟全量索引当主线。真正需要的是只生成 Hikyuu 支持的 day/1min/5min 原生整数 TABLE、验证后安全切换；15/30/60min与week/month属于购买 Parquet 所有的独立周期，不能假装旧H5有同等物理结构。
+
+**不重算的实绩：** 2011—2026年购买优先14,137,981条日线已曾反向写入 `work/h5_mirror/full_day_3dc5044a4122/` 三份独立Hikyuu day H5；全量整数读回通过，SAFE `reports/full-2011-2026-native-h5-day-3dc5044a4122.json`。分钟已有9月28～30购买数据+10月13 H5补缺合计6,427,013条、6份独立原生H5 `work/h5_mirror/minute_union_660389198d64/`，SAFE `reports/mixed-purchased-h5-native-minute-4days-660389198d64.json`。这些均不是D:\stock\HikyuuData生产原件，禁止假报原H5已补齐。其后2026年的更多已验分钟私有Parquet可直接用于后续分批镜像，但2011—2026分钟全量3.4B+0.69B条仍需实际生成H5，不可仅凭Arrow dataset可打开就说已完成。
+
+**立即可执行的首个真实H5动作：** 工具 `tools/merge-existing-native-day-h5-original-history-and-2011-2026-parquet-mirror.py`、6项真实PyTables合成测试及入口 `run-complete-day-h5-from-existing-original-and-parquet-native-mirror.ps1`。此入口先验证已写好的16年现代 H5 来源SHA，再把 `D:\stock\HikyuuData/{sh,sz,bj}_day.h5` 三个原生文件复制到新的 `work/h5_mirror/complete_day_<run_id>/`，**不再读取14,137,981条原始Parquet价量额**；在复制文件中，仅针对已有购买优先镜像的SH/SZ/BJ股票表做原生整数K线逐日并集，保留1990—2010原生记录、2011+只在原H5而不在购买镜像的原始记录和所有不在现代镜像中的原证券表。对重合日线键用Parquet镜像整数覆盖原H5，不改原市场文件、非/data元数据和非镜像股票表。每股新TABLE整数完整读回、现代镜像原SHA和原H5原字节SHA前后校验，最终三份独立原生H5 SHA写安全SAFE。这是原生H5日线实做，不是再次研究；首次实机待验证。新H5仍属隔离输出，未取得全市场Hikyuu C++驱动读回、量额量化业务接受和备份切换校验前不能直接替换生产原H5。
+
+**随后的最主要工作**是利用已验收的八周期文件清单直接对购买1min、5min原件做有界流式本地批量H5镜像，按证券+原生时间键与旧H5并集，恢复已有6,427,013条镜像成果并继续2025—2026，逐年持久化checkpoint；原购买数据至少3,447,422,899条1min和686,623,649条5min，体量很大，必须利用源本身而非把所有数十亿条OHLCVA装内存。当前尚未完成全分钟H5，不得声称已经激活。已有现代日线H5阶段不重复生成。

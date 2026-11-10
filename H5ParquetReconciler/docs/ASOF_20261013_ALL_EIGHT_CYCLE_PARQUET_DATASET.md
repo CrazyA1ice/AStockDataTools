@@ -23,3 +23,9 @@ Windows脚本 run-build-asof20261013-unified-eight-cycle-parquet-dataset.ps1 执
 ## 不可误称已完成的部分
 
 该版本是已存在Parquet碎片组成的**研究可用物理多文件数据集**，不是重新建立全量复制的单目录数据库，不表示2011—2026所有股票/时间网格的缺键认证完成，也不表示历史量纲、复权、交易日历、供应商字段、量价单位已认证。继续做逐周期真实键差集并明确缺口与异常；随后单独安全发布、镜像H5。新增代码还需用户本机Windows首次运行，不能提前算通过。
+
+## 2026-11-10 Windows 首次预检失败与修复
+
+Windows 提交 9c0507f 首次运行：既有7项来源目录测试、12项八周期SHA查询测试均通过；新增15项中14项通过，唯一报错 test_source_catalog_change_prevents_manifest_use 的模拟payload漏写 modern_16year_day_physical_version_sha256，导致 load_manifest 在虚构测试数据上 KeyError。**真实数据集构建并未开始**，不能把此错误解释成原购买Parquet损坏。
+
+修复在当前开发分支完成：模拟payload补齐现代DAY版本SHA、历史层空列表和固定10-14后界；load_manifest 在实际重核前主动检查全部必需SHA与截止日字段，对缺失/畸形manifest明确拒绝而不是KeyError；加入源身份不完整与8个真实Arrow Dataset打不开就不能发布manifest的回归。新增测试数现为17，**待用户下一次Windows验收**。并已调整先打开全部8个实际Arrow Dataset、最后才写不可变成功manifest，防止失败后留下伪成功版本。原行情不重新物化，截止2026-10-13不变。

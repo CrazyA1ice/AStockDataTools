@@ -162,3 +162,63 @@ PowerShell PASS 因此未取得。
 运行这九项。**修复提交之后的 Windows 复验尚待用户执行**。
 继续使用原不可变目录 SHA，不重新生成来源 catalog、原始购买
 Parquet 或四天 621348 条高周期私有候选。
+
+## 2026-11-10 全八周期目录 SHA 绑定：最终 Windows 真实 PASS
+
+用户已执行提交 `d6af906`，40 个 Python 与 9 个 PowerShell 合成测试均 OK。
+目录 SHA `7f4a84f07d519e317d6b51049004d937acd8cba4cf561a3312fe457c5bed68df`
+仍然完全可用；SH600000、2026-09-30—10-13 的购买优先研究查询真实
+八周期均 PASS：1min 购买241 + H5补缺960；5min 48 +192；
+15min 16+64；30min 8+32；60min 4+16；day=1、
+week=1、month=1（均当时仅源购买），所有读取不修改原市场文件或指针。
+原脚本的 PowerShell 空来源数组越界已永久修复。**此阶段不再重复运行**。
+
+## 2026-11-10 本轮：联合已有22,274日线私有登记SHA（新增代码，Windows待验）
+
+仓库原来已实现完整购买优先22,274日线版本：
+- 既有注册版本 SHA 为
+  `e53e076f4eabf80a987d4e6e0bd7e4c239a8ea947f26a13cd455b66e39528b23`；
+  构成 22,191 whole-date 和 83 mixed-stockday，隔离 2026-07-16 的 5 条异常。
+- 已有 `tools/resolve-registered-day-22274-evidence-offline.py`
+  可从注册版本 SHA 离线恢复全部 7 项有 SHA 证明的来源证据配置；
+  `query-purchased-primary-all-eight-cycles-readonly.py`
+  已实现显式 `private_day_evidence` 模式，并交由原
+  `query-private-combined-day-22274-readonly.py` 做**整套原始 H5、
+  购买 Parquet、日线私有快照及 83 mixed 来源的现场 SHA/键复核**；
+  这一步已有的全来源门禁可能新生成仅含脱敏汇总的 SAFE JSON，
+  不会新建 Parquet 行情/H5 镜像或激活生产。不能用静态 registry
+  代替此现场复核。
+
+为衔接用户刚验收的八周期数据目录而不破坏旧版目录，本轮新增
+`tools/query-catalog-bound-registered-day-22274-readonly.py`：
+- 必须同时显式提供 **已验收八周期 catalog SHA**、**已登记的日线
+  私有22,274版本SHA**、`--allow-registered-private-day`；
+  其他1/5/15/30/60min私有回退仍需另行显式 `--allow-private-minute-highcycle`，
+  不得自动启用。
+- 对非 day 周期，继续用已经 Windows PASS 的
+  `query-catalog-bound-purchased-primary-eight-cycles-readonly.py`，
+  保持购买原位引用及四天 H5 私有完整数据；对于 day 则完全复用
+  22,274 注册研究版本的正式来源重验流程，不猜测 H5 来源单位、
+  时间标签或复权，也不让其混入 week/month。
+- 对两条注册 SHA 生成**纯确定性联合研究版本标识**，
+  与两份原有 SHA 一并输出。它是研究快照的 pair 身份，
+  **不是新的生产 catalog 文件，也不是持久合并或自动提升来源**。
+  全部现有原版 catalog、购买原件及 H5 物理文件保持不变。
+- 本轮 `tests/test_query_catalog_bound_registered_day_22274_readonly.py`
+  提供 16 项合成用例，检查单纯日线及八周期、必须显式 opt-in、
+  不支持年份、两份 SHA 改动、来源许可漂移、日线 mixed/whole
+  来源计数，以及动态版本来源漂移拒绝。实机新的自动入口：
+  `run-catalog-bound-registered-22274-day-eight-cycle-live.ps1`；
+  测试通过后对 **2026-10-09 / SH600000** 查询八周期，
+  H5 1/5min=240/48、15/30/60=16/8/4、注册 whole-day日线1条，
+  其余周/月无购买行；调用原始 H5/Parquet day LIVE 完整复核，
+  最终标志 `PASS_CATALOG_BOUND_REGISTERED_22274_DAY_EIGHT_CYCLES`。
+- **尚未收到这一版 Windows 实机的回执**。异常立即中止，
+  完整来源日线复核可能开销较大，不能通过放宽 SHA 或选择“最新文件”
+  来绕过。研究版仍 `ready_for_production_query=false`；
+  1990—2010 日线仍为隔离的原生 RAW 身份候选，不因此自动认证。
+
+下一个直接影响正式数据库交付的步骤：单独建立**逐周期实际证券+时间键
+差集审计**（而非 footer 估计），确定 H5-only 缺口能否满足已购来源
+优先、时间网格、金额/成交量单位和复权验证；符合独立证据资格后再
+批准可回滚的统一正式 Parquet 与 Hikyuu 原生 H5 镜像。

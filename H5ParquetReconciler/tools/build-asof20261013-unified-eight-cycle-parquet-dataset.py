@@ -361,8 +361,24 @@ def load_manifest(path,root,*,expected_sha=None,verify_sources=True):
         raise ValueError("Oversized dataset manifest")
     doc=json.loads(raw)
     if (type(doc) is not dict or set(doc)!={"dataset_sha256","payload"}
+            or type(doc["payload"]) is not dict
             or doc["payload"].get("format")!=MANIFEST_VERSION):
         raise ValueError("Wrong dataset manifest")
+    body=doc["payload"]
+    hist=body.get("historical_1990_2010_day")
+    if (type(body.get("source_catalog_sha256")) is not str
+            or SHA_RE.fullmatch(body["source_catalog_sha256"]) is None
+            or body.get("modern_16year_day_physical_version_sha256")!=
+               SOURCE_DAY_VERSION_SHA
+            or type(hist) is not dict
+            or type(hist.get("historical_files")) is not list
+            or len(hist["historical_files"]) not in (0,21)
+            or body.get("asof_inclusive")!=DATE_CUTOFF
+            or body.get("strict_cutoff_next_day")!="2026-10-14"
+            or body.get("periods")!=list(PERIODS)
+            or body.get("ready_for_production_query") is not False
+            or body.get("no_purchased_parquet_copy") is not True):
+        raise ValueError("Immutable dataset missing mandatory source identity or safety gates")
     version=fingerprint(doc["payload"])
     if (version!=doc["dataset_sha256"]
             or path.parent.name!="eight_cycle_asof_20261013_"+version[:16]
@@ -370,12 +386,12 @@ def load_manifest(path,root,*,expected_sha=None,verify_sources=True):
             or raw!=canonical(doc)):
         raise ValueError("Dataset SHA or canonical bytes changed")
     if verify_sources:
-        actual=assemble(root,doc["payload"]["source_catalog_sha256"],
-                        day_version_sha=doc["payload"][
+        actual=assemble(root,body["source_catalog_sha256"],
+                        day_version_sha=body[
                             "modern_16year_day_physical_version_sha256"],
-                        with_historical_1990_2010=bool(doc["payload"][
-                            "historical_1990_2010_day"]["historical_files"]))
-        if actual!=doc["payload"]:
+                        with_historical_1990_2010=bool(
+                            hist["historical_files"]))
+        if actual!=body:
             raise ValueError("Parquet dataset references stale underlying source")
     return doc["payload"],version
 

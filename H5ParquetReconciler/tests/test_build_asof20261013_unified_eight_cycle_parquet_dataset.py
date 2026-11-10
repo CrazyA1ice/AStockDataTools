@@ -178,6 +178,26 @@ class PhysicalEightCycleParquetDatasetTests(unittest.TestCase):
                 allow_research_unverified_units=True)
             self.assertEqual(stream.to_table().num_rows,1)
 
+    def test_all_eight_arrow_dataset_metadata_opens_actual_files_once(self):
+        opened=M.validate_eight_arrow_dataset_metadata(
+            self.pseudo_payload(),self.market)
+        self.assertEqual(set(opened),set(M.PERIODS))
+        self.assertEqual(sum(opened.values()),8)
+        self.assertEqual(opened["day"],1)
+
+    def test_historical_day_candidate_is_never_silent_modern_day(self):
+        modern=self.pseudo_payload()
+        self.assertNotIn("historical_1990_2010_h5_uncertified_candidate",
+                         [record["source_class"]
+                          for record in modern["period_physical_files"]["day"]])
+        record=M._item(
+            "private_module","work/unified_parquet/historical/1990.parquet",
+            "historical_1990_2010_h5_uncertified_candidate",
+            sha256="a"*64,rows=5)
+        self.assertEqual(record["source_rows"],5)
+        self.assertNotEqual(record["source_class"],
+                            "modern_16yr_purchased_first_day")
+
     def test_research_unit_opt_in_is_mandatory(self):
         file,digest=self.write_version()
         with self.assertRaisesRegex(ValueError,"Research source-unit opt-in"):

@@ -142,8 +142,8 @@ def audit(payload,root,*,periods=None):
         if type(historic) is not list or len(historic)!=21:
             raise ValueError("Previously verified independent 21-year research layer absent")
         for entry in historic:
-            if entry.get("source_class")!=
-                    "historical_1990_2010_h5_uncertified_candidate":
+            if (entry.get("source_class")!=
+                    "historical_1990_2010_h5_uncertified_candidate"):
                 raise ValueError("Historical tier source mislabeled")
             file=D.checked(entry["root_kind"],entry["relative_file"],
                            Path(root).resolve(),D.MODULE,

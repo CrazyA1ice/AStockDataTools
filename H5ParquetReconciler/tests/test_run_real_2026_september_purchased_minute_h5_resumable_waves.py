@@ -124,6 +124,40 @@ class AcceptedSeptemberBatchOrchestrator(unittest.TestCase):
             M.run_all("unused","unused",max_waves=2)
         self.assertEqual(called,[second])
 
+    def test_four_committed_weeks_final_six_h5_sha_checked(self):
+        states={}
+        for name in M.R.H5_NAMES:
+            file=self.dir/name
+            file.write_bytes(b"already committed native H5 "+name.encode())
+            states[name]=M.R.sha(file)
+        self.set_state([])
+        def fake_run(_root,_manifest,first,last):
+            self.write_done(first,last)
+            self.completed.append([first,last])
+            (self.dir/"initialized.json").write_text(json.dumps({
+                "completed_windows":self.completed,
+                "latest_h5_files_sha256":states}),encoding="utf-8")
+        with patch.object(M.R,"run",fake_run):
+            result=M.run_all("unused","unused",max_waves=4)
+        self.assertEqual(result["window_count"],4)
+        self.assertEqual(result["purchased_source_days_in_full_explicit_plan"],16)
+
+    def test_four_skipped_commits_cannot_hide_private_h5_sha_mutation(self):
+        expected={}
+        for name in M.R.H5_NAMES:
+            file=self.dir/name
+            file.write_bytes(b"fixed "+name.encode())
+            expected[name]=M.R.sha(file)
+        for first,last in M.WAVES:
+            self.write_done(first,last)
+        (self.dir/"initialized.json").write_text(json.dumps({
+            "completed_windows":[list(x) for x in M.WAVES],
+            "latest_h5_files_sha256":expected}),encoding="utf-8")
+        (self.dir/M.R.H5_NAMES[0]).write_bytes(b"tampered")
+        with patch.object(M.R,"run",side_effect=AssertionError("Already done")):
+            with self.assertRaisesRegex(ValueError,"differ from committed SHA"):
+                M.run_all("unused","unused",max_waves=4)
+
     def test_missing_receipt_never_skips_allegedly_completed_window(self):
         self.set_state([list(M.WAVES[0])])
         with self.assertRaisesRegex(ValueError,"Missing committed"):

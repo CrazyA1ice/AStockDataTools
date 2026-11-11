@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import traceback
 from collections import Counter
+from contextlib import contextmanager
 from datetime import date,datetime
 from pathlib import Path
 
@@ -407,6 +408,43 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
     finally:
         store.close()
 
+@contextmanager
+def exclusive_working_h5_lock():
+    """OS-held single writer lock; released even after a killed process.
+
+    Windows msvcrt range locks (and POSIX flock) avoid stale lockfiles and
+    prevent two H5 writers corrupting the same continuous candidate.
+    """
+    MIRRORS.mkdir(parents=True,exist_ok=True)
+    if LIVE.is_symlink():
+        raise ValueError("Linked private H5 workspace refused")
+    LIVE.mkdir(exist_ok=True)
+    file=LIVE/"single_writer.lock"
+    if file.is_symlink():
+        raise ValueError("Linked H5 single-writer lock refused")
+    with file.open("a+b") as fd:
+        fd.seek(0,2)
+        if fd.tell()==0:
+            fd.write(b"0")
+            fd.flush()
+        fd.seek(0)
+        try:
+            if os.name=="nt":
+                import msvcrt
+                msvcrt.locking(fd.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(fd.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ValueError("Another minute H5 copy writer already active") from exc
+        try:
+            yield
+        finally:
+            if os.name=="nt":
+                msvcrt.locking(fd.fileno(),msvcrt.LK_UNLCK,1)
+            else:
+                fcntl.flock(fd.fileno(),fcntl.LOCK_UN)
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--root",type=Path,required=True)
@@ -416,7 +454,8 @@ def main(argv=None):
     p.add_argument("--write-resumable-private-h5",action="store_true",required=True)
     a=p.parse_args(argv)
     try:
-        run(a.root,a.manifest,a.from_day,a.through_day)
+        with exclusive_working_h5_lock():
+            run(a.root,a.manifest,a.from_day,a.through_day)
     except (ValueError,OSError,TypeError,KeyError,sqlite3.Error,RuntimeError) as exc:
         last=traceback.extract_tb(exc.__traceback__)[-1]
         p.error("Resumable native minute H5 source/staged/batch REFUSED ["+

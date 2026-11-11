@@ -62,3 +62,13 @@ manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a
 **立即可执行的首个真实H5动作：** 工具 `tools/merge-existing-native-day-h5-original-history-and-2011-2026-parquet-mirror.py`、6项真实PyTables合成测试及入口 `run-complete-day-h5-from-existing-original-and-parquet-native-mirror.ps1`。此入口先验证已写好的16年现代 H5 来源SHA，再把 `D:\stock\HikyuuData/{sh,sz,bj}_day.h5` 三个原生文件复制到新的 `work/h5_mirror/complete_day_<run_id>/`，**不再读取14,137,981条原始Parquet价量额**；在复制文件中，仅针对已有购买优先镜像的SH/SZ/BJ股票表做原生整数K线逐日并集，保留1990—2010原生记录、2011+只在原H5而不在购买镜像的原始记录和所有不在现代镜像中的原证券表。对重合日线键用Parquet镜像整数覆盖原H5，不改原市场文件、非/data元数据和非镜像股票表。每股新TABLE整数完整读回、现代镜像原SHA和原H5原字节SHA前后校验，最终三份独立原生H5 SHA写安全SAFE。这是原生H5日线实做，不是再次研究；首次实机待验证。新H5仍属隔离输出，未取得全市场Hikyuu C++驱动读回、量额量化业务接受和备份切换校验前不能直接替换生产原H5。
 
 **随后的最主要工作**是利用已验收的八周期文件清单直接对购买1min、5min原件做有界流式本地批量H5镜像，按证券+原生时间键与旧H5并集，恢复已有6,427,013条镜像成果并继续2025—2026，逐年持久化checkpoint；原购买数据至少3,447,422,899条1min和686,623,649条5min，体量很大，必须利用源本身而非把所有数十亿条OHLCVA装内存。当前尚未完成全分钟H5，不得声称已经激活。已有现代日线H5阶段不重复生成。
+
+## 2026-11-11 继续下一步：首批 REAL purchased 1m/5m Parquet→Hikyuu 原生 H5
+
+本机用户真实回执：上一轮三市场日线 H5 真实隔离合并已 PASS，`work/h5_mirror/complete_day_cd7633cd99cb/`，包含现代购买优先 14,137,981 日线、在相关股票表中保留的原H5 1990—2010 日线 3,811,239 和现代原 H5 独有的 118,084 条；SAFE `reports/complete-day-original-plus-parquet-native-cd7633cd99cb.json`。本轮禁止再次转换日线及复制已完成的全部早期日线来源。
+
+**新增实际分钟回写实现**：`tools/mirror-asof20261013-purchased-minute-parquet-into-copied-native-h5.py`，5项购买Parquet+PyTables真格式合成回归；Windows一次入口：`run-first-real-purchased-minute-parquet-to-native-h5-copy.ps1`。从已实测八周期物理数据集SHA `a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01` 读购买1min/5min原件，仅检查 Parquet 页脚有可能覆盖所选日期的 rowgroup，批次迭代投影8列，按原供应商时间键转换为 Hikyuu 40-byte整数记录；借用此前真实6,427,013条已通过的候选数值倍率、1min结束时标及5min+5映射，不重新读取日线/原6.4m镜像，不宣称供应商已认证。所有新增日期 `(period,canonical symbol,native datetime)` 写进**磁盘SQLite**，防止一次性加载百万到数十亿行并拒绝重复购买键。
+
+先实写 `2026-09-24` 单交易日（之前已物化Parquet，但从未纳入已成功的四日分钟 H5 镜像），再滚动扩大。创建 `work/h5_mirror/minute_purchased_wave_<id>/`，只有第一次复制6份原H5到私有目录，保留全部 `/data` 中未变证券及其它元数据；按购买 key 替换复制H5里同键行，原H5独有键全部保留，并逐证券严格整数回读后写 SHA SAFE。源 Parquet 仍采用 size+mtime 及旧清单身份验证（未计算商业文件完整字节 SHA），输入 H5 初始/完成 stat 验证，禁止直接向 `D:\stock` 写入或覆盖。6份原H5副本可能较大，写入前检查剩余磁盘空间，空间不足即拒绝，勿绕过。
+
+此交付是**首批真实分钟回填和H5副本完整整数字段验收**，不是2025—2026或2011—2026全历史4.1B条全部H5同步。每次独立生成6份全源副本适于验证首波，不应对全部历史按日重复拷贝6份大H5。实机首波成功后应**把此隔离版本当持续写入的工作基线**，研发按月分组读取/持久增量checkpoint/源版本检验后继续更新同一候选H5，不再重复整个H5复制。最后做Hikyuu C++原生读取、键/值与被接受量化规则核对，再给用户明确批准的生产原H5备份和切换机制。

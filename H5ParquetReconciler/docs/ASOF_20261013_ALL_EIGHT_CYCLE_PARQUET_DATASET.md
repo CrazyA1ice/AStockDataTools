@@ -96,3 +96,9 @@ manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a
 单批源数据/完整证券键来自已实测的八周期物理Parquet来源清单；每股H5事务用__next/__undo+SQLite state分步提交并回读；失败保留唯一未完成窗口的完整SQLite，重跑同一命令按记录恢复，**不会因此前成功窗口的当前六H5 SHA在后续正在进行的窗口变化而误阻断续传**。每个完整窗口同时写 `done.json`、更新 `initialized.json` SHA/完成日期，再清理体积巨大的临时SQLite键表以便之后继续2011—2026，不删除H5与SAFE。四批完成再对持续六H5比对最新提交完整SHA，并输出总来源行数。支持 Windows 原生OS锁单写进程。原购买Parquet、原Hikyuu H5和日线H5不动，不自动更换生产应用数据源；分钟转换量纲及全市场C++读取仍未认证。
 
 新代码静态仓库检查完成（10项真实临时PyTables+SQLite连续源/5日测试、9项纯临时四波/断点/账本/SHA测试），**尚未在用户Windows实际运行**；不得将新程序已提交冒充2026年9月16日已真实回填。真实成功标志 `PASS_SEPTEMBER_PURCHASED_PRIVATE_H5_REFILLED_16_CONFIRMED_DAYS`；继续下一批可进一步按周导入8月和2025等来源，但应优先稳定验证本轮整周脚本。
+
+### 2026-11-11：四周连续分钟H5首批计划已落地（本机尚待真写）
+
+在已验收2026-09-23持续H5版本上，批量入口 `run-real-2026-september-purchased-minute-h5-four-weeks.ps1` 默认一次运行四个来源已确认有购买分钟交易日的工作窗口：09-21..22、09-14..18、09-07..11、09-01..04，总计16天，不包括已完成09-23/24/28/29/30，也不以周末或09-25假称实际行情。配套 `tools/run-real-2026-september-purchased-minute-h5-resumable-waves.py` 依次调用原断点工具和单写锁，每个交易周仅更新当前工作H5的证券表一次：允许最多7个自然日，购买来源有界SQLite总量最多1200万条，股票日最多1min241/5min48条；已提交窗口不会被重复运行，并可从下一中断窗口继续。每批H5整数字节SHA及 `done.json` 检查后释放临时购买-key-SQLite，避免长期存放数百个GB的中间键副本。完全成功后六个实时H5文件对 `initialized.json` 最新SHA再次核验。
+
+首次建立长期工作库时已完全检查过SHA的旧Sep24基础H5仅用于初次复制，以后批次不再重复读取并全字节hash这六个不用再处理的初始输入H5；当前持续H5仍坚持每个成功提交的整文件SHA验证。Windows运行过程同时实时显示进度、保留四批末尾合计SAFE；新增长期回填与四周计划共10+9=19项临时PyTables/SQLite合成回归测试。代码已提交 GitHub，但截至此文档提交**还未取得此次16天真实H5写入的本机回执**，不得宣布16日已补齐。实际成功标志 `PASS_SEPTEMBER_PURCHASED_PRIVATE_H5_REFILLED_16_CONFIRMED_DAYS`。量纲候选、C++全市场原生读取和生产切换未认证，原D:/stock不会修改。

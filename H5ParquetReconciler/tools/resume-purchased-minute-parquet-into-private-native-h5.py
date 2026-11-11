@@ -377,6 +377,7 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
     store,stage,where=stage_receipt(root,start,end,source)
     dtype=MERGE.canonical_dtype(np)
     counts=Counter()
+    completed=False
     try:
         for period in PERIODS:
             for market in MARKETS:
@@ -414,8 +415,23 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
                           "updated_stock_tables":receipt["committed_stock_tables"],
                           "workspace":str(LIVE),"original_market_unchanged":True},
                          sort_keys=True),flush=True)
+        completed=True
     finally:
         store.close()
+    if completed:
+        # Once the H5 six-file hashes, done.json, AND initialized.json are
+        # durable, the staged purchased key database is not required for
+        # replay or rollback. Avoid accumulating hundreds of gigabytes of
+        # copied temporary key rows over 2011-2026.
+        staged=where/"purchased_native_keys.sqlite3"
+        if staged.is_symlink():
+            raise ValueError("Unexpected symlink to committed staged market key store")
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            # Disk cleanup is nonessential after an accepted H5 commit.
+            print("STAGED_KEY_DB_CLEANUP_SKIPPED="+window[0]+
+                  ".."+window[1],flush=True)
 
 @contextmanager
 def exclusive_working_h5_lock():

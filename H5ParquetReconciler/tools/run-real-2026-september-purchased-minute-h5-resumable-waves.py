@@ -121,6 +121,24 @@ def run_all(root,manifest,*,max_waves=4):
             for period in R.PERIODS:
                 totals[period]+=source[period]
             completed.append([first,last])
+        # The final live six-file H5 bytes must still equal the most
+        # recently committed SHA set. This is especially important when all
+        # windows were skipped on a subsequent idempotent invocation.
+        if len(completed)==len(WAVES):
+            state=R.LIVE/"initialized.json"
+            if state.is_symlink() or not state.is_file():
+                raise ValueError("Missing permanent six-H5 completed state")
+            doc=json.loads(state.read_bytes())
+            expected=doc.get("latest_h5_files_sha256")
+            if type(expected) is not dict or set(expected)!=set(R.H5_NAMES):
+                raise ValueError("Incomplete latest six-file H5 provenance")
+            for filename,digest in expected.items():
+                if (type(digest) is not str
+                        or len(digest)!=64
+                        or R.sha(R.LIVE/filename)!=digest):
+                    raise ValueError("Final copied private H5 bytes differ from committed SHA")
+            print("ALL_SIX_CONTINUOUS_H5_FILES_MATCH_LATEST_COMMIT_SHA=TRUE",
+                  flush=True)
         # No claim of all-September completion unless four waves and
         # the already accepted 9/23, 9/24, 9/28..30 are also accounted for.
         result={

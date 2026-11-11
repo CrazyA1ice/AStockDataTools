@@ -86,3 +86,13 @@ manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a
 新工具 tools/resume-purchased-minute-parquet-into-private-native-h5.py、新8项PyTables/SQLite合成测试与一键 run-resume-purchased-minute-parquet-into-private-native-h5.ps1：第一次从刚刚验收的22dc六份H5及各自SHA复制一套持续私有工作库 work/h5_mirror/minute_resumable_22dc038f17a2；此后**不再每天复制六个完整原生H5**。对截至2026-09-23且早于首批基线的购买1min/5min按1到3自然日键扫描到有界SQLite文件，每证券用H5新表__next/备份表__undo与SQLite已提交状态事务逐股更新。脚本意外终止时会自动回退尚未提交证券、校验并跳过已完成证券，恢复后继续；跨成功批次六个H5整体SHA绑定及OS单写者锁。仅私有连续候选写入，原H5/购买Parquet依然只读，未经认证的分钟量额和Hikyuu全市场C++消费不视为生产完成。
 
 首次真实连续批次选择2026-09-23（此前9月24日已验，避免重复）。首轮预期八项合成通过并输出PASS_RESUMABLE_PURCHASED_PARQUET_TO_NATIVE_MINUTE_H5，持续H5不再单日重新全复制；首轮Windows执行仍待用户新回执。之后按三天或单日窗口向2025、2011逐步推进，当前不处理2026-10-14至10-31，也不重复已完成的day H5。
+
+## 2026-11-11：持续 H5 首次 9月23日真实回填成功；下一次四个整周直接真写
+
+用户 Windows 已实测通过提交 30f6bfb 的持续回填：8项临时H5/SQLite模拟测试OK，首次建立单一长期工作库 `work/h5_mirror/minute_resumable_22dc038f17a2/`。2026-09-23 购买Parquet实际1min=1,341,647条（50个源行组）、5min=267,216条（47个源行组），合计1,608,863条；日志显示11,134只/周期股票表提交事务（两个周期5,567个符号表实例），全六份H5 SHA及独立 `batches/batch_2026-09-23_2026-09-23/done.json` 验收，原市场文件未写。日线H5及以前已完成的2026-09-24、9/28—30、10/13分钟H5不重做。来源记录统计并非净新增H5键数，其他未完成年度仍大。
+
+为直接扩大真实分钟回填，新建 `tools/run-real-2026-september-purchased-minute-h5-resumable-waves.py` 和 Windows入口 `run-real-2026-september-purchased-minute-h5-four-weeks.ps1`，固定四个已知真实购买分钟来源窗口，**倒序依次写同一套私有H5**：2026-09-21..22（2日）、09-14..18（5日）、09-07..11（5日）、09-01..04（4日），累计16个经既有真实工作流验证的候选交易日；不包含周末、不重新扫描已验09-23、09-24、09-28..30，也不猜测09-25等休市日期。max窗口7自然日且单批成交记录最多12,000,000条，max_stock=实际覆盖日数×(1min241或5min48)。整周来源一次SQLite分组、每支股票只重写一次原生H5完整TABLE，避免每天重写相同老数据。
+
+单批源数据/完整证券键来自已实测的八周期物理Parquet来源清单；每股H5事务用__next/__undo+SQLite state分步提交并回读；失败保留唯一未完成窗口的完整SQLite，重跑同一命令按记录恢复，**不会因此前成功窗口的当前六H5 SHA在后续正在进行的窗口变化而误阻断续传**。每个完整窗口同时写 `done.json`、更新 `initialized.json` SHA/完成日期，再清理体积巨大的临时SQLite键表以便之后继续2011—2026，不删除H5与SAFE。四批完成再对持续六H5比对最新提交完整SHA，并输出总来源行数。支持 Windows 原生OS锁单写进程。原购买Parquet、原Hikyuu H5和日线H5不动，不自动更换生产应用数据源；分钟转换量纲及全市场C++读取仍未认证。
+
+新代码静态仓库检查完成（10项真实临时PyTables+SQLite连续源/5日测试、9项纯临时四波/断点/账本/SHA测试），**尚未在用户Windows实际运行**；不得将新程序已提交冒充2026年9月16日已真实回填。真实成功标志 `PASS_SEPTEMBER_PURCHASED_PRIVATE_H5_REFILLED_16_CONFIRMED_DAYS`；继续下一批可进一步按周导入8月和2025等来源，但应优先稳定验证本轮整周脚本。

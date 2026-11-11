@@ -197,6 +197,11 @@ def stage_sqlite(dbpath,refs,root,start,end,*,max_source_rows=12000000):
                         or st.st_mtime_ns!=entry["source_stat"]["mtime_ns"]):
                     raise ValueError("Vendor Parquet source drift since physical manifest")
         store.commit()
+        for period in PERIODS:
+            print("STAGED_PURCHASED_NATIVE_MINUTE_KEYS="+period+
+                  " COUNT="+str(counts[period])+
+                  " SOURCE_ROWGROUPS="+str(rowgroups_read[period]),
+                  flush=True)
         return store,{
             "purchased_canonical_a_share_rows":dict(counts),
             "non_A_share_or_unrecognized_source_rows_skipped":dict(skipped),
@@ -347,6 +352,8 @@ def merge_wave(root,manifest,sha,first,last,run_id,out,*,
             for market in MARKETS:
                 file=originals[period,market]
                 copy=dest/file.name
+                print("COPYING_ORIGINAL_MINUTE_H5_TO_ISOLATED_OUTPUT="+file.name+
+                      " SOURCE_BYTES="+str(file.stat().st_size),flush=True)
                 shutil.copyfile(file,copy)
                 with tables.open_file(str(copy),"a") as target:
                     if not hasattr(target.root,"data"):

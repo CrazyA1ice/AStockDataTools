@@ -178,6 +178,65 @@ class PurchasedMinuteIntoCopiedOriginalH5(unittest.TestCase):
         self.assertTrue(result[
             "native_minute_table_40byte_all_changed_stock_integer_readback_verified"])
 
+    def make_prior_four_day_native(self):
+        folder=self.mirrors/("minute_union_"+M.PRIOR_RUN)
+        paths={}
+        for period in M.PERIODS:
+            for market in M.MARKETS:
+                name=market+"_"+period+".h5"
+                tables_for_market={}
+                if market=="sh":
+                    ts=202609280931 if period=="1min" else 202609280935
+                    tables_for_market["SH600000"]=native([ts],[9999])
+                file=folder/name
+                h5(file,tables_for_market)
+                paths[name]=M.MERGE.sha(file)
+        safe=self.reports/(
+            "mixed-purchased-h5-native-minute-4days-"+M.PRIOR_RUN+".json")
+        safe.write_text(json.dumps({
+            "status":"private_purchased_plus_h5_minute_40byte_native_h5_written_full_integer_readback",
+            "native_bar_counts":{"1min":1,"5min":1},
+            "source_days":sorted(M.PRIOR_DAYS),
+            "native_h5_files_sha256":paths,
+            "native_40byte_pytables_integer_full_readback_verified":True,
+            "original_purchased_parquet_or_original_h5_modified":False,
+            "production_pointer_modified":False,
+        }),encoding="utf-8")
+        return safe,folder
+
+    def test_prior_native_four_day_sources_sha_verified_and_exact_keys_reused(self):
+        safe,folder=self.make_prior_four_day_native()
+        with patch.object(M,"PRIOR_ROWS",{"1min":1,"5min":1}):
+            files=M.prior_native_files(safe,folder)
+            self.assertEqual(len(files),6)
+            result=self.reports/"merged-with-prior.json"
+            with patch.object(M,"src_input",return_value=self.payload):
+                doc=M.merge_wave(
+                    self.root,self.reports/"not_real.json",M.SOURCE_SHA,
+                    "2026-09-24","2026-09-24","f00d00000003",result,
+                    prior_safe=safe,prior_root=folder)
+        self.assertEqual(
+            doc["already_written_prior_four_day_native_rows_reused"],
+            {"1min":1,"5min":1})
+        self.assertTrue(doc["prior_four_day_native_mirror_reused_not_reconverted"])
+        output=self.mirrors/"minute_purchased_wave_f00d00000003"
+        with tables.open_file(str(output/"sh_1min.h5"),"r") as db:
+            old=db.get_node("/data/SH600000").read()
+            self.assertEqual(old["datetime"].tolist(),
+                             [202609240931,202609240932,202609280931])
+            self.assertEqual(old["closePrice"].tolist(),[11125,3333,9999])
+        for name,source_sha in self.sourceH5.items():
+            self.assertEqual(M.MERGE.sha(self.root/"HikyuuData"/name),source_sha)
+
+    def test_prior_native_mirror_sha_tamper_blocks_before_copy(self):
+        safe,folder=self.make_prior_four_day_native()
+        prior=folder/"sh_1min.h5"
+        prior.write_bytes(prior.read_bytes()+b"changed")
+        with patch.object(M,"PRIOR_ROWS",{"1min":1,"5min":1}):
+            with self.assertRaisesRegex(ValueError,"SHA mismatch"):
+                M.prior_native_files(safe,folder)
+        self.assertFalse((self.mirrors/"minute_purchased_wave_f00d00000004").exists())
+
     def test_original_market_file_does_not_change_when_no_purchased_minute(self):
         p=self.refs["5min"][0][0]
         parquet(p,[bar("2026-09-23","09:30","SH600000")])

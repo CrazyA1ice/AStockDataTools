@@ -161,6 +161,57 @@ class ResumableMinuteStockTests(unittest.TestCase):
         M.initialize_live(expected,baseline_sha)
         self.assertEqual(target.read_bytes(),b"CHANGED private ongoing candidate")
 
+    def test_real_five_day_native_h5_stock_960_bars_in_single_commit(self):
+        # 960 genuine minute end-label records across four trading days:
+        # > prior 3*241 ceiling, <= new five-day bounded calendar ceiling.
+        from datetime import date,timedelta
+        self.sqlite.execute(
+            "CREATE TABLE bars (period TEXT NOT NULL,symbol TEXT NOT NULL,"
+            " stamp INTEGER NOT NULL,record BLOB NOT NULL,"
+            " PRIMARY KEY(period,symbol,stamp)) WITHOUT ROWID")
+        imported=0
+        for day in (14,15,16,17):
+            for begin,end in ((9*60+31,11*60+30),
+                              (13*60+1,15*60)):
+                for minute in range(begin,end+1):
+                    key=202609000000+day*10000+(minute//60)*100+minute%60
+                    raw=rows([key],[11125]).tobytes()
+                    self.sqlite.execute(
+                        "INSERT INTO bars(period,symbol,stamp,record)"
+                        " VALUES(?,?,?,?)",
+                        ("1min",SYMBOL,key,raw))
+                    imported+=1
+        self.sqlite.commit()
+        self.assertEqual(imported,960)
+        outcome=M.process_stock_batch(
+            self.sqlite,"1min","sh",self.h5,days=5,
+            dtype=DT,np=np,tables=tables)
+        self.assertEqual(outcome["purchased_rows_checked"],960)
+        self.assertEqual(outcome["stock_tables_updated"],1)
+        result=self.old()
+        self.assertEqual(len(result),962)
+        self.assertEqual(int(result["datetime"][-1]),202609230932)
+        self.assertEqual(len(set(result["datetime"].tolist())),962)
+
+    def test_week_batch_per_stock_overflow_rejected_before_h5_change(self):
+        self.sqlite.execute(
+            "CREATE TABLE bars (period TEXT NOT NULL,symbol TEXT NOT NULL,"
+            " stamp INTEGER NOT NULL,record BLOB NOT NULL,"
+            " PRIMARY KEY(period,symbol,stamp)) WITHOUT ROWID")
+        # 2*241 exceeds a two-day 5-minute max (2*48).
+        for ix in range(97):
+            key=202609140000+ix
+            self.sqlite.execute(
+                "INSERT INTO bars(period,symbol,stamp,record) VALUES(?,?,?,?)",
+                ("5min",SYMBOL,key,rows([key],[20]).tobytes()))
+        self.sqlite.commit()
+        original=M.sha_array(self.old())
+        with self.assertRaisesRegex(ValueError,"Unexpected stock/week"):
+            M.process_stock_batch(
+                self.sqlite,"5min","sh",self.h5,days=2,
+                dtype=DT,np=np,tables=tables)
+        self.assertEqual(M.sha_array(self.old()),original)
+
     def test_timestamp_bounds_reject_future_and_crossing_accepted_date(self):
         self.assertEqual(
             tuple(str(x) for x in M.batch_dates("2026-09-23","2026-09-23")),

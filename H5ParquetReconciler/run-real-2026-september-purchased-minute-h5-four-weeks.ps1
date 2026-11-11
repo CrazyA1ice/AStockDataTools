@@ -27,9 +27,9 @@ Write-Host '===== 7 DETERMINISTIC CONFIRMED-TRADEDATE WEEK / CRASH RESTART TESTS
 & $py -B -m unittest discover -s $tests -p 'test_run_real_2026_september_purchased_minute_h5_resumable_waves.py' -q
 if($LASTEXITCODE -ne 0){throw 'Four-week real purchased H5 batch plan tests failed'}
 Write-Host '===== REAL PARQUET -> CONTINUOUS 1MIN/5MIN H5 SEPTEMBER 2026 FOUR WAVES ====='
-$logs=@(& $py -B $orchestrator --root 'D:\stock' --manifest $manifest --max-waves 4 --write-verified-september-purchased-private-h5)
+& $py -B $orchestrator --root 'D:\stock' --manifest $manifest --max-waves 4 --write-verified-september-purchased-private-h5 | Tee-Object -Variable progress
 if($LASTEXITCODE -ne 0){throw 'Actual September source-to-private-H5 batch failed; restart SAME command to resume safely'}
-$lines=@($logs|Where-Object {$_ -like 'PASS_2026_SEPTEMBER_PURCHASED_1MIN_5MIN_NATIVE_H5_RESUMABLE_WAVES=*'})
+$lines=@($progress|Where-Object {$_ -like 'PASS_2026_SEPTEMBER_PURCHASED_1MIN_5MIN_NATIVE_H5_RESUMABLE_WAVES=*'})
 if($lines.Count -ne 1){throw 'Four-week private minute H5 acceptance receipt missing'}
 $summary=([string]$lines[0]).Substring('PASS_2026_SEPTEMBER_PURCHASED_1MIN_5MIN_NATIVE_H5_RESUMABLE_WAVES='.Length)|ConvertFrom-Json
 if($summary.status -ne 'accepted_purchased_2026_september_minute_H5_rolling_windows' -or $summary.window_count -ne 4 -or $summary.purchased_source_days_in_full_explicit_plan -ne 16 -or $summary.previous_sep23_24_and_sep28_30_not_rebuilt -ne $true -or $summary.original_purchased_or_hikyuu_market_files_modified -ne $false -or $summary.native_minute_units_vendor_certified -ne $false -or $summary.production_h5_activated -ne $false -or @($summary.completed_or_reused_windows).Count -ne 4 -or [long]$summary.purchased_source_rows_processed_in_these_windows.'1min' -le 0 -or [long]$summary.purchased_source_rows_processed_in_these_windows.'5min' -le 0){throw 'Four purchased-week H5 transaction summary did not pass safety/readback gates'}

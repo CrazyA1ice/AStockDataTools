@@ -335,6 +335,10 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
         print("PASS_EXISTING_RESUMABLE_NATIVE_H5_MINUTE_WINDOW="+
               "-".join(window),flush=True)
         return
+    for prior_start,prior_end in doc["completed_windows"]:
+        if (start<=date.fromisoformat(prior_end)
+                and end>=date.fromisoformat(prior_start)):
+            raise ValueError("New purchased-minute batch overlaps already committed H5 days")
     finished=LIVE/"batches"/("batch_"+start.isoformat()+"_"+end.isoformat())/"done.json"
     if finished.exists():
         # A power cut between writing the immutable batch receipt and

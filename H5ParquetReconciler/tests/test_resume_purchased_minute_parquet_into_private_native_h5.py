@@ -165,9 +165,15 @@ class ResumableMinuteStockTests(unittest.TestCase):
         self.assertEqual(
             tuple(str(x) for x in M.batch_dates("2026-09-23","2026-09-23")),
             ("2026-09-23","2026-09-23"))
+        self.assertEqual(
+            tuple(str(x) for x in M.batch_dates("2011-01-04","2011-01-04")),
+            ("2011-01-04","2011-01-04"))
+        self.assertEqual(
+            tuple(str(x) for x in M.batch_dates("2025-09-01","2025-09-03")),
+            ("2025-09-01","2025-09-03"))
         for first,last in (("2026-09-24","2026-09-24"),
                            ("2026-10-14","2026-10-14"),
-                           ("2026-08-30","2026-08-30"),
+                           ("2010-12-31","2010-12-31"),
                            ("2026-09-01","2026-09-06")):
             with self.subTest(first),self.assertRaises(ValueError):
                 M.batch_dates(first,last)

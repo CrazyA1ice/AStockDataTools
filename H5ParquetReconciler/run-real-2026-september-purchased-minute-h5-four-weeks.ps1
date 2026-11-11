@@ -23,7 +23,7 @@ if($prior.status -ne 'private_resumable_native_minute_H5_parquet_purchased_wave_
 Write-Host '===== 10 NATIVE H5 STOCK RECOVERY/WEEK SOURCE TESTS ====='
 & $py -B -m unittest discover -s $tests -p 'test_resume_purchased_minute_parquet_into_private_native_h5.py' -q
 if($LASTEXITCODE -ne 0){throw 'Real PyTables/sqlite weekly purchase H5 tests failed before market read'}
-Write-Host '===== 7 DETERMINISTIC CONFIRMED-TRADEDATE WEEK / CRASH RESTART TESTS ====='
+Write-Host '===== 9 DETERMINISTIC CONFIRMED-TRADEDATE WEEK / CRASH RESTART TESTS ====='
 & $py -B -m unittest discover -s $tests -p 'test_run_real_2026_september_purchased_minute_h5_resumable_waves.py' -q
 if($LASTEXITCODE -ne 0){throw 'Four-week real purchased H5 batch plan tests failed'}
 Write-Host '===== REAL PARQUET -> CONTINUOUS 1MIN/5MIN H5 SEPTEMBER 2026 FOUR WAVES ====='

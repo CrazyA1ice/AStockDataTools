@@ -152,8 +152,8 @@ def batch_dates(first,last):
     # Parquet under an unproven historical mapping.
     start,end=date.fromisoformat(first),date.fromisoformat(last)
     if (start>end or start<date(2011,1,1)
-            or end>date(2026,9,23) or (end-start).days>2):
-        raise ValueError("Bound native 1m/5m purchase window to <=3 days, 2011-01-01..2026-09-23")
+            or end>date(2026,9,23) or (end-start).days>6):
+        raise ValueError("Bound native 1m/5m purchase window to <=7 calendar days, 2011-01-01..2026-09-23")
     return start,end
 
 def stage_receipt(root,start,end,payload):
@@ -290,7 +290,7 @@ def commit_stock(db,store,period,symbol,purchased,tables,np,dtype):
     db.flush()
     return True
 
-def process_stock_batch(store,period,market,file,*,dtype,np,tables):
+def process_stock_batch(store,period,market,file,*,days,dtype,np,tables):
     source=store.execute(
         "SELECT DISTINCT symbol FROM bars WHERE period=? AND symbol LIKE ? "
         "ORDER BY symbol",(period,market.upper()+"%"))
@@ -302,8 +302,12 @@ def process_stock_batch(store,period,market,file,*,dtype,np,tables):
             packed=[b for (b,) in store.execute(
                 "SELECT record FROM bars WHERE period=? AND symbol=? "
                 "ORDER BY stamp",(period,symbol))]
-            if not packed or len(packed)>3*241:
-                raise ValueError("Unexpected stock/batch minute Parquet bar count")
+            # A 5-day purchased week is committed as one stock replacement,
+            # avoiding repeated full-history table rewrites each day.
+            # Allow only one trading-session maximum per calendar day.
+            ceiling=days*(241 if period=="1min" else 48)
+            if not packed or len(packed)>ceiling:
+                raise ValueError("Unexpected stock/week minute Parquet bar count")
             arr=np.frombuffer(b"".join(packed),dtype=dtype).copy()
             changed=commit_stock(h5,store,period,symbol,arr,tables,np,dtype)
             counters["purchased_rows_checked"]+=len(arr)
@@ -378,6 +382,7 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
             for market in MARKETS:
                 counters=process_stock_batch(
                     store,period,market,LIVE/(market+"_"+period+".h5"),
+                    days=(end-start).days+1,
                     dtype=dtype,np=np,tables=tables)
                 counts[period]+=counters["purchased_rows_checked"]
         if any(counts[p]!=stage["source_purchased_bar_counts"].get(p,0)

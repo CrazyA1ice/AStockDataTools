@@ -68,7 +68,7 @@ def write_json_atomic(path,doc):
         os.fsync(stream.fileno())
     os.replace(temp,path)
 
-def base_receipt():
+def base_receipt(*,verify_baseline_bytes=True):
     if (BASE_SAFE.is_symlink() or not BASE_SAFE.is_file()
             or BASE_SAFE.stat().st_size>200000
             or BASE_DIR.is_symlink() or not BASE_DIR.is_dir()):
@@ -94,7 +94,7 @@ def base_receipt():
         f=BASE_DIR/name
         if (f.is_symlink() or not f.is_file()
                 or type(value) is not str or re.fullmatch(r"[0-9a-f]{64}",value) is None
-                or sha(f)!=value):
+                or (verify_baseline_bytes and sha(f)!=value)):
             raise ValueError("Immutable prior accepted real native minute H5 SHA drift")
     return maps,sha(BASE_SAFE)
 
@@ -329,7 +329,14 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
     start,end=batch_dates(from_day,through_day)
     if (REPORTS.is_symlink() or MIRRORS.is_symlink() or LIVE.is_symlink()):
         raise ValueError("Linked private output path refused")
-    base_map,base_safe_sha=base_receipt()
+    # The baseline has already been completely SHA-verified and copied
+    # into the ongoing workspace. Re-hashing all six unused immutable
+    # baseline H5 files on EVERY later weekly wave wastes several GB of IO.
+    # The unchanged SAFE SHA is still checked against initialized.json;
+    # the active six H5 files are verified against the last committed SHA.
+    fresh_baseline=not (LIVE/"initialized.json").is_file()
+    base_map,base_safe_sha=base_receipt(
+        verify_baseline_bytes=fresh_baseline)
     doc=initialize_live(base_map,base_safe_sha)
     window=[start.isoformat(),end.isoformat()]
     if window in doc["completed_windows"]:

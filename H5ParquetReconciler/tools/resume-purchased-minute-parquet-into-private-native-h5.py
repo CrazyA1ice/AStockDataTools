@@ -103,6 +103,8 @@ def initialize_live(maps,baseline_safe_sha):
     if any(p.is_symlink() for p in (MODULE/"work",MIRRORS,LIVE)):
         raise ValueError("Private H5 workspace path is a link")
     initialized=LIVE/"initialized.json"
+    if initialized.is_symlink():
+        raise ValueError("Linked private native H5 state is not permitted")
     if initialized.exists():
         d=json.loads(initialized.read_bytes())
         if (d.get("source_baseline_safe_sha256")!=baseline_safe_sha
@@ -322,7 +324,28 @@ def run(root,manifest,from_day,through_day,*,expected_sha=SOURCE_SHA):
     doc=initialize_live(base_map,base_safe_sha)
     window=[start.isoformat(),end.isoformat()]
     if window in doc["completed_windows"]:
+        for filename,known in doc["latest_h5_files_sha256"].items():
+            if sha(LIVE/filename)!=known:
+                raise ValueError("Completed private minute H5 source changed")
         print("PASS_EXISTING_RESUMABLE_NATIVE_H5_MINUTE_WINDOW="+
+              "-".join(window),flush=True)
+        return
+    finished=LIVE/"batches"/("batch_"+start.isoformat()+"_"+end.isoformat())/"done.json"
+    if finished.exists():
+        # A power cut between writing the immutable batch receipt and
+        # replacing initialized.json is recoverable without rewriting H5.
+        saved=json.loads(finished.read_bytes())
+        if (saved.get("status")!=STATUS or saved.get("window")!=window
+                or saved.get("dataset_sha256")!=SOURCE_SHA
+                or set(saved.get("full_private_six_file_H5_sha256",{}))!=set(H5_NAMES)):
+            raise ValueError("Interrupted completed minute H5 batch receipt invalid")
+        for filename,known in saved["full_private_six_file_H5_sha256"].items():
+            if sha(LIVE/filename)!=known:
+                raise ValueError("Interrupted completed private H5 candidate bytes changed")
+        doc["completed_windows"].append(window)
+        doc["latest_h5_files_sha256"]=saved["full_private_six_file_H5_sha256"]
+        write_json_atomic(LIVE/"initialized.json",doc)
+        print("PASS_RECOVERED_COMPLETE_NATIVE_H5_MINUTE_BATCH="+
               "-".join(window),flush=True)
         return
     in_progress=[p for p in (LIVE/"batches").glob("batch_*")

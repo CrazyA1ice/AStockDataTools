@@ -78,3 +78,11 @@ manifest= `work/unified_parquet/datasets/eight_cycle_asof_20261013_a4987bba0ce3a
 为了让这次真实回填结果累积而非重建另一套不完整分钟H5，首波同时绑定已在2026-11-02实测通过的四日完整原生H5镜像：`work/h5_mirror/minute_union_660389198d64/`，SAFE `reports/mixed-purchased-h5-native-minute-4days-660389198d64.json`。新工具 `prior_native_files` 将两周期1min=5,358,629、5min=1,068,384，合计6,427,013条与六文件SHA/日期约束校验。输出时先从原H5复制6个完整文件，合入9月24日购买Parquet当日时间键（优先），再把已有四日原生H5整数字节按同股时间键合入副本；两批在时间上不重叠。逐股票验证输出的40字节TABLE整数字节相同，源旧H5只读不改。新增2个集成真PyTables回归（既有5项→7项）涵盖复用前一镜像、源SHA篡改拒绝和原H5其他证券/时间键保留；Windows新7项尚未实测。
 
 这仍是首次验证下一波实际Parquet→H5写入，接下来应基于**该首次成功H5候选库**增量写剩余年度窗口，不能每次复制整个原H5六文件。源vendor价量额量纲/5min时标映射为现有候选规则，原生Hikyuu C++全市场分钟驱动和商业数值等价尚未完成认证，禁止直接替换生产H5。
+
+## 2026-11-11：真实9月24日分钟H5已验收，转连续续写（不再每天复制六份H5）
+
+用户 Windows 已实测先前分支 b9013e0：7个实写模拟测试OK。真实2026-09-24购买Parquet1min=1,341,888条（涉及39行组）、5min=267,264条（47行组），合计1,609,152条，均转换为Hikyuu原生整数并在六份私有H5副本回读；此前已验原生四日镜像1min=5,358,629，5min=1,068,384合计6,427,013条也复用成功。被处理的来源数之和8,036,165，不等于H5净新增唯一键数。真实SAFE：reports/purchased-minute-native-h5-copy-20260924-22dc038f17a2.json；已验收候选H5：work/h5_mirror/minute_purchased_wave_22dc038f17a2/。原D:/stock及日线H5均未更改。
+
+新工具 tools/resume-purchased-minute-parquet-into-private-native-h5.py、新8项PyTables/SQLite合成测试与一键 run-resume-purchased-minute-parquet-into-private-native-h5.ps1：第一次从刚刚验收的22dc六份H5及各自SHA复制一套持续私有工作库 work/h5_mirror/minute_resumable_22dc038f17a2；此后**不再每天复制六个完整原生H5**。对截至2026-09-23且早于首批基线的购买1min/5min按1到3自然日键扫描到有界SQLite文件，每证券用H5新表__next/备份表__undo与SQLite已提交状态事务逐股更新。脚本意外终止时会自动回退尚未提交证券、校验并跳过已完成证券，恢复后继续；跨成功批次六个H5整体SHA绑定及OS单写者锁。仅私有连续候选写入，原H5/购买Parquet依然只读，未经认证的分钟量额和Hikyuu全市场C++消费不视为生产完成。
+
+首次真实连续批次选择2026-09-23（此前9月24日已验，避免重复）。首轮预期八项合成通过并输出PASS_RESUMABLE_PURCHASED_PARQUET_TO_NATIVE_MINUTE_H5，持续H5不再单日重新全复制；首轮Windows执行仍待用户新回执。之后按三天或单日窗口向2025、2011逐步推进，当前不处理2026-10-14至10-31，也不重复已完成的day H5。

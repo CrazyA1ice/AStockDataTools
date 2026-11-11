@@ -62,7 +62,7 @@ class AcceptedSeptemberBatchOrchestrator(unittest.TestCase):
     def test_excess_window_limit_or_unverified_source_days_rejected(self):
         with self.assertRaisesRegex(ValueError,"one to four"):
             M.run_all("unused","unused",max_waves=5)
-        with patch.object(M,"WAVES",(("2026-09-23","2026-09-24"),)):
+        with patch.object(M,"WAVES",M.WAVES+(("2026-09-23","2026-09-23"),)):
             with self.assertRaisesRegex(ValueError,"Unexpected"):
                 M.validate_windows()
 

@@ -259,6 +259,49 @@ def prior_native_files(safe,base):
             raise ValueError("Prior native H5 file SHA mismatch")
     return {name:root/name for name in files}
 
+def overlay_prior_native_file(target,source_path,dtype,np,tables,market):
+    """Integrate already verified four-day native H5 into copied original."""
+    start_sha=MERGE.sha(source_path)
+    count=0
+    stocks=0
+    with tables.open_file(str(source_path),"r") as older:
+        if not hasattr(older.root,"data"):
+            raise ValueError("Prior four-day H5 source has no native /data")
+        for node in older.root.data:
+            if not isinstance(node,tables.Table):
+                raise ValueError("Prior native H5 has unexpected non-table stock node")
+            sym=node._v_name
+            if (not re.fullmatch(r"(SH|SZ|BJ)[0-9]{6}",sym)
+                    or not sym.startswith(market.upper())):
+                raise ValueError("Prior native H5 stock symbol belongs to wrong venue")
+            modern=MERGE.convert_records(node.read(),dtype,np)
+            try:
+                original=target.get_node("/data/"+sym).read()
+                old_exists=True
+            except tables.NoSuchNodeError:
+                original=np.empty(0,dtype=dtype)
+                old_exists=False
+            combined,_=MERGE.merge_stock(original,modern,np,dtype)
+            output=target.create_table(
+                "/data","_prior_"+sym,description=dtype,title=sym,
+                expectedrows=len(combined),
+                filters=tables.Filters(complevel=5,complib="zlib",shuffle=True))
+            for at in range(0,len(combined),16384):
+                output.append(combined[at:at+16384])
+            output.flush()
+            if old_exists:
+                target.remove_node("/data",sym)
+            target.rename_node(output,sym)
+            after=target.get_node("/data/"+sym)
+            if (after.dtype!=dtype or int(after.nrows)!=len(combined)
+                    or after.read().tobytes()!=combined.tobytes()):
+                raise ValueError("Prior four-day native H5 integer reuse readback failed")
+            count+=len(modern)
+            stocks+=1
+    if MERGE.sha(source_path)!=start_sha:
+        raise ValueError("Prior four-day native H5 source mutated during reuse")
+    return count,stocks
+
 def merge_wave(root,manifest,sha,first,last,run_id,out,*,
                max_source_rows=12000000,prior_safe=None,prior_root=None):
     import numpy as np
@@ -295,6 +338,8 @@ def merge_wave(root,manifest,sha,first,last,run_id,out,*,
     changed_stocks=Counter()
     total_after=Counter()
     purchased=Counter()
+    prior_reused=Counter()
+    prior_stocks=Counter()
     originals_replaced=Counter()
     original_keys_kept=Counter()
     try:
@@ -347,6 +392,11 @@ def merge_wave(root,manifest,sha,first,last,run_id,out,*,
                             "original_post2010_replaced_by_purchased"]
                         original_keys_kept[period]+=len(combined)-len(modern)
                         total_after[period]+=len(combined)
+                    if file.name in prior:
+                        count,tables_count=overlay_prior_native_file(
+                            target,prior[file.name],dtype,np,tables,market)
+                        prior_reused[period]+=count
+                        prior_stocks[period]+=tables_count
                     target.flush()
                 print("DONE_MINUTE_H5_COPY_SOURCE="+period+"/"+market.upper()+
                       " STOCKS="+str(changed_stocks[period]),flush=True)
@@ -356,12 +406,17 @@ def merge_wave(root,manifest,sha,first,last,run_id,out,*,
         if any(purchased[p]!=scan["purchased_canonical_a_share_rows"].get(p,0)
                or purchased[p]<=0 for p in PERIODS):
             raise ValueError("Purchased native minute rows not conserved")
+        if prior and any(prior_reused[p]!=PRIOR_ROWS[p] for p in PERIODS):
+            raise ValueError("Prior native four-day H5 full row counts not conserved")
         result={
             "status":STATUS,"format":NAME,
             "window":[first,last],
             "physical_dataset_sha256":sha,
             "native_h5_files":6,
             "purchased_parquet_source_rows_written_as_native_h5":dict(purchased),
+            "already_written_prior_four_day_native_rows_reused":dict(prior_reused),
+            "already_written_prior_four_day_native_stock_tables_reused":dict(prior_stocks),
+            "prior_four_day_native_mirror_reused_not_reconverted":bool(prior),
             "changed_native_stock_tables":dict(changed_stocks),
             "original_h5_same_keys_overridden_from_purchased":dict(originals_replaced),
             "original_h5_only_keys_preserved_in_changed_stocks":dict(original_keys_kept),
@@ -397,12 +452,16 @@ def main(argv=None):
     p.add_argument("--run-id",required=True)
     p.add_argument("--out",required=True,type=Path)
     p.add_argument("--max-source-rows",type=int,default=12000000)
+    p.add_argument("--prior-four-day-native-safe",type=Path)
+    p.add_argument("--prior-four-day-native-root",type=Path)
     p.add_argument("--write-isolated-minute-h5",action="store_true",required=True)
     a=p.parse_args(argv)
     try:
         merge_wave(a.root,a.manifest,a.dataset_sha256,a.from_day,
                    a.through_day,a.run_id,a.out,
-                   max_source_rows=a.max_source_rows)
+                   max_source_rows=a.max_source_rows,
+                   prior_safe=a.prior_four_day_native_safe,
+                   prior_root=a.prior_four_day_native_root)
     except Exception as exc:
         last=traceback.extract_tb(exc.__traceback__)[-1]
         p.error("Native minute H5 copied-source purchased-primary wave REFUSED ["+

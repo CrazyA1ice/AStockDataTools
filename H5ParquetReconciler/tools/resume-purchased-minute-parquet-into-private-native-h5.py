@@ -146,9 +146,13 @@ def initialize_live(maps,baseline_safe_sha):
     return d
 
 def batch_dates(first,last):
-    start,end=BASE.validate_days(first,last)
-    if end>=date(2026,9,24):
-        raise ValueError("This first resumable stream is only for dates BEFORE accepted Sep24")
+    # Use already-addressable purchased 1m/5m Parquet back to 2011;
+    # private 1990-2010 history is in H5 and never converted from paid
+    # Parquet under an unproven historical mapping.
+    start,end=date.fromisoformat(first),date.fromisoformat(last)
+    if (start>end or start<date(2011,1,1)
+            or end>date(2026,9,23) or (end-start).days>2):
+        raise ValueError("Bound native 1m/5m purchase window to <=3 days, 2011-01-01..2026-09-23")
     return start,end
 
 def stage_receipt(root,start,end,payload):

@@ -162,7 +162,7 @@ def stage_sqlite(dbpath,refs,root,start,end,*,max_source_rows=12000000):
                                 day=datetime.fromtimestamp(t/1000,tz=UTC8).date()
                                 normalized=C.symbol_id(row["symbol"])
                                 if normalized is None or not C.is_a_share_candidate(
-                                        normalized,2026):
+                                        normalized,day.year):
                                     skipped[period]+=1
                                     continue
                                 clock=calendar[period,day]

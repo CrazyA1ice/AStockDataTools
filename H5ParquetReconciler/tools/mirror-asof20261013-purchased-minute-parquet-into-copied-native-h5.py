@@ -224,7 +224,43 @@ def source_h5(root):
             result[period,market]=source
     return result
 
-def merge_wave(root,manifest,sha,first,last,run_id,out,*,max_source_rows=12000000):
+PRIOR_RUN="660389198d64"
+PRIOR_ROWS={"1min":5358629,"5min":1068384}
+PRIOR_DAYS={"2026-09-28","2026-09-29","2026-09-30","2026-10-13"}
+
+def prior_native_files(safe,base):
+    """Re-use the already verified native 6.427m-minute four-day H5."""
+    root=MIRRORS/("minute_union_"+PRIOR_RUN)
+    receipt=REPORTS/("mixed-purchased-h5-native-minute-4days-"+PRIOR_RUN+".json")
+    if (Path(safe).resolve()!=receipt.resolve()
+            or Path(base).resolve()!=root.resolve()
+            or receipt.is_symlink() or not receipt.is_file()
+            or receipt.stat().st_size>100000
+            or root.is_symlink() or not root.is_dir()):
+        raise ValueError("Prior four-day H5 native source identity missing")
+    doc=json.loads(receipt.read_bytes())
+    files=doc.get("native_h5_files_sha256")
+    if (doc.get("status")!=
+            "private_purchased_plus_h5_minute_40byte_native_h5_written_full_integer_readback"
+            or doc.get("native_bar_counts")!=PRIOR_ROWS
+            or set(doc.get("source_days",[]))!=PRIOR_DAYS
+            or doc.get("native_40byte_pytables_integer_full_readback_verified") is not True
+            or doc.get("original_purchased_parquet_or_original_h5_modified") is not False
+            or doc.get("production_pointer_modified") is not False
+            or type(files) is not dict
+            or set(files)!={m+"_"+p+".h5" for m in MARKETS for p in PERIODS}):
+        raise ValueError("Prior accepted 6.4-million-row native H5 receipt drift")
+    for filename,digest in files.items():
+        candidate=root/filename
+        if (candidate.is_symlink() or not candidate.is_file()
+                or type(digest) is not str
+                or re.fullmatch(r"[a-f0-9]{64}",digest) is None
+                or MERGE.sha(candidate)!=digest):
+            raise ValueError("Prior native H5 file SHA mismatch")
+    return {name:root/name for name in files}
+
+def merge_wave(root,manifest,sha,first,last,run_id,out,*,
+               max_source_rows=12000000,prior_safe=None,prior_root=None):
     import numpy as np
     import tables
     start,end=validate_days(first,last)
@@ -242,6 +278,9 @@ def merge_wave(root,manifest,sha,first,last,run_id,out,*,max_source_rows=1200000
     payload=src_input(root,manifest,sha)
     refs=purchased_refs(payload,root)
     originals=source_h5(root)
+    if (prior_safe is None)!=(prior_root is None):
+        raise ValueError("Prior native minute mirror requires SAFE and root together")
+    prior=(prior_native_files(prior_safe,prior_root) if prior_safe else {})
     original_stat={(p,m):(f.stat().st_size,f.stat().st_mtime_ns)
                    for (p,m),f in originals.items()}
     total_size=sum(s[0] for s in original_stat.values())

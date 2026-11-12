@@ -22,7 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import local_layout as L
-from live_sync import CN, WORK, source_day_ts
+from live_sync import CN, WORK, source_day_ts, read_state, checked_path
 from minute_paid_calibration import source_day_rows
 from qmt_1m_probe import FIELDS, normalize_code, normalize_frame, parse_time, probe
 
@@ -232,68 +232,105 @@ def calibrate(root, xtdata, workspace=BASE, logger=print):
 
 
 def latest_certified_day(root, start, requested_end):
-    """Conservatively trim trailing unpublished DAY dates, never invent calendar rows."""
+    """Trim to SHA-accepted DAY overlay or physical complete local month."""
+    state=read_state()
     base=L.storage_root(root)
     current=requested_end
     while current>=start:
-        if current.weekday() < 5:
+        if current.weekday()<5:
+            if current.isoformat() in state["days"]:
+                return current
             p=base/"day"/f"{current.year}-{current.month:02}.parquet"
-            if p.exists() and not p.is_symlink():
+            if p.is_file() and not p.is_symlink():
                 stamp=source_day_ts(current)
                 view=pq.read_table(p,columns=["ts","symbol"],
                     filters=[("ts",">=",stamp),("ts","<",stamp+86400000)])
                 if view.num_rows>=2500:
                     return current
         current-=timedelta(days=1)
-    raise ValueError("No official 2500+-stock DAY reference on/after requested start")
+    raise ValueError("No accepted DAY overlay or 2500+-stock physical reference after cutoff")
 
 
 def official_day_universe(root, start, end):
-    """Read-only stocks from actual monthly DAY Parquet, no index-point expansion."""
+    """Use original physical DAY where accepted, otherwise SHA-pinned TDX DAY overlay.
+
+    The overlay lives under Git-ignored ParquetLiveSync/work; no market month
+    needs to be materialized for private QMT 1m staging.
+    """
     base=L.storage_root(root)
-    monthly={}
+    state=read_state()  # validates every overlay path, receipt and SHA
+    physical={}
+    overlay={}
     selected=defaultdict(dict)
     month=(start.year,start.month)
     while month<=(end.year,end.month):
         year,mm=month
         p=base/"day"/f"{year}-{mm:02d}.parquet"
-        if p.is_symlink() or not p.is_file():
-            raise ValueError("Required official DAY monthly file missing: "+str(p))
-        digest=L.hash_file(p)
-        monthly[p.name]=digest
-        lo=source_day_ts(start)
-        hi=source_day_ts(end)+86400000
-        frame=pq.read_table(p,columns=list(L.COLS),
-                            filters=[("ts",">=",lo),("ts","<",hi)])
-        L.validate_schema(frame.schema)
-        for bar in frame.to_pylist():
-            day=L.market_ts_day(int(bar["ts"]))
-            sym=L.normal_symbol(bar["symbol"])
-            if not start<=day<=end or sym[:2] not in ("SH","SZ") or len(sym)!=8:
-                continue
-            if not sym[2:].isdigit() or float(bar["close"])<=0 or float(bar["volume"])<=0:
-                continue
-            code=normalize_code(sym)
-            if code in selected[day]:
-                raise ValueError("Duplicate official stock/day: "+code+" "+str(day))
-            selected[day][code]=bar
+        if p.is_symlink():
+            raise ValueError("Symlinked official DAY month")
+        if p.is_file():
+            physical[p.name]=L.hash_file(p)
+            lo=source_day_ts(start)
+            hi=source_day_ts(end)+86400000
+            tab=pq.read_table(p,columns=list(L.COLS),
+                filters=[("ts",">=",lo),("ts","<",hi)])
+            L.validate_schema(tab.schema)
+            for bar in tab.to_pylist():
+                day=L.market_ts_day(int(bar["ts"]))
+                sym=L.normal_symbol(bar["symbol"])
+                if not start<=day<=end or sym[:2] not in ("SH","SZ") or len(sym)!=8:
+                    continue
+                if not sym[2:].isdigit() or float(bar["close"])<=0 or float(bar["volume"])<=0:
+                    continue
+                code=normalize_code(sym)
+                if code in selected[day]:
+                    raise ValueError("Duplicate physical DAY stock/day: "+code+" "+str(day))
+                selected[day][code]=bar
         month=(year+1,1) if mm==12 else (year,mm+1)
+    current=start
+    while current<=end:
+        existing=selected.get(current)
+        if not existing or len(existing)<2500:
+            entry=state["days"].get(current.isoformat())
+            if entry:
+                p=checked_path(WORK,entry["file"])
+                if L.hash_file(p)!=entry["sha256"]:
+                    raise ValueError("TDX DAY private overlay SHA changed")
+                overlay[current.isoformat()]=entry["sha256"]
+                tab=pq.read_table(p,columns=list(L.COLS))
+                L.validate_schema(tab.schema)
+                rows={}
+                for bar in tab.to_pylist():
+                    if L.market_ts_day(int(bar["ts"]))!=current:
+                        raise ValueError("TDX DAY overlay contains different day")
+                    sym=L.normal_symbol(bar["symbol"])
+                    if sym[:2] not in ("SH","SZ") or len(sym)!=8 or not sym[2:].isdigit():
+                        continue
+                    if float(bar["close"])<=0 or float(bar["volume"])<=0:
+                        continue
+                    code=normalize_code(sym)
+                    if code in rows:
+                        raise ValueError("Duplicate TDX DAY overlay symbol")
+                    rows[code]=bar
+                selected[current]=rows
+        current+=timedelta(days=1)
     if not selected:
-        raise ValueError("No official DAY traded securities over request")
+        raise ValueError("No verified DAY securities over requested window")
     counts={str(day):len(day_symbols) for day,day_symbols in selected.items()}
     if any(n<2500 for n in counts.values()):
         raise ValueError("DAY_REFERENCE_NOT_FULL_MARKET "+str(counts))
-    # If a weekday is absent, we cannot infer that it was a holiday.
+    # Current post-cutoff window has no exchange holidays; never silently
+    # treat an absent weekday as nontrading without exchange-calendar proof.
     for n in range((end-start).days+1):
         day=start+timedelta(days=n)
         if day.weekday()<5 and day not in selected:
             raise ValueError("DAY_REFERENCE_TRADING_DATE_NOT_PROVEN "+str(day))
     universe=sorted(set().union(*(set(v) for v in selected.values())))
-    proof=sha_bytes(canonical({"monthly_sha256":monthly,
+    proof=sha_bytes(canonical({"physical_month_sha256":physical,
+                              "used_tdx_day_overlay_sha256":overlay,
                               "days":sorted((str(day),code)
                                   for day,codes in selected.items() for code in codes)}))
-    return selected,universe,proof,monthly
-
+    return selected,universe,proof,{"physical":physical,"tdx_overlay":overlay}
 
 def qmt_stage_stock(code, expected, start, end, calibration, workspace, xtdata):
     root=Path(workspace)

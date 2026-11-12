@@ -155,6 +155,21 @@ class ParquetDashboard(tk.Tk):
                 self.schedule.set("自动任务：上次结果文件无法解析；请查看详细日志")
         else:
             self.schedule.set("自动任务：尚无本工具记录的运行回执 · 计划时间21:30")
+        market_status=WORK/"minute_market_sync"/"last-status.json"
+        if market_status.is_file():
+            try:
+                doc=json.loads(market_status.read_text(encoding="utf-8"))
+                count=int(doc.get("stock_receipts_present",0))
+                total=int(doc.get("expected_distinct_stocks",0))
+                state=doc.get("status","")
+                if state=="FOUR_MINUTE_PERIOD_MONTH_ATOMIC_SWAPS_COMPLETED":
+                    label="5/15/30/60分钟：完成当月物理Parquet合并"
+                else:
+                    label=f"5/15/30/60分钟：已校验 {count}/{total} 只，继续下载中"
+                self.minute.set(label)
+                return
+            except (ValueError,KeyError,UnicodeError):
+                self.minute.set("分钟数据收据异常，请检查详细日志")
         report_root=WORK/"minute_source_trials"
         batch=report_root/"batch-progress.json"
         if batch.is_file():

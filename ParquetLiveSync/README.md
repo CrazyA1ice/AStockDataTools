@@ -132,3 +132,26 @@ CLI显式授权写入（只有已完成严格预检并确认风险后才能使�
     .\.venv\Scripts\python.exe -B ParquetLiveSync\rollup_week_month.py --root D:\stock --apply-to-local-week-month
 
 新周/月派生逻辑另有6项真实临时Arrow Parquet/时间标签/缺失交易日/金额口径/仅已结周期/实际月文件合并测试；与原40项合计46项。代码先在Windows/Linux CI 通过，再用真实本地购买周/月源只读做校准。**在未拿到真实周/月口径验收结果前，不得声称周线/月线已同步到最新。**
+
+## 2026-11-12：日线、周线、月线一键安全增量
+
+根据用户Windows真实回执，2026-11-11日线已新增21个交易日116,944条，并在真实购买源2026年5—9月校准出周/月时间戳为最后交易日北京时间零时：周线100,847条样本，OHLCVA吻合率0.999732，时标吻合率1.0；月线28,091条样本，OHLCVA吻合率1.0，时标吻合率1.0。用户在本地成功物理写入：
+
+- AllCycleAStockData/week/2026-10.parquet：16,712条
+- AllCycleAStockData/week/2026-11.parquet：5,573条（11月2—6日的完整周）
+- AllCycleAStockData/month/2026-10.parquet：5,576条；尚未结束的11月整月不输出
+
+新增 update_pipeline.py，默认不联网、不写市场数据，仅查看计划；明确加 --apply 才执行日线→已结束周/月线的顺序增量。CLI：
+
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\update_pipeline.py --root D:\stock
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\update_pipeline.py --root D:\stock --recent-days 90 --apply
+
+第一步沿用已验官方TDX原始日线下载、盘后校验、量价额系数校准、SHA确认及day/YYYY-MM.parquet按月安全合并；第二步重新比对原购买2026年5—9月周/月OHLCVA及时间标签，确认衍生周期的工作日已收齐、周期已结束，对所有拟写入week/month月份文件做同键OHLCVA全字段预检，不符合则在任何周/月目标物理文件改写前拒绝；然后才SHA备份+文件原子替换。同键重复运行时原OHLCVA必须与推导值匹配，不能只看存在就跳过。
+
+新GUI按钮「一键更新日/周/月」必须用户明确确认后才会联网并写入；之前已有的「开始下载并补齐日线」「核验周线/月线」「写入已完成周/月」仍单独存在。可安全停止日期循环，日线已验记录保留，未完成的周期下次自动重算。日线成功而周/月校验失败会明显报错，不会伪装3周期全部完成。
+
+定时任务由用户主动安装。当前 scheduled-update.ps1 默认保持DAY_ONLY，不会悄悄改变已有任务的行为。只有用户明确加 -IncludeClosedWeekMonth 才启用三周期定时增量，21:30使用Windows本机时钟：
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\install-schedule.ps1 -Action Install -IncludeClosedWeekMonth
+
+新增7项一键主流程离线测试及2项周/月已存在同键的逐字段对照与重复运行测试；与此前46项合计55项。Windows/Linux CI会执行这些真正临时Parquet文件和模拟HTTP ZIP的测试。H5、五个分钟周期继续保持原状。

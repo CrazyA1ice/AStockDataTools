@@ -28,9 +28,15 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "QMT_ONE_SHOT_STEP_2_OFFLINE_TESTS"
 & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_qmt*.py" -v
 if ($LASTEXITCODE -ne 0) { throw "QMT offline tests failed; live source staging not started" }
-Write-Host "QMT_ONE_SHOT_STEP_3_PAID_OVERLAP_AND_RESUMABLE_MARKET_INTAKE"
+Write-Host "QMT_ONE_SHOT_STEP_3_UPDATE_PRIVATE_OFFICIAL_DAY_OVERLAY"
 Write-Host ("PRIVATE_LOG=" + $log)
-& $python -u -B "ParquetLiveSync\qmt_1m_pipeline.py" --root "D:\stock" --start $StartDate --end $EndDate --limit-stocks $MaxStocks 2>&1 | Tee-Object -FilePath $log | Where-Object {
+& $python -u -B "ParquetLiveSync\\live_sync.py" --root "D:\\stock" --from-day $StartDate --through-day $EndDate --max-days 60 --sync-day-overlay 2>&1 | Tee-Object -FilePath $log | Where-Object {
+  $_ -match "^(PASS_NEW_DAY_PARQUET|RETRYABLE_404_NOT_A_HOLIDAY_PROOF|PARQUET_LIVE_SYNC_RESULT|TDX_CALIBRATION)"
+}
+$dayCode = $LASTEXITCODE
+if ($dayCode -ne 0) { Write-Host ("PRIVATE_DAY_OVERLAY_INCOMPLETE_EXIT=" + $dayCode + "; trying existing verified day references") }
+Write-Host "QMT_ONE_SHOT_STEP_4_PAID_OVERLAP_AND_RESUMABLE_MARKET_INTAKE"
+& $python -u -B "ParquetLiveSync\qmt_1m_pipeline.py" --root "D:\stock" --start $StartDate --end $EndDate --limit-stocks $MaxStocks 2>&1 | Tee-Object -FilePath $log -Append | Where-Object {
   $_ -match '^QMT_(CALIBRATION|SOURCE_WINDOW|PAID_CALIBRATION|PRIVATE_QUARANTINE|CIRCUIT_BREAKER|ONE_MINUTE_MARKET_RESULT|SINGLE_COMMAND)'
 }
 $code = $LASTEXITCODE

@@ -172,7 +172,7 @@ class ParquetDashboard(tk.Tk):
             except (ValueError,KeyError,UnicodeError):
                 self.minute.set("分钟数据收据异常，请检查详细日志")
         report_root=WORK/"minute_source_trials"
-        batch=report_root/"batch-progress.json"
+        batch=report_root/"batch-progress-tencent-v2.json"
         if batch.is_file():
             try:
                 record=json.loads(batch.read_text(encoding="utf-8"))
@@ -181,7 +181,7 @@ class ParquetDashboard(tk.Tk):
                 all_stocks=int(record.get("symbols_in_universe",0))
                 self.minute.set(
                     f"分钟线候选采集：{done}/{all_stocks} 只股票 · "
-                    "1/5/15/30/60分钟（待量纲与完整性验收）")
+                    "沪深1m真实OHLCV（无成交额）+4高周期候选")
                 return
             except (ValueError,KeyError,UnicodeError):
                 self.minute.set("分钟线候选索引需检查")

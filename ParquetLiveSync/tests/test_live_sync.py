@@ -115,7 +115,7 @@ class OfficialSourceParsing(unittest.TestCase):
                               self.day,minimums={"sh":1,"sz":1,"bj":1})
 
     def test_nan_market_value_fails_closed(self):
-        with self.assertRaisesRegex(ValueError,"Nonfinite"):
+        with self.assertRaisesRegex(ValueError,r"TDX_SOURCE_NONFINITE date=2026-11-11 symbol=SH600000"):
             T.parse_daily_zip(official_zip(self.day,corrupt=True),
                               self.day,minimums={"sh":1,"sz":1,"bj":1})
 

@@ -15,6 +15,7 @@ from local_layout import PERIODS,inventory,storage_root
 from update_pipeline import run as update_all
 from minute_probe import PERIODS as MINUTES,run as trial_minutes
 from minute_batch import run as collect_market_batch
+from minute_market_sync import execute as run_four_minute_market
 
 class ParquetDashboard(tk.Tk):
     def __init__(self):
@@ -83,7 +84,8 @@ class ParquetDashboard(tk.Tk):
         ttk.Entry(selection,textvariable=self.symbols,width=29).pack(
             side="left",fill="x",expand=True,padx=(8,5))
         ttk.Combobox(selection,textvariable=self.minute_mode,
-                     values=("三只样本","全市场下一批10只"),
+                     values=("三只样本","全市场下一批10只",
+                             "11月四周期：自动补齐并拼接"),
                      width=17,state="readonly").pack(side="left",padx=(0,8))
         self.probe_button=ttk.Button(
             selection,text="开始分钟下载",command=self._start_probe)
@@ -239,12 +241,34 @@ class ParquetDashboard(tk.Tk):
             job=lambda:trial_minutes(
                 symbols,logger=lambda line:self.events.put(("log",line)),
                 stop=self.stop_event.is_set)
-        else:
+        elif mode=="全市场下一批10只":
             prompt=("从已验收本地日线提取全市场股票，每次继续10只股票的"
                     "五个分钟周期候选下载，并保存断点。\n"
-                    "源数据保留期有限；本功能暂不覆盖正式分钟Parquet或H5。")
+                    "原始1分钟源只有分时趋势；本功能暂不覆盖正式分钟Parquet或H5。")
             job=lambda:collect_market_batch(
                 self.root_path,limit=10,
+                logger=lambda line:self.events.put(("log",line)),
+                stop=self.stop_event.is_set)
+        else:
+            try:
+                today_end=date.fromisoformat(self.end_day.get().strip())
+                if not date(2026,11,2)<=today_end<=date(2026,11,30):
+                    raise ValueError("当前四周期自动合并先支持2026-11-02至2026-11-30")
+            except ValueError as exc:
+                messagebox.showerror("月份选择不正确",str(exc))
+                return
+            prompt=(
+                "正式分钟增量：先与原购买9月5/15/30/60分钟核验价格、"
+                "量额单位和时标，再下载11月全市场5分钟原始K线，"
+                "安全聚合15/30/60分钟。\n"
+                "完整交易日和所有股票都核对通过后，才写入四个周期的"
+                "2026-11.parquet月文件；不完整仅保留私有断点，绝不写入。\n"
+                "1分钟数据未获完整OHLCVA，10月历史缺口仍隔离。"
+                "\n全市场耗时较长，可点击「停止」并以后继续。开始吗？")
+            job=lambda:run_four_minute_market(
+                self.root_path,
+                start=date(2026,11,2),end=today_end,
+                limit=0,apply=True,
                 logger=lambda line:self.events.put(("log",line)),
                 stop=self.stop_event.is_set)
         if not messagebox.askyesno("分钟行情下载",prompt):
@@ -275,6 +299,13 @@ class ParquetDashboard(tk.Tk):
                     success=payload.get("status","")
                     if success=="DAY_WEEK_MONTH_COMPLETED_AND_SHA_BACKED":
                         self.status.set("日/周/月更新成功")
+                    elif success=="FOUR_MINUTE_PERIOD_MONTH_ATOMIC_SWAPS_COMPLETED":
+                        self.status.set("完整全市场5/15/30/60分钟Parquet已安全合并")
+                    elif success=="FOUR_MINUTE_PERIOD_STAGE_IN_PROGRESS_NOT_MERGED":
+                        self.status.set("分钟下载已断点保存："+str(
+                            payload.get("stock_receipts_present",0))+"/"+
+                            str(payload.get("expected_distinct_stocks","?"))+
+                            "只股票；尚未合并")
                     elif success.startswith("PROBE") or "CANDIDATE" in success:
                         self.status.set("分钟候选下载已完成；尚未写入正式分钟数据库")
                     else:

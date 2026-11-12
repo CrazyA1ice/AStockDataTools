@@ -230,6 +230,24 @@ def calibrate(root, xtdata, workspace=BASE, logger=print):
     return result
 
 
+
+def latest_certified_day(root, start, requested_end):
+    """Conservatively trim trailing unpublished DAY dates, never invent calendar rows."""
+    base=L.storage_root(root)
+    current=requested_end
+    while current>=start:
+        if current.weekday() < 5:
+            p=base/"day"/f"{current.year}-{current.month:02}.parquet"
+            if p.exists() and not p.is_symlink():
+                stamp=source_day_ts(current)
+                view=pq.read_table(p,columns=["ts","symbol"],
+                    filters=[("ts",">=",stamp),("ts","<",stamp+86400000)])
+                if view.num_rows>=2500:
+                    return current
+        current-=timedelta(days=1)
+    raise ValueError("No official 2500+-stock DAY reference on/after requested start")
+
+
 def official_day_universe(root, start, end):
     """Read-only stocks from actual monthly DAY Parquet, no index-point expansion."""
     base=L.storage_root(root)
@@ -362,6 +380,11 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
         raise ValueError("Use --limit-stocks 0 for all, or 1..10000 for bounded batches")
     if xtdata is None:
         from xtquant import xtdata
+    requested_end=end
+    end=latest_certified_day(root,start,end)
+    if end!=requested_end:
+        logger(f"QMT_SOURCE_WINDOW_TRIMMED_TO_LAST_DAY_REFERENCE {requested_end} -> {end}; "
+               "not claiming future/current unverified market-day completion")
     # Always calibrate first; do not silently accept a prior receipt after
     # local purchased Parquet bytes or server-side history have changed.
     calib=calibrate(root,xtdata,workspace,logger)
@@ -412,7 +435,8 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
         if not is_cached:
             time.sleep(.15)
     result={"format":FORMAT,"status":"PRIVATE_ONE_MINUTE_INTAKE",
-            "range":[str(start),str(end)],"expected_stocks":len(stocks),
+            "range":[str(start),str(end)],"requested_end":str(requested_end),
+            "expected_stocks":len(stocks),
             "accepted_stocks":accepted,"cached_stocks":cached,
             "download_attempts":attempted,"stopped_early":stopped_early,
             "pending_count":max(0,len(stocks)-accepted-len(failures)),

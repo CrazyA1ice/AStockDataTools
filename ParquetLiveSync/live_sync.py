@@ -26,6 +26,7 @@ import sys
 from typing import Callable
 
 from tdx_source import MissingPackage,download_daily,parse_daily_zip,sha256
+import local_layout as LOCAL
 
 HERE=Path(__file__).resolve().parent
 REPO=HERE.parent
@@ -191,6 +192,7 @@ def initial_state():
             "base_day":BASE_DAY.isoformat(),
             "adapter":LATEST_SOURCE,"calibration":None,
             "days":{},"unavailable_404_last_attempt":{},
+            "local_month_materializations":{},
             "original_purchased_parquet_or_H5_modified":False,
             "production_activated":False,
             "updated_periods":["day"],
@@ -362,6 +364,91 @@ def put_day(day,table,source_meta,doc):
     save_state(doc)
     return proof
 
+def trusted_october_pre_cutoff(payload):
+    """Seed the new 2026-10 monthly physical Parquet using ACCEPTED private
+    purchased-first DAY values through 2026-10-13. This is essential when
+    local stock/AllCycleAStockData/day ends at 2026-09.parquet.
+    """
+    import pyarrow.dataset as ds
+    from datetime import date as D
+    source=ds.dataset([str(p) for p in baseline_day_files(payload)],
+                      format="parquet",schema=parquet_schema())
+    begin=source_day_ts(D(2026,10,1))
+    after=source_day_ts(D(2026,10,14))
+    rows=source.to_table(
+        columns=list(FIELDS),
+        filter=(ds.field("ts")>=begin)&(ds.field("ts")<after),
+        use_threads=False)
+    if not 1000<=rows.num_rows<=150000:
+        raise ValueError("Missing accepted original 2026-10-01..13 DAY physical rows")
+    LOCAL.checked_records(rows,target_year=2026,target_month=10)
+    return rows
+
+def materialize_day_in_original_layout(root,day,doc,baseline_payload,logger):
+    """Post-SHA single-day upsert into actual AllCycleAStockData/day/YYYY-MM.
+
+    Never called by the legacy overlay-only CLI. Explicit GUI / CLI opt-in
+    only. Fully backed up, staged, readback verified, atomic replacement.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    if day<=BASE_DAY:
+        raise ValueError("Cannot rewrite pinned purchased source cutoff day")
+    key=day.isoformat()
+    entry=doc.get("days",{}).get(key)
+    if entry is None:
+        raise ValueError("No already SHA-verified daily official overlay")
+    physical=checked_path(WORK,entry["file"])
+    supplied=pq.read_table(physical,columns=list(FIELDS))
+    if supplied.num_rows!=entry["rows"] or supplied.schema!=parquet_schema():
+        raise ValueError("Cannot materialize a wrong-schema or partial official source")
+    LOCAL.checked_records(supplied,target_year=day.year,target_month=day.month)
+    store=LOCAL.storage_root(root)
+    current=datetime.now(CN).year
+    if day.year!=current:
+        # Year rollovers are a separate, explicitly verified operation.
+        # Never mix old annual and year-month source fragments implicitly.
+        raise ValueError("Original annual/current-month rollover requires separate archival; direct materialization only in current year")
+    target=LOCAL.target_for_date(root,"day",day,current_year=current)
+    if day==date(2026,10,14) or (day.year==2026 and day.month==10):
+        earlier=trusted_october_pre_cutoff(baseline_payload)
+        supplied=pa.concat_tables([earlier,supplied])
+        LOCAL.checked_records(supplied,target_year=2026,target_month=10)
+    state_key=target.relative_to(store).as_posix()
+    commits=doc.setdefault("local_month_materializations",{})
+    previous=commits.get(state_key)
+    if previous:
+        digest=LOCAL.hash_file(target) if target.is_file() else None
+        if digest!=previous.get("sha256"):
+            # Permit recovery after atomic physical replace but before
+            # state.json was updated: the private journal proves what
+            # should now be installed in the named physical target.
+            journal=WORK/"transactions"/"day"/f"{day.year}-{day.month:02}.json"
+            if not journal.is_file() or journal.is_symlink():
+                raise ValueError("Local market Parquet changed outside accepted month transaction")
+            proof=json.loads(journal.read_bytes())
+            if (proof.get("new_sha256")!=digest
+                    or proof.get("old_sha256")!=previous["sha256"]):
+                raise ValueError("Live Parquet month differs from old committed SHA")
+    receipt=LOCAL.write_month(
+        root,"day",day.year,day.month,supplied,WORK,current_year=current)
+    commits[state_key]={"sha256":receipt["sha256"],
+                        "target":str(target),
+                        "row_count":receipt["total_rows"],
+                        "calendar_month":f"{day.year}-{day.month:02}",
+                        "source":"accepted TDX DAY overlay plus trusted old October subset",
+                        "last_materialized_source_day":key}
+    doc["original_purchased_parquet_or_H5_modified"]=True
+    doc["original_H5_modified"]=False
+    doc["actual_local_AllCycleAStockData_day_updated"]=True
+    save_state(doc)
+    logger("PASS_LOCAL_DAY_MONTH_PARQUET "+key+
+           " TARGET="+str(target)+
+           " NEW_KEYS="+str(receipt["added"])+
+           " KEPT_LOCAL_KEYS="+str(receipt["same_key"])+
+           " MONTH_ROWS="+str(receipt["total_rows"]))
+    return receipt
+
 def latest_yesterday():
     """Today's package is only eligible after 20:00 China time.
 
@@ -376,7 +463,8 @@ def safe_window(start,end,max_days=60):
     if (end-start).days+1>max_days or max_days>180 or max_days<1:
         raise ValueError("Date range exceeds bounded window limit")
 
-def _sync_unlocked(root,start,end,*,logger=print,stop=None,max_days=60):
+def _sync_unlocked(root,start,end,*,logger=print,stop=None,
+                   max_days=60,materialize_local=False):
     payload=baseline()
     safe_window(start,end,max_days)
     doc=read_state()
@@ -391,6 +479,10 @@ def _sync_unlocked(root,start,end,*,logger=print,stop=None,max_days=60):
         if key in doc["days"]:
             logger("SKIP_ALREADY_SHA_VERIFIED "+key)
             counters["already_verified"]+=1
+            if materialize_local:
+                materialize_day_in_original_layout(
+                    root,day,doc,payload,logger)
+                counters["local_month_materializations_checked"]+=1
             day+=timedelta(days=1)
             continue
         logger("FETCH_TDX_DAY "+key)
@@ -406,6 +498,10 @@ def _sync_unlocked(root,start,end,*,logger=print,stop=None,max_days=60):
         external,meta=parse_daily_zip(raw,day)
         table=prepare_day(external,day,cal)
         proof=put_day(day,table,meta,doc)
+        if materialize_local:
+            materialize_day_in_original_layout(
+                root,day,doc,payload,logger)
+            counters["local_month_materializations_checked"]+=1
         counters["new_days"]+=1
         counters["new_daily_rows"]+=proof["rows"]
         logger("PASS_NEW_DAY_PARQUET "+key+" ROWS="+str(proof["rows"])+
@@ -421,7 +517,10 @@ def _sync_unlocked(root,start,end,*,logger=print,stop=None,max_days=60):
             "total_day_overlay_rows":sum(x["rows"] for x in doc["days"].values()),
             "all_eight_periods_up_to_date":False,
             "only_day_period_extended":True,
-            "original_purchased_Parquet_and_H5_unchanged":True}
+            "physical_local_AllCycleAStockData_day_written":bool(materialize_local),
+            "local_day_months_checked":counters["local_month_materializations_checked"],
+            "original_H5_unchanged":True,
+            "original_purchased_parquet_historic_file_units_preserved":True}
     logger("PARQUET_LIVE_SYNC_RESULT="+json.dumps(result,ensure_ascii=False,sort_keys=True))
     return result
 
@@ -455,10 +554,12 @@ def exclusive_writer():
             else:
                 fcntl.flock(file.fileno(),fcntl.LOCK_UN)
 
-def sync(root,start,end,*,logger=print,stop=None,max_days=60):
+def sync(root,start,end,*,logger=print,stop=None,max_days=60,
+         materialize_local=False):
     with exclusive_writer():
         return _sync_unlocked(root,start,end,logger=logger,stop=stop,
-                              max_days=max_days)
+                              max_days=max_days,
+                              materialize_local=materialize_local)
 
 def open_live_dataset(period,root=None):
     """Read-only union: 8 known physical periods, plus new DAY Parquet only.
@@ -494,7 +595,9 @@ def summarize():
             "periods":{"day":"baseline + independently SHA-verified increment",
                        **{x:"asof 2026-10-13; not updated by this source"
                           for x in PERIODS if x!="day"}},
-            "original_market_files_modified":False}
+            "original_H5_modified":False,
+            "local_day_month_materialized":bool(doc.get("local_month_materializations")),
+            "local_month_targets":doc.get("local_month_materializations",{})}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -506,7 +609,14 @@ def main():
     parser.add_argument("--preview",action="store_true")
     parser.add_argument("--sync-day-overlay",action="store_true")
     parser.add_argument("--auto-recent-90-days",action="store_true")
+    parser.add_argument("--materialize-local-day",action="store_true",
+                        help="Also transactionally merge into AllCycleAStockData/day/YYYY-MM.parquet")
+    parser.add_argument("--inspect-local-layout",action="store_true",
+                        help="Read-only eight-period year/month file and Parquet footer report")
     args=parser.parse_args()
+    if args.inspect_local_layout:
+        print(json.dumps(LOCAL.inventory(args.root),ensure_ascii=False,indent=2))
+        return
     if args.status:
         print(json.dumps(summarize(),ensure_ascii=False,indent=2))
         return
@@ -530,7 +640,8 @@ def main():
         return
     if not args.sync_day_overlay and not args.auto_recent_90_days:
         parser.error("Specify --preview, --status, --sync-day-overlay, or --auto-recent-90-days")
-    sync(args.root,start,end,max_days=args.max_days)
+    sync(args.root,start,end,max_days=args.max_days,
+         materialize_local=args.materialize_local_day)
 
 if __name__=="__main__":
     main()

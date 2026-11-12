@@ -419,9 +419,9 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
             accepted+=1
             cached+=not created
             consecutive_failures=0
-            if created:
-                logger(f"QMT_PRIVATE_STAGED {accepted}/{len(stocks)} {code} "
-                       f"rows={status['rows']} days={len(status['traded_days'])}")
+            if created and (accepted <= 3 or accepted%50==0):
+                logger(f"QMT_MARKET_PROGRESS {accepted}/{len(stocks)} "
+                       f"last={code} rows={status['rows']} days={len(status['traded_days'])}")
             elif accepted%100==0:
                 logger(f"QMT_PRIVATE_REUSE {accepted}/{len(stocks)}")
         except Exception as exc:

@@ -235,7 +235,9 @@ def audit_one(stock_root,period,*,calibration_months=None):
     if choice is None:
         raise ValueError(
             f"UNCERTAIN_{period.upper()}_PURCHASED_TIME_LABEL"
-            f" coverage={high/len(matched):.4f}; strict inference required")
+            f" coverage={high/len(matched):.4f}"
+            f" matched={len(matched)} patterns={dict(patterns)}"
+            f" offsets={dict(offsets.most_common(3))}; strict inference required")
     return {
         "period":period,"rule":choice,"intraday_offset_ms":offset,
         "source":"D:/stock/AllCycleAStockData historical purchased Day+"+period,

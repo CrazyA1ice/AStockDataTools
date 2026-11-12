@@ -166,6 +166,70 @@ class AtomicLocalDayAndView(unittest.TestCase):
                          "origin_url":"https://www.tdx.com.cn/test.zip",
                          "a_share_by_market":{"sh":1,"sz":0,"bj":0}}
 
+    def test_windows_atomic_parquet_rename_closes_pyarrow_file_reader_first(self):
+        # Reproduces WinError 32 without requiring actual Windows locks:
+        # inspect the true ParquetFile close state at the exact os.replace.
+        import pyarrow.parquet as pq
+        original_reader=pq.ParquetFile
+        original_rename=Path.replace
+        readers=[]
+        class SpyReader:
+            def __init__(self,*args,**kwargs):
+                self.inner=original_reader(*args,**kwargs)
+                self.closed=False
+                readers.append(self)
+            def __getattr__(self,name):
+                return getattr(self.inner,name)
+            def close(self):
+                self.inner.close()
+                self.closed=True
+        seen=[]
+        def guarded_rename(file,target):
+            if str(file).endswith(".parquet.part"):
+                self.assertTrue(readers)
+                self.assertTrue(all(reader.closed for reader in readers),
+                                "Parquet reader must close before Windows rename")
+                seen.append(str(file))
+            return original_rename(file,target)
+        state=S.initial_state()
+        state["calibration"]=good_units()
+        table=S.prepare_day(self.sourcerows,self.sourceDay,state["calibration"])
+        with patch.object(pq,"ParquetFile",side_effect=SpyReader):
+            with patch.object(Path,"replace",guarded_rename):
+                proof=S.put_day(self.sourceDay,table,self.sourceMeta,state)
+        self.assertEqual(len(seen),1)
+        self.assertEqual(len(readers),1)
+        self.assertTrue(readers[0].closed)
+        self.assertTrue((self.work/proof["file"]).is_file())
+
+    def test_windows_footer_rejection_releases_temp_parquet_reader(self):
+        import pyarrow.parquet as pq
+        original_reader=pq.ParquetFile
+        readers=[]
+        class BrokenFooter:
+            def __init__(self,*args,**kwargs):
+                self.inner=original_reader(*args,**kwargs)
+                readers.append(self)
+                self.closed=False
+            @property
+            def schema_arrow(self):
+                return None
+            @property
+            def metadata(self):
+                return self.inner.metadata
+            def close(self):
+                self.inner.close()
+                self.closed=True
+        state=S.initial_state()
+        state["calibration"]=good_units()
+        table=S.prepare_day(self.sourcerows,self.sourceDay,state["calibration"])
+        with patch.object(pq,"ParquetFile",side_effect=BrokenFooter):
+            with self.assertRaisesRegex(ValueError,"footer schema"):
+                S.put_day(self.sourceDay,table,self.sourceMeta,state)
+        self.assertEqual(len(readers),1)
+        self.assertTrue(readers[0].closed)
+        self.assertFalse((self.work/"incremental/day/year=2026/2026-11-11.parquet").exists())
+
     def test_atomic_day_parquet_receipt_and_manifest(self):
         base=S.initial_state()
         base["calibration"]=good_units()

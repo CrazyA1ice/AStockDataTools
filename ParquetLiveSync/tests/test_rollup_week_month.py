@@ -97,7 +97,9 @@ class WeekMonthStrictPurchasedCalibration(unittest.TestCase):
     def create_recent(self,*,all_days=True):
         recent=[]
         overlay={}
-        days=list(week_days(date(2026,10,12),date(2026,10,30)))+list(
+        days=[
+            date(2026,10,8),date(2026,10,9)
+        ]+list(week_days(date(2026,10,12),date(2026,10,30)))+list(
             week_days(date(2026,11,2),date(2026,11,11)))
         for day in days:
             if not all_days and day==date(2026,10,21):

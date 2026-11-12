@@ -23,6 +23,43 @@ def fixture(url):
     return raw,out
 
 class PublicMinuteProbe(unittest.TestCase):
+    def test_transient_remote_disconnected_recovers_with_new_request(self):
+        from http.client import RemoteDisconnected
+        from urllib.parse import urlparse
+        _,doc=fixture(P.endpoint("30min","SH600000"))
+        payload=json.dumps(doc).encode()
+        counters={"attempts":0}
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def read(self,_max):return payload
+        def flaky(req,*,timeout):
+            counters["attempts"]+=1
+            if counters["attempts"]<=2:
+                raise RemoteDisconnected("Remote end closed connection")
+            return Response()
+        pauses=[]
+        raw,result=P.fetch(P.endpoint("30min","SH600000"),
+                           retries=4,pause=pauses.append,opener=flaky)
+        self.assertEqual(counters["attempts"],3)
+        self.assertEqual(len(pauses),2)
+        self.assertEqual(raw,payload)
+        self.assertEqual(result,doc)
+
+    def test_invalid_public_json_not_retried_or_accepted(self):
+        class Response:
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def read(self,_max):return b"Not official JSON"
+        count=[]
+        def invalid(req,*,timeout):
+            count.append(1)
+            return Response()
+        with self.assertRaisesRegex(ValueError,"not plain JSON"):
+            P.fetch(P.endpoint("15min","SZ000001"),
+                    pause=lambda _:None,opener=invalid,retries=4)
+        self.assertEqual(len(count),1)
+
     def test_prefix_and_beijing_exchange_id(self):
         self.assertEqual(P.secid("SH600000"),"1.600000")
         self.assertEqual(P.secid("SZ000001"),"0.000001")

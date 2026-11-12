@@ -197,7 +197,8 @@ def _atomic_json(path,value):
     os.replace(temp,path)
 
 def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
-        requester=fetch,pause=0.4,stop=None):
+        requester=fetch,pause=0.4,stop=None,tencent_first=False,
+        tencent_collector=None):
     """Small explicit-source experiment: 3 stocks x 5 periods by default.
 
     This NEVER writes any AllCycleAStockData or H5 bytes; data are
@@ -231,6 +232,25 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
             url=endpoint(period,symbol,end=now.date())
             logger(f"MINUTE_SOURCE_FETCH {period} {symbol}")
             try:
+                # Upstream a-stock-data §1.2: Tencent m1 is a real Kline,
+                # unlike Eastmoney trends2 f52 price + f53 average.
+                # Only SH/SZ available, and no per-minute turnover amount.
+                # Do NOT infer it from Tencent item[7] (turnover ratio).
+                if period=="1min" and tencent_first and symbol[:2] in ("SH","SZ"):
+                    from tencent_m1 import collect as genuine_tencent_m1
+                    candidate=(tencent_collector or genuine_tencent_m1)(
+                        symbol,work=work/"tencent_m1",logger=logger)
+                    report["periods"][period][symbol]={
+                        "status":"TENCENT_REAL_M1_OHLCV_NO_AMOUNT",
+                        "raw_source_sha256":candidate["source_sha256"],
+                        "private_source_file":candidate["source_json_path"],
+                        "private_ohlcv_parquet":candidate[
+                            "ohlcv_only_parquet_path"],
+                        "count":candidate["count"],
+                        "date_coverage":candidate["bars_per_day"],
+                        "amount_cny_available":False,
+                        "full_ohlcva_certified":False}
+                    continue
                 raw,doc=requester(url)
                 # Save raw public response before OHLCVA normalization.
                 # Historical 1min trends2 uses price/average-price, NOT

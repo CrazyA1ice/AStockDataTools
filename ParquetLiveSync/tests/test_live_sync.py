@@ -178,6 +178,51 @@ class AtomicLocalDayAndView(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"conflicting incremental"):
             S.put_day(self.sourceDay,table,self.sourceMeta,base)
 
+    def test_receipt_mutation_refused_even_when_parquet_bytes_unchanged(self):
+        doc=S.initial_state()
+        doc["calibration"]=good_units()
+        table=S.prepare_day(self.sourcerows,self.sourceDay,doc["calibration"])
+        proof=S.put_day(self.sourceDay,table,self.sourceMeta,doc)
+        receipt=(self.work/proof["file"]).with_suffix(".json")
+        saved=json.loads(receipt.read_text(encoding="utf-8"))
+        saved["raw_zip_sha256"]="f"*64
+        receipt.write_text(json.dumps(saved),encoding="utf-8")
+        with self.assertRaisesRegex(ValueError,"receipt checksum changed"):
+            S.read_state()
+
+    def test_missing_upstream_404_is_retryable_not_committed(self):
+        from tdx_source import MissingPackage
+        day=date(2026,10,14)
+        with patch.object(S,"baseline",return_value={}):
+            with patch.object(S,"get_calibration",return_value=good_units()):
+                with patch.object(S,"download_daily",
+                                  side_effect=MissingPackage("404")):
+                    result=S.sync(self.root,day,day,logger=lambda _:None)
+        self.assertEqual(result["new_days"],0)
+        self.assertEqual(result["source_not_yet_available_404"],1)
+        state=S.read_state()
+        self.assertEqual(state["days"],{})
+        self.assertIn(day.isoformat(),state["unavailable_404_last_attempt"])
+
+    def test_real_physical_day_sync_then_idempotent_skip_without_network(self):
+        day=date(2026,10,14)
+        sample=[dict(self.sourcerows[0],date=str(day))]
+        with patch.object(S,"baseline",return_value={}):
+            with patch.object(S,"get_calibration",return_value=good_units()):
+                with patch.object(S,"parse_daily_zip",
+                                  return_value=(sample,self.sourceMeta)):
+                    with patch.object(S,"download_daily",
+                                      return_value=(b"official-zip","downloaded")) as downloader:
+                        result=S.sync(self.root,day,day,logger=lambda _:None)
+                    self.assertEqual(result["new_days"],1)
+                    self.assertEqual(result["new_daily_rows"],1)
+                    with patch.object(S,"download_daily",
+                                      side_effect=AssertionError("No redownload")):
+                        again=S.sync(self.root,day,day,logger=lambda _:None)
+                        self.assertEqual(again["already_verified"],1)
+        self.assertEqual(downloader.call_count,1)
+        self.assertEqual(len(S.read_state()["days"]),1)
+
     def test_tampered_incremental_parquet_never_accepted(self):
         base=S.initial_state()
         base["calibration"]=good_units()

@@ -415,7 +415,14 @@ def archive_year(root,period,year,workspace,*,current_year=None,apply=False):
                 "action":"VERIFIED_PREVIOUS_ARCHIVE" if apply else "ALREADY_ARCHIVED"}
 
     if yearfile.exists():
-        raise ValueError("Existing annual market file without private archive receipt")
+        if any(path.exists() or path.is_symlink() for path in files):
+            raise ValueError("Annual and monthly Parquet of the same year coexist")
+        if yearfile.is_symlink() or not yearfile.is_file():
+            raise ValueError("Untrusted physical annual Parquet path")
+        _,count=parquet_reader(yearfile)
+        return {"period":period,"year":year,"annual_file":str(yearfile),
+                "rows":count,"sha256":hash_file(yearfile),
+                "action":"ALREADY_ANNUAL_NO_CHANGES"}
     if not all(path.is_file() and not path.is_symlink() for path in files):
         raise ValueError("Yearly rollover requires twelve complete original months")
     metas=[parquet_reader(p) for p in files]

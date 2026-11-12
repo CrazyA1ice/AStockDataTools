@@ -23,8 +23,8 @@ from live_sync import WORK,read_state,CN
 from local_layout import normal_symbol,storage_root,market_ts_day
 from minute_probe import run as collect,PERIODS
 
-FORMAT="minute_public_batch_source_candidates_v1"
-PROGRESS=WORK/"minute_source_trials"/"batch-progress.json"
+FORMAT="minute_public_batch_source_candidates_with_real_tencent_m1_v2"
+PROGRESS=WORK/"minute_source_trials"/"batch-progress-tencent-v2.json"
 
 def active_market_symbols(root):
     root=storage_root(root)
@@ -75,11 +75,19 @@ def source_package_cached(result,symbol):
     periods=result.get("periods",{})
     if set(periods)!=set(PERIODS):
         return False
-    trend=periods.get("1min",{}).get(symbol,{})
-    if (trend.get("status")!="SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
-            or "EASTMONEY_TRENDS2_NOT_OHLCVA" not in trend.get("reason","")
-            or not trend.get("raw_source_sha256")):
-        return False
+    first=periods.get("1min",{}).get(symbol,{})
+    if symbol.startswith(("SH","SZ")):
+        if (first.get("status")!="TENCENT_REAL_M1_OHLCV_NO_AMOUNT"
+                or first.get("amount_cny_available") is not False
+                or not first.get("raw_source_sha256")
+                or not first.get("private_ohlcv_parquet")):
+            return False
+    else:
+        # Tencent has no BJ m1; only raw Eastmoney trend can be cached.
+        if (first.get("status")!="SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
+                or "EASTMONEY_TRENDS2_NOT_OHLCVA" not in first.get("reason","")
+                or not first.get("raw_source_sha256")):
+            return False
     for period in PERIODS[1:]:
         entry=periods.get(period,{}).get(symbol,{})
         if (entry.get("status")!="CANDIDATE_ONLY_NOT_MERGED"
@@ -105,7 +113,7 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         "symbols_in_universe":len(stocks),
         "all_five_periods_candidate_only":list(PERIODS),
         "accepted_stock_symbols":[],
-        "accepted_scope":"raw_1min_trends_plus_valid_5_15_30_60_kline_candidates_only",
+        "accepted_scope":"true_Tencent_SH_SZ_1min_OHLCV_NO_AMOUNT_or_BJ_raw_trend_plus_valid_4_kline_candidates_only",
         "failed_stock_symbols":{},
         "market_files_modified":False,
         "complete_full_market_minute_coverage_verified":False,
@@ -136,7 +144,8 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
             break
         result=collector(
             [sym],periods=PERIODS,logger=logger,
-            stop=stop,work=progress.parent/"source")
+            stop=stop,work=progress.parent/"source",
+            tencent_first=True)
         if source_package_cached(result,sym):
             accepted.add(sym)
             proof["failed_stock_symbols"].pop(sym,None)
@@ -146,8 +155,8 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         proof["completed_at_cn"]=datetime.now(CN).isoformat()
         save_atomic(progress,proof)  # durable per-stock checkpoint
         logger(f"MINUTE_BATCH_RAW_CANDIDATE_PROGRESS={len(accepted)}/{len(stocks)} "
-               f"symbol={sym} four_kline_sources_and_1m_raw_saved={sym in accepted} "
-               "no_full_1min_ohlcva=True")
+               f"symbol={sym} candidate_with_true_tencent_1m_for_SH_SZ={sym in accepted} "
+               "1m_turnover_amount_not_available=True")
     proof["status"]=(
         "CANDIDATE_SOURCE_INVENTORY_PARTIAL_NOT_MARKET_MERGED")
     proof["current_completed_stocks"]=len(accepted)

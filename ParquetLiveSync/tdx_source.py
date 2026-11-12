@@ -103,6 +103,13 @@ def parse_daily_zip(raw,day,minimums=None):
                 total+=1
                 if not is_equity(market,code,day.year):
                     continue
+                name_bytes=item[40:72].split(b"\x00")[0]
+                try:
+                    official_name=name_bytes.decode("gbk").strip()
+                except UnicodeDecodeError as exc:
+                    raise ValueError("Invalid GBK source market security name") from exc
+                if not official_name:
+                    raise ValueError("Missing named source security with a valid closing price")
                 volume=struct.unpack_from("<Q",bar,56)[0]
                 if (min(o,h,l,c)<=0 or l>min(o,c) or h<max(o,c)
                         or l>h or amount<0 or

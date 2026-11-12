@@ -44,6 +44,10 @@ jobs:
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync/tests/test_install_schedule_mock.ps1
       - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
         run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v
+      - name: Optional genuine Tencent upstream 1min OHLCV live source probe (SHA private candidate, no amount)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python -B ParquetLiveSync/tencent_m1.py --symbol SH600000 --count 320
       - name: Optional public Eastmoney all five minute-cycle Shanghai pilot (private raw only)
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true

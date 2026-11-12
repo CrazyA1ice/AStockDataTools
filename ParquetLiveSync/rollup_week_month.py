@@ -298,6 +298,17 @@ def build_candidates(stock_root,state,audits,*,asof=None):
     accepted_dates={
         str(source_day(ts)) for ts in daily["ts"].to_pylist()
     }
+    # The accepted old October slice was physically carried into the
+    # 2026-10 month on first new TDX day. Require all four previously
+    # SHA-pinned purchased trading days before deriving a week or month
+    # containing the 2026-10-13 cutoff.
+    required_legacy={"2026-10-08","2026-10-09",
+                     "2026-10-12","2026-10-13"}
+    if not required_legacy.issubset(accepted_dates):
+        raise ValueError(
+            "MISSING_PINNED_PRE_CUTOFF_OCTOBER_DAYS="+
+            ",".join(sorted(required_legacy-accepted_dates))+
+            "; no closed period can be safely derived")
     all_out={}
     for period in PERIODS:
         rows=[]
@@ -338,9 +349,15 @@ def run(root,*,apply=False,log=print,asof=None):
         log("PASSED_HISTORICAL_"+period.upper()+"_PURCHASED_ROLLUP_AUDIT="+
             json.dumps(result,sort_keys=True))
     built=build_candidates(root,state,audits,asof=asof)
+    targets={}
+    for period,table in built.items():
+        targets[period]=dict(sorted(Counter(
+            str(source_day(ts))[:7] for ts in table["ts"].to_pylist()
+        ).items()))
     result={"mode":"APPLY" if apply else "READONLY_PREVIEW",
             "verified_purchased_calibration":audits,
             "candidate_rows":{period:table.num_rows for period,table in built.items()},
+            "candidate_month_file_rows":targets,
             "original_h5_unchanged":True,
             "other_six_parquet_periods_unchanged":True,
             "weekly_monthly_write_only_if_explicit_apply":True,

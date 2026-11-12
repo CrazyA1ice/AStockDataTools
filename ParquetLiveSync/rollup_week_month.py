@@ -368,8 +368,10 @@ def run(root,*,apply=False,log=print,asof=None):
             # concurrent DAY writer from changing source between audit and
             # monthly materialization.
             reread=read_state()
-            if reread["days"]!=state["days"]:
-                raise ValueError("Official DAY source changed after audit, rerun")
+            if (reread["days"]!=state["days"] or
+                    reread.get("local_month_materializations",{})!=
+                       state.get("local_month_materializations",{})):
+                raise ValueError("Physical/official DAY source changed after audit; rerun")
             commits=[]
             for period in PERIODS:
                 values=defaultdict(list)

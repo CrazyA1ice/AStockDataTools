@@ -30,3 +30,7 @@ jobs:
         run: python -m compileall -q ParquetLiveSync
       - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
         run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v
+      - name: Optional read-only public TDX 2026-10-14 ZIP quality probe (no local licensed data)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python -B ParquetLiveSync/probe_official_zip_readonly.py --date 2026-10-14

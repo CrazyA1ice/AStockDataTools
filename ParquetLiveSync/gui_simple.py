@@ -85,7 +85,7 @@ class ParquetDashboard(tk.Tk):
         ttk.Entry(selection,textvariable=self.symbols,width=29).pack(
             side="left",fill="x",expand=True,padx=(8,5))
         ttk.Combobox(selection,textvariable=self.minute_mode,
-                     values=("沪深真实1分钟K线","三只样本","全市场下一批10只",
+                     values=("沪深真实1分钟K线","多周期样本","全市场下一批10只",
                              "11月四周期：自动补齐并拼接"),
                      width=17,state="readonly").pack(side="left",padx=(0,8))
         self.probe_button=ttk.Button(
@@ -244,7 +244,7 @@ class ParquetDashboard(tk.Tk):
         mode=self.minute_mode.get()
         from minute_probe import parse_symbols
         try:
-            if mode in ("三只样本","沪深真实1分钟K线"):
+            if mode in ("多周期样本","沪深真实1分钟K线"):
                 symbols=parse_symbols(self.symbols.get())
                 if mode=="沪深真实1分钟K线":
                     for symbol in symbols:
@@ -262,16 +262,19 @@ class ParquetDashboard(tk.Tk):
             job=lambda:collect_true_m1(
                 symbols,logger=lambda line:self.events.put(("log",line)),
                 stop=self.stop_event.is_set)
-        elif mode=="三只样本":
-            prompt=(f"下载 {len(symbols)} 只股票的1/5/15/30/60分钟候选源数据？"
-                    "\n仅保存独立SHA原始样本，不修改正式数据库。")
+        elif mode=="多周期样本":
+            prompt=(f"下载 {len(symbols)} 只股票的五周期样本？\n"
+                    "沪深1分钟来自腾讯真实K线（缺逐分钟成交额）；"
+                    "北交所1分钟仅保留分时源。"
+                    "5/15/30/60分钟仍逐源校验，全部只存私有候选。")
             job=lambda:trial_minutes(
                 symbols,logger=lambda line:self.events.put(("log",line)),
-                stop=self.stop_event.is_set)
+                stop=self.stop_event.is_set,tencent_first=True)
         elif mode=="全市场下一批10只":
             prompt=("从已验收本地日线提取全市场股票，每次继续10只股票的"
                     "五个分钟周期候选下载，并保存断点。\n"
-                    "原始1分钟源只有分时趋势；本功能暂不覆盖正式分钟Parquet或H5。")
+                    "沪深1分钟来源改为腾讯真实OHLCV但缺成交额，"
+                    "北交所仅原始分时；仍不覆盖正式1分钟Parquet或H5。")
             job=lambda:collect_market_batch(
                 self.root_path,limit=10,
                 logger=lambda line:self.events.put(("log",line)),

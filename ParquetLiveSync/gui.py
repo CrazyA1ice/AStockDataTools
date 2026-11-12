@@ -375,8 +375,12 @@ class LiveParquetGui(tk.Tk):
                     if self.derivation_preview_root is not None:
                         self.apply_derived.configure(state="normal")
                     if kind=="auto_ok":
-                        self.current.set("日线、完整周/月线联合增量已完成")
-                        self._write("一键流水线验收："+json.dumps(item,ensure_ascii=False))
+                        if item.get("status")=="DAY_WEEK_MONTH_COMPLETED_AND_SHA_BACKED":
+                            self.current.set("日线和已结束周/月线通过SHA校验并完成增量")
+                            self._write("一键流水线全部通过："+json.dumps(item,ensure_ascii=False))
+                        else:
+                            self.current.set("一键更新安全停止：未声称三周期全部完成")
+                            self._write("一键流水线未完全完成："+json.dumps(item,ensure_ascii=False))
                         self._refresh()
                     elif kind=="derived_preview":
                         self.derivation_preview_root=str(

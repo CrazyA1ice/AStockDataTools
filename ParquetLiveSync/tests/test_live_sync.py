@@ -119,6 +119,24 @@ class OfficialSourceParsing(unittest.TestCase):
                 source,day,cache,"repeat, must not overwrite"))
             self.assertFalse((cache/(day.strftime("%Y%m%d")+".zip")).exists())
 
+    def test_live_download_bad_traded_quote_has_diagnostic_and_private_rejected_zip(self):
+        day=self.day
+        raw=official_zip(day,bad_active_market="sz")
+        with tempfile.TemporaryDirectory() as td:
+            class FakeHttp(io.BytesIO):
+                status=200
+            with patch.object(T.urllib.request,"urlopen",
+                              return_value=FakeHttp(raw)):
+                with self.assertRaisesRegex(
+                    ValueError,r"TDX_INVALID_TRADED_A_SHARE_OHLCVA"
+                               r" date=2026-11-11 symbol=SZ000001.*private_raw_zip="):
+                    T.download_daily(day,Path(td)/"downloads",retries=1,pause=0)
+            target=Path(td)/"rejected_official_tdx"/(
+                "20261111-"+T.sha256(raw)[:16]+".zip")
+            self.assertTrue(target.is_file())
+            self.assertEqual(T.sha256(target.read_bytes()),T.sha256(raw))
+            self.assertFalse((Path(td)/"downloads"/"20261111.zip").exists())
+
     def test_bad_bj_pair_fails_closed_not_partial(self):
         key=self.day.strftime("%Y%m%d")[2:]
         with self.assertRaisesRegex(ValueError,"Missing original"):

@@ -66,6 +66,27 @@ def save_atomic(path,doc):
                    encoding="utf-8")
     os.replace(tmp,path)
 
+def source_package_cached(result,symbol):
+    """Raw 1m trend + all four valid Kline sources is a *cached package*,
+    not a full five-period OHLCVA candidate or production certification.
+    """
+    if result.get("status")=="PROBE_COMPLETE_CANDIDATE_ONLY":
+        return True
+    periods=result.get("periods",{})
+    if set(periods)!=set(PERIODS):
+        return False
+    trend=periods.get("1min",{}).get(symbol,{})
+    if (trend.get("status")!="SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
+            or "EASTMONEY_TRENDS2_NOT_OHLCVA" not in trend.get("reason","")
+            or not trend.get("raw_source_sha256")):
+        return False
+    for period in PERIODS[1:]:
+        entry=periods.get(period,{}).get(symbol,{})
+        if (entry.get("status")!="CANDIDATE_ONLY_NOT_MERGED"
+                or not entry.get("raw_source_sha256")):
+            return False
+    return True
+
 def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         collector=collect,universe=None):
     if type(limit) is not int or not 1<=limit<=12:
@@ -84,6 +105,7 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         "symbols_in_universe":len(stocks),
         "all_five_periods_candidate_only":list(PERIODS),
         "accepted_stock_symbols":[],
+        "accepted_scope":"raw_1min_trends_plus_valid_5_15_30_60_kline_candidates_only",
         "failed_stock_symbols":{},
         "market_files_modified":False,
         "complete_full_market_minute_coverage_verified":False,
@@ -115,7 +137,7 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         result=collector(
             [sym],periods=PERIODS,logger=logger,
             stop=stop,work=progress.parent/"source")
-        if result.get("status")=="PROBE_COMPLETE_CANDIDATE_ONLY":
+        if source_package_cached(result,sym):
             accepted.add(sym)
             proof["failed_stock_symbols"].pop(sym,None)
         else:
@@ -123,8 +145,9 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
         proof["accepted_stock_symbols"]=sorted(accepted)
         proof["completed_at_cn"]=datetime.now(CN).isoformat()
         save_atomic(progress,proof)  # durable per-stock checkpoint
-        logger(f"MINUTE_BATCH_CANDIDATE_PROGRESS={len(accepted)}/{len(stocks)} "
-               f"symbol={sym} verified_all_periods={sym in accepted}")
+        logger(f"MINUTE_BATCH_RAW_CANDIDATE_PROGRESS={len(accepted)}/{len(stocks)} "
+               f"symbol={sym} four_kline_sources_and_1m_raw_saved={sym in accepted} "
+               "no_full_1min_ohlcva=True")
     proof["status"]=(
         "CANDIDATE_SOURCE_INVENTORY_PARTIAL_NOT_MARKET_MERGED")
     proof["current_completed_stocks"]=len(accepted)

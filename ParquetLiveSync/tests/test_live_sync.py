@@ -239,7 +239,11 @@ class AtomicLocalDayAndView(unittest.TestCase):
         self.assertEqual(S.read_state()["days"][self.sourceDay.isoformat()]["rows"],1)
         from pyarrow.parquet import ParquetFile
         new=self.work/proof["file"]
-        self.assertEqual(ParquetFile(new).metadata.num_rows,1)
+        reader=ParquetFile(new)
+        try:
+            self.assertEqual(reader.metadata.num_rows,1)
+        finally:
+            reader.close()
         self.assertEqual(new.stat().st_size>0,True)
         # Simulate an interrupted publish: the physical file and receipt
         # are durable, but state.json was lost before the final manifest

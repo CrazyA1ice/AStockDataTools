@@ -125,6 +125,21 @@ def parse_bars(doc,period,symbol):
                 and (o<=0 or c<=0 or h<=0 or l<=0
                      or h<max(o,c) or l>min(o,c) or h<l)):
             continue
+        original_open=o
+        auction_reconstruction=False
+        # A live public SH600000 source on 2026-11-06 returned
+        # 09:30 open=0, high=low=close=9.91,
+        # volume=3771 lots, amount=3_737_061 yuan. It is NOT a
+        # no-trade placeholder. A one-price auction's opening price is
+        # mathematically the single price (min=max=close). Rebuild ONLY
+        # if the turnover/volume implies that exact same trade price,
+        # and tag both the raw missing open and our derivation.
+        if (period=="1min" and t.strftime("%H:%M")=="09:30"
+                and o==0 and h==l==c and c>0 and vol>0 and amount>0):
+            price_from_turnover=amount/(vol*100.0)
+            if abs(price_from_turnover-c)<=max(0.01,c*0.002):
+                o=c
+                auction_reconstruction=True
         if (not all(math.isfinite(x) for x in (o,c,h,l,vol,amount))
                 or o<=0 or c<=0 or h<=0 or l<=0 or h<max(o,c)
                 or l>min(o,c) or h<l or vol<0 or amount<0
@@ -139,6 +154,8 @@ def parse_bars(doc,period,symbol):
         checked.append({"ts":stamp,"date":t.date().isoformat(),
                         "local_time":t.strftime("%H:%M"),"symbol":symbol,
                         "open":o,"high":h,"low":l,"close":c,
+                        "source_original_open":original_open,
+                        "auction_open_reconstructed":auction_reconstruction,
                         "provider_volume":vol,"amount_yuan":amount})
     if not checked:
         raise ValueError("No real traded minute bars after rejecting source placeholders")
@@ -224,9 +241,15 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
                 if ignored:
                     logger(f"MINUTE_SOURCE_NO_TRADE_0930_EXCLUDED "
                            f"{period} {symbol} count={ignored}")
+                reconstructed=sum(bool(x["auction_open_reconstructed"])
+                                  for x in data)
+                if reconstructed:
+                    logger(f"MINUTE_0930_SINGLE_PRICE_AUCTION_OPEN_DERIVED "
+                           f"{period} {symbol} count={reconstructed}")
                 proof={"raw_source_sha256":digest,"private_source_file":str(rawfile),
                        "count":len(data),
                        "excluded_source_no_trade_placeholders":ignored,
+                       "derived_single_price_auction_open_count":reconstructed,
                        "date_coverage":daily_summary(data),
                        "first_bar_cn":data[0]["date"]+" "+data[0]["local_time"],
                        "last_bar_cn":data[-1]["date"]+" "+data[-1]["local_time"],

@@ -115,14 +115,23 @@ def parse_bars(doc,period,symbol):
             o,c,h,l,vol,amount=(float(x) for x in values[1:7])
         except (ValueError,TypeError,OverflowError) as exc:
             raise ValueError("Minute source has invalid datetime or numeric OHLCVA") from exc
-        # Some feeds include a 09:30 auction / placeholder minute.
-        # Don't silently alter data; keep genuine positive trade bars and
-        # flag questionable source structure for follow-up review.
+        # The public 1min endpoint has been observed returning a
+        # non-traded 09:30 source placeholder. Only omit it when BOTH
+        # source volume and turnover amount equal zero. Any 09:30 bar
+        # containing actual turnover still passes the same strict real
+        # OHLCVA grid as every other minute.
+        if (period=="1min" and t.strftime("%H:%M")=="09:30"
+                and vol==0 and amount==0
+                and (o<=0 or c<=0 or h<=0 or l<=0
+                     or h<max(o,c) or l>min(o,c) or h<l)):
+            continue
         if (not all(math.isfinite(x) for x in (o,c,h,l,vol,amount))
                 or o<=0 or c<=0 or h<=0 or l<=0 or h<max(o,c)
                 or l>min(o,c) or h<l or vol<0 or amount<0
                 or ((vol==0)!=(amount==0))):
-            raise ValueError(f"Invalid {symbol} {period} OHLCVA at {values[0]}")
+            raise ValueError(
+                f"Invalid {symbol} {period} OHLCVA at {values[0]} "
+                f"o={o} h={h} l={l} c={c} volume={vol} amount={amount}")
         stamp=int(t.timestamp()*1000)
         if stamp in seen:
             raise ValueError("Duplicate minute datetime from public source")
@@ -131,6 +140,8 @@ def parse_bars(doc,period,symbol):
                         "local_time":t.strftime("%H:%M"),"symbol":symbol,
                         "open":o,"high":h,"low":l,"close":c,
                         "provider_volume":vol,"amount_yuan":amount})
+    if not checked:
+        raise ValueError("No real traded minute bars after rejecting source placeholders")
     if checked!=sorted(checked,key=lambda row:row["ts"]):
         raise ValueError("External minute bars are not chronologically ordered")
     return checked
@@ -207,8 +218,16 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
                         raise ValueError("Linked private raw minute source refused")
                     part.write_bytes(raw)
                     os.replace(part,rawfile)
+                original=doc["data"].get(
+                    "trends" if period=="1min" else "klines",[])
+                ignored=len(original)-len(data)
+                if ignored:
+                    logger(f"MINUTE_SOURCE_NO_TRADE_0930_EXCLUDED "
+                           f"{period} {symbol} count={ignored}")
                 proof={"raw_source_sha256":digest,"private_source_file":str(rawfile),
-                       "count":len(data),"date_coverage":daily_summary(data),
+                       "count":len(data),
+                       "excluded_source_no_trade_placeholders":ignored,
+                       "date_coverage":daily_summary(data),
                        "first_bar_cn":data[0]["date"]+" "+data[0]["local_time"],
                        "last_bar_cn":data[-1]["date"]+" "+data[-1]["local_time"],
                        "status":"CANDIDATE_ONLY_NOT_MERGED"}

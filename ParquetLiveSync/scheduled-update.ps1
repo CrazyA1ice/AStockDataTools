@@ -13,7 +13,7 @@ try {
     if(-not (Test-Path -LiteralPath $python -PathType Leaf)){throw 'ParquetLiveSync Python environment missing'}
     if(-not (Test-Path -LiteralPath 'D:\stock' -PathType Container)){throw 'Original D:\stock data root missing'}
     Write-Host ('START_LOCAL_PARQUET_DAILY_UPDATE='+(Get-Date).ToString('o'))
-    & $python -B $worker --root 'D:\stock' --auto-recent-90-days
+    & $python -B $worker --root 'D:\stock' --auto-recent-90-days --materialize-local-day
     if($LASTEXITCODE -ne 0){throw 'Scheduled DAY update failed; previously committed receipts remain'}
     Write-Host 'PASS_LOCAL_DAILY_PARQUET_UPDATE'
 } finally {Stop-Transcript | Out-Null}

@@ -294,13 +294,22 @@ def get_calibration(doc,source_root,log):
             raise ValueError("Persistent source-vendor unit calibration identity changed")
         return out
     cache=WORK/"downloads"
+    rejected_anchors=[]
     for day in CALIBRATION_DAYS:
         try:
             raw,provenance=download_daily(day,cache,logger=log)
+            external,source_meta=parse_daily_zip(raw,day)
         except MissingPackage:
             log("校准基准日未发布："+str(day)+"；改试另一已验收交易日")
             continue
-        external,source_meta=parse_daily_zip(raw,day)
+        except ValueError as exc:
+            # One sampled baseline source ZIP can contain exceptional
+            # records; reject that whole anchor, keep its evidence, and
+            # try a DIFFERENT already purchased/accepted trading day.
+            # Do not weaken downstream real-day data validation.
+            rejected_anchors.append({"date":str(day),"reason":str(exc)[:600]})
+            log("TDX_CALIBRATION_ANCHOR_REJECTED "+str(day)+" "+str(exc))
+            continue
         log("TDX_CALIBRATION_SOURCE_TRADING_COUNT "+str(day)+" "+
             json.dumps(source_meta["a_share_by_market"],sort_keys=True)+
             " suspended_zero_turnover="+
@@ -308,19 +317,26 @@ def get_calibration(doc,source_root,log):
                 "zero_turnover_nontrading_a_shares_by_market",{}),
                 sort_keys=True))
         existing=baseline_overlap(source_root,day)
-        factors=compare_units(existing,external)
+        try:
+            factors=compare_units(existing,external)
+        except ValueError as exc:
+            rejected_anchors.append({"date":str(day),"reason":str(exc)[:600]})
+            log("TDX_CALIBRATION_UNIT_OR_PRICE_REJECTED "+str(day)+" "+str(exc))
+            continue
         doc["calibration"]={
             **factors,"baseline_sha256":BASE_SHA,
             "anchor_day":day.isoformat(),
             "anchor_raw_zip_sha256":source_meta["raw_zip_sha256"],
             "anchor_source":source_meta["origin_url"],
+            "rejected_calibration_anchor_days":rejected_anchors,
             "source_adapter_version":LATEST_SOURCE}
         save_state(doc)
         log("自动量纲对照通过："+day.isoformat()+
             " volume×"+str(factors["tdx_shares_to_local_volume"])+
             " amount×"+str(factors["tdx_yuan_to_local_amount"]))
         return doc["calibration"]
-    raise ValueError("无法从通达信官网获取已存在的日线重叠样本，不会猜测量纲")
+    raise ValueError("所有已验收重叠日校准均未通过，拒绝猜测价格或量纲；"
+                     "候选失败："+json.dumps(rejected_anchors,ensure_ascii=False))
 
 def prepare_day(external,day,units):
     import pyarrow as pa

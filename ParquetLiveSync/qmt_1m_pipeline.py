@@ -330,9 +330,19 @@ def qmt_stage_stock(code, expected, start, end, calibration, workspace, xtdata):
         close_enough=all(math.isclose(float(daily[field]),float(value),
                                       rel_tol=.006,abs_tol=.04)
                          for field,value in ohlc.items())
-        day_checks[day.isoformat()]={"ohlc_match":close_enough,
-                                    "qmt_volume_total":round(sum(x["volume"] for x in bars),4),
-                                    "qmt_amount_total":round(sum(x["amount"] for x in bars),4)}
+        source_volume=sum(x["volume"] for x in bars)
+        source_amount=sum(x["amount"] for x in bars)
+        daily_volume=float(daily["volume"])
+        daily_amount=float(daily["amount"])
+        day_checks[day.isoformat()]={
+            "ohlc_match":close_enough,
+            "qmt_volume_total":round(source_volume,4),
+            "qmt_amount_total":round(source_amount,4),
+            "day_to_qmt_volume_total_ratio":round(daily_volume/source_volume,8)
+                if source_volume>0 else None,
+            "day_to_qmt_amount_total_ratio":round(daily_amount/source_amount,8)
+                if source_amount>0 else None,
+            "daily_volume_amount_units_not_yet_independently_certified":True}
         if not close_enough:
             raise ValueError("QMT_OFFICIAL_DAY_OHLC_MISMATCH "+code+" "+str(day))
     tab=pa.Table.from_pylist([

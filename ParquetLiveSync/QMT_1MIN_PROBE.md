@@ -50,3 +50,21 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; .\.venv\Scripts\python.e
 ```
 
 该命令只做 QMT 来源私有缓存与行检查，尚未执行与购买 Parquet 的逐根自动对比。只有完成独立逐根对账之后才能建立正确的跨源量纲与时间偏移映射，不能因为同日记录数为 241 就认定二者数据一致。
+
+## 一键大批量推进（新增）
+
+第一阶段三只股票已在用户 Windows QMT (xtquant 250807.1.2, pandas 2.3.3) 返回 2026-10-14..2026-11-12 全部 22 个交易日各 241 根。为避免小批量反复操作，新增 `qmt_1m_pipeline.py` 和 PowerShell 一键入口：
+
+```powershell
+Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; git pull --ff-only origin feat/qmt-one-minute-history-probe-20261112; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-1m-full.ps1 -StartDate 2026-10-14 -EndDate 2026-11-12 -MaxStocks 0; if($LASTEXITCODE -ne 0){throw "QMT one-shot workflow failed"}
+```
+
+它依次：确保 `pandas/xtquant/pyarrow` 可用（如仅缺 pyarrow 则尝试安装）、运行 QMT 离线测试、验证 2026-09-30 的沪主/深主/科创已购买 1min 数据时间/价格/量额倍率，再从现有本机 **DAY** 月文件识别 SH/SZ 全市场真实交易股票，按股票获取 2026-10-14 以来每个交易日的原生 1m OHLCVA。
+
+逐股票需要完整的 241 根时标（09:30..11:30，13:01..15:00）并与当天 DAY OHLC 交叉核验。额外记录每只股票每个交易日的 DAY/QMT 成交量额合计比值，但**不假设倍率已经完成独立认证**。成功股票在私有 `work/qmt_1min_market/YYYYMMDD_YYYYMMDD/` 存来源 Arrow Parquet 和 SHA 收据，重复执行不重新下载已通过的股票；12 次连续失败自动停止新下载并保留断点。QMT 客户端自己的行情缓存会正常增加，正式 `AllCycleAStockData` 与 H5 始终不修改。
+
+若官方 DAY 月度文件比指定 --EndDate 落后，自动**只缩短本次全市场已校验覆盖上界**，绝不伪称原日期已更新；末尾会明确报告实际 `range` 和 `requested_end`。若 9 月 30 日跨源倍率未通过，仍可进行 **仅原始 OHLCVA 私有采集**，但相关股票的 `calibrated_*_factor` 为 null，绝不把未认证数据当作可入正式 Parquet 的八字段来源。
+
+一键脚本终端只显示校准、每 50 只的进度、失败示例、最终 `QMT_ONE_MINUTE_MARKET_RESULT`。完整运行日志保存在 `work/qmt_1min_market/logs/`。如本机强制终止，本次已完成 SHA 收据仍保留；重新运行同一命令继续。完整市场可能涉及数千只股票，注意可用磁盘空间和 QMT 行情服务限速。如需先少量试运行，将参数 `-MaxStocks 0` 改为 `-MaxStocks 100`。
+
+该阶段未合并到正式 1min 月文件，原因是 October 2026 已购/H5 月文件前半月的分钟口径还未最终统一，且大范围写入需按内存/事务边界拆分。下一阶段必须用本次源证据继续进行跨源/全日成交量额单位验收、月分片流式并入/备份及覆盖范围证明。

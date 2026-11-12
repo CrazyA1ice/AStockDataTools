@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 from collections import Counter
 
 PERIODS=("1min","5min","15min","30min","60min","day","week","month")
@@ -320,6 +321,19 @@ def write_month(root,period,year,month,new_rows,workspace,*,current_year=None):
                 "total_rows":merged.num_rows,"unchanged":True,
                 "sha256":hash_file(target) if target.exists() else None}
     backup=safe_private_backup(target,workspace)
+    transactions=Path(workspace)/"transactions"/period
+    transactions.mkdir(parents=True,exist_ok=True)
+    journal=transactions/(f"{year}-{month:02}.json")
+    prior_digest=backup["sha256"] if backup is not None else None
+    if journal.is_symlink():
+        raise ValueError("Linked local physical market Parquet transaction journal")
+    if journal.exists():
+        previous=json.loads(journal.read_bytes())
+        if (previous.get("period")!=period or
+                previous.get("year")!=year or
+                previous.get("month")!=month or
+                previous.get("new_sha256")!=prior_digest):
+            raise ValueError("Physical month does not match previously committed/staged journal")
     scratch=target.with_suffix(".parquet.live-sync-part")
     if scratch.is_symlink():
         raise ValueError("Linked Parquet staging file")
@@ -337,6 +351,16 @@ def write_month(root,period,year,month,new_rows,workspace,*,current_year=None):
     # backup; a third-party writer may not race this transaction.
     if target.exists() and hash_file(target)!=backup["sha256"]:
         raise ValueError("Original market month changed while staging")
+    journal_doc={"format":"market_parquet_derived_month_physical_swap_v1",
+                 "period":period,"year":year,"month":month,
+                 "old_sha256":prior_digest,"new_sha256":expected_digest,
+                 "original_backup":backup,"expected_rows":merged.num_rows}
+    temporary_journal=journal.with_suffix(".json.part")
+    if temporary_journal.is_symlink():
+        raise ValueError("Linked month journal temporary path")
+    temporary_journal.write_text(
+        json.dumps(journal_doc,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+    os.replace(temporary_journal,journal)
     os.replace(scratch,target)
     if hash_file(target)!=expected_digest:
         raise ValueError("Atomic final monthly Parquet output SHA drift")
@@ -374,34 +398,47 @@ def archive_year(root,period,year,workspace,*,current_year=None,apply=False):
     scratch=yearfile.with_suffix(".parquet.annual-part")
     if scratch.is_symlink() or scratch.exists():
         raise ValueError("Existing annual scratch file; prior rollover needs inspection")
+    # A year's 1-minute data can contain hundreds of millions of bars.
+    # Keep a UNIQUE (symbol,ts) key index on disk rather than a Python set.
+    index_path=Path(workspace)/"rollover"/str(year)/(period+"-key-index.sqlite3")
+    index_path.parent.mkdir(parents=True,exist_ok=True)
+    if index_path.is_symlink() or index_path.exists():
+        raise ValueError("Previous rollover key index needs recovery/inspection")
+    db=sqlite3.connect(str(index_path))
     writer=None
-    seen=set()
+    observed=0
     try:
+        db.execute("PRAGMA journal_mode=DELETE")
+        db.execute("CREATE TABLE seen (ts INTEGER NOT NULL,symbol TEXT NOT NULL,"
+                   "PRIMARY KEY(ts,symbol)) WITHOUT ROWID")
         writer=pq.ParquetWriter(str(scratch),schemas[0],compression="zstd")
         for idx,path in enumerate(files,1):
             p=pq.ParquetFile(path)
             try:
                 for batch in p.iter_batches(batch_size=32768):
-                    table=batch.to_table() if hasattr(batch,"to_table") else None
-                    # pyarrow RecordBatch.to_table is available on modern Arrow;
-                    # fallback is explicit Table.from_batches for portability.
-                    if table is None:
-                        import pyarrow as pa
-                        table=pa.Table.from_batches([batch],schema=schemas[0])
+                    import pyarrow as pa
+                    table=pa.Table.from_batches([batch],schema=schemas[0])
                     checked_records(table,target_year=year,target_month=idx)
-                    for ts,sym in zip(table["ts"].to_pylist(),table["symbol"].to_pylist()):
-                        key=(ts,normal_symbol(sym))
-                        if key in seen:
-                            raise ValueError("Duplicate key across source months")
-                        seen.add(key)
+                    keys=[(ts,normal_symbol(sym))
+                          for ts,sym in zip(table["ts"].to_pylist(),
+                                            table["symbol"].to_pylist())]
+                    try:
+                        db.executemany(
+                            "INSERT INTO seen(ts,symbol) VALUES(?,?)",keys)
+                    except sqlite3.IntegrityError as exc:
+                        raise ValueError("Duplicate native Parquet key across annual source rowgroups") from exc
+                    observed+=len(keys)
                     writer.write_table(table)
             finally:
                 p.close()
+        db.commit()
     finally:
         if writer is not None:
             writer.close()
+        db.close()
+        index_path.unlink(missing_ok=True)
     schema,rows=parquet_reader(scratch)
-    if schema!=schemas[0] or rows!=rows_expected or rows!=len(seen):
+    if schema!=schemas[0] or rows!=rows_expected or rows!=observed:
         raise ValueError("Yearly stitched Parquet footer/key total differs from 12 months")
     backups=[safe_private_backup(p,Path(workspace)/"rollover"/str(year))
              for p in files]

@@ -39,6 +39,22 @@ class MinuteBatchPilot(unittest.TestCase):
     def accepted(self,*args,**kwargs):
         return {"status":"PROBE_COMPLETE_CANDIDATE_ONLY","failed":[]}
 
+    def test_one_minute_raw_trend_and_four_real_kline_candidates_count_as_cached_only(self):
+        stock="SH600000"
+        payload={"status":"PROBE_PARTIAL_NOT_MERGED","periods":{
+            p:{stock:{"status":("SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
+                                  if p=="1min" else "CANDIDATE_ONLY_NOT_MERGED"),
+                      "reason":("EASTMONEY_TRENDS2_NOT_OHLCVA source trend not Kline"
+                                if p=="1min" else ""),
+                      "raw_source_sha256":"a"*64}}
+            for p in B.PERIODS}}
+        self.assertTrue(B.source_package_cached(payload,stock))
+        payload["periods"]["5min"][stock]["status"]="UNAVAILABLE_OR_UNVERIFIED"
+        self.assertFalse(B.source_package_cached(payload,stock))
+        payload["periods"]["5min"][stock]["status"]="CANDIDATE_ONLY_NOT_MERGED"
+        payload["periods"]["1min"][stock]["reason"]="Bad 1min source market identity"
+        self.assertFalse(B.source_package_cached(payload,stock))
+
     def test_universe_uses_actual_day_month_not_untrusted_stock_names(self):
         day,stocks=B.active_market_symbols(self.root)
         self.assertEqual(day,date(2026,11,11))

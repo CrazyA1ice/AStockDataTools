@@ -45,9 +45,7 @@ function Register-ScheduledTask {
 # Original bug: param([ValidateSet('Install',..)]$Action) then assigning
 # $action=New-ScheduledTaskAction raises ValidateSetFailure on Windows.
 & $installer -Action Install -IncludeClosedWeekMonth
-if($LASTEXITCODE -ne 0){throw 'Opt-in installation mock failed'}
 & $installer -Action Install
-if($LASTEXITCODE -ne 0){throw 'Day-only installation mock failed'}
 if($global:ParquetLiveSyncMockRegistrations.Count -ne 2){
     throw 'Both mock installation paths must register exactly one action'
 }

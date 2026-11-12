@@ -38,6 +38,10 @@ jobs:
             if($errors.Count -ne 0){throw "PowerShell parse failed for $($_.Name): $($errors | Out-String)"}
             Write-Host "PASS_PS_PARSE $($_.Name)"
           }
+      - name: Exercise Windows PowerShell 5.1 Task Scheduler INSTALL logic with mocked cmdlets (NO actual task)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync/tests/test_install_schedule_mock.ps1
       - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
         run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v
       - name: Optional read-only public TDX Sep30 unit-overlap anchor quality probe

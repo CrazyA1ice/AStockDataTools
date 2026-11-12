@@ -164,7 +164,7 @@ CLI显式授权写入（只有已完成严格预检并确认风险后才能使�
 
 原版本默认不提供桌面成功/失败通知，是否看到PowerShell窗口取决于Windows任务运行会话。新版 scheduled-update.ps1 将最近一次完成状态 SUCCESS/FAILED、时间、模式持久保存到 work/last-scheduled-run.json，在简化GUI直接展示；完整运行日志保存在 work/scheduled-update.log。新版 install-schedule.ps1 用 -WindowStyle Hidden 申请不显示任务命令行窗口，但只在用户主动重新安装任务后才会更新已注册的任务配置；普通 Git pull 不会改变当前计划任务。
 
-分钟行情候选源为东方财富公开接口（不是上游a-stock-data仓库中包含的可下载分钟Parquet）：1min使用 trends2/get ndays=5（仅近期，可能无法追补较早日期），5min/15min/30min/60min使用 kline/get 的klt=5/15/30/60、fqt=0不复权。解析f51时间、f52/53/54/55开收高低、f56来源成交量、f57来源成交额；来源返回不足、数据异常、重复时戳必须拒绝或记录失败。
+分钟行情候选源为东方财富公开接口（不是上游a-stock-data仓库中包含的可下载分钟Parquet）：1min使用 trends2/get ndays=5（仅近期，可能无法追补较早日期），5min/15min/30min/60min使用 kline/get 的klt=5/15/30/60、fqt=0不复权。必须区分字段语义：5/15/30/60min 的 kline/get 为 f51日期、f52开盘、f53收盘、f54最高、f55最低、f56来源成交量、f57成交额；但1min trends2/get 是 f51时间、f52价格（历史记录常为0）、f53均价、f54最高、f55最低、f56量、f57额，**不能把 f52/f53 错当作1分钟开盘/收盘**。因此1min目前仅保留原始分时资料，不合并K线数据库。
 
 新 GUI 的分钟区可以选「三只样本」或「全市场下一批10只」，均可点击「开始分钟下载」。样本默认沪深北各1只；批量从当前本地已验收日线最后一天提取约五千多只真实A股代码，每次最多10只，已通过候选下载的股票记录私有断点，重复运行继续下一批。下载响应的SHA、各周期起止时间、逐日数量及异常收据都在被Git忽略的 work/minute_source_trials；完全不修改AllCycleAStockData下任何5个分钟周期的正式Parquet或H5。
 
@@ -173,6 +173,6 @@ CLI小样本：
 CLI续跑批量：
     .\.venv\Scripts\python.exe -B ParquetLiveSync\minute_batch.py --root D:\stock --limit 10
 
-GitHub Actions公开样本实测：5min SH600000获得600根带金额的K线；1min曾被源端09:30无成交占位行挡住，现对确实volume=amount=0且价格结构无效的09:30行单独忽略，并保留统计；有成交的异常数据不会跳过。真实分钟源仍需校验保留期限、北交所覆盖、成交量单位、1m和5m时间标签、原购买Parquet OHLCVA等，**此阶段不能把候选数据直接当成已补齐的正式分钟Parquet**。
+GitHub Actions在2026-11-12对SH600000实际联网验证：5min=600根、15min=512根、30min=256根、60min=128根，四周期均含开高低收、来源成交量和成交额；1min trends2虽有分时价格、均价、最高最低和量额，但缺可证明的OHLC开/收，必须留在SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED（原始JSON按SHA缓存），不能由均价伪造收盘价。批量「候选已缓存X只」表示取得**4种K线+1种分时原始响应**，并不表示全五周期K线都可使用。未完成北交所覆盖、量纲、时间戳和完整性验收之前，正式分钟Parquet全部不修改。
 
 正式自动同步仍为三周期日线/周线/月线。五个分钟周期已进入同一GUI中的可验证公开源下载阶段，未声称全市场分钟数据更新完成。

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from datetime import date,datetime,timedelta,timezone
 import hashlib
 import json
@@ -333,7 +334,7 @@ def safe_window(start,end,max_days=60):
     if (end-start).days+1>max_days or max_days>180 or max_days<1:
         raise ValueError("Date range exceeds bounded window limit")
 
-def sync(root,start,end,*,logger=print,stop=None,max_days=60):
+def _sync_unlocked(root,start,end,*,logger=print,stop=None,max_days=60):
     payload=baseline()
     safe_window(start,end,max_days)
     doc=read_state()
@@ -381,6 +382,41 @@ def sync(root,start,end,*,logger=print,stop=None,max_days=60):
             "original_purchased_Parquet_and_H5_unchanged":True}
     logger("PARQUET_LIVE_SYNC_RESULT="+json.dumps(result,ensure_ascii=False,sort_keys=True))
     return result
+
+@contextmanager
+def exclusive_writer():
+    """Hold a 1-byte OS lock so GUI, CLI, and future scheduled jobs cannot race."""
+    WORK.mkdir(parents=True,exist_ok=True)
+    lock=WORK/"exclusive_writer.lock"
+    if WORK.is_symlink() or lock.is_symlink():
+        raise ValueError("Linked Parquet updater workspace/lock refused")
+    with lock.open("a+b") as file:
+        file.seek(0,2)
+        if file.tell()==0:
+            file.write(b"0")
+            file.flush()
+        file.seek(0)
+        try:
+            if os.name=="nt":
+                import msvcrt
+                msvcrt.locking(file.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(file.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ValueError("Another Parquet GUI/CLI update is already running") from exc
+        try:
+            yield
+        finally:
+            if os.name=="nt":
+                msvcrt.locking(file.fileno(),msvcrt.LK_UNLCK,1)
+            else:
+                fcntl.flock(file.fileno(),fcntl.LOCK_UN)
+
+def sync(root,start,end,*,logger=print,stop=None,max_days=60):
+    with exclusive_writer():
+        return _sync_unlocked(root,start,end,logger=logger,stop=stop,
+                              max_days=max_days)
 
 def open_live_dataset(period,root=None):
     """Read-only union: 8 known physical periods, plus new DAY Parquet only.

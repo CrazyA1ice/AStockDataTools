@@ -61,6 +61,30 @@ class PublicMinuteProbe(unittest.TestCase):
         self.assertEqual(len(parsed),1)
         self.assertEqual(parsed[0]["local_time"],"09:31")
 
+    def test_real_single_price_auction_0930_3771_lots_amount_3737061(self):
+        _,data=fixture(P.endpoint("1min","SH600000"))
+        data["data"]["trends"].insert(
+            0,"2026-11-06 09:30,0,9.91,9.91,9.91,3771,3737061,9.91")
+        # Keep chronological order for a real multi-day public response.
+        data["data"]["trends"][1]="2026-11-06 09:31,10,10.5,11,9.5,100,150000,10"
+        bars=P.parse_bars(data,"1min","SH600000")
+        self.assertEqual(len(bars),2)
+        first=bars[0]
+        self.assertEqual(first["source_original_open"],0.)
+        self.assertEqual(first["open"],9.91)
+        self.assertTrue(first["auction_open_reconstructed"])
+        self.assertEqual(first["amount_yuan"],3737061.)
+        self.assertEqual(first["provider_volume"],3771.)
+        self.assertEqual(P.daily_summary(bars)["2026-11-06"]["amount_yuan"],
+                         3737061.+150000.)
+
+    def test_fake_auction_single_price_but_incompatible_amount_refused(self):
+        _,data=fixture(P.endpoint("1min","SH600000"))
+        data["data"]["trends"].insert(
+            0,"2026-11-11 09:30,0,9.91,9.91,9.91,3771,120,9.91")
+        with self.assertRaisesRegex(ValueError,"Invalid SH600000 1min OHLCVA"):
+            P.parse_bars(data,"1min","SH600000")
+
     def test_traded_0930_with_bad_price_still_refused(self):
         _,data=fixture(P.endpoint("1min","SH600000"))
         data["data"]["trends"].insert(

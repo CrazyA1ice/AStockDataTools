@@ -205,9 +205,21 @@ def read_state():
         if candidate<=BASE_DAY or not isinstance(entry,dict):
             raise ValueError("Live overlay contains date colliding with original pinned dataset")
         path=checked_path(WORK,entry["file"])
+        receipt=path.with_suffix(".json")
+        if (receipt.is_symlink() or not receipt.is_file()
+                or type(entry.get("receipt_sha256")) is not str
+                or file_sha(receipt)!=entry["receipt_sha256"]):
+            raise ValueError("Already accepted incremental day receipt checksum changed")
+        proof=json.loads(receipt.read_bytes())
+        if (proof.get("date")!=label or
+                proof.get("file")!=entry["file"] or
+                proof.get("raw_zip_sha256")!=entry.get("source_zip_sha256")):
+            raise ValueError("Incremental source receipt identity differs")
         if (entry.get("sha256")!=file_sha(path)
                 or type(entry.get("rows")) is not int
-                or entry["rows"]<1 or entry["rows"]>15000):
+                or entry["rows"]<1 or entry["rows"]>15000
+                or proof.get("rows")!=entry["rows"]
+                or proof.get("sha256")!=entry["sha256"]):
             raise ValueError("Already accepted incremental day Parquet checksum changed")
     return doc
 
@@ -308,7 +320,12 @@ def put_day(day,table,source_meta,doc):
     return proof
 
 def latest_yesterday():
-    return datetime.now(CN).date()-timedelta(days=1)
+    """Today's package is only eligible after 20:00 China time.
+
+    A 404 remains unpublished/absent, NOT a market-calendar conclusion.
+    """
+    current=datetime.now(CN)
+    return current.date() if current.hour>=20 else current.date()-timedelta(days=1)
 
 def safe_window(start,end,max_days=60):
     if start<=BASE_DAY or start>end or end>latest_yesterday():

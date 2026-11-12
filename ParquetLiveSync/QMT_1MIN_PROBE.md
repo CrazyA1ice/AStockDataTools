@@ -36,3 +36,17 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; & .\.venv\Scripts\python
 - 当前只支持沪深 A 股探针；北交所历史 1 分钟线尚未证明可用。
 - 不证明 `volume` 的股/手量纲，亦不证明时间戳与购买 Parquet 对齐，因此探针不具备正式合并权限。
 - 只有在实际返回三个时间锚点的有效结果后，才开发批量断点、物理单位校准、整日 OHLCVA 与 DAY 对账以及原子合并。
+
+## 已验证：QMT 历史窗口深度
+
+用户本机 2026-11-12 实测：xtquant 250807.1.2、pandas 2.3.3，QMT 进程连接 127.0.0.1:58610，三个样本 600000.SH、000001.SZ、688001.SH 在 2026-10-14..2026-11-12 各自取得 22 个交易日 × 241 = 5302 根 OHLCVA。所有结果仍属于来源候选，**未取得已购数据口径校准认证**。
+
+## 下一验收门槛：9 月 30 日原购买 1min 重叠样本
+
+仅下载 QMT 2026-09-30 当日 3 股，核对旧购买物理数据的时间戳、volume 与 amount 单位。此阶段仍**不写 AllCycleAStockData**。
+
+```powershell
+Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; .\.venv\Scripts\python.exe -B ParquetLiveSync\qmt_1m_probe.py --paid-overlap-probe --start 2026-09-30 --end 2026-09-30 --symbols 600000.SH,000001.SZ,688001.SH
+```
+
+该命令只做 QMT 来源私有缓存与行检查，尚未执行与购买 Parquet 的逐根自动对比。只有完成独立逐根对账之后才能建立正确的跨源量纲与时间偏移映射，不能因为同日记录数为 241 就认定二者数据一致。

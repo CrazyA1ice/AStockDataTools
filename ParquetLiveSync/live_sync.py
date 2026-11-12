@@ -325,9 +325,17 @@ def put_day(day,table,source_meta,doc):
         if temp.exists():
             temp.unlink()
         pq.write_table(table,temp,compression="zstd",row_group_size=16384)
+        # ParquetFile owns an open local file handle. Windows refuses
+        # os.replace() while that reader still holds the temp file (WinError 32).
+        # Always close it BEFORE the atomic rename, including on validation
+        # failure. Do not rely on CPython garbage collection or Linux semantics.
         check=pq.ParquetFile(temp)
-        if check.schema_arrow!=parquet_schema() or check.metadata.num_rows!=table.num_rows:
-            raise ValueError("New Parquet footer schema/row count incorrect")
+        try:
+            if (check.schema_arrow!=parquet_schema()
+                    or check.metadata.num_rows!=table.num_rows):
+                raise ValueError("New Parquet footer schema/row count incorrect")
+        finally:
+            check.close()
         temp.replace(output)
     digest=file_sha(output)
     proof={"date":day.isoformat(),"file":rel,

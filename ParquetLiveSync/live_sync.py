@@ -462,6 +462,21 @@ def materialize_day_in_original_layout(root,day,doc,baseline_payload,logger):
             # overlays are included by the SHA-validated archive receipt.
             if state_key not in commits:
                 raise ValueError("Late historical DAY not present in accepted yearly archive")
+            import pyarrow.dataset as ds
+            low=source_day_ts(day)
+            high=source_day_ts(day+timedelta(days=1))
+            archived=ds.dataset(str(annual),format="parquet").to_table(
+                columns=["ts","symbol"],
+                filter=(ds.field("ts")>=low)&(ds.field("ts")<high),
+                use_threads=False)
+            existing_keys={(t,LOCAL.normal_symbol(symbol))
+                           for t,symbol in zip(archived["ts"].to_pylist(),
+                                               archived["symbol"].to_pylist())}
+            new_keys={(t,LOCAL.normal_symbol(symbol))
+                      for t,symbol in zip(supplied["ts"].to_pylist(),
+                                          supplied["symbol"].to_pylist())}
+            if not new_keys.issubset(existing_keys):
+                raise ValueError("Archived annual day is missing late official-source keys; cannot silently skip")
             logger("SKIP_ALREADY_ARCHIVED_LOCAL_DAY "+key+
                    " VERIFIED_ANNUAL="+str(annual))
             return {"target":str(annual),"added":0,

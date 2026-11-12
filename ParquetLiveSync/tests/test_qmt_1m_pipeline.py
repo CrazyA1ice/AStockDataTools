@@ -114,7 +114,7 @@ class QmtPipelineTests(unittest.TestCase):
         day=date(2026,10,14)
         code="600000.SH"
         fake=FakeXtdata(code,rows(day))
-        expected={day:{code:{"open":10.,"high":10.01,"low":9.99,"close":10.}}}
+        expected={day:{code:{"open":10.,"high":10.01,"low":9.99,"close":10.,"volume":24100.,"amount":2410000.}}}
         with tempfile.TemporaryDirectory() as d:
             result,_=p.qmt_stage_stock(code,expected,day,day,{},Path(d),fake)
             self.assertFalse(result["paid_calibration_passed_for_category"])

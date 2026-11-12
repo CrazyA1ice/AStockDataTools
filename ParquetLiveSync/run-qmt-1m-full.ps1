@@ -39,7 +39,7 @@ $dayCode = $LASTEXITCODE
 if ($dayCode -ne 0) { Write-Host ("PRIVATE_DAY_OVERLAY_INCOMPLETE_EXIT=" + $dayCode + "; trying existing verified day references") }
 Write-Host "QMT_ONE_SHOT_STEP_4_PAID_OVERLAP_AND_RESUMABLE_MARKET_INTAKE"
 & $python -u -B "ParquetLiveSync\qmt_1m_pipeline.py" --root "D:\stock" --start $StartDate --end $EndDate --limit-stocks $MaxStocks 2>&1 | Tee-Object -FilePath $log -Append | Where-Object {
-  $_ -match '^QMT_(CALIBRATION|SOURCE_WINDOW|PAID_CALIBRATION|PRIVATE_QUARANTINE|CIRCUIT_BREAKER|ONE_MINUTE_MARKET_RESULT|SINGLE_COMMAND)'
+  $_ -match '^QMT_(CALIBRATION|SOURCE_WINDOW|PAID_CALIBRATION|PRIVATE_QUARANTINE|PRIVATE_REUSE|MARKET_PROGRESS|CIRCUIT_BREAKER|ONE_MINUTE_MARKET_RESULT|SINGLE_COMMAND)'
 }
 $code = $LASTEXITCODE
 if ($code -ne 0) {

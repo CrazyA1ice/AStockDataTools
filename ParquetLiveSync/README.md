@@ -105,6 +105,8 @@ Windows Python 3.11 上首轮18项合成测试中5项真实 Parquet 写入均在
 - 作为自动量纲对照的首个原始交易日有特异/损坏ZIP时，只拒绝该**校准日**并记录来源异常，再尝试其他已验收的2026-09-24/10-13原购买重叠日；实际下载目标日仍必须完整通过严校验。
 - 因真实异常导致的源ZIP拒收（不是HTTP 404）将保存为私有 `ParquetLiveSync/work/rejected_official_tdx/YYYYMMDD-<SHA16>.zip`，绝不写入原市场文件，也不会标记下载成功。GUI会显示具体异常，方便只读诊断；诊断工具 `ParquetLiveSync/probe_official_zip_readonly.py --date YYYY-MM-DD [--zip 已有文件]` 不修改Parquet或H5。
 
+**实际校准日复核**：GitHub Actions 也使用2026-09-30官网ZIP作了公开数据检查，SHA256 `2699353d2851d4a13841c2014e9323720d3d9ec912a203a8d5046de2f2e35e36`。同样发现沪市5条零成交且开高低为零、收盘参考价有效的报价；修复后正确接受**5,560条有效A股交易记录**，`strict_source_accepted=true`。因此原GUI首个量纲校准基准日2026-09-30也存在同一类可以确认的旧校验错误。真实来源检测：https://github.com/CrazyA1ice/AStockDataTools/actions/runs/43148853933
+
 **真实公开样本证据**：GitHub Actions 用2026-10-14官网ZIP做了网络直读，原始SHA256 `cfa745c7972fe52f698e829aacf7f21db947ddacd722ef6368f24c64ffb60ec6`，发现沪市5条 `close>0, open=high=low=0, volume=amount=0` 参考报价：SH600293、SH600825、SH601059、SH601198、SH688496。新解析器接纳其余 **5,562条有效A股成交记录**（沪2315、深2898、京349），对这5条不伪造成交K线。实证CI：https://github.com/CrazyA1ice/AStockDataTools/actions/runs/43148666361
 
 新版本已在 Windows/Linux 上执行40项ZIP、量纲、Parquet实写、年月分区、跨年归档、断点和来源异常的全离线回归测试，另有2026-10-14真实公开盘后包校验。**这不是用户本机量纲校准和落库的成功回执**。用户需关闭旧GUI、更新脚本并重新尝试，并检查2026-10-14和当年月文件是否真正通过SHA/业务合并。

@@ -35,7 +35,7 @@ a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1
 
-入口会先跑18项全离线模拟回归测试，成功后打开 Tkinter 中文 GUI，展示八周期状态、日期、下载进度、日志，支持预览、开始、停止（在当前日完成后退出），不会再运行H5任务。
+入口会先跑20项全离线模拟回归测试，成功后打开 Tkinter 中文 GUI，展示八周期状态、日期、下载进度、日志，支持预览、开始、停止（在当前日完成后退出），不会再运行H5任务。
 
 默认从2026-10-14取到前一个北京时间交易候选日；若当前已过北京时间20:00也允许尝试今天（仍以真实ZIP可下载为准）。建议先用3个最近日期验证，再扩大到10月14日以后的所有日期。
 
@@ -66,3 +66,7 @@ CLI 命令示例，使用仓库既有Python .venv：
 Windows 任务计划程序将在**本机时间21:30**尝试使用既有 .venv Python 执行 ParquetLiveSync/scheduled-update.ps1。内置 --auto-recent-90-days 仅重新检查最近90天的未完成日线（已提交SHA日线直接跳过）；404仍会重试，不会重新下载45亿历史源行情。日志保存在被Git忽略的 work/scheduled-update.log。请保证本机在对应时间开机、网络连通；官方晚发布会在后续计划中再尝试。
 
 当前只实现日线完整八字段增量：这不会擅自把腾讯缺成交额的分钟K线混入本地Parquet；其他七周期要完善必须另行接入有成交额及完整时标的可信来源。
+
+## 2026-11-12 Windows 首次运行的文件占用修复
+
+Windows Python 3.11 上首轮18项合成测试中5项真实 Parquet 写入均在 `temp.replace(output)` 处因 WinError 32 中断。原因是 PyArrow `ParquetFile(temp)` 保留打开的文件句柄，重命名前未关闭，并非GitHub、行情数据源或者原Parquet故障。修复后已明确 `try/finally: check.close()`，并在两项新回归测试中验证重命名前已经关闭、校验失败时也关闭（测试数量18→20）。用户新的Windows运行回执尚待验证；以前本机运行没有修改原始八周期Parquet/H5，也没有开始GUI实网下载。

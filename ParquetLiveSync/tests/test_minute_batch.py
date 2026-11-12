@@ -36,24 +36,38 @@ class MinuteBatchPilot(unittest.TestCase):
         self.symbols=fixture(self.root)
         self.progress=self.work/"progress.json"
 
-    def accepted(self,*args,**kwargs):
-        return {"status":"PROBE_COMPLETE_CANDIDATE_ONLY","failed":[]}
+    def accepted(self,symbol="SH600000"):
+        result={"status":"PROBE_COMPLETE_CANDIDATE_ONLY","failed":[],
+                "periods":{}}
+        for period in B.PERIODS:
+            item={"raw_source_sha256":"a"*64,
+                  "status":("TENCENT_REAL_M1_OHLCV_NO_AMOUNT"
+                            if period=="1min" else "CANDIDATE_ONLY_NOT_MERGED")}
+            if period=="1min":
+                item["amount_cny_available"]=False
+                item["private_ohlcv_parquet"]="private-real-tencent-1min.parquet"
+            result["periods"][period]={symbol:item}
+        return result
 
-    def test_one_minute_raw_trend_and_four_real_kline_candidates_count_as_cached_only(self):
+    def test_real_tencent_m1_and_four_valid_klines_cached_only(self):
         stock="SH600000"
-        payload={"status":"PROBE_PARTIAL_NOT_MERGED","periods":{
-            p:{stock:{"status":("SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
-                                  if p=="1min" else "CANDIDATE_ONLY_NOT_MERGED"),
-                      "reason":("EASTMONEY_TRENDS2_NOT_OHLCVA source trend not Kline"
-                                if p=="1min" else ""),
-                      "raw_source_sha256":"a"*64}}
-            for p in B.PERIODS}}
+        payload=self.accepted(stock)
         self.assertTrue(B.source_package_cached(payload,stock))
+        self.assertFalse(B.source_package_cached(
+            {"status":"PROBE_COMPLETE_CANDIDATE_ONLY","periods":{}},stock))
         payload["periods"]["5min"][stock]["status"]="UNAVAILABLE_OR_UNVERIFIED"
         self.assertFalse(B.source_package_cached(payload,stock))
         payload["periods"]["5min"][stock]["status"]="CANDIDATE_ONLY_NOT_MERGED"
-        payload["periods"]["1min"][stock]["reason"]="Bad 1min source market identity"
+        payload["periods"]["1min"][stock]["status"]="SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
         self.assertFalse(B.source_package_cached(payload,stock))
+
+    def test_bj_remains_explicit_trend_source_only_with_no_tencent_fabrication(self):
+        stock="BJ920021"
+        payload=self.accepted(stock)
+        item=payload["periods"]["1min"][stock]
+        item["status"]="SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED"
+        item["reason"]="EASTMONEY_TRENDS2_NOT_OHLCVA raw trend only"
+        self.assertTrue(B.source_package_cached(payload,stock))
 
     def test_universe_uses_actual_day_month_not_untrusted_stock_names(self):
         day,stocks=B.active_market_symbols(self.root)
@@ -64,7 +78,7 @@ class MinuteBatchPilot(unittest.TestCase):
         requested=[]
         def sample(symbols,**kwargs):
             requested.extend(symbols)
-            return self.accepted()
+            return self.accepted(symbols[0])
         with patch.object(B,"read_state",return_value={"days":{"2026-11-11":{}}}):
             first=B.run(self.root,limit=3,collector=sample,
                         progress=self.progress,logger=lambda _:None)
@@ -91,13 +105,15 @@ class MinuteBatchPilot(unittest.TestCase):
 
     def test_previous_stock_universe_sha_change_fails(self):
         with patch.object(B,"read_state",return_value={"days":{"2026-11-11":{}}}):
-            B.run(self.root,limit=1,collector=self.accepted,
+            B.run(self.root,limit=1,
+                  collector=lambda symbols,**kwargs:self.accepted(symbols[0]),
                   progress=self.progress,logger=lambda _:None)
             saved=json.loads(self.progress.read_text(encoding="utf-8"))
             saved["stock_universe_sha256"]="z"*64
             self.progress.write_text(json.dumps(saved),encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"changed"):
-                B.run(self.root,limit=1,collector=self.accepted,
+                B.run(self.root,limit=1,
+                      collector=lambda symbols,**kwargs:self.accepted(symbols[0]),
                       progress=self.progress,logger=lambda _:None)
 
     def test_stop_before_network_does_not_claim_completion(self):

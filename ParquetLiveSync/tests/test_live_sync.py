@@ -102,6 +102,23 @@ class OfficialSourceParsing(unittest.TestCase):
             T.parse_daily_zip(official_zip(self.day,missing_amount_market="bj"),
                               self.day,minimums={"sh":1,"sz":1,"bj":1})
 
+    def test_invalid_traded_quote_is_quarantined_with_source_sha_not_published(self):
+        day=self.day
+        source=official_zip(day,bad_active_market="sh")
+        with tempfile.TemporaryDirectory() as td:
+            cache=Path(td)/"downloads"
+            cache.mkdir()
+            # Exercise the real public ZIP quarantine but no network:
+            # an already downloaded byte sequence that fails strict OHLCVA.
+            with self.assertRaisesRegex(ValueError,"TDX_INVALID_TRADED_A_SHARE_OHLCVA"):
+                T.parse_daily_zip(source,day,minimums={"sh":1,"sz":1,"bj":1})
+            quarantine=T.preserve_rejected_zip(source,day,cache,"bad OHLC")
+            self.assertEqual(quarantine.read_bytes(),source)
+            self.assertEqual(quarantine.parent.name,"rejected_official_tdx")
+            self.assertEqual(quarantine,T.preserve_rejected_zip(
+                source,day,cache,"repeat, must not overwrite"))
+            self.assertFalse((cache/(day.strftime("%Y%m%d")+".zip")).exists())
+
     def test_bad_bj_pair_fails_closed_not_partial(self):
         key=self.day.strftime("%Y%m%d")[2:]
         with self.assertRaisesRegex(ValueError,"Missing original"):

@@ -193,9 +193,15 @@ def compare_day(period,day,source_day_bars,daily,gate):
             raise ValueError(
                 f"{period} official DAY OHLC differs {day} {name}: "
                 f"TDX={old} source={new}")
+    # IMPORTANT: purchased MINUTE units are independently calibrated
+    # against 2026-09 historical minute Parquet. The official DAY Parquet
+    # has a SEPARATE verified TDX shares/yuan convention. Eastmoney Kline
+    # source volume is in 100-share lots and source amount is CNY yuan.
+    # Do NOT use the minute vendor-to-purchased factor when comparing to
+    # a different DAY vendor's physical stock-day!
     for srcfield,field,factor in (
-        ("provider_volume","volume",gate["source_volume_to_purchased_factor"]),
-        ("amount_yuan","amount",gate["source_amount_to_purchased_factor"])):
+        ("provider_volume","volume",100.),
+        ("amount_yuan","amount",1.)):
         old=float(daily[field])
         new=sum(float(x[srcfield])*factor for x in src)
         if not math.isclose(old,new,rel_tol=.025,abs_tol=300):

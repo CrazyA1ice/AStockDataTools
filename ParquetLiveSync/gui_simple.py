@@ -100,7 +100,7 @@ class ParquetDashboard(tk.Tk):
         self.details=ttk.Frame(outer)
         self.details.pack(fill="both",expand=True)
         self.results=ttk.Label(self.details,textvariable=self.summary,justify="left",
-                               anchor="nw",foreground="#556575")
+                               anchor="nw",foreground="#556575",wraplength=760)
         self.results.pack(fill="x")
         self.log_frame=ttk.Frame(self.details)
         self.log=tk.Text(self.log_frame,wrap="word",font=("Consolas",9),
@@ -129,10 +129,14 @@ class ParquetDashboard(tk.Tk):
             latest=source["latest_overlaid_day"] or "待更新"
             self.overview.set("日线："+latest+"    周/月线：已接入按月更新")
             periods=report["periods"]
-            fragments="  ".join(
-                f"{period}：本年{len(periods[period]['current_year_monthly_files'])}个月"
-                for period in PERIODS)
-            self.summary.set(fragments)
+            ymd="、".join(f"{p}{len(periods[p]['current_year_monthly_files'])}个月"
+                         for p in ("day","week","month"))
+            minute_months="、".join(
+                f"{p}{len(periods[p]['current_year_monthly_files'])}个月"
+                for p in ("1min","5min","15min","30min","60min"))
+            self.summary.set("本年已存文件：日/周/月 "+ymd+
+                             "\n历史分钟文件： "+minute_months+
+                             "（新增分钟候选尚未正式合并）")
         except Exception as exc:
             self.overview.set("数据库读取失败，请检查 D:\\stock")
             self.summary.set("诊断："+str(exc)[:200])

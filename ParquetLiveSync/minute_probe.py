@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import date,datetime,timedelta,timezone
 import argparse
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -24,6 +25,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 CN=timezone(timedelta(hours=8))
 BASE="https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -73,15 +75,38 @@ def endpoint(period,symbol,*,end=None):
         url=BASE
     return url+"?"+urllib.parse.urlencode(parms)
 
-def fetch(url,*,timeout=20):
+def fetch(url,*,timeout=20,retries=4,pause=time.sleep,opener=None):
+    """Retry transient public HTTP/network disconnects, never invalid OHLCVA.
+
+    429/5xx and RemoteDisconnected are transient; 400/403/404, bad JSON
+    or wrong symbol are not silently retried as valid market source data.
+    Each attempt opens its own fresh connection, with a modest backoff.
+    """
+    opener=opener or urllib.request.urlopen
     req=urllib.request.Request(url,headers={
         "User-Agent":USER_AGENT,
         "Accept":"application/json,text/plain,*/*",
-        "Referer":"https://quote.eastmoney.com/"})
-    with urllib.request.urlopen(req,timeout=timeout) as response:
-        raw=response.read(MAX_RESPONSE+1)
-    if not 20<=len(raw)<=MAX_RESPONSE:
-        raise ValueError("Eastmoney source returned empty/oversize reply")
+        "Referer":"https://quote.eastmoney.com/",
+        "Connection":"close"})
+    if not 1<=retries<=6:
+        raise ValueError("Retry budget must be 1..6 attempts")
+    raw=None
+    for attempt in range(retries):
+        try:
+            with opener(req,timeout=timeout) as response:
+                raw=response.read(MAX_RESPONSE+1)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (408,429,500,502,503,504) or attempt==retries-1:
+                raise
+        except (urllib.error.URLError,http.client.RemoteDisconnected,
+                ConnectionResetError,ConnectionAbortedError,
+                TimeoutError,EOFError) as exc:
+            if attempt==retries-1:
+                raise
+        pause(min(8.0,1.5*(attempt+1)))
+    if raw is None or not 20<=len(raw)<=MAX_RESPONSE:
+        raise ValueError("External minute source returned empty/oversize reply")
     try:
         result=json.loads(raw)
     except (ValueError,UnicodeDecodeError) as exc:

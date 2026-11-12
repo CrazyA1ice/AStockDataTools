@@ -12,6 +12,8 @@ $branch = (& git branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne "feat/qmt-one-minute-history-probe-20261112") {
   throw "Wrong Git branch; expected feat/qmt-one-minute-history-probe-20261112"
 }
+# unittest discover runs from tests/, so sibling modules must be importable explicitly.
+$env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
 $logDir = Join-Path $PSScriptRoot "work\qmt_1min_market\logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

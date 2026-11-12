@@ -338,6 +338,45 @@ def build_candidates(stock_root,state,audits,*,asof=None):
               ("open","high","low","close","volume","amount"))]))
     return all_out
 
+def verify_existing_period_keys(root,period,year,month,derived):
+    """Fail closed if a re-run would accept existing same-key bars with
+    different OHLCVA. Local_layout.write_month preserves those original
+    values intentionally; without this comparison we'd falsely report a
+    successful incremental refresh even when a period changed.
+    """
+    import math
+    root=L.storage_root(root)
+    target=root/period/f"{year}-{month:02}.parquet"
+    if target.is_symlink():
+        raise ValueError("Linked existing physical period Parquet refused")
+    if not target.exists():
+        return {"existing_checked":0,"same_keys":0}
+    original=pq.read_table(target,columns=list(L.COLS))
+    L.checked_records(original,target_year=year,target_month=month)
+    L.checked_records(derived,target_year=year,target_month=month)
+    prior={(row["ts"],L.normal_symbol(row["symbol"])):row
+           for row in original.to_pylist()}
+    same=0
+    for new in derived.to_pylist():
+        key=(new["ts"],L.normal_symbol(new["symbol"]))
+        older=prior.get(key)
+        if older is None:
+            continue
+        same+=1
+        for name in ("open","high","low","close","volume","amount"):
+            before=float(older[name])
+            now=float(new[name])
+            if (not math.isfinite(before) or not math.isfinite(now)
+                    or not math.isclose(before,now,rel_tol=1e-10,
+                                        abs_tol=1e-8)):
+                raise ValueError(
+                    f"CONFLICTING_DERIVED_{period.upper()}_BAR "
+                    f"month={year}-{month:02} ts={key[0]} symbol={key[1]} "
+                    f"field={name} existing={before} derived={now}; "
+                    "refuse to preserve a wrong bar or overwrite original")
+    return {"existing_checked":len(prior),"same_keys":same}
+
+
 def run(root,*,apply=False,log=print,asof=None):
     root=Path(root)
     L.storage_root(root)
@@ -382,8 +421,11 @@ def run(root,*,apply=False,log=print,asof=None):
                     values[(day.year,day.month)].append(row)
                 for (year,month),records in sorted(values.items()):
                     group=pa.Table.from_pylist(records,schema=built[period].schema)
+                    crosscheck=verify_existing_period_keys(
+                        root,period,year,month,group)
                     done=L.write_month(root,period,year,month,group,WORK,
                                        current_year=year)
+                    done["derivation_same_key_values_verified"]=crosscheck["same_keys"]
                     commits.append({"period":period,"year":year,
                                     "month":month,**done})
                     log("PASS_LOCAL_"+period.upper()+"_MONTH_PARQUET "+

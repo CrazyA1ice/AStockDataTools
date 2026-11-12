@@ -90,6 +90,37 @@ class PublicMinuteProbe(unittest.TestCase):
             self.assertEqual(data[0]["local_time"],"09:31")
             self.assertEqual(data[0]["symbol"],"SH600000")
 
+    def test_all_five_period_sample_switches_to_true_tencent_sh_sz_1m(self):
+        with tempfile.TemporaryDirectory() as td:
+            tencent_calls=[]
+            def real_one_minute(symbol,*,work,logger):
+                tencent_calls.append(symbol)
+                return {
+                    "source_sha256":"a"*64,
+                    "source_json_path":str(Path(td)/"real-tencent-m1.json"),
+                    "ohlcv_only_parquet_path":str(Path(td)/"real-m1.parquet"),
+                    "count":320,"bars_per_day":{"2026-11-11":79,
+                                                    "2026-11-12":241},
+                }
+            output=P.run(
+                ["SH600000","SZ000001"],
+                periods=("1min","5min"),
+                requester=fixture,tencent_first=True,
+                tencent_collector=real_one_minute,
+                work=Path(td),pause=0,logger=lambda _:None)
+            self.assertEqual(tencent_calls,["SH600000","SZ000001"])
+            self.assertEqual(output["status"],"PROBE_COMPLETE_CANDIDATE_ONLY")
+            for symbol in tencent_calls:
+                one=output["periods"]["1min"][symbol]
+                self.assertEqual(one["status"],
+                                 "TENCENT_REAL_M1_OHLCV_NO_AMOUNT")
+                self.assertEqual(one["count"],320)
+                self.assertFalse(one["amount_cny_available"])
+                self.assertFalse(one["full_ohlcva_certified"])
+                self.assertEqual(output["periods"]["5min"][symbol][
+                    "status"],"CANDIDATE_ONLY_NOT_MERGED")
+            self.assertFalse(output["market_files_modified"])
+
     def test_source_1min_is_trend_not_ohlc_even_when_nonzero_prices(self):
         _,data=fixture(P.endpoint("1min","SH600000"))
         with self.assertRaisesRegex(

@@ -448,13 +448,28 @@ def materialize_day_in_original_layout(root,day,doc,baseline_payload,logger):
     LOCAL.checked_records(supplied,target_year=day.year,target_month=day.month)
     store=LOCAL.storage_root(root)
     current=datetime.now(CN).year
-    if day.year!=current:
-        # Year rollovers are a separate, explicitly verified operation.
-        # Never mix old annual and year-month source fragments implicitly.
-        raise ValueError("Original annual/current-month rollover requires separate archival; direct materialization only in current year")
-    target=LOCAL.target_for_date(root,"day",day,current_year=current)
-    state_key=target.relative_to(store).as_posix()
     commits=doc.setdefault("local_month_materializations",{})
+    target=store/"day"/f"{day.year}-{day.month:02}.parquet"
+    state_key=target.relative_to(store).as_posix()
+    annual=store/"day"/f"{day.year}.parquet"
+    if day.year>current or day.year<current-1:
+        raise ValueError("Direct local day update supports active or immediately previous year only")
+    if day.year<current:
+        if annual.exists():
+            # The canonical month has already been consolidated. Preserve
+            # the accepted historical annual SHA and never overwrite it
+            # from a late external package. Previously committed month
+            # overlays are included by the SHA-validated archive receipt.
+            if state_key not in commits:
+                raise ValueError("Late historical DAY not present in accepted yearly archive")
+            logger("SKIP_ALREADY_ARCHIVED_LOCAL_DAY "+key+
+                   " VERIFIED_ANNUAL="+str(annual))
+            return {"target":str(annual),"added":0,
+                    "archived_year":True}
+        has_months=any((store/"day").glob(f"{day.year}-??.parquet"))
+        if not has_months:
+            raise ValueError("Previous year DAY cannot be updated: no pending monthly files")
+        logger("PREVIOUS_YEAR_MONTHLY_PENDING_ROLLOVER "+key)
     if day.year==2026 and day.month==10 and state_key not in commits:
         # Seed original purchased-first Oct1..13 exactly ONCE. Later Oct
         # source days merge into this already persistent month; do not
@@ -477,7 +492,7 @@ def materialize_day_in_original_layout(root,day,doc,baseline_payload,logger):
                     or proof.get("old_sha256")!=previous["sha256"]):
                 raise ValueError("Live Parquet month differs from old committed SHA")
     receipt=LOCAL.write_month(
-        root,"day",day.year,day.month,supplied,WORK,current_year=current)
+        root,"day",day.year,day.month,supplied,WORK,current_year=day.year)
     commits[state_key]={"sha256":receipt["sha256"],
                         "target":str(target),
                         "row_count":receipt["total_rows"],

@@ -212,6 +212,27 @@ def read_state():
             or type(doc.get("days")) is not dict
             or doc.get("production_activated") is not False):
         raise ValueError("Persistent live Parquet state not accepted")
+    materialized=doc.get("local_month_materializations",{})
+    if type(materialized) is not dict:
+        raise ValueError("Local Parquet monthly physical receipts must be a mapping")
+    for key,info in materialized.items():
+        if (type(key) is not str or re.fullmatch(
+                r"day/[0-9]{4}-(0[1-9]|1[0-2])\.parquet",key) is None
+                or type(info) is not dict):
+            raise ValueError("Invalid local monthly Parquet target entry")
+        target=Path(info["target"])
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("Committed original local monthly Parquet file missing")
+        current=LOCAL.hash_file(target)
+        if current!=info.get("sha256"):
+            parts=key.removeprefix("day/").removesuffix(".parquet")
+            journal=WORK/"transactions"/"day"/(parts+".json")
+            if journal.is_symlink() or not journal.is_file():
+                raise ValueError("Physical monthly Parquet has changed outside updater")
+            trans=json.loads(journal.read_bytes())
+            if (trans.get("old_sha256")!=info.get("sha256")
+                    or trans.get("new_sha256")!=current):
+                raise ValueError("Changed physical monthly Parquet has no valid interrupted transaction")
     for label,entry in doc["days"].items():
         candidate=date.fromisoformat(label)
         if candidate<=BASE_DAY or not isinstance(entry,dict):
@@ -597,7 +618,8 @@ def summarize():
                           for x in PERIODS if x!="day"}},
             "original_H5_modified":False,
             "local_day_month_materialized":bool(doc.get("local_month_materializations")),
-            "local_month_targets":doc.get("local_month_materializations",{})}
+            "local_month_targets":doc.get("local_month_materializations",{}),
+            "storage_convention":"previous years yearly; active year monthly; all eight periods"}
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)

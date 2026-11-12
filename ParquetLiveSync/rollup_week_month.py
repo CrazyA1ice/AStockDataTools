@@ -180,11 +180,22 @@ def audit_one(stock_root,period,*,calibration_months=None):
             # groups at the edges of calibration months.
             begin=start_of(key,period)
             end=next_start(key,period)-timedelta(days=1)
-            if (period=="week" and
-                any(not (date(y,m,1)<=begin and end<
-                             (date(y+1,1,1) if m==12 else date(y,m+1,1)))
-                    for y,m in ((begin.year,begin.month),))):
-                continue
+            if period=="week":
+                # Avoid end-of-month source windows with only 1-2 DAY
+                # records (e.g. a week continuing outside our May-Sep
+                # audit sample). They can coincidentally match a different
+                # weekly vendor bar but cannot establish a weekly anchor.
+                # 3+ actual trading-day observations per stock are
+                # sufficient for calibration; legitimate short-holiday
+                # weeks simply do not contribute calibration evidence.
+                if current["day_count"]<3:
+                    continue
+                month_end=(
+                    date(begin.year+1,1,1) if begin.month==12
+                    else date(begin.year,begin.month+1,1))
+                if not (begin>=date(begin.year,begin.month,1)
+                        and end<month_end):
+                    continue
             total_candidates+=1
             if price_match(current,row):
                 price_pass+=1

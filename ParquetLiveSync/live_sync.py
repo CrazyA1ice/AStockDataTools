@@ -306,16 +306,29 @@ def put_day(day,table,source_meta,doc):
     folder.mkdir(parents=True,exist_ok=True)
     output=checked_path(WORK,rel) if (WORK/rel).exists() else WORK/rel
     receipt=output.with_suffix(".json")
-    if output.is_symlink() or receipt.is_symlink() or output.exists() or receipt.exists():
-        raise ValueError("Orphan or conflicting incremental DAY file; no overwrites")
-    temp=output.with_suffix(".parquet.part")
-    if temp.exists():
-        temp.unlink()
-    pq.write_table(table,temp,compression="zstd",row_group_size=16384)
-    check=pq.ParquetFile(temp)
-    if check.schema_arrow!=parquet_schema() or check.metadata.num_rows!=table.num_rows:
-        raise ValueError("New Parquet footer schema/row count incorrect")
-    temp.replace(output)
+    if output.is_symlink() or receipt.is_symlink():
+        raise ValueError("Linked incremental day output is refused")
+    # An OS/process crash can occur AFTER new Parquet was renamed but
+    # BEFORE the receipt/state is published. If the existing physical file
+    # is byte-valid and exactly equal to the current source + calibrated
+    # Arrow columns, recover it in-place instead of overwriting.
+    if output.exists():
+        existing=pq.read_table(output,columns=list(FIELDS))
+        if existing.schema!=parquet_schema() or not existing.equals(table):
+            raise ValueError("Conflicting/orphan DAY physical data differs from the official source")
+    else:
+        if receipt.exists():
+            raise ValueError("Orphan receipt exists without corresponding DAY Parquet")
+        temp=output.with_suffix(".parquet.part")
+        if temp.is_symlink():
+            raise ValueError("Linked incremental temporary Parquet path refused")
+        if temp.exists():
+            temp.unlink()
+        pq.write_table(table,temp,compression="zstd",row_group_size=16384)
+        check=pq.ParquetFile(temp)
+        if check.schema_arrow!=parquet_schema() or check.metadata.num_rows!=table.num_rows:
+            raise ValueError("New Parquet footer schema/row count incorrect")
+        temp.replace(output)
     digest=file_sha(output)
     proof={"date":day.isoformat(),"file":rel,
            "sha256":digest,"rows":table.num_rows,
@@ -324,7 +337,16 @@ def put_day(day,table,source_meta,doc):
            "a_share_counts_by_market":source_meta["a_share_by_market"],
            "calibration":doc["calibration"],"base_dataset_sha256":BASE_SHA,
            "original_Parquet_files_unchanged":True,"source_values_adj":"none"}
-    receipt.write_bytes(canonical(proof))
+    if receipt.exists():
+        old_proof=json.loads(receipt.read_bytes())
+        if old_proof!=proof:
+            raise ValueError("Previously written DAY Parquet receipt differs from source")
+    else:
+        temp_receipt=receipt.with_suffix(".json.part")
+        if temp_receipt.is_symlink():
+            raise ValueError("Linked temporary source receipt refused")
+        temp_receipt.write_bytes(canonical(proof))
+        temp_receipt.replace(receipt)
     doc["days"][day.isoformat()]={"file":rel,"sha256":digest,"rows":table.num_rows,
                                   "receipt_sha256":file_sha(receipt),
                                   "source_zip_sha256":source_meta["raw_zip_sha256"]}

@@ -101,13 +101,15 @@ class UnitMatchingAndPhysicalDay(unittest.TestCase):
             sym="SH"+str(600000+i)
             base=50+i*.01
             old[sym]={"close":base,"volume":float((10000+i)*100),
-                      "amount":float((100000+i)*1)}
-            current.append({"symbol":sym,"close":base,
+                      "amount":float((100000+i)*1),
+                      "ts":S.source_day_ts(date(2026,9,30))+34200000}
+            current.append({"symbol":sym,"close":base,"date":"2026-09-30",
                             "volume_shares":10000+i,"amount_yuan":100000+i})
         result=S.compare_units(old,current)
         self.assertEqual(result["tdx_shares_to_local_volume"],100)
         self.assertEqual(result["tdx_yuan_to_local_amount"],1)
         self.assertEqual(result["matched_prices"],200)
+        self.assertEqual(result["local_day_ts_offset_ms"],34200000)
 
     def test_changed_adjusted_close_rejects_calibration(self):
         old={}

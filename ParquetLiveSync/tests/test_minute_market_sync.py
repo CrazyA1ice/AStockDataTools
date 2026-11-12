@@ -78,6 +78,19 @@ class MonthMarketMerge(unittest.TestCase):
         self.assertEqual(period,"5min")
         return {"pages":[{"raw_sha256":"b"*64}]},exact_bars(symbol)
 
+    def test_daily_shares_vs_purchased_minute_lots_distinct_factors(self):
+        bars=exact_bars("SH600000")
+        source_day=daily("SH600000")
+        # Old paid minute Kline may preserve lots, while official TDX
+        # daily physical file independently stores shares.
+        purchased_vendor_gate={
+            "source_volume_to_purchased_factor":1.,
+            "source_amount_to_purchased_factor":1.}
+        M.compare_day("5min",date(2026,11,2),bars,
+                      source_day,purchased_vendor_gate)
+        self.assertEqual(sum(x["provider_volume"] for x in bars)*100,
+                         source_day["volume"])
+
     def test_source_only_first_partial_stock_prevents_any_month_write(self):
         result=M.execute(self.root,work=self.work,limit=1,
                          collector=self.collector,

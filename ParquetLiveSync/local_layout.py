@@ -332,8 +332,12 @@ def write_month(root,period,year,month,new_rows,workspace,*,current_year=None):
         if (previous.get("period")!=period or
                 previous.get("year")!=year or
                 previous.get("month")!=month or
-                previous.get("new_sha256")!=prior_digest):
-            raise ValueError("Physical month does not match previously committed/staged journal")
+                prior_digest not in (previous.get("new_sha256"),
+                                     previous.get("old_sha256"))):
+            # Either the prior atomic swap completed (new_sha) or it was
+            # interrupted before the swap (old_sha), allowing replay.
+            # Any unrelated external modification must fail closed.
+            raise ValueError("Physical month differs from previous protected transaction")
     scratch=target.with_suffix(".parquet.live-sync-part")
     if scratch.is_symlink():
         raise ValueError("Linked Parquet staging file")

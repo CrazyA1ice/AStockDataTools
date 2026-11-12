@@ -228,7 +228,7 @@ GitHub Actions于2026-11-12真实联网取SH600000得到320根完整开高低收
 
 用户 2026-11-12 已在 Windows QMT 实测 600000.SH / 000001.SZ / 688001.SH 各 22 个交易日 × 241 = 5302 根 1min OHLCVA，时间跨度 2026-10-14 至 2026-11-12，证明 QMT 历史能力明显超过腾讯最近 320 根限制。
 
-新增 `qmt_1m_pipeline.py`，完整流程包括：Sep30 原购买 1min 交叉样本逐根时间/价格/量额倍率审计、当前本机 DAY 物理月文件 SHA 绑定的 SH/SZ 股票日期清单、按股票 QMT 历史 OHLCVA 下载、全部交易日 241 分钟网格核查、官方 DAY OHLC 核查、按股私有 Arrow zstd + SHA 收据、断点重试、连续失败熔断和最终汇总。若最近的官方 DAY 物理文件还没更新到指定日期，会自动缩短**全市场已核验上界**并在报告中如实说明。校准失败不会阻止安全的私有 QMT 原始来源采集，但不能授权正式写入。
+新增 `qmt_1m_pipeline.py`，完整流程包括：Sep30 原购买 1min 交叉样本逐根时间/价格/量额倍率审计、当前本机 DAY 物理月文件或 SHA 验证私有 TDX 日线增量的 SH/SZ 股票日期清单、按股票 QMT 历史 OHLCVA 下载、全部交易日 241 分钟网格核查、官方 DAY OHLC 核查、按股私有 Arrow zstd + SHA 收据、断点重试、连续失败熔断和最终汇总。一键命令会先尝试填充官方 TDX 私有日线来源层；若正式 DAY 文件和已接受私有日线都还没有指定日期，会自动缩短**全市场已核验上界**并在报告中如实说明。校准失败不会阻止安全的私有 QMT 原始来源采集，但不能授权正式写入。
 
 **用户只需一条命令：**
 
@@ -236,4 +236,4 @@ GitHub Actions于2026-11-12真实联网取SH600000得到320根完整开高低收
 Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; git pull --ff-only origin feat/qmt-one-minute-history-probe-20261112; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-1m-full.ps1 -StartDate 2026-10-14 -EndDate 2026-11-12 -MaxStocks 0; if($LASTEXITCODE -ne 0){throw "QMT one-shot workflow failed"}
 ```
 
-注意：该命令会使用 QMT 的本机缓存，并将新数据写到 Git 忽略的 `ParquetLiveSync/work/qmt_1min_market`；**不会更改 `D:\stock\AllCycleAStockData\1min`、其他周期或 H5**。将 QMT 来源与 2026-10 已购/H5 的实际口径完全统一、证明全市场日线量额守恒及实现可恢复的按月正式原子更新，是下一提交阶段，不会用“下载成功”替代正式验收。详细见 `QMT_1MIN_PROBE.md`。
+注意：该命令会先下载 SHA 验证的 TDX 私有 DAY 增量（不写正式 day），随后使用 QMT 的本机缓存，并将新数据写到 Git 忽略的 `ParquetLiveSync/work/qmt_1min_market`；**不会更改 `D:\stock\AllCycleAStockData\1min`、其他周期或 H5**。将 QMT 来源与 2026-10 已购/H5 的实际口径完全统一、证明全市场日线量额守恒及实现可恢复的按月正式原子更新，是下一提交阶段，不会用“下载成功”替代正式验收。详细见 `QMT_1MIN_PROBE.md`。

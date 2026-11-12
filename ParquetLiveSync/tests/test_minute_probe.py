@@ -53,6 +53,21 @@ class PublicMinuteProbe(unittest.TestCase):
             self.assertEqual(data[0]["local_time"],"09:31")
             self.assertEqual(data[0]["symbol"],"SH600000")
 
+    def test_public_0930_untraded_placeholder_excluded_not_synthetic_bar(self):
+        _,data=fixture(P.endpoint("1min","SH600000"))
+        data["data"]["trends"].insert(
+            0,"2026-11-11 09:30,0,10.5,0,0,0,0,0")
+        parsed=P.parse_bars(data,"1min","SH600000")
+        self.assertEqual(len(parsed),1)
+        self.assertEqual(parsed[0]["local_time"],"09:31")
+
+    def test_traded_0930_with_bad_price_still_refused(self):
+        _,data=fixture(P.endpoint("1min","SH600000"))
+        data["data"]["trends"].insert(
+            0,"2026-11-11 09:30,0,10.5,0,0,100,100000,0")
+        with self.assertRaisesRegex(ValueError,"Invalid SH600000 1min OHLCVA"):
+            P.parse_bars(data,"1min","SH600000")
+
     def test_missing_amount_rejected_without_zero_fill(self):
         _,d=fixture(P.endpoint("5min","SH600000"))
         d["data"]["klines"][0]="2026-11-11 09:35,10,10.5,11,9.5,100"

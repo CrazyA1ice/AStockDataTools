@@ -167,6 +167,27 @@ class OfficialSourceParsing(unittest.TestCase):
         self.assertTrue(T.is_equity("sh","688981",2026))
 
 class UnitMatchingAndPhysicalDay(unittest.TestCase):
+    def test_calibration_invalid_first_vendor_source_tries_second_accepted_day(self):
+        with tempfile.TemporaryDirectory() as td:
+            work=Path(td)/"work"
+            work.mkdir()
+            doc=S.initial_state()
+            valid_raw=official_zip(date(2026,9,24))
+            with patch.object(S,"WORK",work),patch.object(S,"STATE",work/"state.json"):
+                with patch.object(S,"download_daily",side_effect=[
+                    ValueError("TDX_INVALID_TRADED_A_SHARE_OHLCVA date=2026-09-30 symbol=SH600000"),
+                    (valid_raw,"downloaded")]):
+                    with patch.object(T,"MIN_ROWS",{"sh":1,"sz":1,"bj":1}):
+                        with patch.object(S,"baseline_overlap",return_value={}):
+                            with patch.object(S,"compare_units",
+                                              return_value=good_units()):
+                                record=S.get_calibration(doc,{},lambda _msg:None)
+            self.assertEqual(record["anchor_day"],"2026-09-24")
+            self.assertEqual(record["rejected_calibration_anchor_days"][0]["date"],
+                             "2026-09-30")
+            self.assertTrue(record["anchor_raw_zip_sha256"])
+            self.assertEqual(len(record["rejected_calibration_anchor_days"]),1)
+
     def test_auto_unit_scale_from_2026_original_day(self):
         old={}
         current=[]

@@ -167,9 +167,14 @@ def audit_one(stock_root,period,*,calibration_months=None):
         # Week timestamps are usually in their matching ISO week. A
         # next-Monday vendor convention is also supported as an option.
         candidates=[period_key(old_date,period)]
-        if period=="week":
+        if period=="week" and old_date.weekday()==0:
+            # A vendor may date the completed week on NEXT Monday.
+            # Do NOT treat a source row labeled Friday of an incomplete
+            # edge-week as the previous FULL week's paid bar; that falsely
+            # matched data and undermined the stamp-convention audit.
             candidates.append(period_key(old_date-timedelta(days=7),period))
-        else:
+        elif period=="month" and old_date.day==1:
+            # Next-month-first labels are plausible only on the 1st.
             previous=old_date.replace(day=1)-timedelta(days=1)
             candidates.append(period_key(previous,period))
         for key in candidates:

@@ -19,7 +19,7 @@ ZIP 内沪深北各有 .cod 证券目录（每记录150字节）与 .md1 行情�
 固定已验收八周期物理 Parquet 数据集 SHA：
 a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
-它的日线截至2026-10-13、14,137,981行。现有 45.59 亿行八周期数据来源不更改、不重复制。新的官方日线**仅在严格晚于2026-10-13的日期**另存为 Parquet SHA 增量帧。文件仍用同一 Arrow 数据列 ts/symbol/open/high/low/close/volume/amount，ts 按北京时间交易日零时对应的 UTC 毫秒，证券如 SH600000/SZ000001/BJ920021。
+它的日线截至2026-10-13、14,137,981行。现有 45.59 亿行八周期数据来源不更改、不重复制。新的官方日线**仅在严格晚于2026-10-13的日期**另存为 Parquet SHA 增量帧。文件仍用同一 Arrow 数据列 ts/symbol/open/high/low/close/volume/amount，ts 按原购买 Parquet 对照日自动识别的交易日时标（以北京时间零时为基准保留实际偏移），证券如 SH600000/SZ000001/BJ920021。
 
 官方通达信成交量为股、金额为元；为避免买入源 Parquet 量纲不同，工具第一次自动获取已有购买日线与官方重叠日（依次2026-09-30、09-24、10-13），比较至少120个重复证券及真实收盘价，验证量与额的唯一倍率。没有>=90%的正确匹配则**拒绝写入新的统一八字段日线**，不会静默混合不一致单位。此校准只认证实际对照日的观察关系，并非交易所统一的历史供应商口径。
 
@@ -53,3 +53,16 @@ CLI 命令示例，使用仓库既有Python .venv：
 - 2026-10-14..31 按通达信官方实际能取到的日期追加，不根据旧库存缺口编造行情。
 - 源项目只提供获取方案。商业使用须遵守各官方数据源的许可与访问规定。
 - 下一阶段：首次真机量纲校准和日线 Parquet 补齐确认后，增加可靠的定时增量和更全的分钟 OHLCVA 数据来源。分钟无法由无成交额的腾讯接口直接写入全部8个字段。
+
+
+## 可选：首次实机验证通过后启用本地定时增量
+
+这一步不会自动启用；仅在 GUI 完成至少一个真实交易日的日线同步、且状态和量纲校准检查通过后，由用户主动执行下面的 Install 操作。
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\install-schedule.ps1 -Action Install
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\install-schedule.ps1 -Action Status
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\install-schedule.ps1 -Action Remove
+
+Windows 任务计划程序将在**本机时间21:30**尝试使用既有 .venv Python 执行 ParquetLiveSync/scheduled-update.ps1。内置 --auto-recent-90-days 仅重新检查最近90天的未完成日线（已提交SHA日线直接跳过）；404仍会重试，不会重新下载45亿历史源行情。日志保存在被Git忽略的 work/scheduled-update.log。请保证本机在对应时间开机、网络连通；官方晚发布会在后续计划中再尝试。
+
+当前只实现日线完整八字段增量：这不会擅自把腾讯缺成交额的分钟K线混入本地Parquet；其他七周期要完善必须另行接入有成交额及完整时标的可信来源。

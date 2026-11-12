@@ -133,5 +133,32 @@ class QmtPipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"SHA mismatch"):
                 p.qmt_stage_stock(code,expected,day,day,{},root,fake)
 
+
+    def test_private_tdx_day_overlay_fallback_when_physical_month_missing(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from unittest.mock import patch
+        day=date(2026,10,14)
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            for period in p.L.PERIODS:
+                (root/"AllCycleAStockData"/period).mkdir(parents=True)
+            overlay=root/"private_source_day.parquet"
+            records=[{"ts":p.source_day_ts(day),"symbol":"SH"+str(600000+i).zfill(6),
+                      "open":10.,"high":10.01,"low":9.99,"close":10.,
+                      "volume":1000.,"amount":10000.} for i in range(2500)]
+            pq.write_table(pa.Table.from_pylist(records),overlay)
+            state={"days":{day.isoformat():{"file":"ignored",
+                                           "sha256":p.L.hash_file(overlay)}}}
+            with patch.object(p,"read_state",return_value=state),patch.object(
+                    p,"checked_path",return_value=overlay):
+                clipped=p.latest_certified_day(root,day,day)
+                self.assertEqual(clipped,day)
+                by_day,stocks,digest,files=p.official_day_universe(root,day,day)
+                self.assertEqual(len(by_day[day]),2500)
+                self.assertEqual(len(stocks),2500)
+                self.assertEqual(files["tdx_overlay"][day.isoformat()],p.L.hash_file(overlay))
+                self.assertEqual(len(digest),64)
+
 if __name__=="__main__":
     unittest.main()

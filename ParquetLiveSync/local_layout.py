@@ -162,14 +162,17 @@ def symbol_style(table):
     # vendor "600000.SH". Reject mixed conventions for an A-share new row
     # rather than writing a third incompatible symbol spelling.
     values=table["symbol"].to_pylist()
-    samples=[v for v in values if isinstance(v,str)
+    samples=[v.upper() for v in values if isinstance(v,str)
              and (re.fullmatch(r"(SH|SZ|BJ)\d{6}",v.upper())
-                  or re.fullmatch(r"\d{6}[.:-](SH|SZ|BJ)",v.upper()))]
-    prefix=sum(bool(re.fullmatch(r"(SH|SZ|BJ)\d{6}",v.upper())) for v in samples)
-    suffix=sum(bool(re.fullmatch(r"\d{6}[.:-](SH|SZ|BJ)",v.upper())) for v in samples)
-    if prefix and suffix:
-        raise ValueError("Existing purchased stock symbols use mixed suffix/prefix formats")
-    if suffix:
+                  or re.fullmatch(r"\d{6}[.:-](SH|SZ|BJ|XSHG|XSHE|BSE)",v.upper()))]
+    prefix=sum(bool(re.fullmatch(r"(SH|SZ|BJ)\d{6}",v)) for v in samples)
+    short=sum(bool(re.fullmatch(r"\d{6}[.:-](SH|SZ|BJ)",v)) for v in samples)
+    long=sum(bool(re.fullmatch(r"\d{6}[.:-](XSHG|XSHE|BSE)",v)) for v in samples)
+    if sum(bool(x) for x in (prefix,short,long))>1:
+        raise ValueError("Existing purchased stock symbols mix canonical, vendor and exchange suffix codes")
+    if long:
+        return "suffix_exchange"
+    if short:
         return "suffix"
     return "prefix"
 
@@ -196,13 +199,15 @@ def checked_records(table,*,target_year=None,target_month=None):
 def in_original_schema(incoming,original_schema,style):
     import pyarrow as pa
     standard=incoming
-    if style=="suffix":
+    if style in ("suffix","suffix_exchange"):
         converted=[]
         for sym in incoming["symbol"].to_pylist():
             v=normal_symbol(sym)
             if re.fullmatch(r"(SH|SZ|BJ)\d{6}",v) is None:
                 raise ValueError("New symbol cannot be styled to local original format")
-            converted.append(v[2:]+"."+v[:2])
+            suffix=v[:2] if style=="suffix" else {
+                "SH":"XSHG","SZ":"XSHE","BJ":"BSE"}[v[:2]]
+            converted.append(v[2:]+"."+suffix)
         standard=incoming.set_column(
             incoming.schema.get_field_index("symbol"),"symbol",
             pa.array(converted,type=pa.string()))

@@ -431,12 +431,15 @@ def materialize_day_in_original_layout(root,day,doc,baseline_payload,logger):
         # Never mix old annual and year-month source fragments implicitly.
         raise ValueError("Original annual/current-month rollover requires separate archival; direct materialization only in current year")
     target=LOCAL.target_for_date(root,"day",day,current_year=current)
-    if day==date(2026,10,14) or (day.year==2026 and day.month==10):
+    state_key=target.relative_to(store).as_posix()
+    commits=doc.setdefault("local_month_materializations",{})
+    if day.year==2026 and day.month==10 and state_key not in commits:
+        # Seed original purchased-first Oct1..13 exactly ONCE. Later Oct
+        # source days merge into this already persistent month; do not
+        # rescan all accepted 2011-2026 historical daily fragments each day.
         earlier=trusted_october_pre_cutoff(baseline_payload)
         supplied=pa.concat_tables([earlier,supplied])
         LOCAL.checked_records(supplied,target_year=2026,target_month=10)
-    state_key=target.relative_to(store).as_posix()
-    commits=doc.setdefault("local_month_materializations",{})
     previous=commits.get(state_key)
     if previous:
         digest=LOCAL.hash_file(target) if target.is_file() else None

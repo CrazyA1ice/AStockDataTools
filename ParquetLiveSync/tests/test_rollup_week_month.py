@@ -174,6 +174,7 @@ class WeekMonthStrictPurchasedCalibration(unittest.TestCase):
     def test_explicit_apply_creates_same_monthly_shards_without_rewriting_day(self):
         overlay=self.create_recent()
         state=self.work_state
+        state["days"]=overlay
         # The source state itself is verified/returned in this synthetic
         # test, whereas production always verifies private SHA receipts.
         audits={"week":{"rule":"friday","intraday_offset_ms":34200000},

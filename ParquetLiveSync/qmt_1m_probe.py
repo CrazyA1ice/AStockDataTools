@@ -161,13 +161,18 @@ def main(argv=None):
     parser.add_argument("--start", default="2026-10-14")
     parser.add_argument("--end", default="2026-11-12")
     parser.add_argument("--work", type=Path, default=WORK)
+    parser.add_argument("--paid-overlap-probe", action="store_true",
+                        help="Allow the existing paid 2026-09-30 overlap day for isolated QMT source calibration; still no market writes")
     args = parser.parse_args(argv)
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
-    if start > end or start < date(2026, 10, 14) or end > datetime.now(CN).date():
+    earliest = date(2026, 9, 30) if args.paid_overlap_probe else date(2026, 10, 14)
+    if start > end or start < earliest or end > datetime.now(CN).date():
         parser.error("Invalid requested historical interval")
     codes = [normalize_code(v) for v in args.symbols.split(",")]
     if len(set(codes)) != len(codes) or not 1 <= len(codes) <= 10:
         parser.error("Provide 1..10 distinct sample codes")
+    if args.paid_overlap_probe and (start != date(2026, 9, 30) or end != date(2026, 9, 30)):
+        parser.error("--paid-overlap-probe only permits the exact 2026-09-30 day")
     print("QMT_SOURCE_ONLY_NO_MARKET_WRITE", flush=True)
     probe(codes, start, end, args.work)
 

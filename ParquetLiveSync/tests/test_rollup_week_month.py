@@ -202,5 +202,43 @@ class WeekMonthStrictPurchasedCalibration(unittest.TestCase):
             pq.read_table(self.data/"day"/"2026-11.parquet").num_rows,
             80*8)
 
+    def test_second_week_month_apply_checks_values_and_adds_zero_rows(self):
+        self.work_state["days"]=self.create_recent()
+        audits={"week":{"rule":"friday","intraday_offset_ms":34200000},
+                "month":{"rule":"last_traded","intraday_offset_ms":34200000}}
+        with patch.object(R,"read_state",return_value=self.work_state):
+            with patch.object(R,"audit_one",side_effect=lambda root,p:audits[p]):
+                first=R.run(self.root,apply=True,asof=date(2026,11,12),
+                            log=lambda _:None)
+                second=R.run(self.root,apply=True,asof=date(2026,11,12),
+                             log=lambda _:None)
+        self.assertEqual(len(first["commits"]),3)
+        self.assertEqual(len(second["commits"]),3)
+        self.assertTrue(all(commit["added"]==0 for commit in second["commits"]))
+        self.assertTrue(all(commit["unchanged"] for commit in second["commits"]))
+        self.assertTrue(all(commit["derivation_same_key_values_verified"]>0
+                            for commit in second["commits"]))
+
+    def test_modified_existing_week_ohlcva_rejected_before_any_new_swap(self):
+        self.work_state["days"]=self.create_recent()
+        audits={"week":{"rule":"friday","intraday_offset_ms":34200000},
+                "month":{"rule":"last_traded","intraday_offset_ms":34200000}}
+        with patch.object(R,"read_state",return_value=self.work_state):
+            with patch.object(R,"audit_one",side_effect=lambda root,p:audits[p]):
+                R.run(self.root,apply=True,asof=date(2026,11,12),
+                      log=lambda _:None)
+                file=self.data/"week"/"2026-10.parquet"
+                physical=pq.read_table(file)
+                changed=physical.set_column(
+                    physical.schema.get_field_index("amount"),"amount",
+                    pa.array([999999. if i==0 else float(v)
+                              for i,v in enumerate(physical["amount"].to_pylist())],
+                             type=pa.float64()))
+                pq.write_table(changed,file)
+                with self.assertRaisesRegex(
+                    ValueError,"CONFLICTING_DERIVED_WEEK_BAR.*field=amount"):
+                    R.run(self.root,apply=True,asof=date(2026,11,12),
+                          log=lambda _:None)
+
 if __name__=="__main__":
     unittest.main()

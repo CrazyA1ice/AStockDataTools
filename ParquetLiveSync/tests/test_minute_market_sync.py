@@ -68,6 +68,7 @@ class MonthMarketMerge(unittest.TestCase):
             M,"check_calibration",return_value={"calibrations":self.gates})
         self.cal_patch.start()
         self.addCleanup(self.cal_patch.stop)
+        self.real_official_days=M.official_days
         self.day_patch=patch.object(
             M,"official_days",return_value=(self.days,self.snapshot))
         self.day_patch.start()
@@ -143,9 +144,10 @@ class MonthMarketMerge(unittest.TestCase):
 
     def test_original_purchased_october_source_baseline_protected(self):
         with self.assertRaisesRegex(ValueError,"OCTOBER_MINUTE_BASELINE_UNVERIFIED"):
-            # Need actually call original official_days, not test fixture.
-            with patch.object(M,"official_days",wraps=M.official_days):
-                M.official_days(self.root,date(2026,10,14),date(2026,10,14))
+            # Call saved REAL implementation; patching a mocked function
+            # with wraps merely wraps the mock and hides the safety gate.
+            self.real_official_days(self.root,date(2026,10,14),
+                                    date(2026,10,14))
 
 if __name__=="__main__":
     unittest.main()

@@ -99,7 +99,15 @@ def run(root,*,limit=10,logger=print,stop=None,progress=PROGRESS,
             raise ValueError("Local active-stock universe changed; cannot reuse stale full-market source trial index")
         proof=previous
     accepted=set(proof["accepted_stock_symbols"])
-    next_batch=[sym for sym in stocks if sym not in accepted][:limit]
+    # A known Eastmoney 1min source defect (traded bars with open=0)
+    # must not permanently block the whole 5,500-stock candidate queue.
+    # Take never-tried equities first; retry source-defective codes
+    # only after the rest have had a chance to be sampled.
+    failed=set(proof.get("failed_stock_symbols",{}))
+    next_batch=(
+        [sym for sym in stocks if sym not in accepted and sym not in failed]
+        +[sym for sym in stocks if sym not in accepted and sym in failed]
+    )[:limit]
     for sym in next_batch:
         if stop is not None and stop():
             logger("PAUSED_MINUTE_BATCH_WITH_INCOMPLETE_CANDIDATES")

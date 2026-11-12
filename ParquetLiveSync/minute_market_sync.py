@@ -355,6 +355,18 @@ def execute(root,*,start=date(2026,11,2),end=date(2026,11,11),
                 receipts=receipts,symbols=symbols,logger=logger)
             result["status"]="FOUR_MINUTE_PERIOD_MONTH_ATOMIC_SWAPS_COMPLETED"
             result["physical_market_parquet_modified"]=True
+    write_json(Path(work)/"last-status.json",{
+        "format":FORMAT,
+        "status":result["status"],
+        "window":result["window"],
+        "expected_distinct_stocks":result["expected_distinct_stocks"],
+        "stock_receipts_present":result["stock_receipts_present"],
+        "attempted_this_run":result["attempted_this_run"],
+        "source_or_coverage_failure_count":len(failures),
+        "last_source_failure_examples":list(failures.items())[:8],
+        "physical_market_parquet_modified":result["physical_market_parquet_modified"],
+        "updated_at_cn":datetime.now(CN).isoformat(),
+    })
     return result
 
 def commit_month(root,expected,day_sha,gates,*,start,end,work,receipts,

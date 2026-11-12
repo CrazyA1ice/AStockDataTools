@@ -155,3 +155,24 @@ CLI显式授权写入（只有已完成严格预检并确认风险后才能使�
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\install-schedule.ps1 -Action Install -IncludeClosedWeekMonth
 
 新增7项一键主流程离线测试及2项周/月已存在同键的逐字段对照与重复运行测试；与此前46项合计55项。Windows/Linux CI会执行这些真正临时Parquet文件和模拟HTTP ZIP的测试。H5、五个分钟周期继续保持原状。
+
+## 2026-11-12：简化 GUI、定时任务状态、五周期分钟行情候选下载
+
+默认启动脚本 ParquetLiveSync/run-gui.ps1 已切换到紧凑版 gui_simple.py。主界面只保留「更新日/周/月」「开始分钟下载」「停止」「刷新状态」，详细日志可点击查看/隐藏。旧高级界面 gui.py 仍保留；不会自动安装或修改定时任务。
+
+电脑关机期间不会运行任务。已安装计划任务用 -StartWhenAvailable，重新开机且运行条件满足时Windows会尝试补运行（微软默认延迟约10分钟；并不保证立即、也不能在没电时运行）。目前无 WakeToRun，因此睡眠中不会自动唤醒电脑。每次日线任务重查最近90天，已验收日期跳过；仍受源网站ZIP保留期限和网络条件限制。
+
+原版本默认不提供桌面成功/失败通知，是否看到PowerShell窗口取决于Windows任务运行会话。新版 scheduled-update.ps1 将最近一次完成状态 SUCCESS/FAILED、时间、模式持久保存到 work/last-scheduled-run.json，在简化GUI直接展示；完整运行日志保存在 work/scheduled-update.log。新版 install-schedule.ps1 用 -WindowStyle Hidden 申请不显示任务命令行窗口，但只在用户主动重新安装任务后才会更新已注册的任务配置；普通 Git pull 不会改变当前计划任务。
+
+分钟行情候选源为东方财富公开接口（不是上游a-stock-data仓库中包含的可下载分钟Parquet）：1min使用 trends2/get ndays=5（仅近期，可能无法追补较早日期），5min/15min/30min/60min使用 kline/get 的klt=5/15/30/60、fqt=0不复权。解析f51时间、f52/53/54/55开收高低、f56来源成交量、f57来源成交额；来源返回不足、数据异常、重复时戳必须拒绝或记录失败。
+
+新 GUI 的分钟区可以选「三只样本」或「全市场下一批10只」，均可点击「开始分钟下载」。样本默认沪深北各1只；批量从当前本地已验收日线最后一天提取约五千多只真实A股代码，每次最多10只，已通过候选下载的股票记录私有断点，重复运行继续下一批。下载响应的SHA、各周期起止时间、逐日数量及异常收据都在被Git忽略的 work/minute_source_trials；完全不修改AllCycleAStockData下任何5个分钟周期的正式Parquet或H5。
+
+CLI小样本：
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\minute_probe.py --symbols SH600000,SZ000001,BJ920021
+CLI续跑批量：
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\minute_batch.py --root D:\stock --limit 10
+
+GitHub Actions公开样本实测：5min SH600000获得600根带金额的K线；1min曾被源端09:30无成交占位行挡住，现对确实volume=amount=0且价格结构无效的09:30行单独忽略，并保留统计；有成交的异常数据不会跳过。真实分钟源仍需校验保留期限、北交所覆盖、成交量单位、1m和5m时间标签、原购买Parquet OHLCVA等，**此阶段不能把候选数据直接当成已补齐的正式分钟Parquet**。
+
+正式自动同步仍为三周期日线/周线/月线。五个分钟周期已进入同一GUI中的可验证公开源下载阶段，未声称全市场分钟数据更新完成。

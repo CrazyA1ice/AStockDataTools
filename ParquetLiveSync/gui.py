@@ -10,14 +10,16 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox,ttk
-from live_sync import WORK,BASE_DAY,latest_yesterday,safe_window,sync,summarize
+from live_sync import WORK,BASE_DAY,latest_yesterday,safe_window,sync,summarize,exclusive_writer,CN
+from local_layout import inventory,storage_root,rollover_all_periods,PERIODS
+from datetime import datetime
 
 class LiveParquetGui(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AStockDataTools | Parquet 增量更新")
-        self.geometry("940x690")
-        self.minsize(800,590)
+        self.geometry("970x785")
+        self.minsize(840,690)
         self.messages=queue.Queue()
         self.stop_event=threading.Event()
         self.running=False
@@ -27,9 +29,13 @@ class LiveParquetGui(tk.Tk):
         self.headline=tk.StringVar(value="加载本地数据库状态…")
         self.current=tk.StringVar(value="待命")
         self.pct=tk.IntVar(value=0)
+        self.direct_local=tk.BooleanVar(value=True)
+        self.localpath=tk.StringVar(value=r"D:\stock\AllCycleAStockData")
+        self.close_requested=False
         self._layout()
         self.after(120,self._poll)
         self._refresh()
+        self.protocol("WM_DELETE_WINDOW",self._close)
 
     def _layout(self):
         frame=ttk.Frame(self,padding=20)
@@ -42,7 +48,9 @@ class LiveParquetGui(tk.Tk):
         top.pack(fill="x")
         ttk.Label(top,textvariable=self.headline,
                   font=("Microsoft YaHei UI",11)).pack(anchor="w")
-        ttk.Label(top,text="原八周期快照：截至 2026-10-13。仅日线可用通达信官方包完整补齐；其他七周期仍为原快照。",
+        ttk.Label(top,text="存储位置自动识别：",foreground="#666666").pack(anchor="w",pady=(7,0))
+        ttk.Label(top,textvariable=self.localpath).pack(anchor="w")
+        ttk.Label(top,text="目录规则：往年 YYYY.parquet / 当年 YYYY-MM.parquet；日线优先更新，其余周期保留。",
                   foreground="#666666").pack(anchor="w",pady=(7,0))
         ctrl=ttk.LabelFrame(frame,text="更新参数",padding=12)
         ctrl.pack(fill="x",pady=(12,0))
@@ -56,6 +64,9 @@ class LiveParquetGui(tk.Tk):
         ttk.Entry(ctrl,textvariable=self.end_day,width=16).grid(
             row=1,column=3,sticky="w")
         ctrl.columnconfigure(1,weight=1)
+        ttk.Checkbutton(
+            frame,text="把已校验的新日线合并进 D:\\stock\\AllCycleAStockData\\day\\2026-MM.parquet（自动备份、校验与原子替换）",
+            variable=self.direct_local).pack(anchor="w",pady=(9,0))
         btn=ttk.Frame(frame)
         btn.pack(fill="x",pady=14)
         self.preview=ttk.Button(btn,text="预览更新范围",command=self._preview)
@@ -65,6 +76,7 @@ class LiveParquetGui(tk.Tk):
         self.cancel=ttk.Button(btn,text="安全停止",command=self._stop,state="disabled")
         self.cancel.pack(side="left")
         ttk.Button(btn,text="刷新状态",command=self._refresh).pack(side="right")
+        ttk.Button(btn,text="跨年归档检查",command=self._rollover).pack(side="right",padx=7)
         state=ttk.Frame(frame)
         state.pack(fill="x")
         ttk.Label(state,textvariable=self.current).pack(anchor="w")
@@ -85,7 +97,7 @@ class LiveParquetGui(tk.Tk):
                          bg="#111827",fg="#e2e8f0",
                          insertbackground="white",font=("Consolas",10))
         self.log.pack(fill="both",expand=True)
-        ttk.Label(frame,text="原始 ZIP、增量 Parquet、SHA 收据及日志均存于 ParquetLiveSync/work（Git 忽略）；404 不等于休市。",
+        ttk.Label(frame,text="日线新数据同时留私有SHA增量副本；本地标准月文件变更前自动备份。跨年归档需12个月完整且明确确认。",
                   foreground="#667085").pack(anchor="w",pady=(7,0))
 
     def _write(self,message):
@@ -101,6 +113,9 @@ class LiveParquetGui(tk.Tk):
     def _preview(self):
         try:
             start,end=self._window()
+            identified=storage_root(self.root_value.get().strip())
+            self._write("自动发现八周期目录："+str(identified))
+            self._write("本地日线合并："+("开启" if self.direct_local.get() else "仅私有SHA增量"))
             self._write("预览：" + str(start)+" → "+str(end)+
                         "，最多 "+str((end-start).days+1)+" 个日历日")
             self._write("只对2026-10-13之后下载通达信官方完整盘后包；404将留待下次重试。")
@@ -114,15 +129,17 @@ class LiveParquetGui(tk.Tk):
         try:
             left,right=self._window()
             root=Path(self.root_value.get().strip())
-            if not root.is_dir():
-                raise ValueError("找不到 D:\\stock 市场数据库目录")
+            resolved=storage_root(root)
+            self.localpath.set(str(resolved))
         except Exception as exc:
             messagebox.showerror("无法启动",str(exc))
             return
         if not messagebox.askyesno(
                 "确认增量更新",
-                "将访问通达信官网并在私有 work 目录保存新的日线 Parquet。\n"
-                "不会覆盖历史八周期 Parquet 或 H5。\n\n"
+                "将访问通达信官网并保存可核验的日线 Parquet 增量。\n"
+                + ("同时备份并合并到实际 AllCycleAStockData/day/YYYY-MM.parquet。\n" if self.direct_local.get()
+                   else "仅私有增量目录，不改动原月文件。\n")
+                + "不会修改任何 H5 或其余七周期的原数据。\n\n"
                 f"范围：{left} 至 {right}\n继续吗？"):
             return
         self.running=True
@@ -135,7 +152,8 @@ class LiveParquetGui(tk.Tk):
             try:
                 result=sync(root,left,right,max_days=180,
                             logger=lambda msg:self.messages.put(("log",msg)),
-                            stop=self.stop_event.is_set)
+                            stop=self.stop_event.is_set,
+                            materialize_local=self.direct_local.get())
                 self.messages.put(("ok",result))
             except Exception as exc:
                 self.messages.put(("error",str(exc)))
@@ -149,25 +167,85 @@ class LiveParquetGui(tk.Tk):
     def _refresh(self):
         self.table.delete(*self.table.get_children())
         try:
+            root=storage_root(self.root_value.get().strip())
+            self.localpath.set(str(root))
             report=summarize()
+            layout=inventory(root)
             last=report["latest_overlaid_day"] or "尚无新增日线"
             self.headline.set(
-                f"原版日线截至 {BASE_DAY}  |  新增日线最新 {last}  |  "
-                f"新增 {report['new_day_dates']} 日 / {report['new_day_rows']:,} 行")
-            for period in ("day","1min","5min","15min",
-                           "30min","60min","week","month"):
+                f"历史日线截止 {BASE_DAY} | 最新增量 {last} | "
+                f"已获取 {report['new_day_dates']} 日、{report['new_day_rows']:,} 行")
+            for period in PERIODS:
+                folder=layout["periods"][period]
+                current=len(folder["current_year_monthly_files"])
+                old=folder["annual_files"]
+                anomalies=len(folder["prior_year_monthly_files"])
+                note=(f"{old}个年度文件 / 本年{current}个月文件"
+                      + (f" / {anomalies}个往年月文件待归档" if anomalies else ""))
                 if period=="day":
-                    detail=f"原始完整日线 + {report['new_day_dates']} 日新Parquet（SHA 验证）"
+                    note+=" / 当前接入官方日线增量"
                 else:
-                    detail="原始物理来源截至 2026-10-13；尚未增量"
-                self.table.insert("","end",values=(period+"： "+detail,
-                                                    report["periods"][period]))
+                    note+=" / 尚无可信完整增量源"
+                self.table.insert("","end",
+                                  values=(period+"： "+note,str(root/period)))
         except Exception as exc:
-            self.headline.set("尚未找到可用的本地原八周期 Parquet 快照")
-            self._write("状态读取失败："+str(exc))
-            for period in ("day","1min","5min","15min",
-                           "30min","60min","week","month"):
-                self.table.insert("","end",values=(period,"等待本地 Parquet 源验证"))
+            self.headline.set("未能验证本地八周期 Parquet 文件布局")
+            self._write("路径/布局校验失败："+str(exc))
+            for period in PERIODS:
+                self.table.insert("","end",values=(period,"等待D:\\stock目录验证"))
+
+    def _rollover(self):
+        if self.running:
+            messagebox.showinfo("任务仍在运行","请先完成或安全停止当前下载。")
+            return
+        try:
+            root=storage_root(self.root_value.get().strip())
+            year=datetime.now(CN).year-1
+            preview=rollover_all_periods(
+                root,year,WORK,current_year=year+1,apply=False)
+            self._write("跨年预检："+str(year)+"，八个周期已存在完整年度文件或12个月文件。")
+            for period,info in preview["periods"].items():
+                self._write(period+": "+info["action"])
+        except Exception as exc:
+            self._write("跨年尚不能归档："+str(exc))
+            messagebox.showinfo(
+                "未满足年度归档条件",
+                "八个周期必须全部具有完整的上一年度数据。当前只读预检结果：\n"+
+                str(exc))
+            return
+        if not messagebox.askyesno(
+            "年度归档确认",
+            f"将 {year} 年八周期的每月文件合并为每周期一个 {year}.parquet，"+
+            "先做SHA私有备份与整数字段/唯一键校验，归档后移除原位置月文件。\n"+
+            "旧的固定物理快照若硬编码了这些月文件路径，将需要重新生成索引版本。\n"+
+            "确定要进行跨年归档吗？"):
+            return
+        self.running=True
+        self.stop_event.clear()
+        self.progress.start(12)
+        self.start.configure(state="disabled")
+        self.cancel.configure(state="disabled")
+        self.current.set("正在核对并归档八周期上一年度Parquet；不得强制关窗")
+        def job():
+            try:
+                with exclusive_writer():
+                    result=rollover_all_periods(
+                        root,year,WORK,current_year=year+1,apply=True)
+                self.messages.put(("archive_ok",result))
+            except Exception as exc:
+                self.messages.put(("error",str(exc)))
+        threading.Thread(target=job,daemon=True).start()
+
+    def _close(self):
+        if not self.running:
+            self.destroy()
+            return
+        if messagebox.askyesno(
+                "当前仍有写入任务",
+                "任务运行中。现在请求安全停止并保持窗口，直至当前操作结束吗？"):
+            self.stop_event.set()
+            self.close_requested=True
+            self.current.set("正在安全结束当前日期，窗口将随后自动关闭")
 
     def _poll(self):
         try:
@@ -180,7 +258,11 @@ class LiveParquetGui(tk.Tk):
                     self.progress.stop()
                     self.start.configure(state="normal")
                     self.cancel.configure(state="disabled")
-                    if kind=="ok":
+                    if kind=="archive_ok":
+                        self.current.set("年度归档完成")
+                        self._write("归档验收："+json.dumps(item,ensure_ascii=False))
+                        self._refresh()
+                    elif kind=="ok":
                         self.current.set("当前请求已完成，请看增量状态")
                         self._write("完成："+json.dumps(item,ensure_ascii=False))
                         self._refresh()
@@ -188,6 +270,9 @@ class LiveParquetGui(tk.Tk):
                         self.current.set("运行中断：保留已验收的日线数据")
                         self._write("已停止/失败："+item)
                         messagebox.showerror("增量更新未全部成功",item)
+                    if self.close_requested:
+                        self.destroy()
+                        return
         except queue.Empty:
             pass
         self.after(120,self._poll)

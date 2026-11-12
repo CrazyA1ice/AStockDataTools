@@ -87,7 +87,6 @@ def time_candidate_offsets(period):
 def pair_and_calibrate(period,source,original):
     if period not in PERIODS_OHLCVA:
         raise ValueError("Never calibrate trends2 1min as full OHLCVA Kline")
-    source=[x for x in source if (x["symbol"],x["ts"]) not in set()]
     if not source:
         raise ValueError("No public source minute overlap candidates")
     scored=[]
@@ -105,20 +104,39 @@ def pair_and_calibrate(period,source,original):
                                 rel_tol=.005,abs_tol=.03)
                    for key in ("open","high","low","close")):
                 price+=1
-        score=price
-        scored.append((score,len(paired),-abs(offset),offset,paired))
+        # With minute OHLC prices adjacent bars can differ by only
+        # 0.01 yuan, meaning both wrong and correct shifts pass a loose
+        # 3-cent price tolerance. Use the aggregate *actual residual*
+        # as the first discriminator, not the count of tolerance hits.
+        loss=statistics.median(
+            sum(abs(float(old[k])-float(bar[k]))
+                for k in ("open","high","low","close"))
+            /max(1.,abs(float(old["close"])))
+            for old,bar in paired)
+        scored.append((loss,-price,-len(paired),abs(offset),offset,paired))
     if not scored:
         raise ValueError("Purchased and public source minute timestamps have zero overlap")
-    scored.sort(reverse=True)
-    score,n,_,offset,pairs=scored[0]
-    price_fit=score/n
+    scored.sort(key=lambda x:x[:4])
+    loss,neg_price,neg_n,_,offset,pairs=scored[0]
+    n=-neg_n
+    price_fit=-neg_price/n
     minimum=MIN_COMMON[period]
     if n<minimum or price_fit<.93:
         raise ValueError(
             f"{period} PAID_PUBLIC_PRICE_OR_TIME_UNVERIFIED "
             f"paired={n} required={minimum} price_fit={price_fit:.4f}")
-    if len(scored)>1 and scored[1][0]>=score*.95:
-        raise ValueError(f"{period} timestamp offset ambiguous between historical sources")
+    if len(scored)>1:
+        second=scored[1]
+        # If two offsets have virtually the same real-price residual
+        # and similar row coverage, source time labeling is ambiguous.
+        # A single fixed close on a suspended/limit-locked stock is not
+        # sufficient proof of a precise vendor timestamp convention.
+        if (second[0]<=max(loss*1.25,loss+1e-7)
+                and -second[2]>=n*.90):
+            raise ValueError(
+                f"{period} timestamp offset ambiguous between historical sources "
+                f"best={offset} best_loss={loss:.7f} "
+                f"second={second[4]} second_loss={second[0]:.7f}")
     price_pairs=[pair for pair in pairs
                  if all(math.isclose(float(pair[0][field]),
                                      float(pair[1][field]),

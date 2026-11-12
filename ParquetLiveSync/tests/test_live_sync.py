@@ -17,7 +17,9 @@ sys.path.insert(0,str(HERE.parent))
 import live_sync as S
 import tdx_source as T
 
-def official_zip(day,*,missing=(),duplicate=False,corrupt=False):
+def official_zip(day,*,missing=(),duplicate=False,corrupt=False,
+                 suspended_market=None,bad_active_market=None,
+                 missing_amount_market=None):
     raw=io.BytesIO()
     with zipfile.ZipFile(raw,"w",compression=zipfile.ZIP_DEFLATED) as z:
         for m,equity in (("sh","600000"),("sz","000001"),("bj","920021")):
@@ -35,9 +37,20 @@ def official_zip(day,*,missing=(),duplicate=False,corrupt=False):
                 cod.extend(row)
                 blk=bytearray(512)
                 struct.pack_into("<d",blk,4,9.99)
-                struct.pack_into("<4d",blk,12,10.,11.,9.,10.5)
-                struct.pack_into("<Q",blk,56,10000+i)
-                struct.pack_into("<d",blk,72,float("nan") if corrupt else 105000.)
+                o,h,l,c=(10.,11.,9.,10.5)
+                vol=10000+i
+                amount=float("nan") if corrupt else 105000.
+                if i==0 and m==suspended_market:
+                    o,h,l=0.,0.,0.
+                    vol=0
+                    amount=0.
+                if i==0 and m==bad_active_market:
+                    h=9.5
+                if i==0 and m==missing_amount_market:
+                    amount=0.
+                struct.pack_into("<4d",blk,12,o,h,l,c)
+                struct.pack_into("<Q",blk,56,vol)
+                struct.pack_into("<d",blk,72,amount)
                 md1.extend(blk)
             key=day.strftime("%Y%m%d")[2:]
             for ext,payload in (("cod",cod),("md1",md1)):
@@ -64,6 +77,30 @@ class OfficialSourceParsing(unittest.TestCase):
         self.assertEqual(bars[0]["volume_shares"],10000)
         self.assertEqual(bars[0]["amount_yuan"],105000.0)
         self.assertEqual(meta["all_priced_by_market"],{"sh":2,"sz":2,"bj":2})
+
+    def test_real_zero_turnover_suspended_a_share_not_fake_trading_bar(self):
+        # Full source still contains genuine close carried forward while
+        # O/H/L are zero. This is NOT a traded A-share OHLCVA record and
+        # should be counted, excluded and explainable, not abort the day.
+        bars,meta=T.parse_daily_zip(
+            official_zip(self.day,suspended_market="sh"),self.day,
+            minimums={"sh":1,"sz":1,"bj":1})
+        self.assertEqual(len(bars),2)
+        self.assertNotIn("SH600000",[bar["symbol"] for bar in bars])
+        self.assertEqual(meta["zero_turnover_nontrading_a_shares_by_market"]["sh"],1)
+        self.assertEqual(meta["zero_turnover_nontrading_a_shares_by_market"]["sz"],0)
+
+    def test_genuine_traded_a_share_bad_ohlc_fails_with_exact_symbol_and_date(self):
+        with self.assertRaisesRegex(
+            ValueError,r"TDX_INVALID_TRADED_A_SHARE_OHLCVA date=2026-11-11 symbol=SZ000001"):
+            T.parse_daily_zip(official_zip(self.day,bad_active_market="sz"),
+                              self.day,minimums={"sh":1,"sz":1,"bj":1})
+
+    def test_genuine_traded_a_share_missing_amount_not_silently_zero_filled(self):
+        with self.assertRaisesRegex(
+            ValueError,r"TDX_INVALID_TRADED_A_SHARE_OHLCVA date=2026-11-11 symbol=BJ920021"):
+            T.parse_daily_zip(official_zip(self.day,missing_amount_market="bj"),
+                              self.day,minimums={"sh":1,"sz":1,"bj":1})
 
     def test_bad_bj_pair_fails_closed_not_partial(self):
         key=self.day.strftime("%Y%m%d")[2:]

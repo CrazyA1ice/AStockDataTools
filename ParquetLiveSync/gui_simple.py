@@ -16,6 +16,7 @@ from update_pipeline import run as update_all
 from minute_probe import PERIODS as MINUTES,run as trial_minutes
 from minute_batch import run as collect_market_batch
 from minute_market_sync import execute as run_four_minute_market
+from tencent_m1 import collect_samples as collect_true_m1,market_symbol as tencent_market_symbol
 
 class ParquetDashboard(tk.Tk):
     def __init__(self):
@@ -33,8 +34,8 @@ class ParquetDashboard(tk.Tk):
         first=max(BASE_DAY+timedelta(days=1),last-timedelta(days=89))
         self.start_day=tk.StringVar(value=first.isoformat())
         self.end_day=tk.StringVar(value=last.isoformat())
-        self.symbols=tk.StringVar(value="SH600000,SZ000001,BJ920021")
-        self.minute_mode=tk.StringVar(value="三只样本")
+        self.symbols=tk.StringVar(value="SH600000,SZ000001")
+        self.minute_mode=tk.StringVar(value="沪深真实1分钟K线")
         self.status=tk.StringVar(value="准备就绪")
         self.overview=tk.StringVar(value="检查本地数据库…")
         self.schedule=tk.StringVar(value="自动更新：读取状态…")
@@ -84,14 +85,14 @@ class ParquetDashboard(tk.Tk):
         ttk.Entry(selection,textvariable=self.symbols,width=29).pack(
             side="left",fill="x",expand=True,padx=(8,5))
         ttk.Combobox(selection,textvariable=self.minute_mode,
-                     values=("三只样本","全市场下一批10只",
+                     values=("沪深真实1分钟K线","三只样本","全市场下一批10只",
                              "11月四周期：自动补齐并拼接"),
                      width=17,state="readonly").pack(side="left",padx=(0,8))
         self.probe_button=ttk.Button(
             selection,text="开始分钟下载",command=self._start_probe)
         self.probe_button.pack(side="left")
         ttk.Label(minutes,
-                  text="1/5/15/30/60分钟 · 暂存独立样本，不会改写原始 Parquet 或 H5",
+                  text="沪深1分钟：真实开高低收量，暂无逐分钟成交额；其他周期经校准才能合并",
                   foreground="#667085").pack(anchor="w",pady=(7,0))
         current=ttk.Frame(outer)
         current.pack(fill="x",pady=(13,4))
@@ -243,14 +244,25 @@ class ParquetDashboard(tk.Tk):
         mode=self.minute_mode.get()
         from minute_probe import parse_symbols
         try:
-            if mode=="三只样本":
+            if mode in ("三只样本","沪深真实1分钟K线"):
                 symbols=parse_symbols(self.symbols.get())
+                if mode=="沪深真实1分钟K线":
+                    for symbol in symbols:
+                        tencent_market_symbol(symbol)
             else:
                 storage_root(self.root_path)
         except ValueError as exc:
             messagebox.showerror("分钟线下载参数不正确",str(exc))
             return
-        if mode=="三只样本":
+        if mode=="沪深真实1分钟K线":
+            prompt=(f"通过a-stock-data所用腾讯接口下载{len(symbols)}只沪深股票的"
+                    "真实1分钟K线，每只最近最多320根。\n"
+                    "包含真实开高低收和成交量，没有逐分钟成交额。"
+                    "仅生成私有OHLCV候选Parquet，不修改正式1min月文件或H5。继续吗？")
+            job=lambda:collect_true_m1(
+                symbols,logger=lambda line:self.events.put(("log",line)),
+                stop=self.stop_event.is_set)
+        elif mode=="三只样本":
             prompt=(f"下载 {len(symbols)} 只股票的1/5/15/30/60分钟候选源数据？"
                     "\n仅保存独立SHA原始样本，不修改正式数据库。")
             job=lambda:trial_minutes(
@@ -321,6 +333,9 @@ class ParquetDashboard(tk.Tk):
                             payload.get("stock_receipts_present",0))+"/"+
                             str(payload.get("expected_distinct_stocks","?"))+
                             "只股票；尚未合并")
+                    elif success.startswith("TENCENT_1MIN_"):
+                        n=len(payload.get("symbols_verified",[]))
+                        self.status.set(f"真实沪深1分钟OHLCV：已下载{n}只股票；仍缺逐分钟成交额")
                     elif success.startswith("PROBE") or "CANDIDATE" in success:
                         self.status.set("分钟候选下载已完成；尚未写入正式分钟数据库")
                     else:

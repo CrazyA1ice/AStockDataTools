@@ -5,8 +5,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 
 HERE=Path(__file__).resolve().parents[1]
+# unittest discovery starts from tests/: make sibling production modules importable.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 spec=importlib.util.spec_from_file_location("qmt_1m_pipeline",HERE/"qmt_1m_pipeline.py")
 p=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)

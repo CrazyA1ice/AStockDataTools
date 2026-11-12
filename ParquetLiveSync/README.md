@@ -35,7 +35,7 @@ a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1
 
-入口会先跑34项全离线模拟回归测试，成功后打开 Tkinter 中文 GUI，展示八周期状态、日期、下载进度、日志，支持预览、开始、停止（在当前日完成后退出），不会再运行H5任务。
+入口会先跑40项全离线模拟回归测试，成功后打开 Tkinter 中文 GUI，展示八周期状态、日期、下载进度、日志，支持预览、开始、停止（在当前日完成后退出），不会再运行H5任务。
 
 默认从2026-10-14取到前一个北京时间交易候选日；若当前已过北京时间20:00也允许尝试今天（仍以真实ZIP可下载为准）。建议先用3个最近日期验证，再扩大到10月14日以后的所有日期。
 
@@ -93,4 +93,18 @@ Windows Python 3.11 上首轮18项合成测试中5项真实 Parquet 写入均在
 
 要以**真正存放在指定年月文件中**的数据为研究数据源，而非旧SHA快照虚拟叠加入口，可用 `from local_layout import open_local_layout_dataset`，然后 `open_local_layout_dataset(r'D:\stock','day')`，返回对 `AllCycleAStockData/day/{2011.parquet,...,2026-11.parquet}` 的只读 PyArrow Dataset，不会同时读入月份与对应全年文件造成双计。
 
-截至本提交，新增14项纯临时八周期原生Parquet/归档/10月预先补齐测试，加上此前20项数据源/ZIP/Arrow测试，总计**34项**。尚未在用户Windows下进行本次新逻辑的实机测试；不要声称已将最新日线真正写入 D:\stock。
+截至本提交，新增14项纯临时八周期原生Parquet/归档/10月预先补齐测试，加上此前20项数据源/ZIP/Arrow测试，总计**40项**。尚未在用户Windows下进行本次新逻辑的实机测试；不要声称已将最新日线真正写入 D:\stock。
+
+## 2026-11-12：官网盘后包有收盘参考价但无交易量导致GUI误报的真实修复
+
+用户首次GUI请求2026-10-14..10-31时弹窗 `Invalid active A-share OHLCVA in official daily package`。旧的校验器错误要求每只出现收盘价的A股都有非零开高低与非零成交，即使来源本身只是停牌或零交易参考报价。修复后统一分为：
+
+- `close>0; volume=0; amount=0`：按**无真实成交报价**记录到来源统计和逐日SHA收据，不用零开高低造出假交易K线，也不以错误行情混合进物理年月Parquet；若一市场此类异常超过候选A股20%/300条则拒绝整日以防残缺源包；
+- `volume>0` 但成交额为零或负、价格结构明显无效：严格拒绝整日，错误包含来源日期、证券代码、前收/开高低收、成交量、成交额与原ZIP摘要；
+- `close<=0` 但原字段存在真实成交：拒绝而不是无声跳过；所有非有限数值依然强制拒绝；
+- 作为自动量纲对照的首个原始交易日有特异/损坏ZIP时，只拒绝该**校准日**并记录来源异常，再尝试其他已验收的2026-09-24/10-13原购买重叠日；实际下载目标日仍必须完整通过严校验。
+- 因真实异常导致的源ZIP拒收（不是HTTP 404）将保存为私有 `ParquetLiveSync/work/rejected_official_tdx/YYYYMMDD-<SHA16>.zip`，绝不写入原市场文件，也不会标记下载成功。GUI会显示具体异常，方便只读诊断；诊断工具 `ParquetLiveSync/probe_official_zip_readonly.py --date YYYY-MM-DD [--zip 已有文件]` 不修改Parquet或H5。
+
+**真实公开样本证据**：GitHub Actions 用2026-10-14官网ZIP做了网络直读，原始SHA256 `cfa745c7972fe52f698e829aacf7f21db947ddacd722ef6368f24c64ffb60ec6`，发现沪市5条 `close>0, open=high=low=0, volume=amount=0` 参考报价：SH600293、SH600825、SH601059、SH601198、SH688496。新解析器接纳其余 **5,562条有效A股成交记录**（沪2315、深2898、京349），对这5条不伪造成交K线。实证CI：https://github.com/CrazyA1ice/AStockDataTools/actions/runs/43148666361
+
+新版本已在 Windows/Linux 上执行40项ZIP、量纲、Parquet实写、年月分区、跨年归档、断点和来源异常的全离线回归测试，另有2026-10-14真实公开盘后包校验。**这不是用户本机量纲校准和落库的成功回执**。用户需关闭旧GUI、更新脚本并重新尝试，并检查2026-10-14和当年月文件是否真正通过SHA/业务合并。

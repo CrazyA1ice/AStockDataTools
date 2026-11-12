@@ -475,12 +475,19 @@ def main():
     parser.add_argument("--status",action="store_true")
     parser.add_argument("--preview",action="store_true")
     parser.add_argument("--sync-day-overlay",action="store_true")
+    parser.add_argument("--auto-recent-90-days",action="store_true")
     args=parser.parse_args()
     if args.status:
         print(json.dumps(summarize(),ensure_ascii=False,indent=2))
         return
     start=date.fromisoformat(args.from_day)
     end=date.fromisoformat(args.through_day) if args.through_day else latest_yesterday()
+    # Long-term scheduled updates intentionally keep a rolling 90-day
+    # retry window so HTTP 404/missed trading days remain retryable, without
+    # rescanning 2011..2026 historical vendor Parquet or years of weekends.
+    if args.auto_recent_90_days:
+        start=max(BASE_DAY+timedelta(days=1),end-timedelta(days=89))
+        args.max_days=90
     safe_window(start,end,args.max_days)
     if args.preview:
         print(json.dumps({"from":str(start),"to":str(end),
@@ -491,8 +498,8 @@ def main():
                           "unsupported":"Tencent minute data lacks amount"},
                          ensure_ascii=False,indent=2))
         return
-    if not args.sync_day_overlay:
-        parser.error("Specify --preview, --status, or explicit --sync-day-overlay")
+    if not args.sync_day_overlay and not args.auto_recent_90_days:
+        parser.error("Specify --preview, --status, --sync-day-overlay, or --auto-recent-90-days")
     sync(args.root,start,end,max_days=args.max_days)
 
 if __name__=="__main__":

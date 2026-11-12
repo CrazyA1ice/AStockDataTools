@@ -14,6 +14,7 @@ from live_sync import WORK,BASE_DAY,latest_yesterday,summarize
 from local_layout import PERIODS,inventory,storage_root
 from update_pipeline import run as update_all
 from minute_probe import PERIODS as MINUTES,run as trial_minutes
+from minute_batch import run as collect_market_batch
 
 class ParquetDashboard(tk.Tk):
     def __init__(self):
@@ -32,6 +33,7 @@ class ParquetDashboard(tk.Tk):
         self.start_day=tk.StringVar(value=first.isoformat())
         self.end_day=tk.StringVar(value=last.isoformat())
         self.symbols=tk.StringVar(value="SH600000,SZ000001,BJ920021")
+        self.minute_mode=tk.StringVar(value="三只样本")
         self.status=tk.StringVar(value="准备就绪")
         self.overview=tk.StringVar(value="检查本地数据库…")
         self.schedule=tk.StringVar(value="自动更新：读取状态…")
@@ -78,10 +80,13 @@ class ParquetDashboard(tk.Tk):
         selection=ttk.Frame(minutes)
         selection.pack(fill="x")
         ttk.Label(selection,text="测试股票").pack(side="left")
-        ttk.Entry(selection,textvariable=self.symbols,width=43).pack(
-            side="left",fill="x",expand=True,padx=(8,12))
+        ttk.Entry(selection,textvariable=self.symbols,width=29).pack(
+            side="left",fill="x",expand=True,padx=(8,5))
+        ttk.Combobox(selection,textvariable=self.minute_mode,
+                     values=("三只样本","全市场下一批10只"),
+                     width=17,state="readonly").pack(side="left",padx=(0,8))
         self.probe_button=ttk.Button(
-            selection,text="下载五周期样本",command=self._start_probe)
+            selection,text="开始分钟下载",command=self._start_probe)
         self.probe_button.pack(side="left")
         ttk.Label(minutes,
                   text="1/5/15/30/60分钟 · 暂存独立样本，不会改写原始 Parquet 或 H5",
@@ -145,6 +150,19 @@ class ParquetDashboard(tk.Tk):
         else:
             self.schedule.set("自动任务：尚无本工具记录的运行回执 · 计划时间21:30")
         report_root=WORK/"minute_source_trials"
+        batch=report_root/"batch-progress.json"
+        if batch.is_file():
+            try:
+                record=json.loads(batch.read_text(encoding="utf-8"))
+                done=int(record.get("current_completed_stocks",
+                         len(record.get("accepted_stock_symbols",[]))))
+                all_stocks=int(record.get("symbols_in_universe",0))
+                self.minute.set(
+                    f"分钟线候选采集：{done}/{all_stocks} 只股票 · "
+                    "1/5/15/30/60分钟（待量纲与完整性验收）")
+                return
+            except (ValueError,KeyError,UnicodeError):
+                self.minute.set("分钟线候选索引需检查")
         trials=sorted(report_root.glob("*/latest-trial.json")) if report_root.is_dir() else []
         if trials:
             try:
@@ -201,21 +219,33 @@ class ParquetDashboard(tk.Tk):
     def _start_probe(self):
         if self.running:
             return
+        mode=self.minute_mode.get()
         from minute_probe import parse_symbols
         try:
-            symbols=parse_symbols(self.symbols.get())
+            if mode=="三只样本":
+                symbols=parse_symbols(self.symbols.get())
+            else:
+                storage_root(self.root_path)
         except ValueError as exc:
-            messagebox.showerror("股票代码不正确",str(exc))
+            messagebox.showerror("分钟线下载参数不正确",str(exc))
             return
-        if not messagebox.askyesno("分钟行情源试验",
-            "将读取东方财富公开分钟行情，测试沪深北股票的1/5/15/30/60分钟"
-            "真实量价额字段。\n\n只有私有SHA原始样本，不修改任何市场Parquet/H5。开始吗？"):
-            return
-        self._begin(
-            lambda:trial_minutes(
+        if mode=="三只样本":
+            prompt=(f"下载 {len(symbols)} 只股票的1/5/15/30/60分钟候选源数据？"
+                    "\n仅保存独立SHA原始样本，不修改正式数据库。")
+            job=lambda:trial_minutes(
                 symbols,logger=lambda line:self.events.put(("log",line)),
-                stop=self.stop_event.is_set),
-            "正在下载分钟行情源小样本…")
+                stop=self.stop_event.is_set)
+        else:
+            prompt=("从已验收本地日线提取全市场股票，每次继续10只股票的"
+                    "五个分钟周期候选下载，并保存断点。\n"
+                    "源数据保留期有限；本功能暂不覆盖正式分钟Parquet或H5。")
+            job=lambda:collect_market_batch(
+                self.root_path,limit=10,
+                logger=lambda line:self.events.put(("log",line)),
+                stop=self.stop_event.is_set)
+        if not messagebox.askyesno("分钟行情下载",prompt):
+            return
+        self._begin(job,"正在下载分钟行情候选；原数据库不改动…")
 
     def _stop(self):
         self.stop_event.set()
@@ -241,8 +271,8 @@ class ParquetDashboard(tk.Tk):
                     success=payload.get("status","")
                     if success=="DAY_WEEK_MONTH_COMPLETED_AND_SHA_BACKED":
                         self.status.set("日/周/月更新成功")
-                    elif success.startswith("PROBE"):
-                        self.status.set("分钟线样本试验完成；尚未写入正式数据库")
+                    elif success.startswith("PROBE") or "CANDIDATE" in success:
+                        self.status.set("分钟候选下载已完成；尚未写入正式分钟数据库")
                     else:
                         self.status.set("任务结束："+success)
                     self._write("结果："+json.dumps(payload,ensure_ascii=False)[:3000])

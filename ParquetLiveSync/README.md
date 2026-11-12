@@ -189,6 +189,12 @@ GitHub Actions在2026-11-12对SH600000实际联网验证：5min=600根、15min=5
 
 新增 minute_market_sync.py：真正按八字段目标格式生成可并入的每股票每周期Parquet候选；逐股票全天5min 48格、四周期实际时间戳和OHLCVA、日线成交量额和开高低收校验。若用户指定 --commit-complete-month-source，只有相应完整日期范围内**所有官方日线交易股票**均下载及校验过，才预检四个目标月文件同键原数据并在独占锁下逐周期调用已验local_layout.write_month（旧月文件SHA备份、临时文件完整Arrow读回、原子替换、可重试）。分批阶段只更新Git忽略的私有文件、显示ready/total、从每支股票的SHA收据断点继续；任一股缺少有效分钟数据则不标记全市场完成。当前只支持**2026年11月完整月初起点**，保护10月1-13日来源包含未经同单位验证的H5/高周期合成候选，不能把10月14日起数据创建成看似完整的10月正式月文件。
 
+历史来源可能逐渐过期，因此10月14—30日仍可先私有缓存（不会创建不完整的10月正式分钟Parquet）：
+
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\minute_market_sync.py --root D:\stock --start 2026-10-14 --end 2026-10-30 --limit-stocks 25
+
+此命令实际下载5m历史分页并分组衍生四周期SHA候选；需要跑更多股票可将25改为0（表示连续处理所有未缓存股票，耗时可能很长）。10月原购买/H5过渡候选量纲与完整性尚未验收，因此严格拒绝 --commit-complete-month-source 对10月生效。
+
 小步试运行（先真实购买历史校准与最多25只股票的四周期私有落盘，不写正式八周期数据库）：
 
     .\.venv\Scripts\python.exe -B ParquetLiveSync\minute_market_sync.py --root D:\stock --start 2026-11-02 --end 2026-11-11 --limit-stocks 25

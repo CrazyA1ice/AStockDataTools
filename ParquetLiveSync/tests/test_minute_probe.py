@@ -43,7 +43,7 @@ class PublicMinuteProbe(unittest.TestCase):
                 self.assertIn("kline/get",url)
 
     def test_ohlcva_real_schema_parse_for_each_period(self):
-        for period in P.PERIODS:
+        for period in ("5min","15min","30min","60min"):
             url=P.endpoint(period,"SH600000")
             _,d=fixture(url)
             data=P.parse_bars(d,period,"SH600000")
@@ -53,43 +53,17 @@ class PublicMinuteProbe(unittest.TestCase):
             self.assertEqual(data[0]["local_time"],"09:31")
             self.assertEqual(data[0]["symbol"],"SH600000")
 
-    def test_public_0930_untraded_placeholder_excluded_not_synthetic_bar(self):
+    def test_source_1min_is_trend_not_ohlc_even_when_nonzero_prices(self):
         _,data=fixture(P.endpoint("1min","SH600000"))
-        data["data"]["trends"].insert(
-            0,"2026-11-11 09:30,0,10.5,0,0,0,0,0")
-        parsed=P.parse_bars(data,"1min","SH600000")
-        self.assertEqual(len(parsed),1)
-        self.assertEqual(parsed[0]["local_time"],"09:31")
+        with self.assertRaisesRegex(
+                ValueError,"EASTMONEY_TRENDS2_NOT_OHLCVA"):
+            P.parse_bars(data,"1min","SH600000")
 
-    def test_real_single_price_auction_0930_3771_lots_amount_3737061(self):
+    def test_1min_auction_open_not_reconstructed_from_avg_price(self):
         _,data=fixture(P.endpoint("1min","SH600000"))
         data["data"]["trends"].insert(
             0,"2026-11-06 09:30,0,9.91,9.91,9.91,3771,3737061,9.91")
-        # Keep chronological order for a real multi-day public response.
-        data["data"]["trends"][1]="2026-11-06 09:31,10,10.5,11,9.5,100,150000,10"
-        bars=P.parse_bars(data,"1min","SH600000")
-        self.assertEqual(len(bars),2)
-        first=bars[0]
-        self.assertEqual(first["source_original_open"],0.)
-        self.assertEqual(first["open"],9.91)
-        self.assertTrue(first["auction_open_reconstructed"])
-        self.assertEqual(first["amount_yuan"],3737061.)
-        self.assertEqual(first["provider_volume"],3771.)
-        self.assertEqual(P.daily_summary(bars)["2026-11-06"]["amount_yuan"],
-                         3737061.+150000.)
-
-    def test_fake_auction_single_price_but_incompatible_amount_refused(self):
-        _,data=fixture(P.endpoint("1min","SH600000"))
-        data["data"]["trends"].insert(
-            0,"2026-11-11 09:30,0,9.91,9.91,9.91,3771,120,9.91")
-        with self.assertRaisesRegex(ValueError,"Invalid SH600000 1min OHLCVA"):
-            P.parse_bars(data,"1min","SH600000")
-
-    def test_traded_0930_with_bad_price_still_refused(self):
-        _,data=fixture(P.endpoint("1min","SH600000"))
-        data["data"]["trends"].insert(
-            0,"2026-11-11 09:30,0,10.5,0,0,100,100000,0")
-        with self.assertRaisesRegex(ValueError,"Invalid SH600000 1min OHLCVA"):
+        with self.assertRaisesRegex(ValueError,"f53 is average price"):
             P.parse_bars(data,"1min","SH600000")
 
     def test_missing_amount_rejected_without_zero_fill(self):
@@ -99,10 +73,10 @@ class PublicMinuteProbe(unittest.TestCase):
             P.parse_bars(d,"5min","SH600000")
 
     def test_amount_volume_inconsistent_rejected(self):
-        _,d=fixture(P.endpoint("1min","SH600000"))
-        d["data"]["trends"][0]="2026-11-11 09:31,10,10.5,11,9.5,100,0"
+        _,d=fixture(P.endpoint("5min","SH600000"))
+        d["data"]["klines"][0]="2026-11-11 09:35,10,10.5,11,9.5,100,0"
         with self.assertRaisesRegex(ValueError,"Invalid"):
-            P.parse_bars(d,"1min","SH600000")
+            P.parse_bars(d,"5min","SH600000")
 
     def test_unsafe_or_duplicate_timestamp_rejected(self):
         _,d=fixture(P.endpoint("15min","SZ000001"))
@@ -120,7 +94,7 @@ class PublicMinuteProbe(unittest.TestCase):
             events=[]
             result=P.run(work=Path(td)/"minute_source_trials",
                          requester=fixture,pause=0,logger=events.append)
-            self.assertEqual(result["status"],"PROBE_COMPLETE_CANDIDATE_ONLY")
+            self.assertEqual(result["status"],"PROBE_PARTIAL_NOT_MERGED")
             self.assertFalse(result["production_full_market_approved"])
             self.assertFalse(result["market_files_modified"])
             self.assertFalse(result["volume_units_certified"])
@@ -132,7 +106,12 @@ class PublicMinuteProbe(unittest.TestCase):
                     self.assertTrue(path.is_file())
                     self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
                                      item["raw_source_sha256"])
-                    self.assertEqual(item["status"],"CANDIDATE_ONLY_NOT_MERGED")
+                    if period=="1min":
+                        self.assertEqual(
+                            item["status"],
+                            "SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED")
+                    else:
+                        self.assertEqual(item["status"],"CANDIDATE_ONLY_NOT_MERGED")
             self.assertFalse((Path(td)/"AllCycleAStockData").exists())
             self.assertTrue(any("MINUTE_SOURCE_CANDIDATE" in m for m in events))
 
@@ -165,7 +144,7 @@ class PublicMinuteProbe(unittest.TestCase):
             result=P.run(work=Path(td),requester=requester,
                          periods=("1min","5min"),pause=0,logger=lambda _:None)
             self.assertEqual(result["status"],"PROBE_PARTIAL_NOT_MERGED")
-            self.assertEqual(len(result["failed"]),2)
+            self.assertEqual(len(result["failed"]),4)
             self.assertFalse(result["market_files_modified"])
 
     def test_safe_stop_after_first_source_does_not_claim_complete(self):

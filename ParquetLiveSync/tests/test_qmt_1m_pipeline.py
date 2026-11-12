@@ -124,7 +124,7 @@ class QmtPipelineTests(unittest.TestCase):
     def test_private_calendar_source_hash_tamper_fails(self):
         day=date(2026,10,14);code="600000.SH"
         fake=FakeXtdata(code,rows(day))
-        expected={day:{code:{"open":10.,"high":10.01,"low":9.99,"close":10.}}}
+        expected={day:{code:{"open":10.,"high":10.01,"low":9.99,"close":10.,"volume":24100.,"amount":2410000.}}}
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)
             receipt,_=p.qmt_stage_stock(code,expected,day,day,{},root,fake)

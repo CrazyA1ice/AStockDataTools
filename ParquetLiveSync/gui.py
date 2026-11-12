@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import messagebox,ttk
 from live_sync import WORK,BASE_DAY,latest_yesterday,safe_window,sync,summarize,exclusive_writer,CN
 from local_layout import inventory,storage_root,rollover_all_periods,PERIODS
+from rollup_week_month import run as verify_and_derive_week_month
 from datetime import datetime
 
 class LiveParquetGui(tk.Tk):
@@ -32,6 +33,7 @@ class LiveParquetGui(tk.Tk):
         self.direct_local=tk.BooleanVar(value=True)
         self.localpath=tk.StringVar(value=r"D:\stock\AllCycleAStockData")
         self.close_requested=False
+        self.derivation_preview_root=None
         self._layout()
         self.after(120,self._poll)
         self._refresh()
@@ -78,6 +80,17 @@ class LiveParquetGui(tk.Tk):
         self.cancel.pack(side="left")
         ttk.Button(btn,text="刷新状态",command=self._refresh).pack(side="right")
         ttk.Button(btn,text="跨年归档检查",command=self._rollover).pack(side="right",padx=7)
+        derived=ttk.Frame(frame)
+        derived.pack(fill="x",pady=(0,5))
+        ttk.Label(derived,text="周线/月线：仅由完整日线推导；必须先对照旧购买数据校准时间戳",
+                  foreground="#667085").pack(side="left",padx=(0,12))
+        self.preview_derived=ttk.Button(
+            derived,text="核验周线/月线",command=lambda:self._run_derived(False))
+        self.preview_derived.pack(side="left")
+        self.apply_derived=ttk.Button(
+            derived,text="写入已完成周/月",command=lambda:self._run_derived(True),
+            state="disabled")
+        self.apply_derived.pack(side="left",padx=7)
         state=ttk.Frame(frame)
         state.pack(fill="x")
         ttk.Label(state,textvariable=self.current).pack(anchor="w")
@@ -238,6 +251,48 @@ class LiveParquetGui(tk.Tk):
                 self.messages.put(("error",str(exc)))
         threading.Thread(target=job,daemon=True).start()
 
+    def _run_derived(self,apply):
+        if self.running:
+            messagebox.showinfo("当前有任务","先结束当前同步或归档，再执行周/月核验。")
+            return
+        try:
+            root=storage_root(self.root_value.get().strip())
+        except Exception as exc:
+            messagebox.showerror("本地Parquet路径不合法",str(exc))
+            return
+        if apply and (self.derivation_preview_root is None or
+                      self.derivation_preview_root!=str(root)):
+            messagebox.showerror("必须先核验",
+                                 "路径或历史核验状态发生变化，请先重新执行周/月只读核验。")
+            return
+        if apply and not messagebox.askyesno(
+            "仅写入已完整结束的周线/月线",
+            "将从已SHA验证的真实日线生成完成周期，并先校验现有2026年5—9月购买"+
+            "周/月线时标、开高低收、成交量、成交额。只有全部通过才会写入"+
+            "AllCycleAStockData/week与month的当前年月文件，旧文件先备份。\n"+
+            "本周/本月未结束的周期不会写；原日线、分钟线、H5不修改。\n继续吗？"):
+            return
+        if not apply:
+            self.derivation_preview_root=None
+            self.apply_derived.configure(state="disabled")
+        self.running=True
+        self.progress.start(12)
+        self.start.configure(state="disabled")
+        self.preview_derived.configure(state="disabled")
+        self.apply_derived.configure(state="disabled")
+        self.cancel.configure(state="disabled")
+        self.current.set("正在核验购买源周/月口径..." if not apply
+                         else "已授权：仅合并通过核验的已结束周/月K线")
+        def job():
+            try:
+                result=verify_and_derive_week_month(
+                    root,apply=apply,
+                    log=lambda msg:self.messages.put(("log",msg)))
+                self.messages.put(("derived_applied" if apply else "derived_preview",result))
+            except Exception as exc:
+                self.messages.put(("error","周/月派生已拒绝："+str(exc)))
+        threading.Thread(target=job,daemon=True).start()
+
     def _close(self):
         if not self.running:
             self.destroy()
@@ -260,7 +315,20 @@ class LiveParquetGui(tk.Tk):
                     self.progress.stop()
                     self.start.configure(state="normal")
                     self.cancel.configure(state="disabled")
-                    if kind=="archive_ok":
+                    self.preview_derived.configure(state="normal")
+                    if self.derivation_preview_root is not None:
+                        self.apply_derived.configure(state="normal")
+                    if kind=="derived_preview":
+                        self.derivation_preview_root=str(
+                            storage_root(self.root_value.get().strip()))
+                        self.apply_derived.configure(state="normal")
+                        self.current.set("购买源周/月口径预检通过，可显式提交完成的周期")
+                        self._write("周/月只读核验通过："+json.dumps(item,ensure_ascii=False))
+                    elif kind=="derived_applied":
+                        self.current.set("周线/月线已验收且已完成的周期写入月文件")
+                        self._write("周/月物理月文件回写："+json.dumps(item,ensure_ascii=False))
+                        self._refresh()
+                    elif kind=="archive_ok":
                         self.current.set("年度归档完成")
                         self._write("归档验收："+json.dumps(item,ensure_ascii=False))
                         self._refresh()

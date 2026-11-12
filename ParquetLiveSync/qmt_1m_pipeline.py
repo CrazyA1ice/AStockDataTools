@@ -334,6 +334,7 @@ def qmt_stage_stock(code, expected, start, end, calibration, workspace, xtdata):
         raise ValueError("QMT Parquet roundtrip mismatch")
     os.replace(scratch,target)
     digest=L.hash_file(target)
+    group=calibration.get(category(code))
     result={"status":"private_ohlcva_source_verified",
             "symbol":code,"rows":tab.num_rows,
             "first":rows[0]["datetime_cn"],"last":rows[-1]["datetime_cn"],
@@ -341,9 +342,10 @@ def qmt_stage_stock(code, expected, start, end, calibration, workspace, xtdata):
             "source_canonical_sha256":sha_bytes(canonical(rows)),
             "fingerprint":fingerprint,
             "calibration_category":category(code),
-            "calibrated_volume_factor":calibration[category(code)]["volume"]["factor"],
-            "calibrated_amount_factor":calibration[category(code)]["amount"]["factor"],
-            "calibrated_offset_ms":calibration[category(code)]["offset_ms"],
+            "calibrated_volume_factor":group["volume"]["factor"] if group else None,
+            "calibrated_amount_factor":group["amount"]["factor"] if group else None,
+            "calibrated_offset_ms":group["offset_ms"] if group else None,
+            "paid_calibration_passed_for_category":group is not None,
             "daily_reference_checks":day_checks,
             "private_path":str(target),
             "market_modified":False}
@@ -364,10 +366,7 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
     # local purchased Parquet bytes or server-side history have changed.
     calib=calibrate(root,xtdata,workspace,logger)
     if not calib["calibration_passed"]:
-        logger("QMT_FULL_MARKET_STAGE_BLOCKED_BY_PAID_CALIBRATION")
-        return {"status":"CALIBRATION_BLOCKED_NO_MARKET_WRITE",
-                "calibration_failures":calib["failed"],
-                "market_modified":False}
+        logger("QMT_PAID_CALIBRATION_NOT_COMPLETE_STILL_SOURCE_ONLY_STAGING")
     expected,stocks,calendar_sha,files=official_day_universe(root,start,end)
     stage=Path(workspace)/f"{start:%Y%m%d}_{end:%Y%m%d}"
     stage.mkdir(parents=True,exist_ok=True)
@@ -381,13 +380,14 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
             raise ValueError("Cached QMT stage bound to different DAY/calibration version")
     else:
         safe_save(planpath,canonical(plan))
-    remaining=0;cached=0;accepted=0;failures={};attempted=0
+    cached=0;accepted=0;failures={};attempted=0;stopped_early=False
+    consecutive_failures=0
     for n,code in enumerate(stocks):
-        if limit and attempted>=limit:
-            remaining+=len(stocks)-n
-            break
         receipt=stage/"receipts"/(code.replace(".","_")+".json")
         is_cached=receipt.exists()
+        if not is_cached and limit and attempted>=limit:
+            stopped_early=True
+            continue
         if not is_cached:
             attempted+=1
         try:
@@ -395,6 +395,7 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
                 code,expected,start,end,calib["providers"],stage,xtdata)
             accepted+=1
             cached+=not created
+            consecutive_failures=0
             if created:
                 logger(f"QMT_PRIVATE_STAGED {accepted}/{len(stocks)} {code} "
                        f"rows={status['rows']} days={len(status['traded_days'])}")
@@ -402,15 +403,24 @@ def execute(root,start,end,limit=100,workspace=BASE,xtdata=None,logger=print):
                 logger(f"QMT_PRIVATE_REUSE {accepted}/{len(stocks)}")
         except Exception as exc:
             failures[code]=f"{type(exc).__name__}: {exc}"[:270]
+            consecutive_failures+=1
             logger(f"QMT_PRIVATE_QUARANTINE {code} {exc}")
+            if consecutive_failures>=12:
+                logger("QMT_CIRCUIT_BREAKER_12_CONSECUTIVE_FAILURES; safe partial stage retained")
+                stopped_early=True
+                break
+        if not is_cached:
+            time.sleep(.15)
     result={"format":FORMAT,"status":"PRIVATE_ONE_MINUTE_INTAKE",
             "range":[str(start),str(end)],"expected_stocks":len(stocks),
             "accepted_stocks":accepted,"cached_stocks":cached,
-            "download_attempts":attempted,"pending_count":max(0,len(stocks)-accepted-len(failures)),
+            "download_attempts":attempted,"stopped_early":stopped_early,
+            "pending_count":max(0,len(stocks)-accepted-len(failures)),
             "failure_count":len(failures),"failure_examples":list(failures.items())[:12],
             "total_rows_expected_for_241_day_stocks":sum(
                 len([d for d in expected if code in expected[d]])*241 for code in stocks),
-            "calibration_passed":True,"market_modified":False,
+            "calibration_passed":calib["calibration_passed"],
+            "calibration_failures":calib["failed"],"market_modified":False,
             "production_1min_merge_authorized":False,
             "stage_root":str(stage)}
     safe_save(stage/"last_report.json",canonical(result))

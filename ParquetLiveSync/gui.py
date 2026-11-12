@@ -198,9 +198,15 @@ class LiveParquetGui(tk.Tk):
                 note=(f"{old}个年度文件 / 本年{current}个月文件"
                       + (f" / {anomalies}个往年月文件待归档" if anomalies else ""))
                 if period=="day":
-                    note+=" / 当前接入官方日线增量"
+                    note+=" / 已接入官方TDX真实日线增量"
+                elif period in ("week","month"):
+                    recent=any(name.startswith(str(datetime.now(CN).year)+"-10")
+                               or name.startswith(str(datetime.now(CN).year)+"-11")
+                               for name in folder["current_year_monthly_files"])
+                    note+=(" / 存在新周期月文件（按核验收据判断完整性）" if recent
+                           else " / 可由已验日线推导；需先核验旧购买周期")
                 else:
-                    note+=" / 尚无可信完整增量源"
+                    note+=" / 尚无可靠完整分钟OHLCVA增量源"
                 self.table.insert("","end",
                                   values=(period+"： "+note,str(root/period)))
         except Exception as exc:

@@ -374,90 +374,177 @@ def write_month(root,period,year,month,new_rows,workspace,*,current_year=None):
             "sha256":expected_digest,"original_backup":backup}
 
 def archive_year(root,period,year,workspace,*,current_year=None,apply=False):
-    """One-time, streaming 12-month -> annual Parquet; explicit opt-in only.
+    """12 verified monthly shards -> one annual; original months SHA-backed.
 
-    Monthly fragments are backed up and preserved in WORK before removal.
-    Never silently archive active-year monthly files. All twelve original
-    months must be present. Annual output is readback checked before cleanup.
+    Strictly prior year. Supports crash recovery after annual rename and
+    between month removals. Never modifies H5 or historical Parquet dates.
+    Uses disk-based SQLite uniqueness index to bound memory on 1min data.
     """
+    import pyarrow as pa
     import pyarrow.parquet as pq
     current_year=current_year or datetime.now(UTC8).year
     if period not in PERIODS or not 2011<=year<current_year:
         raise ValueError("Only complete past years can be archived")
     folder=storage_root(root)/period
     files=[folder/(f"{year}-{m:02}.parquet") for m in range(1,13)]
-    if not all(p.is_file() and not p.is_symlink() for p in files):
-        raise ValueError("Yearly archive requires twelve valid original month files")
     yearfile=folder/(f"{year}.parquet")
-    if yearfile.exists() or yearfile.is_symlink():
-        raise ValueError("Existing annual file already present; refuse overwrite/duplicate")
+    record_dir=Path(workspace)/"rollover"/str(year)
+    record_dir.mkdir(parents=True,exist_ok=True)
+    plan=record_dir/(period+"-annual-commit.json")
+    if yearfile.is_symlink() or plan.is_symlink():
+        raise ValueError("Linked annual market Parquet or receipt not supported")
+    if plan.exists():
+        receipt=json.loads(plan.read_bytes())
+        if (receipt.get("period")!=period or receipt.get("year")!=year
+                or not yearfile.is_file()
+                or hash_file(yearfile)!=receipt.get("annual_sha256")):
+            raise ValueError("Interrupted yearly archive annual bytes differ from receipt")
+        if apply:
+            for month_file,item in zip(files,receipt["original_months"]):
+                backup=Path(item["backup_path"])
+                if (not backup.is_file() or backup.is_symlink()
+                        or hash_file(backup)!=item["sha256"]):
+                    raise ValueError("Archive backup lost or corrupted; cannot remove original month")
+                if month_file.exists():
+                    if (month_file.is_symlink()
+                            or hash_file(month_file)!=item["sha256"]):
+                        raise ValueError("Original month has changed since yearly archive")
+                    month_file.unlink()
+        return {"period":period,"year":year,"annual_file":str(yearfile),
+                "rows":receipt["rows"],"sha256":receipt["annual_sha256"],
+                "action":"VERIFIED_PREVIOUS_ARCHIVE" if apply else "ALREADY_ARCHIVED"}
+
+    if yearfile.exists():
+        raise ValueError("Existing annual market file without private archive receipt")
+    if not all(path.is_file() and not path.is_symlink() for path in files):
+        raise ValueError("Yearly rollover requires twelve complete original months")
     metas=[parquet_reader(p) for p in files]
-    schemas=[m[0] for m in metas]
-    if len(set(schemas))!=1:
-        raise ValueError("Inconsistent Parquet schema across year months")
-    rows_expected=sum(n for _,n in metas)
+    schema=metas[0][0]
+    if any(info[0]!=schema for info in metas):
+        raise ValueError("Monthly physical source schemas differ; cannot archive")
+    expected=sum(n for _,n in metas)
+    if expected<=0:
+        raise ValueError("Cannot archive empty year")
     if not apply:
-        return {"year":year,"period":period,"monthly_files":12,
-                "expected_rows":rows_expected,"action":"PREVIEW_ONLY"}
+        return {"period":period,"year":year,"month_files":12,
+                "expected_rows":expected,"action":"PREVIEW_ONLY"}
+    original_bytes=sum(p.stat().st_size for p in files)
+    if shutil.disk_usage(folder).free<original_bytes*1.20+100000000:
+        raise ValueError("Not enough disk for one new annual physical Parquet")
+    if shutil.disk_usage(record_dir).free<original_bytes*1.10+100000000:
+        raise ValueError("Not enough disk for twelve SHA-pinned original month backups")
     scratch=yearfile.with_suffix(".parquet.annual-part")
-    if scratch.is_symlink() or scratch.exists():
-        raise ValueError("Existing annual scratch file; prior rollover needs inspection")
-    # A year's 1-minute data can contain hundreds of millions of bars.
-    # Keep a UNIQUE (symbol,ts) key index on disk rather than a Python set.
-    index_path=Path(workspace)/"rollover"/str(year)/(period+"-key-index.sqlite3")
-    index_path.parent.mkdir(parents=True,exist_ok=True)
-    if index_path.is_symlink() or index_path.exists():
-        raise ValueError("Previous rollover key index needs recovery/inspection")
-    db=sqlite3.connect(str(index_path))
+    if scratch.exists() or scratch.is_symlink():
+        raise ValueError("Existing annual temp file needs manual inspection")
+    index=record_dir/(period+"-unique-keys.sqlite3")
+    if index.exists() or index.is_symlink():
+        raise ValueError("Existing archive key-index scratch needs inspection")
+    db=sqlite3.connect(str(index))
     writer=None
     observed=0
     try:
         db.execute("PRAGMA journal_mode=DELETE")
-        db.execute("CREATE TABLE seen (ts INTEGER NOT NULL,symbol TEXT NOT NULL,"
-                   "PRIMARY KEY(ts,symbol)) WITHOUT ROWID")
-        writer=pq.ParquetWriter(str(scratch),schemas[0],compression="zstd")
-        for idx,path in enumerate(files,1):
-            p=pq.ParquetFile(path)
+        db.execute("CREATE TABLE seen (ts INTEGER NOT NULL, sym TEXT NOT NULL,"
+                   "PRIMARY KEY(ts,sym)) WITHOUT ROWID")
+        writer=pq.ParquetWriter(str(scratch),schema,compression="zstd")
+        for month,file in enumerate(files,1):
+            reader=pq.ParquetFile(file)
             try:
-                for batch in p.iter_batches(batch_size=32768):
-                    import pyarrow as pa
-                    table=pa.Table.from_batches([batch],schema=schemas[0])
-                    checked_records(table,target_year=year,target_month=idx)
-                    keys=[(ts,normal_symbol(sym))
-                          for ts,sym in zip(table["ts"].to_pylist(),
-                                            table["symbol"].to_pylist())]
+                for batch in reader.iter_batches(batch_size=32768):
+                    chunk=pa.Table.from_batches([batch],schema=schema)
+                    checked_records(chunk,target_year=year,target_month=month)
+                    keys=[(ts,normal_symbol(sym)) for ts,sym in zip(
+                        chunk["ts"].to_pylist(),chunk["symbol"].to_pylist())]
                     try:
-                        db.executemany(
-                            "INSERT INTO seen(ts,symbol) VALUES(?,?)",keys)
+                        db.executemany("INSERT INTO seen(ts,sym) VALUES(?,?)",keys)
                     except sqlite3.IntegrityError as exc:
-                        raise ValueError("Duplicate native Parquet key across annual source rowgroups") from exc
+                        raise ValueError("Duplicated original annual stock-time key") from exc
                     observed+=len(keys)
-                    writer.write_table(table)
+                    writer.write_table(chunk)
             finally:
-                p.close()
+                reader.close()
         db.commit()
     finally:
         if writer is not None:
             writer.close()
         db.close()
-        index_path.unlink(missing_ok=True)
-    schema,rows=parquet_reader(scratch)
-    if schema!=schemas[0] or rows!=rows_expected or rows!=observed:
-        raise ValueError("Yearly stitched Parquet footer/key total differs from 12 months")
-    backups=[safe_private_backup(p,Path(workspace)/"rollover"/str(year))
-             for p in files]
-    annual_digest=hash_file(scratch)
+        index.unlink(missing_ok=True)
+    result_schema,result_rows=parquet_reader(scratch)
+    if (result_schema!=schema or result_rows!=expected
+            or observed!=expected):
+        raise ValueError("Annual staged Parquet footer/key conservation failed")
+    backups=[safe_private_backup(p,record_dir) for p in files]
+    receipt={
+        "format":"annual_native_parquet_monthly_12_to_year_v1",
+        "period":period,"year":year,"rows":expected,
+        "annual_sha256":hash_file(scratch),
+        "original_months":[{"name":p.name,"sha256":item["sha256"],
+                            "backup_path":item["path"]}
+                           for p,item in zip(files,backups)],
+        "old_8cycle_manifest_references_not_rewritten":True,
+    }
+    tmp=plan.with_suffix(".json.part")
+    if tmp.is_symlink():
+        raise ValueError("Annual plan temporary path is linked")
+    tmp.write_text(json.dumps(receipt,ensure_ascii=False,
+                              sort_keys=True,indent=2)+"\n",encoding="utf-8")
+    os.replace(tmp,plan)
     os.replace(scratch,yearfile)
-    if hash_file(yearfile)!=annual_digest:
-        raise ValueError("Verified yearly annual source file differs after commit")
-    # Original months are retained in private SHA backups for rollback, but
-    # moved out of the canonical AllCycleAStockData period folder so there
-    # is ONLY one physical year file. This invalidates legacy manifests that
-    # hard-reference original month files; old snapshots are not rewritten.
-    for path,backup in zip(files,backups):
-        if hash_file(path)!=backup["sha256"]:
-            raise ValueError("Market month changed after annual output commit")
-        path.unlink()
-    return {"year":year,"period":period,"annual_file":str(yearfile),
-            "rows":rows,"sha256":annual_digest,"monthly_backups":backups,
-            "archive_note":"Legacy pinned external physical manifests pointing at these monthly paths must be rebased separately"}
+    if hash_file(yearfile)!=receipt["annual_sha256"]:
+        raise ValueError("Annual physical file SHA drift")
+    # Plan has been durably written; any interruption can now be resumed
+    # from the same source/receipt (no annual rebuild and no data loss).
+    return archive_year(root,period,year,workspace,
+                        current_year=current_year,apply=True)
+
+def rollover_all_periods(root,year,workspace,*,current_year=None,apply=False):
+    """Perform archive of ALL EIGHT periods only when all are ready.
+
+    A period that was already archived with an accepted receipt can be
+    skipped on retry. Never consolidate a partial/incomplete year into an
+    annual shard. A separate opt-in command should invoke apply=True.
+    """
+    current_year=current_year or datetime.now(UTC8).year
+    checks={}
+    for period in PERIODS:
+        checks[period]=archive_year(root,period,year,workspace,
+                                    current_year=current_year,apply=False)
+    if not apply:
+        return {"year":year,"ready_periods":len(checks),
+                "action":"PREVIEW_ALL_EIGHT","periods":checks}
+    outcomes={}
+    for period in PERIODS:
+        outcomes[period]=archive_year(root,period,year,workspace,
+                                      current_year=current_year,apply=True)
+    return {"year":year,"archived_periods":len(outcomes),
+            "action":"COMMITTED_ALL_EIGHT","periods":outcomes}
+
+def open_local_layout_dataset(root,period):
+    """Real native AllCycleAStockData physical files, independent of old SHA
+    snapshot references, returning a typed Arrow Dataset of the eight columns.
+    """
+    import pyarrow as pa
+    import pyarrow.dataset as ds
+    if period not in PERIODS:
+        raise ValueError("Unsupported Parquet K-line period")
+    base=storage_root(root)/period
+    files=sorted(path for path in base.glob("*.parquet")
+                 if classify_filename(path.name) is not None)
+    if not files:
+        raise ValueError("No native physical Parquet files in local period")
+    years=Counter()
+    for path in files:
+        yr,mo=classify_filename(path.name)
+        years[(yr,"annual" if mo is None else "monthly")]+=1
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Linked or missing native stock Parquet source")
+    if any(years.get((y,"annual"),0) and years.get((y,"monthly"),0)
+           for y,_ in years):
+        raise ValueError("Annual and monthly physical Parquet for same year coexist")
+    schema=pa.schema([pa.field("ts",pa.int64()),
+                      pa.field("symbol",pa.string()),
+                      *(pa.field(k,pa.float64()) for k in COLS[2:])])
+    for path in files:
+        original,_=parquet_reader(path)
+        validate_schema(original)
+    return ds.dataset([str(p) for p in files],format="parquet",schema=schema)

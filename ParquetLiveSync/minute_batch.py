@@ -70,8 +70,6 @@ def source_package_cached(result,symbol):
     """Raw 1m trend + all four valid Kline sources is a *cached package*,
     not a full five-period OHLCVA candidate or production certification.
     """
-    if result.get("status")=="PROBE_COMPLETE_CANDIDATE_ONLY":
-        return True
     periods=result.get("periods",{})
     if set(periods)!=set(PERIODS):
         return False

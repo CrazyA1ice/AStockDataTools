@@ -228,7 +228,7 @@ def stage_stock(root,symbol,expected,calendar_sha,gates,*,start,end,
     generated,invalid=derive_from_5min(raw)
     for day in days:
         key=(symbol,day.isoformat())
-        if key not in generated.get("5min",[]) and key in invalid:
+        if key in invalid:
             raise ValueError(
                 f"INCOMPLETE_5MIN_STOCKDAY {symbol} {day}: {invalid[key]}")
     # Verify the complete 48 time grid for every official trade day.
@@ -340,14 +340,15 @@ def execute(root,*,start=date(2026,11,2),end=date(2026,11,11),
         result,ensure_ascii=False,sort_keys=True))
     if apply:
         if ready!=len(symbols) or failures:
-            raise ValueError(
-                f"ALL_MARKET_STOCKS_NOT_STAGED {ready}/{len(symbols)}; "
-                "no official minute month files modified")
-        result["commits"]=commit_month(
-            root,expected,day_sha,gates,start=start,end=end,work=work,
-            receipts=receipts,symbols=symbols,logger=logger)
-        result["status"]="FOUR_MINUTE_PERIOD_MONTH_ATOMIC_SWAPS_COMPLETED"
-        result["physical_market_parquet_modified"]=True
+            result["status"]="FOUR_MINUTE_PERIOD_STAGE_IN_PROGRESS_NOT_MERGED"
+            logger("MINUTE_SOURCE_BATCH_INCOMPLETE_NO_MARKET_WRITES "
+                   f"READY={ready}/{len(symbols)}; rerun to resume")
+        else:
+            result["commits"]=commit_month(
+                root,expected,day_sha,gates,start=start,end=end,work=work,
+                receipts=receipts,symbols=symbols,logger=logger)
+            result["status"]="FOUR_MINUTE_PERIOD_MONTH_ATOMIC_SWAPS_COMPLETED"
+            result["physical_market_parquet_modified"]=True
     return result
 
 def commit_month(root,expected,day_sha,gates,*,start,end,work,receipts,
@@ -396,7 +397,7 @@ def commit_month(root,expected,day_sha,gates,*,start,end,work,receipts,
         for period,frame in groups:
             result=L.write_month(
                 root,period,start.year,start.month,frame,
-                WORK,current_year=start.year)
+                work,current_year=start.year)
             commits.append({"period":period,**result})
             logger("PASS_LOCAL_MINUTE_MONTH_PARQUET "+
                    f"{period} {start.year}-{start.month:02} "+

@@ -105,7 +105,7 @@ def baseline_overlap(doc,day):
                        format="parquet",schema=parquet_schema())
     table=dataset.to_table(
         columns=list(FIELDS),
-        filter=ds.field("ts")==wanted,
+        filter=(ds.field("ts")>=wanted)&(ds.field("ts")<wanted+86400000),
         use_threads=False)
     if table.num_rows<1000 or table.num_rows>30000:
         raise ValueError("Original complete daily purchased source date missing")
@@ -162,6 +162,14 @@ def compare_units(original,external):
     good=[(a,b) for a,b in paired if a["close"]>0 and
           abs(float(a["close"])-float(b["close"]))<=
              max(.04,.0075*abs(float(a["close"])))]
+    # Preserve the existing supplier's DAY timestamp convention (00:00,
+    # 09:30, etc.) instead of assuming all daily source timestamps are
+    # always midnight. Validate an exact common local-day offset.
+    offsets={int(older["ts"])-source_day_ts(
+        date.fromisoformat(newer["date"])) for older,newer in good}
+    if (len(offsets)!=1 or not 0<=next(iter(offsets))<86400000):
+        raise ValueError("Existing day Parquet timestamp convention inconsistent")
+    stamp_offset=next(iter(offsets))
     volume= [(x["volume"],y["volume_shares"]) for x,y in good]
     amount= [(x["amount"],y["amount_yuan"]) for x,y in good]
     vf,vs,vn=infer_factor(volume,[.0001,.001,.01,.1,1,10,100,1000,10000],
@@ -170,6 +178,7 @@ def compare_units(original,external):
                            absolute=1000)
     return {"tdx_shares_to_local_volume":vf,
             "tdx_yuan_to_local_amount":af,
+            "local_day_ts_offset_ms":stamp_offset,
             "price_match_fraction":round(price_good/checked,4),
             "matched_prices":checked,"volume_fit":vs,"amount_fit":aas,
             "volume_samples":vn,"amount_samples":an,
@@ -275,7 +284,10 @@ def prepare_day(external,day,units):
         if symbol in seen:
             raise ValueError("Duplicate TDX A-share symbol on one trading date")
         seen.add(symbol)
-        values["ts"].append(source_day_ts(day))
+        offset=int(units.get("local_day_ts_offset_ms",0))
+        if not 0<=offset<86400000:
+            raise ValueError("Unproven local Parquet DAY timestamp alignment")
+        values["ts"].append(source_day_ts(day)+offset)
         values["symbol"].append(symbol)
         for field in ("open","high","low","close"):
             values[field].append(float(bar[field]))

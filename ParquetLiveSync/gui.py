@@ -65,7 +65,8 @@ class LiveParquetGui(tk.Tk):
             row=1,column=3,sticky="w")
         ctrl.columnconfigure(1,weight=1)
         ttk.Checkbutton(
-            frame,text="把已校验的新日线合并进 D:\\stock\\AllCycleAStockData\\day\\2026-MM.parquet（自动备份、校验与原子替换）",
+            frame,text=("把已校验的新日线合并进 AllCycleAStockData/day/"+
+                  str(datetime.now(CN).year)+"-MM.parquet（备份、校验与原子替换）"),
             variable=self.direct_local).pack(anchor="w",pady=(9,0))
         btn=ttk.Frame(frame)
         btn.pack(fill="x",pady=14)
@@ -142,6 +143,7 @@ class LiveParquetGui(tk.Tk):
                 + "不会修改任何 H5 或其余七周期的原数据。\n\n"
                 f"范围：{left} 至 {right}\n继续吗？"):
             return
+        use_local_months=bool(self.direct_local.get())
         self.running=True
         self.stop_event.clear()
         self.progress.start(12)
@@ -153,7 +155,7 @@ class LiveParquetGui(tk.Tk):
                 result=sync(root,left,right,max_days=180,
                             logger=lambda msg:self.messages.put(("log",msg)),
                             stop=self.stop_event.is_set,
-                            materialize_local=self.direct_local.get())
+                            materialize_local=use_local_months)
                 self.messages.put(("ok",result))
             except Exception as exc:
                 self.messages.put(("error",str(exc)))

@@ -93,6 +93,17 @@ def fetch(url,*,timeout=20):
 def parse_bars(doc,period,symbol):
     if period not in PERIODS or not isinstance(doc,dict):
         raise ValueError("Invalid minute source response metadata")
+    if period=="1min":
+        # Important: /trends2/get is NOT a minute OHLC K-line endpoint.
+        # f52 = instantaneous price (often 0 on historical days);
+        # f53 = average price, NOT the close. f54/f55 are high/low.
+        # Treating f52/f53 as open/close silently fabricates OHLCVA.
+        # The raw public trend response has already been SHA-cached by
+        # run(), but this source cannot enter the canonical 1min K-line DB.
+        raise ValueError(
+            "EASTMONEY_TRENDS2_NOT_OHLCVA: f52 is price, f53 is "
+            "average price (not minute open/close); source-only raw "
+            "trend candidate is saved but 1min K-line cannot be verified")
     data=doc.get("data")
     if not isinstance(data,dict):
         raise ValueError("No market data available for security and requested period")
@@ -243,6 +254,8 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
                 try:
                     data=parse_bars(doc,period,symbol)
                 except ValueError as exc:
+                    # Raw source still counts as downloaded; OHLCVA is NOT
+                    # validated and this never authorizes market writes.
                     report["periods"][period][symbol]={
                         "status":"SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED",
                         "raw_source_sha256":digest,

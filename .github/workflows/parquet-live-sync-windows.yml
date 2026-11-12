@@ -48,6 +48,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: python -B ParquetLiveSync/minute_probe.py --symbols SH600000 --periods 1min,5min,15min,30min,60min
+      - name: Optional read-only historical 5-60min and 1min Kline real-end-date pagination probe
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python -B ParquetLiveSync/probe_minute_history_window.py
       - name: Optional read-only public TDX Sep30 unit-overlap anchor quality probe
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true

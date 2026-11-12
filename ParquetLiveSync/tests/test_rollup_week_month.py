@@ -54,7 +54,11 @@ class WeekMonthStrictPurchasedCalibration(unittest.TestCase):
                                   (date(2026,month+1,1) if month<12
                                    else date(2027,1,1))-timedelta(days=1)):
                 for i,sym in enumerate(self.symbols):
-                    rows.append(fields(day,sym,10.+i*.2+(day.day*.01)))
+                    # Avoid accidentally identical OHLC across different
+                    # months that may make a mismatched prior/next week
+                    # look like an exact vendor period overlap.
+                    rows.append(fields(day,sym,10.+i*.2+
+                                       ((day-date(2026,1,1)).days*.071)))
             self.legacy_daily.extend(rows)
             pq.write_table(frame(rows),self.data/"day"/f"2026-{month:02}.parquet")
         for period in R.PERIODS:

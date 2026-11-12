@@ -1,0 +1,32 @@
+name: ParquetLiveSync Windows Parquet file-lock and annual/monthly layout tests
+
+on:
+  push:
+    branches:
+      - feat/a-stock-data-parquet-sync-20261112
+    paths:
+      - "ParquetLiveSync/**"
+      - ".github/workflows/parquet-live-sync-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-parquet-only:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install isolated binary Arrow library
+        run: python -m pip install "pyarrow>=15,<30"
+      - name: Compile ParquetLiveSync scripts without importing market files
+        run: python -m compileall -q ParquetLiveSync
+      - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
+        run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v

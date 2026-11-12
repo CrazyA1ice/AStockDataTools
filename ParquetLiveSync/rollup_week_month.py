@@ -393,10 +393,27 @@ def run(root,*,apply=False,log=print,asof=None):
         targets[period]=dict(sorted(Counter(
             str(source_day(ts))[:7] for ts in table["ts"].to_pylist()
         ).items()))
+    groups=[]
+    preflight=[]
+    for period in PERIODS:
+        by_month=defaultdict(list)
+        for row in built[period].to_pylist():
+            stamp=source_day(row["ts"])
+            by_month[(stamp.year,stamp.month)].append(row)
+        for (year,month),records in sorted(by_month.items()):
+            group=pa.Table.from_pylist(records,schema=built[period].schema)
+            crosscheck=verify_existing_period_keys(
+                root,period,year,month,group)
+            groups.append((period,year,month,group))
+            preflight.append({
+                "period":period,"month":f"{year}-{month:02}",
+                "candidate_keys":group.num_rows,
+                "overlapping_local_keys_ohlcva_checked":crosscheck["same_keys"]})
     result={"mode":"APPLY" if apply else "READONLY_PREVIEW",
             "verified_purchased_calibration":audits,
             "candidate_rows":{period:table.num_rows for period,table in built.items()},
             "candidate_month_file_rows":targets,
+            "current_period_files_preflight":preflight,
             "original_h5_unchanged":True,
             "other_six_parquet_periods_unchanged":True,
             "weekly_monthly_write_only_if_explicit_apply":True,
@@ -411,26 +428,26 @@ def run(root,*,apply=False,log=print,asof=None):
                     reread.get("local_month_materializations",{})!=
                        state.get("local_month_materializations",{})):
                 raise ValueError("Physical/official DAY source changed after audit; rerun")
+            # Refuse any future-year or historical-year period label
+            # BEFORE the first local physical market file is replaced.
+            if any(year!=datetime.now(CN).year for _,year,_,_ in groups):
+                raise ValueError("Only current-year week/month physical month files writable")
+            # Independent complete preflight across all destination
+            # periods/months avoids a later conflict after earlier swaps.
+            for period,year,month,group in groups:
+                verify_existing_period_keys(root,period,year,month,group)
             commits=[]
-            for period in PERIODS:
-                values=defaultdict(list)
-                for row in built[period].to_pylist():
-                    day=source_day(row["ts"])
-                    if day.year!=datetime.now(CN).year:
-                        raise ValueError("Only current-year week/month monthly files writable")
-                    values[(day.year,day.month)].append(row)
-                for (year,month),records in sorted(values.items()):
-                    group=pa.Table.from_pylist(records,schema=built[period].schema)
-                    crosscheck=verify_existing_period_keys(
-                        root,period,year,month,group)
-                    done=L.write_month(root,period,year,month,group,WORK,
-                                       current_year=year)
-                    done["derivation_same_key_values_verified"]=crosscheck["same_keys"]
-                    commits.append({"period":period,"year":year,
-                                    "month":month,**done})
-                    log("PASS_LOCAL_"+period.upper()+"_MONTH_PARQUET "+
-                        f"{year}-{month:02} NEW_KEYS={done['added']}"+
-                        f" TOTAL={done['total_rows']} TARGET={done['target']}")
+            for period,year,month,group in groups:
+                crosscheck=verify_existing_period_keys(
+                    root,period,year,month,group)
+                done=L.write_month(root,period,year,month,group,WORK,
+                                   current_year=year)
+                done["derivation_same_key_values_verified"]=crosscheck["same_keys"]
+                commits.append({"period":period,"year":year,
+                                "month":month,**done})
+                log("PASS_LOCAL_"+period.upper()+"_MONTH_PARQUET "+
+                    f"{year}-{month:02} NEW_KEYS={done['added']}"+
+                    f" TOTAL={done['total_rows']} TARGET={done['target']}")
             result["commits"]=commits
     log("DAY_DERIVED_WEEK_MONTH_RESULT="+json.dumps(
         result,sort_keys=True,ensure_ascii=False))

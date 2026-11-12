@@ -254,11 +254,14 @@ class RecoverOctoberTrustedBeforeCutoff(unittest.TestCase):
             "day/2026-10.parquet"]["row_count"],1251)
         date15=date(2026,10,15)
         S.put_day(date15,table([(ts(2026,10,15),"SH600000",12)]),meta,doc)
-        with patch.object(S,"baseline_day_files",return_value=[source]):
+        # October 1..13 physical seed is already on disk after the first
+        # accepted commit; repeat downloads must NOT rescan all 16 years.
+        with patch.object(S,"baseline_day_files",
+                          side_effect=AssertionError("Old baseline should not rescan")):
             again=S.materialize_day_in_original_layout(
                 self.root,date15,doc,{},lambda _message:None)
         self.assertEqual(again["added"],1)
-        self.assertEqual(again["same_key"],1250)
+        self.assertEqual(again["same_key"],0)
         self.assertEqual(pq.read_table(self.day/"2026-10.parquet").num_rows,
                          1252)
         self.assertEqual(pq.read_table(self.day/"2026-09.parquet").num_rows,1)

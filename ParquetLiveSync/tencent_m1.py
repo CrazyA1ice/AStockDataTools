@@ -206,6 +206,33 @@ def collect(symbol,*,count=320,work=WORK,requester=fetch_bytes,
             if pause>0:time.sleep(pause)
     raise RuntimeError("Tencent all three 1min hosts unavailable: "+"; ".join(failures))
 
+def collect_samples(symbols,*,logger=print,stop=None,
+                    collector=collect,**kwargs):
+    """Small GUI-friendly sequential SH/SZ true 1min OHLCV samples."""
+    results={}
+    errors={}
+    for symbol in symbols:
+        if stop is not None and stop():
+            break
+        try:
+            value=market_symbol(symbol)
+            results[value]=collector(value,logger=logger,**kwargs)
+        except Exception as exc:
+            errors[str(symbol)]={"error":str(exc)[:350],
+                                 "market_written":False}
+            logger(f"TENCENT_REAL_1MIN_NOT_VERIFIED {symbol} {str(exc)[:180]}")
+    status=("TENCENT_1MIN_OHLCV_CANDIDATES_COLLECTED"
+            if not errors and len(results)==len(symbols) else
+            "TENCENT_1MIN_PARTIAL_CANDIDATES_NOT_MERGED")
+    return {"format":FORMAT,"status":status,
+            "symbols_verified":sorted(results),
+            "samples":results,"failures":errors,
+            "requested_symbols":list(symbols),
+            "full_1min_ohlcva_certified":False,
+            "amount_cny_available":False,
+            "market_files_modified":False,
+            "original_h5_modified":False}
+
 if __name__=="__main__":
     import argparse
     p=argparse.ArgumentParser(description=__doc__)

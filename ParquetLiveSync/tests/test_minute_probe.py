@@ -136,6 +136,26 @@ class PublicMinuteProbe(unittest.TestCase):
             self.assertFalse((Path(td)/"AllCycleAStockData").exists())
             self.assertTrue(any("MINUTE_SOURCE_CANDIDATE" in m for m in events))
 
+    def test_real_traded_0931_missing_open_saves_raw_but_never_merged(self):
+        with tempfile.TemporaryDirectory() as td:
+            url=P.endpoint("1min","SH600000")
+            raw,doc=fixture(url)
+            doc["data"]["trends"][0]=(
+                "2026-11-06 09:31,0,9.88,9.95,9.84,41050,40618125,9.90")
+            raw=json.dumps(doc).encode()
+            def source(_url):
+                return raw,doc
+            report=P.run(["SH600000"],periods=("1min",),
+                         work=Path(td),requester=source,pause=0,
+                         logger=lambda _:None)
+            self.assertEqual(report["status"],"PROBE_PARTIAL_NOT_MERGED")
+            rec=report["periods"]["1min"]["SH600000"]
+            self.assertEqual(rec["status"],"SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED")
+            path=Path(rec["private_source_file"])
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_bytes(),raw)
+            self.assertFalse(report["market_files_modified"])
+
     def test_partial_source_failure_cannot_claim_all_markets_updated(self):
         with tempfile.TemporaryDirectory() as td:
             def requester(url):

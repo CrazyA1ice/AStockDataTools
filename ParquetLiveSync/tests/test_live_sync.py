@@ -177,8 +177,16 @@ class AtomicLocalDayAndView(unittest.TestCase):
         new=self.work/proof["file"]
         self.assertEqual(ParquetFile(new).metadata.num_rows,1)
         self.assertEqual(new.stat().st_size>0,True)
-        with self.assertRaisesRegex(ValueError,"conflicting incremental"):
-            S.put_day(self.sourceDay,table,self.sourceMeta,base)
+        # Simulate an interrupted publish: the physical file and receipt
+        # are durable, but state.json was lost before the final manifest
+        # update. The identical source must recover WITHOUT overwriting.
+        base["days"].clear()
+        S.save_state(base)
+        digest=S.file_sha(new)
+        restored=S.put_day(self.sourceDay,table,self.sourceMeta,base)
+        self.assertEqual(restored,proof)
+        self.assertEqual(S.file_sha(new),digest)
+        self.assertEqual(len(S.read_state()["days"]),1)
 
     def test_receipt_mutation_refused_even_when_parquet_bytes_unchanged(self):
         doc=S.initial_state()

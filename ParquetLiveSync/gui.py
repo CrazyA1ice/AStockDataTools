@@ -68,8 +68,8 @@ class LiveParquetGui(tk.Tk):
         state=ttk.Frame(frame)
         state.pack(fill="x")
         ttk.Label(state,textvariable=self.current).pack(anchor="w")
-        ttk.Progressbar(state,mode="indeterminate",maximum=100,
-                        variable=self.pct).pack(fill="x",pady=(7,0))
+        self.progress=ttk.Progressbar(state,mode="indeterminate",maximum=100)
+        self.progress.pack(fill="x",pady=(7,0))
         status=ttk.LabelFrame(frame,text="各周期接入状态",padding=10)
         status.pack(fill="x",pady=(13,0))
         self.table=ttk.Treeview(status,columns=("status","source"),
@@ -127,6 +127,7 @@ class LiveParquetGui(tk.Tk):
             return
         self.running=True
         self.stop_event.clear()
+        self.progress.start(12)
         self.start.configure(state="disabled")
         self.cancel.configure(state="normal")
         self.current.set("正在运行；进度会逐日显示")
@@ -176,6 +177,7 @@ class LiveParquetGui(tk.Tk):
                     self._write(item)
                 else:
                     self.running=False
+                    self.progress.stop()
                     self.start.configure(state="normal")
                     self.cancel.configure(state="disabled")
                     if kind=="ok":

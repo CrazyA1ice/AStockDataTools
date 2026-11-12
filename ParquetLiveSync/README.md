@@ -69,4 +69,28 @@ Windows 任务计划程序将在**本机时间21:30**尝试使用既有 .venv Py
 
 ## 2026-11-12 Windows 首次运行的文件占用修复
 
-Windows Python 3.11 上首轮18项合成测试中5项真实 Parquet 写入均在 `temp.replace(output)` 处因 WinError 32 中断。原因是 PyArrow `ParquetFile(temp)` 保留打开的文件句柄，重命名前未关闭，并非GitHub、行情数据源或者原Parquet故障。修复后已明确 `try/finally: check.close()`，并在两项新回归测试中验证重命名前已经关闭、校验失败时也关闭（测试数量18→20）。用户新的Windows运行回执尚待验证；以前本机运行没有修改原始八周期Parquet/H5，也没有开始GUI实网下载。
+Windows Python 3.11 上首轮20项合成测试中5项真实 Parquet 写入均在 `temp.replace(output)` 处因 WinError 32 中断。原因是 PyArrow `ParquetFile(temp)` 保留打开的文件句柄，重命名前未关闭，并非GitHub、行情数据源或者原Parquet故障。修复后已明确 `try/finally: check.close()`，并在两项新回归测试中验证重命名前已经关闭、校验失败时也关闭（测试数量18→20）。用户新的Windows运行回执尚待验证；以前本机运行没有修改原始八周期Parquet/H5，也没有开始GUI实网下载。
+
+## 2026-11-12：遵照 D:\stock\AllCycleAStockData 本地物理归档标准
+
+**自动路径识别**：Windows GUI 默认 `D:\stock`，新 `local_layout.storage_root()` 自动识别 `D:\stock\AllCycleAStockData`，也可以直接传 `D:\stock\AllCycleAStockData` 作为路径；八个合法周期固定为 `1min,5min,15min,30min,60min,day,week,month`。界面显示每个周期已有多少年度文件、当年有几个月文件、真实存储目录；不从GitHub下载现成Parquet。
+
+**统一命名规则**：`D:\stock\AllCycleAStockData\<period>\2011.parquet ... 2025.parquet` 为往年整年文件；当前2026年的所有周期使用 `2026-01.parquet ... 2026-12.parquet`（仅实际有数据的月份才创建）。这与用户 Windows 截图中的 day 目录相同。新 GUI 的「把已校验的新日线合并进实际本地年月文件」选项默认勾选。日线 2026-11-09、10、11 成功下载之后，它们都合入**同一份** `D:\stock\AllCycleAStockData\day\2026-11.parquet`，不会每天在主库产生一个 YYYY-MM-DD.parquet。重复同键保留原本地数据，不覆盖已存在的正版行情值。
+
+**10月缺口保护**：截图中的购买日线月文件截止2026-09，但接受的旧 A 股私有 Parquet 完整日线已覆盖到2026-10-13。首次创建或补全 `day\2026-10.parquet` 时，先只读从 SHA 绑定的旧16年完整日线导入 **2026-10-01..10-13 已有交易记录**，再加入官网新下载的2026-10-14以后行情。不能让月文件只存在10月后半月而遗漏已验数据；之后其他10月日期直接合入当前月文件，不重复查询16年旧库。
+
+**修改原月文件的安全流程**：所有原文件原 SHA → 私有 `ParquetLiveSync/work/backups/day/` 备份且核验 → 将原有整月记录与新记录做 (标准化证券代码, ts) 唯一键合并且保留原值 → 新月文件写临时 Parquet → 读取完整文件核对 schema/行数/全部 Arrow 值 → 写耐久事务日志 → 最后 `os.replace()` 原子替换月文件。Windows ParquetFile 始终显式关闭。停电发生在重命名之前可按旧 SHA 恢复，发生在之后但状态未写入时可按事务日志新 SHA 恢复。月文件已有且新日期全部存在时无需重复改写；不修改 H5。
+
+**年度归档**：每年结束后，`local_layout.rollover_all_periods(root,上一年,workspace,apply=False)` 对八周期做统一只读预检；在所有周期均已有全年文件或12个月的完整月文件后，GUI 点击「跨年归档检查」并确认才执行。程序以有界内存扫描12个月，磁盘SQLite验证全年度证券+时间键唯一，生成完整 `YYYY.parquet`，经SHA与行数回读且**先保存原12个月的私有完整SHA备份**，再将原月文件从标准期目录移走；可在中断后按事务计划继续清理。若去年某周期还缺月份，整批拒绝归档，不会制造缺失月份假数据。注意：归档搬移物理月文件将使旧的不可变八周期清单中硬编码月路径的读取器需要另行重建清单；此操作**不自动启动**。
+
+**当前数据源能力**：`TDX g4day` 只够让 `day` 周期自动更新到最新并实际合并月文件；另外七周期的**目录识别、年月分区、规范月文件增量合并、跨年归档及本地Arrow读取接口**已经通用化，但**尚无可靠完整OHLCVA源来更新它们的最新行情**，不会将腾讯没有成交额的分钟价格直接充当完整八字段行情。
+
+新使用方式（Windows PowerShell 单行命令）：
+
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\live_sync.py --root D:\stock --inspect-local-layout
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1
+    .\.venv\Scripts\python.exe -B ParquetLiveSync\live_sync.py --root D:\stock --from-day 2026-10-14 --through-day 2026-11-11 --sync-day-overlay --materialize-local-day
+
+要以**真正存放在指定年月文件中**的数据为研究数据源，而非旧SHA快照虚拟叠加入口，可用 `from local_layout import open_local_layout_dataset`，然后 `open_local_layout_dataset(r'D:\stock','day')`，返回对 `AllCycleAStockData/day/{2011.parquet,...,2026-11.parquet}` 的只读 PyArrow Dataset，不会同时读入月份与对应全年文件造成双计。
+
+截至本提交，新增14项纯临时八周期原生Parquet/归档/10月预先补齐测试，加上此前20项数据源/ZIP/Arrow测试，总计**34项**。尚未在用户Windows下进行本次新逻辑的实机测试；不要声称已将最新日线真正写入 D:\stock。

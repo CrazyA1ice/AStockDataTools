@@ -50,7 +50,7 @@ class PublicMinuteProbe(unittest.TestCase):
         class Response:
             def __enter__(self):return self
             def __exit__(self,*_):return False
-            def read(self,_max):return b"Not official JSON"
+            def read(self,_max):return b"Definitely not an official JSON document"
         count=[]
         def invalid(req,*,timeout):
             count.append(1)

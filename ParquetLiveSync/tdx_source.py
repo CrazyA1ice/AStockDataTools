@@ -178,6 +178,32 @@ def parse_daily_zip(raw,day,minimums=None):
                      "volume_source_units":"shares",
                      "amount_source_units":"CNY_yuan"}
 
+def preserve_rejected_zip(raw,day,cache_dir,detail):
+    """Keep unreadable/abnormal official bytes ONLY in gitignored private work.
+
+    An invalid active market row must not become a completed Parquet day;
+    preserve the SHA-addressed raw file for offline diagnosis without
+    repeated network retrieval. No overwriting existing rejected bytes.
+    """
+    archive=Path(cache_dir).parent/"rejected_official_tdx"
+    archive.mkdir(parents=True,exist_ok=True)
+    digest=sha256(raw)
+    target=archive/(day.strftime("%Y%m%d")+"-"+digest[:16]+".zip")
+    if target.is_symlink():
+        raise ValueError("Linked source quarantine ZIP refused")
+    if target.exists():
+        if sha256(target.read_bytes())!=digest:
+            raise ValueError("Previously rejected public TDX ZIP bytes changed")
+    else:
+        scratch=target.with_suffix(".zip.part")
+        if scratch.is_symlink():
+            raise ValueError("Linked rejected source staging path refused")
+        if scratch.exists():
+            scratch.unlink()
+        scratch.write_bytes(raw)
+        scratch.replace(target)
+    return target
+
 def download_daily(day,cache_dir,*,retries=3,pause=2.0,logger=None):
     """Download once, keep an immutable raw ZIP for reproducible verification."""
     cache_dir=Path(cache_dir)
@@ -203,7 +229,17 @@ def download_daily(day,cache_dir,*,retries=3,pause=2.0,logger=None):
                 raw=response.read(ZIP_MAX+1)
             if len(raw)>ZIP_MAX:
                 raise ValueError("Official daily ZIP too large")
-            parse_daily_zip(raw,day)
+            try:
+                parse_daily_zip(raw,day)
+            except (ValueError,zipfile.BadZipFile,EOFError) as exc:
+                # Fail-closed for genuinely traded invalid values; preserve
+                # the official raw ZIP for later source-specific analysis.
+                # TDX download was successful but NOT acceptable as data.
+                rejected=preserve_rejected_zip(raw,day,cache_dir,str(exc))
+                raise ValueError(
+                    f"{exc}; REJECTED_OFFICIAL_SOURCE date={day}"
+                    f" raw_zip_sha256={sha256(raw)}"
+                    f" private_raw_zip={rejected}") from exc
             temp=target.with_suffix(".zip.part")
             if temp.exists():
                 temp.unlink()

@@ -221,8 +221,30 @@ def read_state():
                 or type(info) is not dict):
             raise ValueError("Invalid local monthly Parquet target entry")
         target=Path(info["target"])
-        if target.is_symlink() or not target.is_file():
-            raise ValueError("Committed original local monthly Parquet file missing")
+        if target.is_symlink():
+            raise ValueError("Committed local monthly Parquet target redirected")
+        if not target.is_file():
+            # After explicit 12-month -> annual archival, the original
+            # monthly file is safely stored under a SHA-backed private
+            # archive. Validate BOTH the immutable month backup identity
+            # and annual physical output instead of rejecting rollover.
+            period,filename=key.split("/")
+            year=int(filename[:4])
+            plan=WORK/"rollover"/str(year)/(period+"-annual-commit.json")
+            annual=target.with_name(str(year)+".parquet")
+            if (plan.is_symlink() or not plan.is_file()
+                    or annual.is_symlink() or not annual.is_file()):
+                raise ValueError("Committed month missing without accepted yearly archive")
+            receipt=json.loads(plan.read_bytes())
+            old=next((x for x in receipt.get("original_months",[])
+                      if x.get("name")==filename),None)
+            if (receipt.get("year")!=year or receipt.get("period")!=period
+                    or old is None or old.get("sha256")!=info.get("sha256")
+                    or LOCAL.hash_file(annual)!=receipt.get("annual_sha256")
+                    or not Path(old.get("backup_path","")).is_file()
+                    or LOCAL.hash_file(old["backup_path"])!=info.get("sha256")):
+                raise ValueError("Year-end archive lost original month or annual SHA")
+            continue
         current=LOCAL.hash_file(target)
         if current!=info.get("sha256"):
             parts=key.removeprefix("day/").removesuffix(".parquet")

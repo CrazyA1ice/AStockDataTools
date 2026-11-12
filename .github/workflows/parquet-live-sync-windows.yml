@@ -44,10 +44,10 @@ jobs:
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync/tests/test_install_schedule_mock.ps1
       - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
         run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v
-      - name: Optional public Eastmoney 1min/5min Shanghai pilot (private source only)
+      - name: Optional public Eastmoney all five minute-cycle Shanghai pilot (private raw only)
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
-        run: python -B ParquetLiveSync/minute_probe.py --symbols SH600000 --periods 1min,5min
+        run: python -B ParquetLiveSync/minute_probe.py --symbols SH600000 --periods 1min,5min,15min,30min,60min
       - name: Optional read-only public TDX Sep30 unit-overlap anchor quality probe
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true

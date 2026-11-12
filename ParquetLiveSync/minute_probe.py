@@ -223,11 +223,16 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
             logger(f"MINUTE_SOURCE_FETCH {period} {symbol}")
             try:
                 raw,doc=requester(url)
-                data=parse_bars(doc,period,symbol)
+                # Save original raw public source BEFORE attempting any
+                # normalization. In particular, Eastmoney trends2 1min
+                # may return open=0 in an ACTUALLY TRADED 09:31 bar.
+                # That is insufficient for real OHLCVA but must not be
+                # thrown away or spuriously turned into a successful bar.
                 digest=hashlib.sha256(raw).hexdigest()
                 rawfile=folder/(f"{period}_{symbol}_{digest[:12]}.json")
                 if rawfile.exists():
-                    if hashlib.sha256(rawfile.read_bytes()).hexdigest()!=digest:
+                    if (rawfile.is_symlink() or
+                            hashlib.sha256(rawfile.read_bytes()).hexdigest()!=digest):
                         raise ValueError("Existing minute source bytes were modified")
                 else:
                     part=rawfile.with_suffix(".json.part")
@@ -235,6 +240,21 @@ def run(symbols=SAMPLES,*,periods=PERIODS,work=WORK,logger=print,
                         raise ValueError("Linked private raw minute source refused")
                     part.write_bytes(raw)
                     os.replace(part,rawfile)
+                try:
+                    data=parse_bars(doc,period,symbol)
+                except ValueError as exc:
+                    report["periods"][period][symbol]={
+                        "status":"SOURCE_DOWNLOADED_BUT_OHLCVA_UNVERIFIED",
+                        "raw_source_sha256":digest,
+                        "private_source_file":str(rawfile),
+                        "reason":str(exc)[:500]}
+                    report["failed"].append({
+                        "symbol":symbol,"period":period,
+                        "error":str(exc)[:500],
+                        "raw_source_sha256":digest})
+                    logger(f"MINUTE_SOURCE_RAW_SAVED_UNVERIFIED {period} "
+                           f"{symbol} {str(exc)[:160]}")
+                    continue
                 original=doc["data"].get(
                     "trends" if period=="1min" else "klines",[])
                 ignored=len(original)-len(data)

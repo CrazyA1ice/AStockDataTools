@@ -55,6 +55,7 @@ def parse_daily_zip(raw,day,minimums=None):
     equities=[]
     all_counts={}
     valid_counts={}
+    skipped_nontrading={}
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         members={entry.filename:entry for entry in archive.infolist()}
         if len(members)!=len(archive.infolist()):
@@ -76,6 +77,8 @@ def parse_daily_zip(raw,day,minimums=None):
                 raise ValueError("Original official cod/md1 block alignment differs")
             total=0
             kept=0
+            zero_trading=0
+            equity_candidates=0
             symbols=set()
             indexes=set()
             for offset in range(0,len(cod),150):
@@ -96,13 +99,27 @@ def parse_daily_zip(raw,day,minimums=None):
                 old_close=struct.unpack_from("<d",bar,4)[0]
                 o,h,l,c=struct.unpack_from("<4d",bar,12)
                 amount=struct.unpack_from("<d",bar,72)[0]
+                symbol=market.upper()+code
                 if not all(math.isfinite(n) for n in (old_close,o,h,l,c,amount)):
-                    raise ValueError("Nonfinite price or amount in official daily quote")
+                    raise ValueError(
+                        f"TDX_SOURCE_NONFINITE date={day} symbol={symbol} seq={seq}"
+                        f" prev_close={old_close!r} open={o!r} high={h!r}"
+                        f" low={l!r} close={c!r} amount={amount!r}")
+                volume=struct.unpack_from("<Q",bar,56)[0]
                 if c<=0:
+                    # No price is common for indexes/baskets in TDX
+                    # packages. It must not be mistaken for a traded A
+                    # share with real turnover.
+                    if is_equity(market,code,day.year) and (volume>0 or amount>0):
+                        raise ValueError(
+                            f"TDX_SOURCE_NONPOSITIVE_CLOSE_WITH_TRADE date={day}"
+                            f" symbol={symbol} seq={seq} close={c!r}"
+                            f" volume_shares={volume} amount_yuan={amount!r}")
                     continue
                 total+=1
                 if not is_equity(market,code,day.year):
                     continue
+                equity_candidates+=1
                 name_bytes=item[40:72].split(b"\x00")[0]
                 try:
                     official_name=name_bytes.decode("gbk").strip()
@@ -110,12 +127,27 @@ def parse_daily_zip(raw,day,minimums=None):
                     raise ValueError("Invalid GBK source market security name") from exc
                 if not official_name:
                     raise ValueError("Missing named source security with a valid closing price")
-                volume=struct.unpack_from("<Q",bar,56)[0]
-                if (min(o,h,l,c)<=0 or l>min(o,c) or h<max(o,c)
-                        or l>h or amount<0 or
-                        (volume>0 and amount<=0)):
-                    raise ValueError("Invalid active A-share OHLCVA in official daily package")
-                symbol=market.upper()+code
+                if volume==0 and amount==0:
+                    # TDX often publishes a previous close for suspended/
+                    # non-trading A-shares, but the O/H/L values may be
+                    # zero or otherwise not a genuine traded bar. Keep
+                    # these codes in source metadata; do NOT synthesize a
+                    # zero-volume OHLCVA market bar or silently distort it.
+                    zero_trading+=1
+                    continue
+                if (volume==0 or amount<=0
+                        or min(o,h,l,c)<=0
+                        or l>min(o,c)+0.0001
+                        or h+0.0001<max(o,c)
+                        or l>h+0.0001):
+                    raise ValueError(
+                        f"TDX_INVALID_TRADED_A_SHARE_OHLCVA date={day}"
+                        f" symbol={symbol} seq={seq} name={official_name!r}"
+                        f" prev_close={old_close:.8g} open={o:.8g}"
+                        f" high={h:.8g} low={l:.8g} close={c:.8g}"
+                        f" volume_shares={volume} amount_yuan={amount:.12g}"
+                        f" reason={'zero_volume_with_amount' if volume==0 else 'nonpositive_amount_or_invalid_price_grid'}"
+                        f" raw_zip_sha256={sha256(raw)[:16]}")
                 equities.append({"symbol":symbol,"date":day.isoformat(),
                                  "open":float(o),"high":float(h),
                                  "low":float(l),"close":float(c),
@@ -124,12 +156,22 @@ def parse_daily_zip(raw,day,minimums=None):
                 kept+=1
             if total<int(limits.get(market,0)):
                 raise ValueError("Incomplete official full-market priced rows in "+market)
+            # A very large number of zero-trade A-share records is more
+            # likely a malformed package than a normal suspension count.
+            # Block the whole day instead of undercounting a market.
+            if equity_candidates and zero_trading>max(300, int(equity_candidates*.20)):
+                raise ValueError(
+                    f"TDX_EXCESSIVE_ZERO_TRADE_A_SHARES date={day}"
+                    f" market={market} zero_trade={zero_trading}"
+                    f" candidate_equities={equity_candidates}")
             all_counts[market]=total
             valid_counts[market]=kept
+            skipped_nontrading[market]=zero_trading
     if not equities or len({row["symbol"] for row in equities})!=len(equities):
         raise ValueError("No unique A-share equity in full-market daily package")
     return equities,{"all_priced_by_market":all_counts,
                      "a_share_by_market":valid_counts,
+                     "zero_turnover_nontrading_a_shares_by_market":skipped_nontrading,
                      "date":day.isoformat(),"origin_url":TDX_URL.format(ymd=key),
                      "raw_zip_sha256":sha256(raw),
                      "return_values_unadjusted":True,

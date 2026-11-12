@@ -13,6 +13,7 @@ from tkinter import messagebox,ttk
 from live_sync import WORK,BASE_DAY,latest_yesterday,safe_window,sync,summarize,exclusive_writer,CN
 from local_layout import inventory,storage_root,rollover_all_periods,PERIODS
 from rollup_week_month import run as verify_and_derive_week_month
+from update_pipeline import run as run_complete_parquet_pipeline
 from datetime import datetime
 
 class LiveParquetGui(tk.Tk):
@@ -78,6 +79,9 @@ class LiveParquetGui(tk.Tk):
         self.start.pack(side="left",padx=9)
         self.cancel=ttk.Button(btn,text="安全停止",command=self._stop,state="disabled")
         self.cancel.pack(side="left")
+        self.autopilot=ttk.Button(
+            btn,text="一键更新日/周/月",command=self._run_autopilot)
+        self.autopilot.pack(side="left",padx=(9,0))
         ttk.Button(btn,text="刷新状态",command=self._refresh).pack(side="right")
         ttk.Button(btn,text="跨年归档检查",command=self._rollover).pack(side="right",padx=7)
         derived=ttk.Frame(frame)
@@ -172,6 +176,51 @@ class LiveParquetGui(tk.Tk):
                 self.messages.put(("ok",result))
             except Exception as exc:
                 self.messages.put(("error",str(exc)))
+        threading.Thread(target=job,daemon=True).start()
+
+    def _run_autopilot(self):
+        if self.running:
+            messagebox.showinfo("当前已有更新任务","请先完成现有写入任务。")
+            return
+        try:
+            left,right=self._window()
+            root=Path(self.root_value.get().strip())
+            self.localpath.set(str(storage_root(root)))
+            if not self.direct_local.get():
+                raise ValueError("一键更新需要勾选把新日线合并进本地标准月文件")
+        except Exception as exc:
+            messagebox.showerror("一键更新前检查未通过",str(exc))
+            return
+        if not messagebox.askyesno(
+            "确认一次性更新三个周期",
+            "会依次执行：\n"
+            "1. 官方TDX日线下载、校准、SHA核验、写入day当年月文件；\n"
+            "2. 重新核验2026年5—9月购买周/月线历史口径；\n"
+            "3. 仅合并已结束且日期完整的week/month，当年月份文件。\n\n"
+            "已存在同一证券/时间戳的周/月K线会逐字段核对，不会静默覆盖。"
+            "任一步失败都会停止后续操作，已验收的前一步文件保留。"
+            "\n不会修改任何H5或分钟线。\n\n"
+            f"日线下载日期：{left} 至 {right}\n确定开始吗？"):
+            return
+        self.derivation_preview_root=None
+        self.apply_derived.configure(state="disabled")
+        self.running=True
+        self.stop_event.clear()
+        self.progress.start(12)
+        self.start.configure(state="disabled")
+        self.autopilot.configure(state="disabled")
+        self.cancel.configure(state="normal")
+        self.preview_derived.configure(state="disabled")
+        self.current.set("一键更新中：先处理日线，再校验并补齐已结束的周/月线")
+        def job():
+            try:
+                result=run_complete_parquet_pipeline(
+                    root,start=left,end=right,apply=True,retry_days=90,
+                    logger=lambda msg:self.messages.put(("log",msg)),
+                    stop=self.stop_event.is_set)
+                self.messages.put(("auto_ok",result))
+            except Exception as exc:
+                self.messages.put(("error","一键日/周/月增量未全部通过："+str(exc)))
         threading.Thread(target=job,daemon=True).start()
 
     def _stop(self):
@@ -322,9 +371,14 @@ class LiveParquetGui(tk.Tk):
                     self.start.configure(state="normal")
                     self.cancel.configure(state="disabled")
                     self.preview_derived.configure(state="normal")
+                    self.autopilot.configure(state="normal")
                     if self.derivation_preview_root is not None:
                         self.apply_derived.configure(state="normal")
-                    if kind=="derived_preview":
+                    if kind=="auto_ok":
+                        self.current.set("日线、完整周/月线联合增量已完成")
+                        self._write("一键流水线验收："+json.dumps(item,ensure_ascii=False))
+                        self._refresh()
+                    elif kind=="derived_preview":
                         self.derivation_preview_root=str(
                             storage_root(self.root_value.get().strip()))
                         self.apply_derived.configure(state="normal")

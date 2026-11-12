@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feat/a-stock-data-parquet-sync-20261112
+      - feat/qmt-one-minute-history-probe-20261112
     paths:
       - "ParquetLiveSync/**"
       - ".github/workflows/parquet-live-sync-windows.yml"

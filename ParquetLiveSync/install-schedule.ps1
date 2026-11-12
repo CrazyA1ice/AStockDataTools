@@ -22,9 +22,9 @@ if(-not (Test-Path -LiteralPath 'D:\stock' -PathType Container)){throw 'Missing 
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arg=('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $script)
 if($IncludeClosedWeekMonth){$arg+=' -IncludeClosedWeekMonth'}
-$action=New-ScheduledTaskAction -Execute $engine -Argument $arg -WorkingDirectory $root
+$taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arg -WorkingDirectory $root
 $trigger=New-ScheduledTaskTrigger -Daily -At '21:30'
 $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable
 $description=if($IncludeClosedWeekMonth){'Opt-in SHA-checked TDX DAY plus purchased-calibrated closed WEEK/MONTH local Parquet; no minutes/H5'}else{'TDX official DAY monthly physical Parquet only; WEEK/MONTH excluded until explicit -IncludeClosedWeekMonth installation'}
-Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Description $description -Force | Out-Null
+Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Description $description -Force | Out-Null
 Write-Host ('INSTALLED_LOCAL_DAILY_PARQUET_TASK 21:30 local time; MODE='+$(if($IncludeClosedWeekMonth){'DAY_WEEK_MONTH'}else{'DAY_ONLY'})+'; private log: ParquetLiveSync\work\scheduled-update.log')

@@ -20,7 +20,7 @@ $python=Join-Path $root '.venv\Scripts\python.exe'
 if(-not (Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing existing .venv Python'}
 if(-not (Test-Path -LiteralPath 'D:\stock' -PathType Container)){throw 'Missing original local stock root'}
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$arg=('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $script)
+$arg=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $script)
 if($IncludeClosedWeekMonth){$arg+=' -IncludeClosedWeekMonth'}
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arg -WorkingDirectory $root
 $trigger=New-ScheduledTaskTrigger -Daily -At '21:30'

@@ -301,6 +301,12 @@ def get_calibration(doc,source_root,log):
             log("校准基准日未发布："+str(day)+"；改试另一已验收交易日")
             continue
         external,source_meta=parse_daily_zip(raw,day)
+        log("TDX_CALIBRATION_SOURCE_TRADING_COUNT "+str(day)+" "+
+            json.dumps(source_meta["a_share_by_market"],sort_keys=True)+
+            " suspended_zero_turnover="+
+            json.dumps(source_meta.get(
+                "zero_turnover_nontrading_a_shares_by_market",{}),
+                sort_keys=True))
         existing=baseline_overlap(source_root,day)
         factors=compare_units(existing,external)
         doc["calibration"]={
@@ -388,6 +394,8 @@ def put_day(day,table,source_meta,doc):
            "raw_zip_sha256":source_meta["raw_zip_sha256"],
            "origin":source_meta["origin_url"],
            "a_share_counts_by_market":source_meta["a_share_by_market"],
+           "nontrading_a_share_zero_turnover_by_market":
+               source_meta.get("zero_turnover_nontrading_a_shares_by_market",{}),
            "calibration":doc["calibration"],"base_dataset_sha256":BASE_SHA,
            "original_Parquet_files_unchanged":True,"source_values_adj":"none"}
     if receipt.exists():
@@ -572,6 +580,10 @@ def _sync_unlocked(root,start,end,*,logger=print,stop=None,
             day+=timedelta(days=1)
             continue
         external,meta=parse_daily_zip(raw,day)
+        nontrading=meta.get("zero_turnover_nontrading_a_shares_by_market",{})
+        if sum(nontrading.values()):
+            logger("TDX_ZERO_TURNOVER_NOT_A_TRADED_BAR "+key+" "+
+                   json.dumps(nontrading,ensure_ascii=False,sort_keys=True))
         table=prepare_day(external,day,cal)
         proof=put_day(day,table,meta,doc)
         if materialize_local:

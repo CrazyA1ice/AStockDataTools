@@ -62,7 +62,7 @@ def write_json(path,data):
     temp.write_bytes(canonical(data))
     os.replace(temp,path)
 
-def official_days(root,start,end):
+def official_days(root,start,end,*,stage_only=False):
     """SHA-accepted official full-market DAY stock-day/bar reference."""
     storage=L.storage_root(root)
     if not start.year==end.year==datetime.now(CN).year or start>end:
@@ -73,9 +73,11 @@ def official_days(root,start,end):
     # November 2026 is the first eligible month: 2026-10 contains
     # unverified vendor H5-derived "prior purchased" records before Oct14.
     if start<date(2026,11,1):
-        raise ValueError(
-            "OCTOBER_MINUTE_BASELINE_UNVERIFIED: do not create incomplete "
-            "October files omitting 2026-10-01..13; stage separately first")
+        if not (stage_only and start==date(2026,10,14)):
+            raise ValueError(
+                "OCTOBER_MINUTE_BASELINE_UNVERIFIED: do not create incomplete "
+                "October market Parquet without 2026-10-01..13; "
+                "only source-only October staging is allowed")
     p=storage/"day"/f"{start.year}-{start.month:02}.parquet"
     if not p.is_file() or p.is_symlink():
         raise ValueError("Physical official DAY monthly reference missing")
@@ -108,11 +110,9 @@ def official_days(root,start,end):
     if not selected:
         raise ValueError("No official current source days to update")
     if min(selected)!=start:
-        # For November 2026 the first trading session is November 2.
-        if not (start==date(2026,11,2) and min(selected)==start):
-            raise ValueError("Window must start on first complete month trading day")
-    if start.day>3:
-        raise ValueError("Only full new-month source window is promotable")
+        raise ValueError("Window must start on first selected trading day")
+    if start.day>3 and not stage_only:
+        raise ValueError("Only complete new-month sources can become official minute Parquet")
     rows_sorted=sorted((day.isoformat(),sym,bar["ts"],
                         bar["open"],bar["high"],bar["low"],bar["close"],
                         bar["volume"],bar["amount"])
@@ -292,7 +292,7 @@ def execute(root,*,start=date(2026,11,2),end=date(2026,11,11),
     """Process <=limit symbols per call; 0 means all pending (slow)."""
     if not isinstance(limit,int) or limit<0 or limit>1000:
         raise ValueError("Per-call stock limit must be 0..1000")
-    expected,day_sha=official_days(root,start,end)
+    expected,day_sha=official_days(root,start,end,stage_only=not apply)
     cal_path=Path(work)/"purchased_sep30_source_calibration.json"
     if not cal_path.exists():
         calibrate_sep30(root,logger=logger,collector=collector,storage=work)

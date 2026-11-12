@@ -125,12 +125,13 @@ class OfficialSourceParsing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             class FakeHttp(io.BytesIO):
                 status=200
-            with patch.object(T.urllib.request,"urlopen",
-                              return_value=FakeHttp(raw)):
-                with self.assertRaisesRegex(
-                    ValueError,r"TDX_INVALID_TRADED_A_SHARE_OHLCVA"
-                               r" date=2026-11-11 symbol=SZ000001.*private_raw_zip="):
-                    T.download_daily(day,Path(td)/"downloads",retries=1,pause=0)
+            with patch.object(T,"MIN_ROWS",{"sh":1,"sz":1,"bj":1}):
+                with patch.object(T.urllib.request,"urlopen",
+                                  return_value=FakeHttp(raw)):
+                    with self.assertRaisesRegex(
+                        ValueError,r"TDX_INVALID_TRADED_A_SHARE_OHLCVA"
+                                   r" date=2026-11-11 symbol=SZ000001.*private_raw_zip="):
+                        T.download_daily(day,Path(td)/"downloads",retries=1,pause=0)
             target=Path(td)/"rejected_official_tdx"/(
                 "20261111-"+T.sha256(raw)[:16]+".zip")
             self.assertTrue(target.is_file())

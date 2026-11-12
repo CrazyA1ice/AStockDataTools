@@ -1,4 +1,4 @@
-param([ValidateSet('Install','Status','Remove')][string]$Action='Status')
+param([ValidateSet('Install','Status','Remove')][string]$Action='Status',[switch]$IncludeClosedWeekMonth)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $task='AStockDataTools-ParquetLiveSync'
@@ -21,8 +21,10 @@ if(-not (Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing existing
 if(-not (Test-Path -LiteralPath 'D:\stock' -PathType Container)){throw 'Missing original local stock root'}
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arg=('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $script)
+if($IncludeClosedWeekMonth){$arg+=' -IncludeClosedWeekMonth'}
 $action=New-ScheduledTaskAction -Execute $engine -Argument $arg -WorkingDirectory $root
 $trigger=New-ScheduledTaskTrigger -Daily -At '21:30'
 $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable
-Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Description 'Append only TDX official DAY into SHA-checked private Parquet overlay; retry latest 90 days; do not edit original purchased Parquet/H5' -Force | Out-Null
-Write-Host 'INSTALLED_LOCAL_DAILY_PARQUET_TASK 21:30 local clock; private logs: ParquetLiveSync\work\scheduled-update.log'
+$description=if($IncludeClosedWeekMonth){'Opt-in SHA-checked TDX DAY plus purchased-calibrated closed WEEK/MONTH local Parquet; no minutes/H5'}else{'TDX official DAY monthly physical Parquet only; WEEK/MONTH excluded until explicit -IncludeClosedWeekMonth installation'}
+Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Description $description -Force | Out-Null
+Write-Host ('INSTALLED_LOCAL_DAILY_PARQUET_TASK 21:30 local time; MODE='+$(if($IncludeClosedWeekMonth){'DAY_WEEK_MONTH'}else{'DAY_ONLY'})+'; private log: ParquetLiveSync\work\scheduled-update.log')

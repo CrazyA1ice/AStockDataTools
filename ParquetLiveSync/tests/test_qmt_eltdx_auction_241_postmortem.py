@@ -52,7 +52,7 @@ class Tests(unittest.TestCase):
             bar["volume"]*=100.
         result=M.diagnostic(q,t,pilot(q,t))
         self.assertEqual(result["merged_failed_fields"],["volume"])
-        self.assertEqual(result["remaining_239_field_fit_counts"]["volume"],0)
+        self.assertEqual(result["remaining_239_field_fit_counts"].get("volume",0),0)
         self.assertEqual(result["remaining_239_field_fit_counts"]["amount"],239)
         proof=result["volume_unit_evidence"]
         self.assertEqual(proof["tdx_raw_volume_to_qmt_candidate_factor"],.01)

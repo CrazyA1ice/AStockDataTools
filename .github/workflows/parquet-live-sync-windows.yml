@@ -47,6 +47,13 @@ jobs:
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync/tests/test_install_schedule_mock.ps1
       - name: Run only offline synthetic ZIP/Arrow and local annual/monthly file tests
         run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_*.py" -v
+      - name: Optional actual eltdx Rust 7709 historical 1-minute OHLCVA (public network, no QMT upload)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        timeout-minutes: 7
+        run: |
+          python -m pip install --only-binary=:all: eltdx
+          python -u -B ParquetLiveSync/qmt_eltdx_1m_probe.py --remote-only --symbols 600000.SH --max-hosts 6 --max-pages 16
       - name: Optional genuine Tencent upstream 1min OHLCV live source probe (SHA private candidate, no amount)
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true

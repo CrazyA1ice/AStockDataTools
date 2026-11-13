@@ -100,3 +100,24 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-t1-crosscheck-and-recovery.ps1 -Day 2026-11-12 -MaxQuarantinedStocks 0; if($LASTEXITCODE -ne 0){throw "QMT T+1 audit or recovery failed"}
 
 保留 QMT_T1_CROSSCHECK_SUMMARY 与 QMT_RECOVERY_SUMMARY；详尽报告和 SHA 在 Git 忽略的 work/qmt_1min_market/independent_crosscheck 与 logs。QMT/Tencent 时间标签或停牌缺失、日内回填造成的正常口径差异必须保留证据。两家公开源并不能替代 QMT 的原生完整 1m 成交额，也不授权正式 Parquet/H5 合并。
+
+
+## 深度分钟对账升级：借鉴 astock-data-toolkit / eltdx（2026-11-13）
+
+源仓库：
+- https://github.com/tiantianlaolao/astock-data-toolkit
+- https://github.com/electkismet/eltdx
+
+代码审查结论：astock-data-toolkit/minute/tdx_download.py 使用 pytdx.hq.TdxHq_API.get_security_bars(category=8, market, symbol, start, count=800) 分页取真正 1 分钟 OHLCVA，原作者报告常见服务器历史窗口近 90 交易日、最多约 24800 根。其 1min 质检依据 240 根/日，并直接提供 open/high/low/close/vol/amount；源服务器限频、旧版 TDX denormal float32 零成交和 100 股/手量纲要特殊处理。深度是源端滚动窗口，不能凭页数推断覆盖到 2011。
+
+eltdx/docs/methods/7709-K线周期线.md 记录：1m period 原生 7/1，all_pages=True、page_size<=800 自动分页；一台服务器实测 23520 根 1m。bar_time='start'/'end' 可暴露分钟标签起止点差异，解析字段 volume_lots、amount 及原始 compact-float。它的 minutes.history(trading_date) 只返回 240 个分时价格/成交量点，非历史 OHLCVA Kline。eltdx 与 pytdx 主要同属通达信 7709 后端，因此不是两个独立供应商；不应把两套客户端一致看成两家源商独立认可。
+
+新增 ParquetLiveSync/qmt_tdx_1m_depth.py，采用上述 pytdx category 8 历史K线，最多 40 页×800 根的有界向前回溯，遇到首条早于窗口开始日才停止；支持多个通达信公开 7709 服务器故障切换、限速和恢复缓存。程序仅对 2026-10-14..2026-11-12 已购买日线/QMT 私有缓存绑定的数据集执行：源日历和购买 1min 校准 SHA 复核；5039 只完整股票源 SHA 复核；可选读取 184 只已获逐日恢复收据；将 TDX 的 240 根与 QMT 241 根按股票/日期/分钟比对；对 offset=-2,-1,0,+1,+2 分钟进行诊断评分，记录 OHLC、逐分钟 amount 匹配、volume/amount 源量纲因子和每日期匹配情况。不得凭 1m 条数相同宣布来源一致，也不能把 09:30 集合竞价当成交量凭空推给 09:31。
+
+只写 Git 忽略的 work/qmt_1min_market/tdx_1m_crosscheck/20261014_20261112 下独立私有 TDX Parquet、SHA 收据和逐日对账结果。不覆盖原有已购 Parquet、H5 或 QMT 私有暂存。稳定因子不可识别则标记 NO_UNIQUE_STABLE_VENDOR_FACTOR，数据有冲突则标记 MINUTE_SOURCE_DIFFERENCE_REVIEW。深度分页较 320 根源显著增加请求量，先三只锚点校验，自动门槛通过才继续全市场，串行按有限页面限速；失败保留断点而不是重复重抓 5039 只 QMT。
+
+新增一条统一 Windows PowerShell 命令（先自检/安装 pytdx、跑离线回归、三股真实 TDX 22 日分钟线门槛，接着恢复 184 股的有效单日，最后约 5000 股深度对账）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-tdx-deep-minute-crosscheck.ps1 -MaxStocks 0 -MaxRecoveryStocks 0; if($LASTEXITCODE -ne 0){throw "Deep 1min crosscheck failed"}
+
+反馈 QMT_TDX_DEEP_CROSSCHECK_SUMMARY 与 QMT_RECOVERY_SUMMARY，若试点门槛失败请只分享最后报错和 QMT_TDX_DEEP_CROSSCHECK_SUMMARY，均不需上传私有行情原始价格和成交金额。生产月合并权限继续 false。北交所不在此次 7709 沪深源计划中。

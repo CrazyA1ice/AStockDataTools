@@ -134,7 +134,11 @@ class Tests(unittest.TestCase):
             # integration fixture: an unauthorized partial live report is
             # supposed to be rejected instead of manufacturing evidence.
             with patch.object(M.X,"WORK",folder.parent),\
-                 patch.object(M.P,"BASE",root):
+                 patch.object(M.P,"BASE",root),\
+                 patch.object(M.X,"verified_cache",
+                     return_value={"source_sha256":tdxsha}),\
+                 patch.object(M.X,"read_qmt_source",
+                     return_value=(q,qmtsha)):
                 with self.assertRaisesRegex(ValueError,"no cached stock"):
                     M.run(day,logger=lambda _:None)
             # Ensure exact source SHA verification remains a hard gate.

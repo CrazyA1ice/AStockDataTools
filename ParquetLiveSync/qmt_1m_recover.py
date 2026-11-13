@@ -126,6 +126,8 @@ def fetch_raw_by_day(xtdata, code, start, end):
         if not start <= ts.date() <= end:
             raise ValueError("QMT raw minute outside requested historical window")
         grouped[ts.date()].append({"time": ts, **{k: row[k] for k in Q.FIELDS}})
+    if not grouped:
+        raise ValueError("QMT_ZERO_HISTORICAL_ROWS_RETRYABLE")
     return grouped
 
 

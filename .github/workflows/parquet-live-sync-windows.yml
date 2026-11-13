@@ -53,7 +53,7 @@ jobs:
         timeout-minutes: 7
         run: |
           python -m pip install --only-binary=:all: eltdx
-          python -u -B ParquetLiveSync/qmt_eltdx_1m_probe.py --remote-only --symbols 600000.SH --max-hosts 6 --max-pages 16
+          python -u -B ParquetLiveSync/qmt_eltdx_1m_probe.py --remote-only --symbols 600000.SH,000001.SZ,688001.SH --max-hosts 6 --max-pages 16
       - name: Optional genuine Tencent upstream 1min OHLCV live source probe (SHA private candidate, no amount)
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true

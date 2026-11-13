@@ -100,36 +100,33 @@ def probe(hosts=HOSTS,client_factory=None,now=None,logger=print,
     for i,(ip,port) in enumerate(hosts):
         if i>=max_hosts:
             break
-        api=client_factory()
-        try:
-            if not api.connect(ip,port,time_out=3):
-                raise ConnectionError("TCP_CONNECT_FALSE")
-            for category in CATEGORIES:
-                try:
-                    bar=api.get_security_bars(category,1,"600000",0,48)
-                    stats=validate_real_1m(bar,"600000.SH",now=now)
-                    result={"format":FORMAT,"status":"REAL_1MIN_7709_CONFIRMED",
-                            "ip":ip,"port":port,"category":category,
-                            "sample_stock":"600000.SH","sample":stats,
-                            "checked_at_cn":now.isoformat(),
-                            "provider":"Tongdaxin 7709, not QMT, not Tencent HTTP",
-                            "market_modified":False}
-                    # Prefer the first verified endpoint from the ordered pool.
-                    P.safe_save(profile,P.canonical(result))
-                    logger("TDX_NETWORK_PREFLIGHT_PASS "+json.dumps(result,sort_keys=True,ensure_ascii=False))
-                    return result
-                except Exception as exc:
-                    reason=diagnostic_error(exc)
-                    failures.append({"endpoint":f"{ip}:{port}",
-                                     "category":category,"error":reason})
-                    logger(f"TDX_NETWORK_PROBE_REJECT {ip}:{port} cat={category} {reason}")
-        except Exception as exc:
-            reason=diagnostic_error(exc)
-            failures.append({"endpoint":f"{ip}:{port}","category":None,"error":reason})
-            logger(f"TDX_NETWORK_CONNECT_REJECT {ip}:{port} {reason}")
-        finally:
-            try:api.disconnect()
-            except Exception:pass
+        for category in CATEGORIES:
+            # A rejected protocol request can close the socket; reconnect
+            # fresh before testing the next category on the same host.
+            api=client_factory()
+            try:
+                if not api.connect(ip,port,time_out=3):
+                    raise ConnectionError("TCP_CONNECT_FALSE")
+                bar=api.get_security_bars(category,1,"600000",0,48)
+                stats=validate_real_1m(bar,"600000.SH",now=now)
+                result={"format":FORMAT,"status":"REAL_1MIN_7709_CONFIRMED",
+                        "ip":ip,"port":port,"category":category,
+                        "sample_stock":"600000.SH","sample":stats,
+                        "checked_at_cn":now.isoformat(),
+                        "provider":"Tongdaxin 7709, not QMT, not Tencent HTTP",
+                        "market_modified":False}
+                # Prefer first verified endpoint from bounded host pool.
+                P.safe_save(profile,P.canonical(result))
+                logger("TDX_NETWORK_PREFLIGHT_PASS "+json.dumps(result,sort_keys=True,ensure_ascii=False))
+                return result
+            except Exception as exc:
+                reason=diagnostic_error(exc)
+                failures.append({"endpoint":f"{ip}:{port}",
+                                 "category":category,"error":reason})
+                logger(f"TDX_NETWORK_PROBE_REJECT {ip}:{port} cat={category} {reason}")
+            finally:
+                try:api.disconnect()
+                except Exception:pass
     summary={"format":FORMAT,"status":"NO_COMPATIBLE_1MIN_7709_ENDPOINT",
              "hosts_tested":min(len(hosts),max_hosts),
              "failures":failures,"market_modified":False,

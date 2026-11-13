@@ -116,6 +116,21 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"SHA invalid"):
                 R.validate_recovery_receipt(root,code,"a",[str(day)])
 
+    def test_full_stock_original_sha_audit_and_undocumented_stock_refused(self):
+        code="600000.SH";day=date(2026,10,14)
+        reference={"open":10.,"high":10.01,"low":9.99,"close":10.,
+                   "volume":24100.,"amount":2410000.}
+        expected={day:{code:reference}}
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            fake=FakeXtdata(code,bars(day))
+            item,created=R.P.qmt_stage_stock(code,expected,day,day,{},root,fake)
+            self.assertTrue(created)
+            accepted=R.validate_original(root,expected,[code],progress=lambda _:None)
+            self.assertEqual(set(accepted),{code})
+            with self.assertRaisesRegex(ValueError,"Unexpected or duplicate"):
+                R.validate_original(root,expected,[],progress=lambda _:None)
+
     def test_empty_recovery_receipt_and_disjoint_days(self):
         day=date(2026,10,14)
         with tempfile.TemporaryDirectory() as temp:

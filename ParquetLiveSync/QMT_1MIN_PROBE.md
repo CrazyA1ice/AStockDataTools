@@ -160,3 +160,18 @@ The branch CI run at https://github.com/CrazyA1ice/AStockDataTools/actions/runs/
 - 688001.SH: 5,280 minute OHLCVA bars / 22 complete days; SHA f6390ea50d110012743828587c519c551ac90031491ec1939e8b8f757550c8ca
 
 Real source fetch pass 3/3, failures 0. The remote CI workspace did not contain private QMT so minute-wise cross-provider fit is still pending the same one-line local script. No private market source uploaded from workstation.
+
+
+## 2026-11-13 next phase: full-market QMT x eltdx true one-minute cross-audit
+
+Three real Windows QMT x independent eltdx 1min pilots returned 22/22 matched stock-days for each SH600000, SZ000001 and SH688001, 15840 eltdx candles in total. MATCHED_1MIN_OHLCVA means the documented price, amount, scaled volume and timestamp tolerance gates were satisfied, not that every field of every minute matched bit-for-bit.
+
+New qmt_eltdx_market_audit.py and run-qmt-eltdx-allmarket.ps1 implement the following in a single session: validate original purchased DAY/paid 1m source fingerprints; SHA-audit all 5039 original QMT stocks; run day-level rescue for only the quarantined 184 stocks; then compare the complete official 5223-stock universe to genuine eltdx Rust 7709 one-minute OHLCVA across the exact 2026-10-14..11-12 window. Reuse the three already staged eltdx sample stocks by SHA, and preserve new sources as immutable private Parquet receipts, with original QMT SHA, DAY-plan SHA, per-minute timestamps, price-volume-amount comparison, daywise 240/241 status and capped specific mismatch examples.
+
+Full-market source download is single-stock serial, bounded to 16 pages of 800 records on at most 6 eltdx nodes, with short throttling, SHA restart and a 12-consecutive-error circuit breaker. The Windows PS one-shot uses Start-Process to separate Python stderr/stdout so errors cannot trigger the previous NativeCommandError premature exit; poll reports for progress. All source buffers are under gitignored ParquetLiveSync/work/qmt_1min_market, production Parquet/H5 is NEVER written and production_merge_authorized stays false. Users must observe eltdx's license restricting use to noncommercial learning/research.
+
+One-line command:
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-eltdx-allmarket.ps1 -MaxStocks 0 -MaxRecoveryStocks 0; if($LASTEXITCODE -ne 0){throw "ELTDX market crosscheck or recovery failed"}
+
+To limit eltdx online source queries to the already cached 3 anchors, change -MaxStocks 0 to -MaxStocks 3. Do not change MaxRecoveryStocks from 0 if you want to recover all original 184 QMT stock-day gaps. The full-market run may involve tens of thousands of real server requests; run only with QMT logged in and stable network. Return just QMT_RECOVERY_SUMMARY and ELTDX_MARKET_SUMMARY plus specific errors, not licensed raw price data.

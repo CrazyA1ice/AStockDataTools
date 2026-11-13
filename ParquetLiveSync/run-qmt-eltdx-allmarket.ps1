@@ -22,13 +22,13 @@ $logs=Join-Path $PSScriptRoot "work\qmt_1min_market\logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 $stamp=Get-Date -Format "yyyyMMdd-HHmmss"
 function Invoke-PrivatePython {
-  param([string]$Label,[string[]]$Args)
+  param([string]$Label,[string[]]$ProgramArgs)
   $stdout=Join-Path $logs ($Label+"-"+$stamp+".stdout.log")
   $stderr=Join-Path $logs ($Label+"-"+$stamp+".stderr.log")
   Write-Host ("QMT_ELTDX_RUNNING_PRIVATE_LOG="+$stdout)
   # Start-Process separates stderr, avoiding PowerShell 5.1 NativeCommandError
   # stopping a recovery script prematurely on benign Python warnings.
-  $task=Start-Process -FilePath $py -ArgumentList $Args -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  $task=Start-Process -FilePath $py -ArgumentList $ProgramArgs -NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
   $lastShown=""
   while (-not $task.HasExited) {
     Start-Sleep -Seconds 15
@@ -51,7 +51,7 @@ function Invoke-PrivatePython {
   Write-Host ("QMT_ELTDX_PRIVATE_STEP_SUCCESS="+$Label)
 }
 Write-Host "QMT_ELTDX_ALLMARKET_STEP_2_RECOVER_ONLY_184_QUARANTINED_QMT_STOCKS"
-Invoke-PrivatePython -Label "qmt-day-recovery" -Args @("-u","-B","ParquetLiveSync\qmt_1m_recover.py","--root","D:\stock","--start","2026-10-14","--end","2026-11-12","--limit-stocks",[string]$MaxRecoveryStocks)
+Invoke-PrivatePython -Label "qmt-day-recovery" -ProgramArgs @("-u","-B","ParquetLiveSync\qmt_1m_recover.py","--root","D:\stock","--start","2026-10-14","--end","2026-11-12","--limit-stocks",[string]$MaxRecoveryStocks)
 Write-Host "QMT_ELTDX_ALLMARKET_STEP_3_SHA_BOUND_FULL_MARKET_INDEPENDENT_1MIN_CROSSCHECK"
-Invoke-PrivatePython -Label "eltdx-market" -Args @("-u","-B","ParquetLiveSync\qmt_eltdx_market_audit.py","--root","D:\stock","--limit-stocks",[string]$MaxStocks,"--max-hosts",[string]$MaxHosts,"--max-pages",[string]$MaxPages)
+Invoke-PrivatePython -Label "eltdx-market" -ProgramArgs @("-u","-B","ParquetLiveSync\qmt_eltdx_market_audit.py","--root","D:\stock","--limit-stocks",[string]$MaxStocks,"--max-hosts",[string]$MaxHosts,"--max-pages",[string]$MaxPages)
 Write-Host "QMT_ELTDX_PRIVATE_SOURCES_AND_REPORTS_COMPLETE_PRODUCTION_MARKET_UNCHANGED"

@@ -116,7 +116,7 @@ class Tests(unittest.TestCase):
             R.derive_source_only(t[0],x,records())
         x=R.formal_event(opening(),day)
         t[0]["low"]=10.5
-        with self.assertRaisesRegex(ValueError,"market bounds"):
+        with self.assertRaisesRegex(ValueError,"not consistent with auction"):
             R.derive_source_only(t[0],x,records())
 
     def test_end_to_end_original_sha_and_source_only_trial_is_private(self):

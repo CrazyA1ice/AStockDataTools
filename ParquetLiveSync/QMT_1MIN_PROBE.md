@@ -389,3 +389,21 @@ PowerShell 单行命令：先更新代码+五项离线测试，然后仅使用�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_tdx_local_lc_probe.py -q; if($LASTEXITCODE -ne 0){throw "Local TDX LC tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\tdx_local_lc_probe.py --vipdoc "D:\software\TDX\vipdoc" --codes "600000.SH,000001.SZ,688001.SH" --dates "2026-10-14,2026-10-15,2026-10-16"; if($LASTEXITCODE -ne 0){throw "Local vipdoc LC read-only scan failed"}
 
 回传 8 条 TDX_LOCAL_BAR_FILE 和 TDX_LOCAL_BAR_SUMMARY。若 .lc1 不存在，则第一步应在通达信软件中检查盘后数据下载是否提供“1分钟”历史下载，**而不是把 5min K 线拆成 1min 或强制填补 09:31 high**。如果 .lc1 存在且目标日期完整，下一阶段才安排 SHA 单分钟标记对照 QMT 原始 241，用作第二来源的只读严格校验。
+
+
+## 2026-11-13 Windows 通达信本地 9,607 个 .lc1 文件发现后：三源只读分钟精度验收
+
+用户本机命令扫描输出：vipdoc/SH minline 4850、SZ minline 4397、BJ minline 360，共 9607 个 .lc1（同目录数量的 .lc5 文件）；截图本来仅显示 sh/fzline 下的 LC5，但 minline 实际存在。原三股 600000.SH、000001.SZ、688001.SH 和 sh000001 指数的 .lc1 全部有效，每个 983040 字节（30720×32）、128 个交易日，每日严格 240 根，样本日期完整，自 2026-05-11 09:31 至 2026-11-13 15:00；其 .lc5 每个 196608 字节，48 根/日。8/8 源文件 32 字节网格、时间顺序、数据格式检查通过，零无效/重复/逆序。已查明 TDX 原始盘后 1min 数据是具有本地持续落盘价值的资料，但是 **仍为 240 根/日，不是直接可用的 QMT 241 根**，且 .lc1 很可能与先前 eltdx 7709 分钟线同源；不能未经测试就认定它能恢复 2026-10-16 688001.SH 09:31 的真实 high。
+
+为此新增 ParquetLiveSync/tdx_local_lc_vs_eltdx_qmt.py 和 tests/test_tdx_local_lc_vs_eltdx_qmt.py。程序仅在 2026-10-14/15/16、三只原样本股票、共 9 个股票日进行：
+- 纯本地不联网读 D:\software\TDX\vipdoc 下的 .lc1/.lc5，逐文件复核完整源 SHA256、目标日精确 240/48 根和分钟时间格，检查期间源文件是否发生改动；
+- 从已有私有 SHA 收据读取 eltdx 7709 的 240 根 1m，以及独立 QMT 241 根参考（QMT 仅验收，不用于候选数据生成）；严格要求三个来源 09:31~15:00 标签完全一致，**不得平移时间或用 QMT 填补未知**；
+- 对本地 .lc1 与在线 eltdx 240、与 QMT 前两根合并成 09:31 的 240、与本地 .lc5（由每 5 根本地 1m 聚合）逐分钟六字段比较，输出严格/宽松匹配根数以及成交量候选倍率 0.01/1/100；倍率只用于研究对账，不调整实际源值；
+- 对最重要的 2026-10-16 / 688001.SH，单独报告 local_merged_high_equals_online_merged_high_strict、local_merged_high_equals_qmt_auction_high_strict、local_merged_high_equals_qmt_regular_high_strict、qmt_regular_high_below_auction_high。**如果本地首根 high 与在线同样等于竞价高，则它还是合并 K 的 high，不能直接认作 QMT 09:31 单独连续交易 high。** 即使本地与在线不同，也仅给出样本对账和来源差异，不自动授予真实 high 的生产可信度。
+- 报告仅在控制台输出逐日匹配计数/布尔判断及总览，不输出任何原始行情 OHLCVA/不创建文件，不修改用户原已购 Parquet/H5/TDX 文件。全部 source_market_files_modified=false、production_merge_authorized=false。
+
+Windows 单行 PowerShell（需先 git pull，本地三方对账本身无行情联网）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_tdx_local_lc_vs_eltdx_qmt.py -q; if($LASTEXITCODE -ne 0){throw "LC three-way tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\tdx_local_lc_vs_eltdx_qmt.py --vipdoc "D:\software\TDX\vipdoc"; if($LASTEXITCODE -ne 0){throw "LC local/online/QMT three-way source SHA audit failed"}
+
+反馈 TDX_LOCAL_THREE_WAY_CASE 九行和 TDX_LOCAL_THREE_WAY_SUMMARY 一行，重点 688001.SH 2026-10-16 的 high 数组及每日日积 240/48 差异。原价/原成交额/原始行情不上传。此阶段严禁直接入库，候选 high 仍需独立、完整的 1m 真值证据。

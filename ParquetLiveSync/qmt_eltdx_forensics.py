@@ -43,7 +43,7 @@ def review_reason(result):
         if factor.get("matching_fraction",0.)<.85:
             reasons.append(name)
         if factor.get("status")=="NO_UNIQUE_STABLE_VENDOR_FACTOR":
-            reasons.append(field.upper()+"_FACTOR_AMBIGUOUS")
+            reasons.append(field.upper()+"_AMBIGUOUS")
     if result.get("tdx_count",0)!=240:
         reasons.append("ELTDX_NOT_240_MINUTE_BARS")
     if result.get("qmt_count",0)!=241:

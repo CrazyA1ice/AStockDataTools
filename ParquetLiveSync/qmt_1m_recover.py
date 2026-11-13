@@ -156,6 +156,16 @@ def check_day(code, day, entries, day_ref):
               "match": matches,
               "qmt_sha256": P.sha_bytes(P.canonical(rows)),
               "rows": len(rows)}
+    # Native QMT totals and unconverted official DAY ratios are evidence only;
+    # the purchased 1m calibration must be used before any actual physical merge.
+    detail["native_totals"] = {
+        k: round(sum(float(r[k]) for r in rows), 4) for k in ("volume", "amount")
+    }
+    detail["day_reference_ratios"] = {
+        k: (round(float(day_ref[k]) / detail["native_totals"][k], 8)
+            if k in day_ref and detail["native_totals"][k] > 0 else None)
+        for k in ("volume", "amount")
+    }
     if not all(matches.values()):
         return None, {"reason": "QMT_OFFICIAL_DAY_OHLC_MISMATCH", **detail}
     return rows, detail

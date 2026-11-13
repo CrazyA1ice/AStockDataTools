@@ -121,3 +121,19 @@ eltdx/docs/methods/7709-K线周期线.md 记录：1m period 原生 7/1，all_pag
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-tdx-deep-minute-crosscheck.ps1 -MaxStocks 0 -MaxRecoveryStocks 0; if($LASTEXITCODE -ne 0){throw "Deep 1min crosscheck failed"}
 
 反馈 QMT_TDX_DEEP_CROSSCHECK_SUMMARY 与 QMT_RECOVERY_SUMMARY，若试点门槛失败请只分享最后报错和 QMT_TDX_DEEP_CROSSCHECK_SUMMARY，均不需上传私有行情原始价格和成交金额。生产月合并权限继续 false。北交所不在此次 7709 沪深源计划中。
+
+## 2026-11-13 本机 pytdx 试点故障与自动诊断修复
+
+本机真实日志（2026-11-13 10:14）：pytdx 1.72 安装成功、33 个离线测试通过、5039 只 QMT 私有来源收据通过读取，但通达信 600000.SH / 000001.SZ / 688001.SH 三股尝试 `get_security_bars` 均返回 None；三股深度对账 0 交易日，源端全市场下载未开始，正式 Parquet/H5 未更改。
+
+代码复核：pytdx BaseSocketClient 的 `update_last_ack_time` 在默认 `raise_exception=False` 时会把 socket/parse 异常吞掉并返回 None，上一版记录缺乏实际网络、协议原因。pytdx TDXParams 将沪深1分钟标号定义为 `KLINE_TYPE_1MIN=8`，另有 `KLINE_TYPE_EXHQ_1MIN=7`；eltdx 文档原生 1m 为 7/1。服务器兼容性须从真实返回的一分钟时间网格实测，不可盲目改编号。
+
+新增 `qmt_tdx_network_preflight.py`：使用 `raise_exception=True`，在有限官方/公开通达信 7709 主机池内依次探测 TCP、category 8 与 7 两种编码。每个类别独立建链，验证至少 16 根有效、最新数据非旧快照、连续真实一分钟时标、交易时段和 OHLCVA 合法才接受。保存选中 IP、端口、类别到 `work/qmt_1min_market/tdx_1m_crosscheck/network_profile.json`；一键脚本读取为**进程级临时环境变量**，不会改系统代理/Clash。真实失败回显底层异常和所在节点，避免抽象 `TDX returned None`。
+
+新的大阶段一键脚本即使 TDX 所有主机不可用，仍继续执行 **184 只 QMT 异常股票逐日恢复**，随后给出 `QMT_TDX_SOURCE_NOT_AVAILABLE`（未启动 TDX 全市场轮询）。如果 TDX 预检通过，则串行执行三股/22 日深度分钟试点，通过门槛才允许启动全市场分钟交叉验收，继续复用 QMT 5039 只私有收据、TDX 已采集分区的 SHA 断点，数据全部私有暂存，无生产行情写入。
+
+运行方式（一条 PowerShell）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-tdx-deep-minute-crosscheck.ps1 -MaxStocks 0 -MaxRecoveryStocks 0; if($LASTEXITCODE -ne 0){throw "QMT-TDX source audit failed"}
+
+反馈简要：`TDX_NETWORK_PREFLIGHT_PASS` / `TDX_NETWORK_PREFLIGHT_FAILED`、`QMT_RECOVERY_SUMMARY` 和 `QMT_TDX_DEEP_CROSSCHECK_SUMMARY`。本机 Clash/TUN 对 TCP 7709 的透明代理可能影响连接，尚未通过返回日志证实是其根因；必须根据实际报错和通过的 IP 制定具体 Clash `IP-CIDR/DIRECT`，不能盲目将所有 Python 流量设置为 DIRECT。

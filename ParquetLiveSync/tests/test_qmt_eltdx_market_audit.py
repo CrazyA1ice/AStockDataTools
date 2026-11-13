@@ -23,8 +23,9 @@ def sample(day=date(2026,10,14),qt=True):
     for i,(h,m) in enumerate(sorted(M.P.GRID)):
         if not qt and (h,m)==(9,30):continue
         stamp=int(datetime(day.year,day.month,day.day,h,m,tzinfo=M.P.CN).timestamp()*1000)
-        source.append({"ts":stamp,"symbol":"SH600000","open":10.,
-            "high":10.02,"low":9.99,"close":10.01,
+        price=10.+((i*37)%53)*.05
+        source.append({"ts":stamp,"symbol":"SH600000","open":price,
+            "high":price+.02,"low":price-.01,"close":price+.01,
             "volume":100.+(i*37)%170,"amount":10000.+i*73})
     return source
 

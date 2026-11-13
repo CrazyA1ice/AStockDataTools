@@ -112,9 +112,10 @@ def local_to_five(local1):
     result=[]
     for i in range(0,240,5):
         group=local1[i:i+5]
-        if group[-1]["minute"]!=[575+5*(i//5) if i<120 else
-                                 785+5*((i-120)//5)][0]:
-            # The two sessions are independent; never bridge lunch.
+        expected_end=(575+5*(i//5) if i<120 else
+                      785+5*((i-120)//5))
+        if [r["minute"] for r in group]!=list(range(expected_end-4,expected_end+1)):
+            # Separate morning and afternoon; never bridge lunch or missing minutes.
             raise ValueError("Invalid local 1m to 5m grouping")
         result.append({
             "minute":group[-1]["minute"],

@@ -149,3 +149,14 @@ One-line command:
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-eltdx-real-1m.ps1 -MaxHosts 6 -MaxPages 16; if($LASTEXITCODE -ne 0){throw "ELTDX pilot setup failed"}
 
 If the user workstation still cannot contact 7709, preserve their original Tongdaxin after-hours 1-minute .lc1 files (often under vipdoc/sh/minline and vipdoc/sz/minline) for a fully offline source-by-source minute validation. Do not confuse .lc5 five-minute or .day daily files with .lc1. eltdx license is noncommercial research only; do not use as a commercial source or trading automation service.
+
+
+### Full three-market live retest, completed
+
+The branch CI run at https://github.com/CrazyA1ice/AStockDataTools/actions/runs/43356407582 performed actual network queries for all three QMT anchors (eltdx 3.3.5, host 116.205.183.150:7709, period=1m, 2026-10-14..2026-11-12):
+
+- 600000.SH: 5,280 minute OHLCVA bars / 22 complete days; SHA 85ae44e1acd96cc9adf8d50f46b184072d258307bd067d532bdede6c2b34ede6
+- 000001.SZ: 5,280 minute OHLCVA bars / 22 complete days; SHA 2f3bdfe3430fab33c184a7eb4dc25e84804df7119deec557dbb7c7d281096696
+- 688001.SH: 5,280 minute OHLCVA bars / 22 complete days; SHA f6390ea50d110012743828587c519c551ac90031491ec1939e8b8f757550c8ca
+
+Real source fetch pass 3/3, failures 0. The remote CI workspace did not contain private QMT so minute-wise cross-provider fit is still pending the same one-line local script. No private market source uploaded from workstation.

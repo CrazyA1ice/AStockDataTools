@@ -80,10 +80,12 @@ class Tests(unittest.TestCase):
 
     def test_if_l2_high_matches_tdx_merged_it_is_not_corroborating_unique_high(self):
         q,t=anchors()
-        q[1]["high"]=10.2
         with tempfile.TemporaryDirectory() as tmp:
             file=Path(tmp)/"trades.csv"
-            file.write_text(csv_fixture(),encoding="utf-8")
+            other=csv_fixture().replace(
+                "93000150,2,0,0,B,101000,10000",
+                "93000150,2,0,0,B,102000,10000")
+            file.write_text(other,encoding="utf-8")
             rows,_=M.read_tick_csv(file)
             result=M.compare(rows,q,t)
             self.assertFalse(result["source_0931_high_differs_from_tdx_merged"])

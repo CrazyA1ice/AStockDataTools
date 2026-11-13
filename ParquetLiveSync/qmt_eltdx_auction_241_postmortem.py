@@ -22,8 +22,52 @@ import qmt_1m_pipeline as P
 import qmt_eltdx_1m_probe as X
 import qmt_eltdx_auction_241_probe as A
 
-FORMAT="qmt_eltdx_0925_0931_sha_bound_offline_model_diagnostics_v1"
+FORMAT="qmt_eltdx_0925_0931_sha_bound_offline_model_diagnostics_v2"
 FIELDS=A.VALUES
+VOLUME_FACTORS=(.01,1.,100.)
+
+
+def volume_factor_evidence(qmt_bars,tdx_bars):
+    """Research-only fit of QMT volume = raw eltdx volume * factor.
+
+    The eltdx private source deliberately preserves volume_wire_value, not
+    volume_lots. No market or private source volume is rewritten.
+    """
+    if len(qmt_bars)!=len(tdx_bars) or not qmt_bars:
+        raise ValueError("Volume audit requires equal nonempty minute grids")
+    positive=[]
+    both_zero=0
+    one_zero=0
+    for left,right in zip(qmt_bars,tdx_bars):
+        q,t=float(left["volume"]),float(right["volume"])
+        if not all(math.isfinite(v) and v>=0 for v in (q,t)):
+            raise ValueError("Nonfinite/negative original volume")
+        if q==0 and t==0:
+            both_zero+=1
+        elif q==0 or t==0:
+            one_zero+=1
+        else:
+            positive.append((q,t))
+    counts={str(factor):sum(A.isnear(q,t*factor,"volume") for q,t in positive)
+            for factor in VOLUME_FACTORS}
+    ranking=sorted(((counts[str(factor)],factor)
+                    for factor in VOLUME_FACTORS),reverse=True)
+    best_count,best_factor=ranking[0]
+    second_count=ranking[1][0]
+    proven=(len(positive)>=40 and one_zero==0
+            and best_count>=len(positive)*.98
+            and second_count<len(positive)*.80)
+    return {
+        "positive_minute_pairs":len(positive),
+        "both_zero_minute_pairs":both_zero,
+        "one_sided_zero_minute_pairs":one_zero,
+        "candidate_fit_positive_counts":counts,
+        "tdx_raw_volume_to_qmt_candidate_factor":best_factor if proven else None,
+        "candidate_identified_for_research":proven,
+        "raw_tdx_wire_volume_preserved":True,
+        "volume_scale_applied_to_source":False,
+        "production_merge_authorized":False,
+    }
 
 
 def compared(first, second):
@@ -62,13 +106,25 @@ def diagnostic(qmt,tdx,pilot):
         for key in FIELDS:
             if fits[key]:
                 later[key]+=1
+    volume_proof=volume_factor_evidence([merged,*qmt[2:]],tdx)
+    factor=volume_proof["tdx_raw_volume_to_qmt_candidate_factor"]
+    scaled_volume_matches=(sum(A.isnear(q["volume"],t["volume"]*factor,
+                             "volume") for q,t in zip([merged,*qmt[2:]],tdx))
+                           if factor is not None else None)
     if all(match_merge.values()):
         model="OPENING_0930_PLUS_0931_MERGE_ALL_SIX"
     elif all(match_direct.values()):
         model="DIRECT_0931_MATCH_ALL_SIX"
-    elif all(match_merge[k] for k in A.OHLC) and not all(
-            match_merge[k] for k in ("volume","amount")):
-        model="MERGE_PRICES_ONLY_VOLUME_AMOUNT_DISAGREE"
+    elif (factor is not None and factor!=1.
+          and scaled_volume_matches==240
+          and all(match_merge[k] for k in (*A.OHLC,"amount"))
+          and all(later[k]==239 for k in (*A.OHLC,"amount"))
+          and pilot.get("auction_0930_candidate_matches_qmt") is True):
+        model="OPENING_MERGE_MATCH_AFTER_RESEARCH_ONLY_VOLUME_UNIT_ALIGNMENT"
+    elif all(match_merge[k] for k in (*A.OHLC,"amount")):
+        model="MERGE_OHLC_AMOUNT_MATCH_VOLUME_DIFFERENCE"
+    elif all(match_merge[k] for k in (*A.OHLC,"volume")):
+        model="MERGE_OHLC_VOLUME_MATCH_AMOUNT_DIFFERENCE"
     elif all(match_merge[k] for k in ("volume","amount")):
         model="MERGE_VOLUME_AMOUNT_ONLY_PRICE_DISAGREES"
     else:
@@ -86,6 +142,9 @@ def diagnostic(qmt,tdx,pilot):
         "direct_relative_errors":rel_direct,
         "remaining_239_field_fit_counts":dict(later),
         "remaining_239_expected":239,
+        "volume_unit_evidence":volume_proof,
+        "volume_after_candidate_scale_all_240_fit":scaled_volume_matches,
+        "original_volume_field_scaling_not_written_to_parquet":True,
         "auction_is_formal_not_virtual":True,
         "regular_0931_OHLC_recovery_proven":False,
         "market_files_modified":False,
@@ -113,6 +172,8 @@ def run(*,day=date(2026,10,14),work=None,logger=print):
     stats=Counter()
     field_fail=Counter()
     full_rest=0
+    scaled_full=0
+    candidate_factors=Counter()
     for code,pilot in sorted(doc["stocks"].items()):
         if code not in A.DEFAULT_CODES or not isinstance(pilot,dict):
             raise ValueError("Unexpected stock in fixed SHA-bound pilot")
@@ -137,6 +198,12 @@ def run(*,day=date(2026,10,14),work=None,logger=print):
         if result.get("remaining_239_field_fit_counts")=={
             name:239 for name in FIELDS}:
             full_rest+=1
+        if result.get("volume_after_candidate_scale_all_240_fit")==240:
+            scaled_full+=1
+        proof=result.get("volume_unit_evidence",{})
+        factor=proof.get("tdx_raw_volume_to_qmt_candidate_factor")
+        if factor is not None:
+            candidate_factors[str(factor)]+=1
         logger("ELTDX_AUCTION_241_FIELD_DIAGNOSTIC="+json.dumps({
             "stock":code,"model":result.get("model"),
             "status":result["status"],
@@ -144,6 +211,9 @@ def run(*,day=date(2026,10,14),work=None,logger=print):
             "direct_failed_fields":result.get("direct_failed_fields"),
             "remaining_239_field_fit_counts":
                 result.get("remaining_239_field_fit_counts"),
+            "volume_unit_evidence":result.get("volume_unit_evidence"),
+            "volume_after_candidate_scale_all_240_fit":
+                result.get("volume_after_candidate_scale_all_240_fit"),
             "merged_relative_errors":
                 {k:v for k,v in result.get("merged_relative_errors",{}).items()
                  if k in result.get("merged_failed_fields",[])},
@@ -159,6 +229,8 @@ def run(*,day=date(2026,10,14),work=None,logger=print):
         "model_counts":dict(stats),
         "merged_mismatch_field_counts":dict(field_fail),
         "stocks_with_other_239_minutes_all_six_matching":full_rest,
+        "stock_days_full_240_volume_fit_after_candidate_scale":scaled_full,
+        "volume_candidate_factors_raw_tdx_to_qmt":dict(candidate_factors),
         "source_files_modified":False,"market_files_modified":False,
         "production_merge_authorized":False}
     logger("ELTDX_AUCTION_241_FIELD_SUMMARY="+json.dumps(

@@ -68,3 +68,18 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 一键脚本终端只显示校准、每 50 只的进度、失败示例、最终 `QMT_ONE_MINUTE_MARKET_RESULT`。完整运行日志保存在 `work/qmt_1min_market/logs/`。如本机强制终止，本次已完成 SHA 收据仍保留；重新运行同一命令继续。完整市场可能涉及数千只股票，注意可用磁盘空间和 QMT 行情服务限速。如需先少量试运行，将参数 `-MaxStocks 0` 改为 `-MaxStocks 100`。
 
 该阶段未合并到正式 1min 月文件，原因是 October 2026 已购/H5 月文件前半月的分钟口径还未最终统一，且大范围写入需按内存/事务边界拆分。下一阶段必须用本次源证据继续进行跨源/全日成交量额单位验收、月分片流式并入/备份及覆盖范围证明。
+
+
+## 全市场采集真实结果与 184 只隔离股票逐日救援（2026-11-13）
+
+用户本机真实采集：2026-10-14..11-12，全市场沪深候选 5223 只，完整 SHA 私有来源验收 5039 只，隔离 184 只。2026-09-30 购买 1min 跨源比对：沪主/深主/科创均通过，分钟时间偏移 0 ms、OHLC fit 1.0、QMT volume 转已购原始 1min 倍数 100、amount 倍数 1。失败分类：181 OHLC mismatch、2 Windows WinError32 文件锁、1 无效 OHLC 价格。正式 AllCycleAStockData 和 H5 均没有写入。
+
+为了避免重新采集 5039 只，新增 qmt_1m_recover.py 和 run-qmt-1m-recovery.ps1。自动执行：逐个校验 5039 份已接受 Parquet 的 SHA/Arrow schema/footer/交易日数；核实官方 DAY 来源与购买原始 1min 跨源校准的版本绑定；只从本机 QMT 获取缺失的约 184 只源数据。每个交易日独立执行 241 分钟网格、OHLCVA 和 DAY OHLC 检验。合格的单日保存在完全独立的私有 day_recovery/source_parquet/*.parquet；异常单日保留差异数值、双方日 OHLC 和量额合计比值用于后续研究。Windows 私有原子替换遇到临时占用最多重试 6 次。重新运行同一命令会验收 SHA 和复用已经写入的恢复收据，绝不重下完整 5039 只，不碰正式 Parquet/H5。
+
+单行运行（QMT 客户端保持已启动及登录）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-1m-recovery.ps1 -MaxStocks 0; if($LASTEXITCODE -ne 0){throw "QMT day recovery failed"}
+
+仅发送终端 QMT_RECOVERY_SUMMARY 和 QMT_RECOVERY_PER_DAY（或最终错误），不要上传原始 QMT 私有行情文件。私有日志保存在 ParquetLiveSync/work/qmt_1min_market/logs/qmt-day-recovery-*.log。
+
+说明：仍是私有来源分段候选，没有正式合并权限；异常日期保留隔离，绝不会凭空补 K 线。北交所未纳入这次沪深源计划。原有分区/数据 SHA 发生变化将直接失败，避免跨版本混用。

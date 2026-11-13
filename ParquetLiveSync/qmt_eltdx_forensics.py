@@ -182,7 +182,7 @@ def inspect(root, *, workspace=WORK, logger=print):
         "source_not_available_stock_days":sum(x["expected_days"] for x in failed.values()),
         "source_failure_first_trading_dates":failed,
         "stock_day_statuses":dict(status),
-        "review_554_reason_days_nonexclusive":dict(reason),
+        "review_reason_days_nonexclusive":dict(reason),
         "review_field_minute_mismatch_counts":dict(field_minutes),
         "review_days_without_minute_details":legacy_no_detail,
         "review_examples_no_market_prices":review_examples,

@@ -238,8 +238,10 @@ def run(logger=print):
                     result["regular_0931"]["strict_failed_fields"],
                 "regular_unknown_fields":
                     result["regular_0931"]["unknown_fields"],
-                "unidentifiable_extrema":
-                    result["unidentifiable_0931_extrema"],
+                "unidentifiable_extrema":{
+                    k:{n:v for n,v in detail.items()
+                       if n!="source_only_observed_extreme_candidate"}
+                    for k,detail in result["unidentifiable_0931_extrema"].items()},
                 "history_trade_amount_errors":
                     result["estimated_history_trade_amount_errors"],
                 "auction_amount_error":

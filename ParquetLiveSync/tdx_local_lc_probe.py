@@ -124,7 +124,7 @@ def scan_file(path,*,period,days=DEFAULT_DAYS):
                     # Work in constant memory for all historical records.
                     y=2004+packed//2048
                     m=(packed%2048)//100
-                    d=packed%100
+                    d=(packed%2048)%100
                     day=date(y,m,d)
                     if (minutes>1439
                         or not all(math.isfinite(x) and x>0 for x in (op,hi,lo,cl))

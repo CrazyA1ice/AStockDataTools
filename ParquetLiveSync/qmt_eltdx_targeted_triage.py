@@ -116,8 +116,13 @@ def diagnostic(qmt,tdx,score):
         status="RAW_MINUTE_AMOUNTS_REPRODUCE"
     elif core_amt==0:
         status="SESSION_BOUNDARY_AMOUNT_ONLY"
-    elif evidence.get("candidate_factor_tdx_to_qmt") is not None:
+    elif (evidence.get("candidate_factor_tdx_to_qmt") not in (None,1.)
+          and total_amt>=len(pairs)*.50):
+        # A lone outlier with 239 other matching minutes will usually
+        # produce a strong factor=1 fit. Never turn that into a unit fix.
         status="PERSISTENT_AMOUNT_RATIO_CANDIDATE"
+    elif total_amt<=max(3,len(pairs)*.05):
+        status="SPARSE_INTRADAY_AMOUNT_ANOMALY"
     else:
         status="INTRADAY_AMOUNT_DIFF_UNEXPLAINED"
     return {"triage":status,"aligned_minutes":len(pairs),
@@ -150,12 +155,17 @@ def inspect(root, *, workspace=SOURCE, logger=print):
             or not isinstance(qdoc.get("cases"),list)):
         raise ValueError("Source review queue is not tied to current plan")
     report_file=folder/"latest_forensics_report.json"
+    if report_file.is_symlink() or not report_file.is_file():
+        raise ValueError("Missing or redirected signed original forensic report")
     report=json.loads(report_file.read_bytes())
     total=sum(report.get("review_exclusive_day_classes",{}).values())
     cases=qdoc["cases"]
     if not total or len(cases)!=total:
         raise ValueError("Review queue and forensic summary counts do not agree")
     expected_codes=set(stocks)
+    if Counter(item.get("review_class") for item in cases)!=Counter(
+            report["review_exclusive_day_classes"]):
+        raise ValueError("Source review queue has different class counts")
     unique=set()
     for item in cases:
         if not isinstance(item,dict):

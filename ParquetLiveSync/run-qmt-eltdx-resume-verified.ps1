@@ -51,4 +51,13 @@ if ($summary.stopped_early) {
 } else {
   Write-Host ("QMT_ELTDX_RESUME_ALL_MARKET_CANDIDATES_CHECKED="+$summary.processed_stocks)
 }
+Write-Host "QMT_ELTDX_RESUME_STEP_4_READONLY_DISCREPANCY_CLASSIFICATION"
+try {
+  $ErrorActionPreference = "Continue"
+  & $py -u -B "ParquetLiveSync\qmt_eltdx_forensics.py" --root "D:\stock"
+  $forensicExit = $LASTEXITCODE
+} finally { $ErrorActionPreference = $previousErrorAction }
+if ($forensicExit -ne 0) {
+  throw "Private minute discrepancy forensic audit failed; no production data modified"
+}
 Write-Host "QMT_ELTDX_OFFICIAL_PARQUET_AND_H5_UNCHANGED"

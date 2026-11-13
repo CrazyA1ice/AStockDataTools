@@ -216,13 +216,21 @@ def audit(root,*,limit=0,workspace=ROOT,max_hosts=6,max_pages=16,
                 for host in X.HOSTS[:max_hosts]:
                     try:
                         client=X.connect_host(host,client_factory)
+                        # Newly listed stocks can have no bars at global
+                        # START; the immutable official DAY calendar is the
+                        # only allowed per-stock lower-bound authority.
+                        if not trading_days:
+                            raise ValueError("No certified official stock trading days")
+                        first_official_day=trading_days[0]
                         with client:
-                            rows,meta=X.fetch_history(client,code,
-                                                      X.START,X.END,max_pages)
+                            rows,meta=X.fetch_history(
+                                client,code,first_official_day,X.END,max_pages,
+                                required_dense_days=min(3,len(trading_days)))
                         meta.update({"endpoint":host,
                                      "plan_sha256":plan_hash,
                                      "qmt_sha256":sha,
                                      "qmt_source_type":qmode,
+                                     "official_first_trading_day":str(first_official_day),
                                      "official_day_count":len(trading_days)})
                         # Verify an independent complete day; never invent
                         # 240 missing rows to force a match.

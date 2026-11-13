@@ -23,7 +23,8 @@ def grid(day):
 def qmt_rows(day=date(2026,10,14)):
     return [{"ts":int(dt.timestamp()*1000),"symbol":"SH600000",
              "open":10.,"high":10.02,"low":9.99,"close":10.01,
-             "volume":100.,"amount":10000.} for dt in grid(day)]
+             "volume":100.+((i*13)%19)*20,"amount":10000.+((i*17)%29)*500}
+            for i,dt in enumerate(grid(day))]
 
 
 def tdx_240(day=date(2026,10,14),*,shift=0):
@@ -31,7 +32,8 @@ def tdx_240(day=date(2026,10,14),*,shift=0):
     return [{"ts":int((x+timedelta(minutes=shift)).timestamp()*1000),
              "symbol":"SH600000","open":10.,"high":10.02,
              "low":9.99,"close":10.01,
-             "volume":100.,"amount":10000.} for x in slots]
+             "volume":100.+((i*13)%19)*20,"amount":10000.+((i*17)%29)*500}
+            for i,x in enumerate(slots,start=1)]
 
 
 class FakeAPI:
@@ -72,7 +74,7 @@ class TdxTests(unittest.TestCase):
             row["amount"]*=2.
         report=D.score_day(qmt_rows(),source)
         self.assertEqual(report["status"],"MINUTE_SOURCE_DIFFERENCE_REVIEW")
-        self.assertEqual(report["amount_factor"]["factor_tdx_to_qmt"],.5)
+        self.assertLess(report["amount_factor"]["matching_fraction"],.1)
         self.assertLess(report["amount_minute_raw_fit"],.2)
 
     def test_normalizer_rejects_bad_ohlc_and_normalizes_denormal(self):

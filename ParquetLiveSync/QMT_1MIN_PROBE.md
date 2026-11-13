@@ -83,3 +83,20 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 仅发送终端 QMT_RECOVERY_SUMMARY 和 QMT_RECOVERY_PER_DAY（或最终错误），不要上传原始 QMT 私有行情文件。私有日志保存在 ParquetLiveSync/work/qmt_1min_market/logs/qmt-day-recovery-*.log。
 
 说明：仍是私有来源分段候选，没有正式合并权限；异常日期保留隔离，绝不会凭空补 K 线。北交所未纳入这次沪深源计划。原有分区/数据 SHA 发生变化将直接失败，避免跨版本混用。
+
+
+## 2026-11-13 盘中：昨日 T+1 历史数据稳定性与独立双源交叉验收
+
+已完成 2026-11-12 15:00 以前的昨日数据可以在 11-13 盘中重新取回，但不得把 11-13 盘中尚未收盘的分钟数据称为完整全天。新增 qmt_1m_crosscheck.py 只指定 2026-11-12 这个闭市交易日。
+
+新增流程 run-qmt-t1-crosscheck-and-recovery.ps1 一次完成：
+1. QMT 重读昨日单日 OHLCVA，与已验收的私有完整历史 Parquet 逐分钟对比（T+1 快照是否改变），任何变动都保留新来源证据，不覆盖原始快照。
+2. 腾讯真 1 分钟 K 线独立检查：逐分钟 OHLCV、时间和独立量纲倍率。腾讯只提供最近最多320根且没有 amount；今天越晚昨天越容易被挤出，源日期缺失时标记覆盖不足，不判定为错误。
+3. 东方财富独立 5 分钟 K 线检查：QMT 昨日 241 根 1m → 48 根 5m，对比分时段 OHLCVA 和成交量额因子；同时测试首根是否纳入 09:30 集合竞价的两种规则，所有差异只作诊断。
+4. 继续核验原来成功的5039只来源 SHA，并逐日救援原先隔离的184只。不合格日永不填补假数据，全部数据仅保存私有暂存。
+
+单行 PowerShell：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-t1-crosscheck-and-recovery.ps1 -Day 2026-11-12 -MaxQuarantinedStocks 0; if($LASTEXITCODE -ne 0){throw "QMT T+1 audit or recovery failed"}
+
+保留 QMT_T1_CROSSCHECK_SUMMARY 与 QMT_RECOVERY_SUMMARY；详尽报告和 SHA 在 Git 忽略的 work/qmt_1min_market/independent_crosscheck 与 logs。QMT/Tencent 时间标签或停牌缺失、日内回填造成的正常口径差异必须保留证据。两家公开源并不能替代 QMT 的原生完整 1m 成交额，也不授权正式 Parquet/H5 合并。

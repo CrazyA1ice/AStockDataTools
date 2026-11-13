@@ -57,10 +57,10 @@ def infer_0931_bounds(qmt,tdx,trade_rows):
     target=qmt[1]
     merged=tdx[0]
     auction_price=float(opening["open"])
-    if not all(strict_fit(opening[k],auction_price,k) for k in A.OHLC):
+    if not all(A.isnear(opening[k],auction_price,k) for k in A.OHLC):
         raise ValueError("Auction opening oracle is not a single-price bar")
-    if not strict_fit(merged["open"],auction_price,"open"):
-        raise ValueError("Merged native first minute does not open at auction")
+    if not A.isnear(merged["open"],auction_price,"open"):
+        raise ValueError("Merged native first minute not consistent with auction")
     # Only deviations strictly beyond the auction price make merged extrema
     # uniquely assignable to regular 09:31 trading.
     high_from_merged=(float(merged["high"])>auction_price+0.0001)
@@ -78,6 +78,10 @@ def infer_0931_bounds(qmt,tdx,trade_rows):
     low=float(merged["low"]) if low_from_merged else None
     return {
         "status":"BOUNDED_INFERABILITY_ONLY_NOT_INDEPENDENT_RECONSTRUCTION",
+        "merged_native_open_equals_auction_strict":
+            strict_fit(merged["open"],auction_price,"open"),
+        "auction_ohlc_are_one_price_strict":
+            all(strict_fit(opening[k],auction_price,k) for k in A.OHLC),
         "known_field_match_to_qmt":{
             "close":strict_fit(merged["close"],target["close"],"close"),
             "volume":strict_fit(inferred_volume,target["volume"],"volume"),

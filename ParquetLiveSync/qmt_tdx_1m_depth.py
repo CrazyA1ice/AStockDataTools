@@ -36,7 +36,8 @@ TDX_CATEGORY_1MIN=8  # astock-data-toolkit minute/tdx_download.py (pytdx).
 PAGE=800
 MAX_PAGES=40
 HOSTS=(("180.153.18.170",7709),("180.153.18.172",80),
-       ("202.108.253.139",80),("60.191.117.167",7709))
+       ("202.108.253.139",80),("60.191.117.167",7709),
+       ("111.229.247.189",7709))
 FIELDS=("open","high","low","close","volume","amount")
 OHLC=FIELDS[:4]
 SCALE_CANDIDATES=(.0001,.001,.01,.1,1.,10.,100.,1000.,10000.)
@@ -195,8 +196,10 @@ def score_ratio(pairs,field,*,threshold=.035,abs_tol=1.):
         ranked.append((fit,-statistics.median(diffs),factor))
     ranked.sort(reverse=True)
     best=ranked[0]
-    return {"status":"DIAGNOSTIC_VENDOR_UNIT_RATIO",
-            "pairs":len(positive),"factor_tdx_to_qmt":best[2],
+    stable=best[0]>=.85 and best[0]-ranked[1][0]>=.15
+    return {"status":"CONSISTENT_VENDOR_UNIT_FACTOR_DIAGNOSTIC" if stable
+            else "NO_UNIQUE_STABLE_VENDOR_FACTOR",
+            "pairs":len(positive),"factor_tdx_to_qmt":best[2] if stable else None,
             "matching_fraction":round(best[0],6),
             "runner_up_matching_fraction":round(ranked[1][0],6),
             "median_relative_residual":round(-best[1],8)}
@@ -287,18 +290,26 @@ def private_save_stock(root,code,rows,days,source_info,fingerprint):
         raise ValueError("Private TDX symlink refused")
     target.parent.mkdir(parents=True,exist_ok=True)
     receipt.parent.mkdir(parents=True,exist_ok=True)
-    if receipt.exists() or target.exists():
-        raise ValueError("Existing TDX evidence requires explicit SHA reuse")
+    if receipt.exists():
+        raise ValueError("Existing TDX receipt requires explicit SHA reuse")
     table=pa.Table.from_pylist(rows,schema=P.PRIVATE_SCHEMA)
-    temp=target.with_suffix(".parquet.part")
-    if temp.is_symlink():
-        raise ValueError("TDX tmp symlink")
-    pq.write_table(table,temp,compression="zstd",row_group_size=8192)
-    verify=pq.read_table(temp)
-    if not verify.equals(table,check_metadata=False):
-        raise ValueError("TDX private Parquet roundtrip altered values")
-    del verify
-    R.retry_private_atomic(temp,target)
+    if target.exists():
+        # Atomic private Parquet rename may succeed just before process
+        # interruption; reattach only independently identical data.
+        previous=pq.read_table(target)
+        if not previous.equals(table,check_metadata=False):
+            raise ValueError("Orphan TDX source Parquet differs; refuse overwrite")
+        del previous
+    else:
+        temp=target.with_suffix(".parquet.part")
+        if temp.is_symlink():
+            raise ValueError("TDX tmp symlink")
+        pq.write_table(table,temp,compression="zstd",row_group_size=8192)
+        verify=pq.read_table(temp)
+        if not verify.equals(table,check_metadata=False):
+            raise ValueError("TDX private Parquet roundtrip altered values")
+        del verify
+        R.retry_private_atomic(temp,target)
     digest=L.hash_file(target)
     receipt_data={"format":FORMAT,"symbol":code,"rows":len(rows),
                   "sha256":digest,"fingerprint":fingerprint,

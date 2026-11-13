@@ -42,9 +42,54 @@ class Tests(unittest.TestCase):
         day,q,t=sample()
         t[0]["amount"]*=2
         d=M.diagnostic(q,t,pilot(q,t))
-        self.assertEqual(d["model"],"MERGE_PRICES_ONLY_VOLUME_AMOUNT_DISAGREE")
+        self.assertEqual(d["model"],"MERGE_OHLC_VOLUME_MATCH_AMOUNT_DIFFERENCE")
         self.assertEqual(d["merged_failed_fields"],["amount"])
         self.assertFalse(d["regular_0931_OHLC_recovery_proven"])
+
+    def test_100x_wire_volume_only_matches_after_diagnostic_scale(self):
+        day,q,t=sample()
+        for bar in t:
+            bar["volume"]*=100.
+        result=M.diagnostic(q,t,pilot(q,t))
+        self.assertEqual(result["merged_failed_fields"],["volume"])
+        self.assertEqual(result["remaining_239_field_fit_counts"]["volume"],0)
+        self.assertEqual(result["remaining_239_field_fit_counts"]["amount"],239)
+        proof=result["volume_unit_evidence"]
+        self.assertEqual(proof["tdx_raw_volume_to_qmt_candidate_factor"],.01)
+        self.assertEqual(proof["candidate_fit_positive_counts"]["0.01"],240)
+        self.assertEqual(result["volume_after_candidate_scale_all_240_fit"],240)
+        self.assertEqual(result["model"],
+            "OPENING_MERGE_MATCH_AFTER_RESEARCH_ONLY_VOLUME_UNIT_ALIGNMENT")
+        self.assertFalse(proof["volume_scale_applied_to_source"])
+        self.assertFalse(result["production_merge_authorized"])
+        self.assertFalse(result["regular_0931_OHLC_recovery_proven"])
+
+    def test_zero_minutes_do_not_masquerade_as_100x_validation(self):
+        day,q,t=sample()
+        for bar in t:
+            bar["volume"]*=100.
+        q[3]["volume"]=0.
+        t[2]["volume"]=0.
+        evidence=M.diagnostic(q,t,pilot(q,t))["volume_unit_evidence"]
+        self.assertEqual(evidence["both_zero_minute_pairs"],1)
+        self.assertEqual(evidence["positive_minute_pairs"],239)
+        self.assertEqual(evidence["candidate_fit_positive_counts"]["0.01"],239)
+        self.assertEqual(evidence["tdx_raw_volume_to_qmt_candidate_factor"],.01)
+        # One-sided zeroes indicate a genuine source conflict, not unit scaling.
+        q[3]["volume"]=200.
+        result=M.diagnostic(q,t,pilot(q,t))
+        self.assertEqual(result["volume_unit_evidence"]["one_sided_zero_minute_pairs"],1)
+        self.assertIsNone(result["volume_unit_evidence"][
+            "tdx_raw_volume_to_qmt_candidate_factor"])
+        self.assertNotEqual(result["model"],
+            "OPENING_MERGE_MATCH_AFTER_RESEARCH_ONLY_VOLUME_UNIT_ALIGNMENT")
+
+    def test_small_sample_cannot_prove_unit(self):
+        left=[{"volume":100.} for _ in range(4)]
+        right=[{"volume":10000.} for _ in range(4)]
+        evidence=M.volume_factor_evidence(left,right)
+        self.assertIsNone(evidence["tdx_raw_volume_to_qmt_candidate_factor"])
+        self.assertFalse(evidence["candidate_identified_for_research"])
 
     def test_price_only_mismatch_is_not_volume_amount_failure(self):
         day,q,t=sample()

@@ -286,3 +286,21 @@ Windows 用户按以下**单行**命令试点（本次仅新查询三只股票�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_tick_alignment.py -q; if($LASTEXITCODE -ne 0){throw "Trade label offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_tick_alignment.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Trade label offline SHA crosscheck failed"}
 
 请回传 ELTDX_OPENING_LABEL_STOCK 三行与 ELTDX_OPENING_LABEL_SUMMARY 一行，不要上传私有逐笔/原始行情数据。
+
+
+## 2026-11-13 第二轮 0x0fc6 双分钟对齐与成交额精度/首分钟可逆性
+
+用户 SHA 原证据 (2026-10-14) 的 3 股输出证明：每股历史真实成交的 09:30 和 09:31 组**各 20 条记录**，时间字段只有分钟；成交记录的 09:30 分组与 QMT 09:31 的成交量严格一致，09:31 分组与 QMT 09:32 的成交量严格一致；上述两组的派生成交额在旧 3.5% 容差内均一致，然而三股的 amount 在更严格的 1 元/1ppm 级阈值下都不一致。旧报告字段 status=NEITHER_MINUTE_LABEL_MODEL_STRICTLY_FITS 是因同时要求严格成交量 + 严格成交额的 AND 门槛造成，**不能据此否定历史成交明细时间比 QMT 分钟 K 线早一标签的强证据**。此时在相同分钟标签下成交量不吻合；09:30→09:31、09:31→09:32 很有必要独立审计。真实成交额是由协议每条成交价格×手数×100 估算的，非另一份严格官方总成交额记录。
+
+下一阶段在原 qmt_eltdx_opening_tick_alignment.py 就地增加：
+- 三类强度：既有宽松成交量+额匹配、已有严格成交量+额匹配，以及新增**严格成交量+容差成交额**匹配，独立判断起始标签 +1 与同名标签，避免严格金额失败造成假阴性；
+- 每个分桶输出估算成交额偏差的**基点**（basis points）与绝对误差区间（<=1、<=10、<=100、<=1000、>1000 元），私有价格成交值不出终端；
+- 首分钟反问题的可确定边界：仅使用已有 QMT 09:30 **作为暂时竞价价、量、额对照基准**（旧 09:25 正式撮合试验原始价量额没有持久保存），研究通达信 09:31 首根 **close**、减去独立 09:30 竞价成交的 **volume/amount** 在原 QMT 09:31 中的严格通过情况；只有通达信合并 K 的 high **严格高于**竞价价格，才能断言该 high 是真实连续交易产生；只有 low **严格低于**竞价价格，才能断言该 low 是真实连续交易产生。若 high==竞价价或 low==竞价价，不能由合并 K 唯一反推该极值；真实 09:31 open 需要完整且可靠时间排序的实际交易。
+- 另外标记 09:30 成交记录按源返回正序和反序的首价是否各自匹配 QMT 09:31 open，但不认证源成交记录属于时间顺序，也不认证每分钟 20 条代表完整逐笔。
+- **本报告使用 QMT 09:30 作临时 oracle，因此只验证数学可逆性，不是脱离 QMT 的独立 241 根数据恢复成果**；真正来源独立的程序以后须重新从 eltdx 0x0fc6 获取正式 09:25 价量额并保存其来源，且对分钟开高低收建立时间顺序/极值完整性证明。在这之前不转换/写入正式 Parquet/H5，仍 production_merge_authorized=false。
+
+零行情联网、零正式数据库修改的单行命令：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_tick_alignment.py -q; if($LASTEXITCODE -ne 0){throw "Opening inference offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_tick_alignment.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Opening inference local SHA audit failed"}
+
+请回传三条 ELTDX_OPENING_LABEL_STOCK 与一条 ELTDX_OPENING_LABEL_SUMMARY。特别检查 status 是否为 NEXT_MINUTE_LABEL_SUPPORTED_BY_EXACT_VOLUME_AND_TOLERANT_AMOUNT，及 inferred_0931_bounds.known_field_match_to_qmt / high_uniquely_determined_by_merged_extreme / low_uniquely_determined_by_merged_extreme / trade_0930_first_as_returned_open_match。以上仍仅能为三只 SHA 源历史样本提供研究结果。

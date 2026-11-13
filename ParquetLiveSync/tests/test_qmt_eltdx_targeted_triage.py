@@ -119,7 +119,7 @@ class Tests(unittest.TestCase):
                 result=T.inspect(Path(tmp),workspace=private,logger=lambda _:None)
             self.assertEqual(result["targeted_review_days"],1)
             self.assertEqual(result["raw_amount_bad_minutes"],1)
-            self.assertEqual(result["diagnostic_classes"]["INTRADAY_AMOUNT_DIFF_UNEXPLAINED"],1)
+            self.assertEqual(result["diagnostic_classes"]["SPARSE_INTRADAY_AMOUNT_ANOMALY"],1)
             out=json.loads((private/"latest_targeted_triage.private.json").read_bytes())
             self.assertFalse(out["summary"]["production_merge_authorized"])
             self.assertEqual(len(out["cases"]),1)

@@ -96,10 +96,12 @@ def page_rows(series, code):
     return sorted(rows, key=lambda x: x["ts"])
 
 
-def fetch_history(client, code, start=START, end=END, max_pages=16):
+def fetch_history(client, code, start=START, end=END, max_pages=16, required_dense_days=3):
     """Page until older than requested start, not until server history exhausted."""
     if start > end:
         raise ValueError("invalid historical date interval")
+    if not 1 <= required_dense_days <= 3:
+        raise ValueError("Invalid minimum completed trading-day threshold")
     got = {}
     pages = 0
     earliest = None
@@ -144,12 +146,13 @@ def fetch_history(client, code, start=START, end=END, max_pages=16):
     # At least the 3 existing anchors should have several complete market days.
     healthy=sum(n>=200 for n in byday.values())
     complete_days=sum(n>=235 for n in byday.values())
-    if healthy < 3:
-        raise ValueError("eltdx returned fewer than three dense trading days")
+    if healthy < required_dense_days:
+        raise ValueError(f"eltdx returned fewer than {required_dense_days} dense trading days")
     return trimmed, {"host_pages":pages,"page_lengths":page_lengths,
                      "source_earliest_day":str(earliest),"source_latest_day":str(latest),
                      "target_day_counts":dict(sorted(byday.items())),
-                     "dense_days":healthy,"complete_minute_days":complete_days,
+                     "dense_days":healthy,"required_dense_days":required_dense_days,
+                     "complete_minute_days":complete_days,
                      "complete_22_day_window":complete_days==22,
                      "target_rows":len(trimmed),
                      "bar_time":"start","adjust":"none",

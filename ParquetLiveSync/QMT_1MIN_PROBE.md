@@ -137,3 +137,15 @@ eltdx/docs/methods/7709-K线周期线.md 记录：1m period 原生 7/1，all_pag
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-tdx-deep-minute-crosscheck.ps1 -MaxStocks 0 -MaxRecoveryStocks 0; if($LASTEXITCODE -ne 0){throw "QMT-TDX source audit failed"}
 
 反馈简要：`TDX_NETWORK_PREFLIGHT_PASS` / `TDX_NETWORK_PREFLIGHT_FAILED`、`QMT_RECOVERY_SUMMARY` 和 `QMT_TDX_DEEP_CROSSCHECK_SUMMARY`。本机 Clash/TUN 对 TCP 7709 的透明代理可能影响连接，尚未通过返回日志证实是其根因；必须根据实际报错和通过的 IP 制定具体 Clash `IP-CIDR/DIRECT`，不能盲目将所有 Python 流量设置为 DIRECT。
+
+## 2026-11-13 verified eltdx 1min OHLCVA (real online test)
+
+An actual GitHub Actions Ubuntu runner installed the prebuilt eltdx 3.3.5 wheel. Its native Rust 7709 bars.get(period="1m", count=800, bar_time="start") interface successfully fetched 5,280 unadjusted OHLCVA 1m records for SH600000 from host 116.205.183.150:7709, spanning all 22 trading days of 2026-10-14..2026-11-12 (240 per day). The source SHA was 85ae44e1acd96cc9adf8d50f46b184072d258307bd067d532bdede6c2b34ede6. Evidence: https://github.com/CrazyA1ice/AStockDataTools/actions/runs/43355867675. CI did not have access to the user's QMT private files, and therefore did not certify per-minute QMT identity.
+
+The new qmt_eltdx_1m_probe.py and run-qmt-eltdx-real-1m.ps1 perform the local equivalent: install eltdx binary wheel if missing, execute synthetic offline tests, download exact-window real 1m OHLCVA for SH600000 / SZ000001 / SH688001, compare each source minute against the SHA-verified QMT private snapshot, and save only new private files under the gitignored work/qmt_1min_market/eltdx_1m_probe directory. The script explicitly distinguishes 22 complete minute days from merely partial online responses and does not authorize production merge. Its Windows PowerShell Start-Process execution also avoids the earlier stderr NativeCommandError pipeline abort.
+
+One-line command:
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-qmt-eltdx-real-1m.ps1 -MaxHosts 6 -MaxPages 16; if($LASTEXITCODE -ne 0){throw "ELTDX pilot setup failed"}
+
+If the user workstation still cannot contact 7709, preserve their original Tongdaxin after-hours 1-minute .lc1 files (often under vipdoc/sh/minline and vipdoc/sz/minline) for a fully offline source-by-source minute validation. Do not confuse .lc5 five-minute or .day daily files with .lc1. eltdx license is noncommercial research only; do not use as a commercial source or trading automation service.

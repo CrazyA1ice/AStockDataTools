@@ -258,3 +258,18 @@ eltdx 的 client.auctions.series(code,date) / 0x056a 返回竞价过程的虚拟
 一条离线 PowerShell 命令（不会重新下载行情，使用原先 2026-10-14 的原 SHA 证据，需回传三条诊断和汇总中的 volume_candidate_factors_raw_tdx_to_qmt）：
 
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Volume scale tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_postmortem.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Volume scale diagnosis failed"}
+
+
+## 2026-11-13 三股 240↔241 首分钟六项数据恢复成功后的下一阶段：历史实际成交验证
+
+用户实际实测 2026-10-14 的 000001.SZ、600000.SH、688001.SH 3/3：QMT 09:30 竞价对应 eltdx 09:25 正式撮合；QMT 09:30+09:31 两根聚合后的 OHLC、amount 与 eltdx 09:31 首根吻合；TDX 原始 volume_wire_value 对应 QMT volume 的固定倍率为 0.01，所有三股的 240/240 每日分钟线 volume 归一化后吻合，后续 239 根的 OHLC 和 amount 也全数吻合。正成交量证据每股 238~239 根、双方同时零成交 1~2 根、单侧零成交 0。**此处 720/720 指三只股票的 240 根聚合对账，并非已经反向独立恢复 723 根 QMT 原始分钟线。**
+
+必要的下一阶段：eltdx 的 0x0fc6 历史成交明细只具备分钟级时间戳，部分成交为合并记录，不是有秒级排序保证的 L2 逐笔成交。因此即使能够从 09:25 正式成交构造真实 09:30 竞价 bar，也不能仅由通达信 09:31 的合并 OHLC 唯一确定 QMT 09:31 的 open/high/low。新增 qmt_eltdx_opening_ticks_241_probe.py，在仅限上述三股和 2026-10-14 日期范围内，复用原 09:25 认证报告、QMT/TDX 的既有 SHA 绑定私有 241/240 快照及 100x 量纲核对。随后只查询三股该日的历史成交明细 (client.trades.all_history / 0x0fc6)；严格排除 event_kind=auction_snapshot 的虚拟竞价行情和 09:25 正式撮合（后者另做单独竞价认证），检查 09:30、09:31、两分钟合并三种交易分组的价格开高低收（同时研究原始记录顺序或反向记录顺序）、手数及派生金额是否拟合 QMT 的独立 09:31 记录。
+
+这是一项**能否在缺少 QMT 09:31 时从通达信真实成交恢复的可行性检验**。一个股票样本即便六字段拟合，也只报告诊断拟合，不自动认证真实时序、完整逐笔撮合、无损恢复，更不会写正式 AllCycleAStockData/H5。源行情及逐笔仅在私有 work 目录保存 SHA 证据，不对公开仓库上传。
+
+Windows 用户按以下**单行**命令试点（本次仅新查询三只股票的 2026-10-14 历史成交明细，已经缓存的 240/241 1min 不重下；试点失败按股票报告并保持原市场文件不变）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_ticks_241_probe.py -q; if($LASTEXITCODE -ne 0){throw "Tick-reconstruction offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_ticks_241_probe.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Historical trade tick pilot failed"}
+
+下一次只需反馈 ELTDX_0931_TRADE_PILOT_STOCK 3 行和 ELTDX_0931_TRADE_PILOT_SUMMARY 1 行。核心问题是 09:31 OHLC 是否能从历史实际成交而不是 QMT 参考来源独立推导。此试点无批量生产合并权限。

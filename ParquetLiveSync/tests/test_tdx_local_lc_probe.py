@@ -123,6 +123,10 @@ class Tests(unittest.TestCase):
                              {"1min":0,"5min":1})
             self.assertTrue(summary["no_network_requests"])
             self.assertTrue(summary["no_output_files_written"])
+            self.assertEqual(summary["market_directory_inventory"]["sh_5min"],
+                             {"status":"DIRECTORY_PRESENT","file_count":1})
+            self.assertEqual(summary["market_directory_inventory"]["sh_1min"],
+                             {"status":"DIRECTORY_NOT_FOUND","file_count":0})
             parsed=[json.loads(line.split("=",1)[1]) for line in logs if
                     line.startswith("TDX_LOCAL_BAR_FILE=")]
             self.assertEqual(len(parsed),8)

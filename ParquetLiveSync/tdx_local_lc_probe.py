@@ -192,6 +192,26 @@ def scan_file(path,*,period,days=DEFAULT_DAYS):
             "source_values_modified":False}
 
 
+def directory_inventory(vipdoc):
+    """Count local file availability without opening all stock files."""
+    root=Path(vipdoc)
+    results={}
+    for market in ("sh","sz","bj"):
+        for period in (1,5):
+            parent=root/market/("minline" if period==1 else "fzline")
+            key=f"{market}_{period}min"
+            if parent.is_symlink():
+                results[key]={"status":"REJECT_SYMLINK","file_count":None}
+            elif not parent.is_dir():
+                results[key]={"status":"DIRECTORY_NOT_FOUND","file_count":0}
+            else:
+                count=sum(1 for p in parent.iterdir()
+                          if p.is_file() and not p.is_symlink()
+                          and p.suffix.lower()==f".lc{period}")
+                results[key]={"status":"DIRECTORY_PRESENT","file_count":count}
+    return results
+
+
 def run(*,vipdoc,codes=DEFAULT_CODES,days=DEFAULT_DAYS,
         include_index=True,logger=print):
     root=Path(vipdoc)
@@ -229,6 +249,7 @@ def run(*,vipdoc,codes=DEFAULT_CODES,days=DEFAULT_DAYS,
             "1min":count[(1,"present")],
             "5min":count[(5,"present")]},
         "statuses":dict(state),
+        "market_directory_inventory":directory_inventory(root),
         "local_1min_needed_for_independent_0931_high":True,
         "no_network_requests":True,
         "no_output_files_written":True,

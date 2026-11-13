@@ -143,12 +143,15 @@ def fetch_history(client, code, start=START, end=END, max_pages=16):
     byday=Counter(datetime.fromtimestamp(x["ts"]/1000,P.CN).date().isoformat() for x in trimmed)
     # At least the 3 existing anchors should have several complete market days.
     healthy=sum(n>=200 for n in byday.values())
+    complete_days=sum(n>=235 for n in byday.values())
     if healthy < 3:
         raise ValueError("eltdx returned fewer than three dense trading days")
     return trimmed, {"host_pages":pages,"page_lengths":page_lengths,
                      "source_earliest_day":str(earliest),"source_latest_day":str(latest),
                      "target_day_counts":dict(sorted(byday.items())),
-                     "dense_days":healthy,"target_rows":len(trimmed),
+                     "dense_days":healthy,"complete_minute_days":complete_days,
+                     "complete_22_day_window":complete_days==22,
+                     "target_rows":len(trimmed),
                      "bar_time":"start","adjust":"none",
                      "volume_source_field":"volume_wire_value",
                      "source":"eltdx Rust 7709 real 1m Kline OHLCVA"}
@@ -217,6 +220,33 @@ def connect_host(host, factory=None, timeout=3.5):
                      heartbeat_interval=None,probe_hosts=False)
 
 
+def verified_cache(folder, code, stage, remote_only):
+    """Restart from an exact SHA-bound private eltdx snapshot, never re-download."""
+    folder=Path(folder)
+    receipt=folder/"receipts"/(code.replace(".","_")+".json")
+    path=folder/"source_parquet"/(code.replace(".","_")+".parquet")
+    if not receipt.exists():
+        return None
+    if receipt.is_symlink() or path.is_symlink() or not path.is_file():
+        raise ValueError("eltdx cached evidence redirected or missing")
+    evidence=json.loads(receipt.read_bytes())
+    if (evidence.get("format")!=FORMAT or evidence.get("stock")!=code
+            or evidence.get("source_sha256")!=L.hash_file(path)):
+        raise ValueError("eltdx existing private evidence failed SHA/identity check")
+    pf=pq.ParquetFile(path)
+    try:
+        if pf.metadata.num_rows!=evidence.get("rows") or pf.schema_arrow!=P.PRIVATE_SCHEMA:
+            raise ValueError("eltdx cached Parquet schema/row count changed")
+    finally:
+        pf.close()
+    previous=evidence.get("meta",{}).get("qmt_sha256")
+    if not remote_only:
+        _,current=read_qmt_source(stage,code)
+        if current!=previous:
+            raise ValueError("QMT source SHA changed since eltdx crosscheck; avoid stale reuse")
+    return evidence
+
+
 def probe(start=START,end=END,symbols=ANCHORS,hosts=HOSTS,*,max_hosts=6,
           max_pages=16,remote_only=False,work=WORK,client_factory=None,log=print):
     if end>=datetime.now(P.CN).date():
@@ -231,6 +261,31 @@ def probe(start=START,end=END,symbols=ANCHORS,hosts=HOSTS,*,max_hosts=6,
         code = D.P.normalize_code(code)
         result={"status":"SOURCE_UNAVAILABLE","attempts":[]}
         log("ELTDX_SOURCE_START "+code)
+        try:
+            previous=verified_cache(folder,code,stage,remote_only)
+            if previous is not None:
+                meta=previous["meta"]
+                result={"status":"REAL_1MIN_AVAILABLE_AND_PRIVATE_STAGED",
+                        "cached":True,"source_bars":previous["rows"],
+                        "source_dense_days":meta["dense_days"],
+                        "complete_22_day_window":meta.get("complete_22_day_window",False),
+                        "endpoint":meta["endpoint"],
+                        "source_sha256":previous["source_sha256"],
+                        "comparison_days":len(previous["day_comparison"]),
+                        "matching_minute_days":sum(
+                            item.get("status")=="MATCHED_1MIN_OHLCVA"
+                            for item in previous["day_comparison"].values()),
+                        "qmt_comparison_available":bool(meta.get("qmt_sha256"))}
+                state["stocks"][code]=result
+                log("ELTDX_SOURCE_CACHED "+json.dumps({"stock":code,**result},ensure_ascii=False))
+                continue
+        except Exception as exc:
+            # A corrupted snapshot must not be silently replaced.
+            result["status"]="PRIVATE_CACHE_REJECTED"
+            result["attempts"].append(type(exc).__name__+": "+str(exc)[:180])
+            state["stocks"][code]=result
+            log("ELTDX_PRIVATE_CACHE_REJECT "+code+" "+result["attempts"][-1])
+            continue
         for host in hosts[:max_hosts]:
             try:
                 client=connect_host(host,client_factory)
@@ -250,6 +305,7 @@ def probe(start=START,end=END,symbols=ANCHORS,hosts=HOSTS,*,max_hosts=6,
                 stats=Counter(x["status"] for x in comparison.values() if isinstance(x,dict) and "status" in x)
                 result={"status":"REAL_1MIN_AVAILABLE_AND_PRIVATE_STAGED",
                         "source_bars":len(rows),"source_dense_days":meta["dense_days"],
+                        "complete_22_day_window":meta["complete_22_day_window"],
                         "endpoint":host,"source_sha256":saved["source_sha256"],
                         "comparison_days":len(comparison),
                         "matching_minute_days":stats.get("MATCHED_1MIN_OHLCVA",0),
@@ -265,7 +321,9 @@ def probe(start=START,end=END,symbols=ANCHORS,hosts=HOSTS,*,max_hosts=6,
         state["stocks"][code]=result
     good=sum(x["status"]=="REAL_1MIN_AVAILABLE_AND_PRIVATE_STAGED"
              for x in state["stocks"].values())
+    full=sum(x.get("complete_22_day_window",False) for x in state["stocks"].values())
     state["summary"]={"requested":len(symbols),"real_minute_success":good,
+                      "complete_22_day_stocks":full,
                       "failed":len(symbols)-good,
                       "qmt_minute_compared_stocks":sum(x.get("qmt_comparison_available",False) for x in state["stocks"].values()),
                       "market_files_modified":False}
@@ -290,7 +348,7 @@ def main(argv=None):
         parser.error("Only certified 2026-10-14..2026-11-12 sample window and bounded requests supported")
     result=probe(args.start,args.end,symbols,max_hosts=args.max_hosts,
                  max_pages=args.max_pages,remote_only=args.remote_only)
-    return 0 if result["summary"]["real_minute_success"]>0 else 2
+    return 0 if result["summary"]["complete_22_day_stocks"]>0 else 2
 
 
 if __name__=="__main__":

@@ -41,6 +41,43 @@ class ForensicTests(unittest.TestCase):
         short=F.independently_compare_tdx_day_to_official(frames[:239],reference)
         self.assertEqual(short["status"],"TDX_DAY_NOT_240_BARS")
 
+    def test_day_reference_provenance_flags_same_vendor_tdx_overlay(self):
+        day=date(2026,10,14)
+        plan={"day_file_sha256":{"physical":{"2026-10.parquet":"physical-sha"},
+                                 "tdx_overlay":{"2026-10-14":"tdx-sha"}}}
+        src=F.reference_source(day,plan)
+        self.assertEqual(src,"TDX_DAY_OVERLAY_SAME_VENDOR_FAMILY")
+        good={"status":"TDX_240_VS_OFFICIAL_DAY_OHLC_DIAGNOSTIC_ONLY",
+              "all_four_fit":True}
+        self.assertEqual(
+            F.classify_gap_candidate(good,src),
+            "TDX_FAMILY_SELF_CONSISTENT_NOT_INDEPENDENT")
+        self.assertEqual(
+            F.classify_gap_candidate(good,"PHYSICAL_PARQUET_DAY_PROVIDER_UNVERIFIED"),
+            "OHLC_CONSISTENT_DAY_PROVIDER_UNVERIFIED")
+        self.assertEqual(
+            F.classify_gap_candidate({**good,"all_four_fit":False},src),
+            "REJECT_DAY_OHLC_CONFLICT")
+        self.assertEqual(
+            F.classify_gap_candidate({"status":"TDX_DAY_NOT_240_BARS"},src),
+            "REJECT_INCOMPLETE_INDEPENDENT_MINUTES")
+
+    def test_exclusive_review_classes_keep_amount_and_price_gates_separate(self):
+        base={"status":"MINUTE_SOURCE_DIFFERENCE_REVIEW",
+              "qmt_count":241,"tdx_count":240,"offset_ambiguous":False,
+              "ohlc_all_fields_fit":.99,"amount_minute_raw_fit":.60,
+              "amount_factor":{"pairs":200,"matching_fraction":.55},
+              "volume_factor":{"pairs":200,"matching_fraction":.99}}
+        self.assertEqual(F.categorize_review(base),"PRICES_ALIGN_AMOUNT_NEEDS_REVIEW")
+        self.assertEqual(F.categorize_review({**base,"ohlc_all_fields_fit":.7}),
+                         "PRICE_DISAGREEMENT_NEEDS_REVIEW")
+        self.assertEqual(F.categorize_review({**base,"offset_ambiguous":True}),
+                         "TIME_OFFSET_NEEDS_REVIEW")
+        self.assertEqual(F.categorize_review({**base,"amount_factor":{"pairs":2}}),
+                         "THIN_TRADING_UNIT_FACTOR_UNPROVEN")
+        with self.assertRaisesRegex(ValueError,"Only discrepancy"):
+            F.categorize_review({"status":"MATCHED_1MIN_OHLCVA"})
+
     def test_gap_receipt_sha_and_day_ohlc_only_for_official_source(self):
         code="600000.SH"
         day=date(2026,10,14)
@@ -72,6 +109,13 @@ class ForensicTests(unittest.TestCase):
             self.assertEqual(result["tdx_gap_days_all_four_official_day_ohlc_fit"],1)
             self.assertFalse(result["production_merge_authorized"])
             self.assertTrue((path/"latest_forensics_report.json").exists())
+            gap_json=json.loads((path/"latest_gap_queue.private.json").read_bytes())
+            self.assertEqual(len(gap_json["cases"]),1)
+            self.assertTrue(gap_json["cases"][0]["auto_fill_prohibited"])
+            self.assertEqual(gap_json["cases"][0]["review_disposition"],
+                             "DAY_SOURCE_UNKNOWN_FURTHER_PROOF_REQUIRED")
+            self.assertEqual(json.loads(
+                (path/"latest_review_queue.private.json").read_bytes())["cases"],[])
             with (path/"source_parquet"/"600000_SH.parquet").open("ab") as out:
                 out.write(b"ALTERED")
             with patch.object(F.P,"BASE",Path(tmp)),\

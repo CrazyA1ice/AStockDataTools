@@ -356,3 +356,18 @@ PowerShell 单行命令：先更新代码+五项离线测试，然后仅使用�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_241_holdout_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "241 held-out SHA postmortem unit tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_holdout_postmortem.py; if($LASTEXITCODE -ne 0){throw "241 held-out SHA replay failed"}
 
 回传 ELTDX_241_HOLDOUT_POSTMORTEM_CASE 的 6 行和 ELTDX_241_HOLDOUT_POSTMORTEM_SUMMARY 的 1 行。下一阶段只根据真实缺口决定能否获得更权威的秒级成交排序/权威金额来源；绝不能把 241 已恢复给所有股票当作结论。
+
+
+## 2026-11-13 六股票日 SHA 复核：缺口是 688001.SH 的 2026-10-16 09:31 high，观测极值不得直接补库
+
+用户本机 2026-10-15/16 六股票日的 qmt_eltdx_241_holdout_postmortem.py SHA 重算通过，5 项离线测试 OK：
+- 6/6 原通达信 09:31 合并首根成交额均能与 QMT 开盘两根成交额之和在严格阈值内对齐，差额均在 10 元以内。但拆成两根后，09:31 独立成交额严格不匹配 4/6。eltdx.models.trade.TradeTick.trade_amount_yuan 只是 self.price * self.volume * 100.0，非交易所独立提供的权威开盘成交额。此为源端金额量化问题，不能用宽容差冒充精确恢复。
+- 688001.SH 2026-10-16 缺失的是 09:31 的 high；合并首根最高价等于正式竞价价，QMT 09:31 最高价与竞价价不同，且记录中 20 条 09:30 实际成交的观测最高价恰好严格吻合 QMT 09:31 最高价。这是来源独立的观测候选，但不是可以严格认证的真实完整极值。
+- **有真实反例：2026-10-14 的 600000.SH 和 688001.SH**，历史成交 09:30 组与 QMT 09:31 的成交量严格匹配、成交额容差匹配，但观测组 high 未与 QMT 对应 high 匹配。即使所有成交量完全覆盖，20 条历史成交记录也不能保证完整价格极值。因此绝不允许因 2026-10-16 688001.SH 的观测 high 恰好匹配 QMT 就自动填补正式 Parquet。
+- eltdx.api.trades.TradeApi._all() 逆序拼接页面但保留页内 wire 顺序；TradeTick.absolute_index 由页偏移+行偏移生成；只有分钟精度的 0x0fc6 记录仍不能独立证明严格秒级成交先后。因此首条价 9/9 样本与 QMT 09:31 开盘价一致，仍属高价值候选，非真实逐笔时序认证。
+- 代码新增来源独立观测极值私有候选、成交量覆盖旗标、相对竞价价基点间隔、观测最高/最低价与 QMT 是否吻合的仅验证布尔值。无论是否吻合都保持真实候选中不确定极值为 null（source_only_production_field_stays_null=true，production_merge_authorized=false）。原始价格值只进 Git 忽略私有报告，不进入打印日志。还加入测试：成交量完全匹配但交易聚合价丢失原始极值的合成反例。
+- 安全结论：不批量写入正式 Parquet/H5；需要在这个真实异常日验证能够认证 09:31 高低价的第二来源，或权威完整逐笔撮合极值；精确金额需比 price×lots×100 更可靠的正式竞价金额来源。不要用 QMT 验收值填充候选。
+
+单行 PowerShell（更新 Git 代码后其余部分全离线）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_241_holdout_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Historical extremes offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_holdout_postmortem.py; if($LASTEXITCODE -ne 0){throw "Extrema forensic SHA replay failed"}

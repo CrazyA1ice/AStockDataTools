@@ -2,8 +2,11 @@
 from datetime import date,datetime
 import importlib.util
 from pathlib import Path
+import json
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE=Path(__file__).resolve().parents[1]
 if str(HERE) not in sys.path:
@@ -77,6 +80,49 @@ class Tests(unittest.TestCase):
         self.assertEqual(result["aligned_minutes"],0)
         with self.assertRaisesRegex(ValueError,"Source SHA"):
             T.diagnostic(q,t,score(n=99))
+
+    def test_offline_end_to_end_one_sha_pinned_discrepancy_case(self):
+        day=date(2026,10,14)
+        code="600000.SH"
+        plan={"calibration_sha256":"synthetic-calibration-pin"}
+        plan_sha=T.P.sha_bytes(T.P.canonical(plan))
+        q,t=stock_rows()
+        t[12]["amount"]*=2
+        stored={**score(),"amount_factor":{"pairs":220,"matching_fraction":.5},
+                "volume_factor":{"pairs":220,"matching_fraction":1.}}
+        case_class=T.F.categorize_review(stored)
+        with tempfile.TemporaryDirectory() as tmp:
+            private=Path(tmp)/"private"
+            private.mkdir()
+            item={"stock":code,"day":day.isoformat(),
+                  "review_class":case_class,"production_merge_authorized":False}
+            T.P.safe_save(private/"latest_review_queue.private.json",
+                T.P.canonical({"format":T.F.FORMAT,"plan_sha256":plan_sha,
+                    "cases":[item],"production_merge_authorized":False,
+                    "market_files_modified":False}))
+            T.P.safe_save(private/"latest_forensics_report.json",
+                T.P.canonical({"review_exclusive_day_classes":{case_class:1}}))
+            evidence={day.isoformat():{"result":stored,
+                         "minute_diagnostics":{"field_mismatch_counts":{
+                             "amount_raw":1}}}}
+            T.X.save_private(private,code,t,{"plan_sha256":plan_sha,
+                "qmt_sha256":"synthetic-QMT-SHA"},evidence)
+            official={day:{code:{"open":10.}}}
+            with patch.object(T.P,"BASE",Path(tmp)),\
+                 patch.object(T.R,"load_bound_context",
+                    return_value=(official,[code],plan,{})),\
+                 patch.object(T.R,"validate_original",
+                    return_value={code:{"traded_days":[str(day)]}}),\
+                 patch.object(T.D,"source_original",
+                    return_value=({"sha256":"synthetic-QMT-SHA"},q,
+                                  "synthetic-QMT-SHA")):
+                result=T.inspect(Path(tmp),workspace=private,logger=lambda _:None)
+            self.assertEqual(result["targeted_review_days"],1)
+            self.assertEqual(result["raw_amount_bad_minutes"],1)
+            self.assertEqual(result["diagnostic_classes"]["INTRADAY_AMOUNT_DIFF_UNEXPLAINED"],1)
+            out=json.loads((private/"latest_targeted_triage.private.json").read_bytes())
+            self.assertFalse(out["summary"]["production_merge_authorized"])
+            self.assertEqual(len(out["cases"]),1)
 
     def test_insufficient_positive_minutes_cannot_infer_amount_factor(self):
         q,t=stock_rows()

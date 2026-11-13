@@ -273,3 +273,16 @@ Windows 用户按以下**单行**命令试点（本次仅新查询三只股票�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_ticks_241_probe.py -q; if($LASTEXITCODE -ne 0){throw "Tick-reconstruction offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_ticks_241_probe.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Historical trade tick pilot failed"}
 
 下一次只需反馈 ELTDX_0931_TRADE_PILOT_STOCK 3 行和 ELTDX_0931_TRADE_PILOT_SUMMARY 1 行。核心问题是 09:31 OHLC 是否能从历史实际成交而不是 QMT 参考来源独立推导。此试点无批量生产合并权限。
+
+
+## 2026-11-13 历史成交实测：不能拿分钟标签 09:30 的成交强行当成 QMT 09:30
+
+2026-10-14 真实三股 eltdx 0x0fc6 采样：三股正式 09:25 撮合仍 3/3 符合 QMT 的单独 09:30 竞价 bar。但历史实际成交明细的 09:30 和 09:31 标签各有 **20 条**，而 000001.SZ 的 09:30 分组却与 **QMT 09:31 bar** 在原试验容差下 OHLCVA 六项 6/6 匹配；600000.SH 是 5/6，688001.SH 是 4/6，均由价格 high（后者还包括 low）失配。被标为 09:31 的成交组直接对 QMT 09:31 仅 1~2/6 通过。这强烈提示需要检验 0x0fc6 成交记录标签是否是 1min 分桶的 **左端点**，即 09:30 对应 QMT 09:31、09:31 对应 QMT 09:32；对于价格极值的失配需检验成交记录聚合/不完整性。20 条每分钟且返回的时间精度只有分钟，不得未经证实将其视为秒级完整 Level 2 撮合。
+
+新增 qmt_eltdx_opening_tick_alignment.py：**零联网、严格源 SHA** 校验上一次 09:25 报告、上一次历史成交试验摘要、每只股票保存的 40 条真实成交 subset（通过内容 SHA256 绑定）、现有 QMT 241/TDX 240 私有源，然后对 09:30/09:31 两个 trade 组分别交叉比对 QMT 的 09:30/09:31/09:32 K、TDX 09:31/09:32。价格/量额同时输出原先诊断容差和更严格容差，不在日志中打印原始收费行情值；给出若干价极值是否落在对应 QMT 极值范围内。源时间顺序/分钟内成交完整性均不认证，不合成或修改任何 K 线。仅保存 Git 忽略目录下新的私有归因结果。只有分钟标签、极值完整性进一步验证后，才可判断 TDX 240+09:25 是否能独立无损恢复 241；当前 production_merge_authorized=false。
+
+单行 PowerShell（零行情联网，仅 git pull 会联网更新代码）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_tick_alignment.py -q; if($LASTEXITCODE -ne 0){throw "Trade label offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_tick_alignment.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Trade label offline SHA crosscheck failed"}
+
+请回传 ELTDX_OPENING_LABEL_STOCK 三行与 ELTDX_OPENING_LABEL_SUMMARY 一行，不要上传私有逐笔/原始行情数据。

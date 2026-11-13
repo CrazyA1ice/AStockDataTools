@@ -64,6 +64,47 @@ class Tests(unittest.TestCase):
         self.assertTrue(first["strict_volume_and_amount_fit"])
         self.assertFalse(out["production_merge_authorized"])
 
+    def test_forward_label_when_tick_amount_close_but_not_one_yuan_exact(self):
+        day,q,t,pilot,rows=fixture()
+        q[1]["amount"]+=5.
+        t[0]["amount"]+=5.
+        q[2]["amount"]+=6.
+        t[1]["amount"]+=6.
+        out=M.assess(rows,q,t)
+        self.assertEqual(out["status"],
+            "NEXT_MINUTE_LABEL_SUPPORTED_BY_EXACT_VOLUME_AND_TOLERANT_AMOUNT")
+        self.assertTrue(out["minute_label_forward_volume_strict_amount_tolerant_fit"])
+        self.assertFalse(out["minute_label_forward_strict_volume_amount_fit"])
+        for key in ("trade_0930_to_qmt_0931","trade_0931_to_qmt_0932"):
+            check=out["comparisons"][key]
+            self.assertTrue(check["strict_fields"]["volume"])
+            self.assertFalse(check["strict_fields"]["amount"])
+            self.assertTrue(check["tolerant_fields"]["amount"])
+            self.assertGreater(check["amount_relative_error_basis_points"],0.)
+        self.assertFalse(out["production_merge_authorized"])
+
+    def test_first_minute_high_low_are_not_always_independently_identifiable(self):
+        day,q,t,pilot,rows=fixture()
+        inferred=M.infer_0931_bounds(q,t,rows)
+        self.assertTrue(inferred["high_uniquely_determined_by_merged_extreme"])
+        self.assertFalse(inferred["low_uniquely_determined_by_merged_extreme"])
+        self.assertIsNone(inferred["known_field_match_to_qmt"]["low"])
+        self.assertTrue(inferred["known_field_match_to_qmt"]["close"])
+        self.assertTrue(inferred["known_field_match_to_qmt"]["volume"])
+        self.assertTrue(inferred["known_field_match_to_qmt"]["amount"])
+        self.assertTrue(inferred["trade_0930_first_as_returned_open_match"])
+        self.assertFalse(inferred["all_six_0931_fields_source_independently_certified"])
+        self.assertTrue(inferred["auction_values_from_qmt_oracle_for_feasibility_only"])
+        self.assertFalse(inferred["production_merge_authorized"])
+        # Even if trade subset min == independently known min, the combined
+        # 240-bar low equal to auction price leaves a nonunique inverse.
+        q[1]["low"]=9.9
+        t[0]["low"]=9.9
+        inferred=M.infer_0931_bounds(q,t,rows)
+        self.assertTrue(inferred["low_uniquely_determined_by_merged_extreme"])
+        self.assertTrue(inferred["known_field_match_to_qmt"]["low"])
+
+
     def test_same_label_hypothesis_and_incomplete_result(self):
         day,q,t,pilot,rows=fixture()
         for i,row in enumerate(rows):

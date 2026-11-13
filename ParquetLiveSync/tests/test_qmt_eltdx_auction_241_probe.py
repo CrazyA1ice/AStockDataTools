@@ -76,7 +76,7 @@ class Tests(unittest.TestCase):
             def __exit__(self,*args):pass
         with tempfile.TemporaryDirectory() as tmp:
             folder=Path(tmp)
-            private=folder/"data"
+            private=folder/"20261014_20261112"
             src=private/"source_parquet"/"600000_SH.parquet"
             src.parent.mkdir(parents=True)
             pq.write_table(pa.Table.from_pylist(t,schema=A.P.PRIVATE_SCHEMA),src)
@@ -89,11 +89,25 @@ class Tests(unittest.TestCase):
                 actual=A.run(day=day,stocks=("600000.SH",),
                     workspace=folder/"private-results",
                     client_factory=Client,logger=lambda _:None)
-            # The test's private source is intentionally NOT in the program's
-            # computed folder, so run must reject the missing/invalid SHA.
             self.assertEqual(actual["stocks"]["600000.SH"]["status"],
-                             "HISTORICAL_AUCTION_PILOT_ERROR")
+                "FORMAL_0925_MATCHES_QMT_0930_AND_TDX_0931_MERGE")
+            self.assertEqual(actual["stocks"]["600000.SH"]["qmt_sha256"],
+                "synthetic-qmt-sha")
             self.assertFalse(actual["production_merge_authorized"])
+            self.assertTrue((folder/"private-results"/"20261014_summary.private.json").exists())
+            # Any later alteration to the private source must stop the pilot.
+            with src.open("ab") as handle:
+                handle.write(b"tampered")
+            with patch.object(A.X,"WORK",private.parent),\
+                 patch.object(A.P,"BASE",folder),\
+                 patch.object(A.X,"verified_cache",return_value=cached),\
+                 patch.object(A.X,"read_qmt_source",
+                              return_value=(q,"synthetic-qmt-sha")):
+                again=A.run(day=day,stocks=("600000.SH",),
+                    workspace=folder/"private-results",
+                    client_factory=Client,logger=lambda _:None)
+            self.assertEqual(again["stocks"]["600000.SH"]["status"],
+                "HISTORICAL_AUCTION_PILOT_ERROR")
 
 
 if __name__=="__main__":

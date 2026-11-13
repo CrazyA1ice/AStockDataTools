@@ -72,7 +72,8 @@ class ForensicTests(unittest.TestCase):
             self.assertEqual(result["tdx_gap_days_all_four_official_day_ohlc_fit"],1)
             self.assertFalse(result["production_merge_authorized"])
             self.assertTrue((path/"latest_forensics_report.json").exists())
-            (path/"source_parquet"/"600000_SH.parquet").open("ab").write(b"ALTERED")
+            with (path/"source_parquet"/"600000_SH.parquet").open("ab") as out:
+                out.write(b"ALTERED")
             with patch.object(F.P,"BASE",Path(tmp)),\
                  patch.object(F.R,"load_bound_context",
                      return_value=(official,[code],plan,{})):

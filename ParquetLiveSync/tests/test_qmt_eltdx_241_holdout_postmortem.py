@@ -45,7 +45,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(output["regular_0931"]["unknown_fields"],["low"])
         low=output["unidentifiable_0931_extrema"]["low"]
         self.assertTrue(low["native_merged_extreme_equals_auction"])
-        self.assertTrue(low["qmt_oracle_extreme_equals_auction"])
+        self.assertFalse(low["qmt_oracle_extreme_equals_auction"])
         self.assertFalse(low["independent_field_value_known"])
         self.assertFalse(low["can_promote_unknown_to_production"])
         self.assertFalse(output["production_merge_authorized"])

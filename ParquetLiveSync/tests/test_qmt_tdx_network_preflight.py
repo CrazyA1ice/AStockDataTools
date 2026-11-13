@@ -47,7 +47,7 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"16_TO_48"):
             N.validate_real_1m(bars(count=10),"600000.SH",stamp)
         with self.assertRaisesRegex(ValueError,"1MIN_KLINE_CADENCE"):
-            N.validate_real_1m(bars(step=5,count=20),"600000.SH",stamp)
+            N.validate_real_1m(bars(base=datetime(2026,11,12,9,35,tzinfo=N.D.CN),step=5,count=20),"600000.SH",stamp)
 
     def test_reject_old_endpoint_and_corrupt_ohlc(self):
         stamp=datetime(2026,11,13,10,0,tzinfo=N.D.CN)

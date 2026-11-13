@@ -73,7 +73,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertFalse(saved["market_modified"])
             validated=R.validate_recovery_receipt(root,code,"test-fingerprint",[str(first),str(second)])
             self.assertEqual(validated["approved_days"],[str(first)])
-            with self.assertRaisesRegex(ValueError,"already exists"):
+            with self.assertRaisesRegex(ValueError,"receipt exists"):
                 R.save_partial(root,code,accepted,[str(first)],{str(second):bad},"test-fingerprint")
 
     def test_bad_source_price_is_quarantined_without_losing_other_day(self):
@@ -85,6 +85,23 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(len(accepted),241)
         with self.assertRaisesRegex(ValueError,"OHLC"):
             R.check_day(code,second,raw[second],ref)
+
+    def test_orphaned_identical_private_parquet_safe_reattach(self):
+        code="600000.SH"; day=date(2026,10,14)
+        reference={"open":10.,"high":10.01,"low":9.99,"close":10.}
+        rows=[{"time":datetime.fromisoformat(x["datetime_cn"]),
+               **{k:x[k] for k in R.Q.FIELDS}} for x in bars(day)]
+        accepted,_=R.check_day(code,day,rows,reference)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            receipt=R.save_partial(root,code,accepted,[str(day)],{},"fp")
+            p=root/"source_parquet"/"600000_SH.parquet"
+            sha=R.L.hash_file(p)
+            (root/"receipts"/"600000_SH.json").unlink()
+            second=R.save_partial(root,code,accepted,[str(day)],{},"fp")
+            self.assertEqual(sha,R.L.hash_file(p))
+            self.assertEqual(receipt["sha256"],second["sha256"])
+            self.assertTrue(R.validate_recovery_receipt(root,code,"fp",[str(day)]))
 
     def test_windows_transient_lock_retry_is_bounded(self):
         with tempfile.TemporaryDirectory() as temp:

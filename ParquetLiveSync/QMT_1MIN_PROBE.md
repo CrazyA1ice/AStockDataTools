@@ -234,3 +234,16 @@ eltdx 的 client.auctions.series(code,date) / 0x056a 返回竞价过程的虚拟
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_probe.py -q; if($LASTEXITCODE -ne 0){throw "Auction split offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_probe.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Historical 09:25 split feasibility probe failed"}
 
 回传 ELTDX_AUCTION_241_FEASIBILITY_SUMMARY 和三条 ELTDX_AUCTION_SPLIT_STOCK 的状态，不要分享非公开原始分钟行情。完整源 SHA 绑定试验报告位于 private work/qmt_1min_market/eltdx_1m_probe/20261014_20261112/auction_0925_split_pilot/。所有结果维持 production_merge_authorized=false。
+
+
+## 2026-11-13 竞价试点实测：09:25 能匹配 QMT 09:30，但 09:31 首根仍有差异
+
+用户 Windows 2026-11-13 试点运行：4 项离线测试通过，3 只锚点 (600000.SH/000001.SZ/688001.SH) 的 2026-10-14 正式 09:25 撮合数据在既定价格/量/额容差内都吻合 QMT 的独立 09:30 bar（auction_0930_candidate_matches_qmt=true）；但 QMT 09:30+09:31 两根按 OHLCVA 聚合后，均未与 eltdx 09:31 首根完成所有 6 字段一致性校验 (first_minute_all_fields_fit=false)。不能把此现象解读为竞价数据无用或认定已经成功恢复了 241 根。由于这是全字段 AND 门槛，必须拆出不匹配字段；仅此结果无法判断是价格还是量额问题，也无法判定源间 09:31 时间语义和盘后 .lc1 是否完全相同。
+
+新增 qmt_eltdx_auction_241_postmortem.py 完全离线对账：读取既有 20261014_summary.private.json，并重新独立验证 QMT 241 和 eltdx 240 的 SHA/Arrow/时间网格；比较 QMT(09:30+09:31)→TDX(09:31) 以及 QMT(09:31)→TDX(09:31) 两种假设的六字段通过项、相对误差及随后 239 根每字段匹配数。若旧报告源签名或字段判定有任何变化，禁止继续推断。全部只写 Git 忽略私有报告，正式 Parquet/H5 不修改。只打印计数和比例，不输出受许可约束的原始行情价格。
+
+单行命令（无任何行情联网请求，仅用用户刚才的原始缓存）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Auction field tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_postmortem.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Auction field postmortem failed"}
+
+请返回 ELTDX_AUCTION_241_FIELD_DIAGNOSTIC (3 行) 与 ELTDX_AUCTION_241_FIELD_SUMMARY (1 行)。之后才考虑针对失败的具体字段调取历史真实成交明细（不是 0x056a 虚拟委托快照），并拿旧购买的 .lc1+241 Parquet 样本做同日交叉印证。正式目标始终保留 241 网格、不得伪造 09:31 high/low/open，也不得因 3 个样本匹配某规则就在全市场自动合成。

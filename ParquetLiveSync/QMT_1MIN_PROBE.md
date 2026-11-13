@@ -407,3 +407,26 @@ Windows 单行 PowerShell（需先 git pull，本地三方对账本身无行情�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_tdx_local_lc_vs_eltdx_qmt.py -q; if($LASTEXITCODE -ne 0){throw "LC three-way tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\tdx_local_lc_vs_eltdx_qmt.py --vipdoc "D:\software\TDX\vipdoc"; if($LASTEXITCODE -ne 0){throw "LC local/online/QMT three-way source SHA audit failed"}
 
 反馈 TDX_LOCAL_THREE_WAY_CASE 九行和 TDX_LOCAL_THREE_WAY_SUMMARY 一行，重点 688001.SH 2026-10-16 的 high 数组及每日日积 240/48 差异。原价/原成交额/原始行情不上传。此阶段严禁直接入库，候选 high 仍需独立、完整的 1m 真值证据。
+
+
+## 2026-11-14 免费第三来源突破路线：先检验新浪/腾讯，再核验 2026-10 的 Level2 逐笔 CSV
+
+先前本地 TDX .lc1 240根与在线 eltdx 7709 240 根，在 2026-10-14/15/16 三股 9 股票日严格六字段一致：这不是独立 241 来源。2026-10-16 688001.SH 的合并 09:31 high==09:25 auction high、QMT 独立 09:31 high 低于竞价 high，该值不能从 TDX 240 唯一恢复。公开来源调查：
+- 新浪股票历史分钟数据 CN_MarketDataService.getKLineData 支持 1min OHLCV；AKShare 代码默认 datalen=1970（约 8 个完整交易日），故必须实际测试服务器是否接纳更大 datalen=20000、是否包含 2026-10-16。新浪不保证成交额字段。无需注册的 HTTP 数据不能保证是真实独立源。
+- 腾讯 appstock/app/kline/mkline 的 m1 历史分钟接口存在，但是否实际支持超过几日、能否回溯 2026-10-16 或提供独立拆分竞价根，都需要运行验证，不能依据端点命名直接断言成功。
+- 东财/AKShare stock_zh_a_hist_min_em 的免费 1min 接口文档明确仅近 5 交易日，因此不是当前 2026-10-16 的可直接回溯来源。
+- 第三方 GitHub 仓库 submato/ashare-l2 公开 **2026-10 Level2 逐笔成交 CSV 免费月份链接**，直达页面 https://github.com/submato/ashare-l2 的 2026-10 夸克网盘：https://pan.quark.cn/s/b9ed1e0ba845。GitHub 仓库存的是演示/字段说明而非真实 2026-10 的已核验原数据，网盘文件体积、真实性、源端交易时间和实际使用/再分发权限都未验证；不要安装/运行下载包中的任何 EXE/脚本，只提取可核验单股日 CSV。
+- zhituapi 历史逐笔成交宣称可覆盖 2026-08-13 后的日内交易，有 token 使用门槛，作为低优先级候选；其他含历史 1min 的服务可能付费，当前不以商业购买作为方案。
+
+新增 qmt_241_public_minute_crossprobe.py：先 SHA 验证原 QMT241 + eltdx240 源且日网格完整，再每只股票最多两个公开只读 HTTPS 请求（Sina + Tencent），内存解析不保存、不上传原始行情，按实际分钟标记核查是否包含 2026-10-16 09:30、09:31。用只读 QMT 做比较：若第三方 09:31 high 正好匹配原 QMT **且不同于已知 TDX 合并高**，才记为新的 high 候选；若第三方 high==TDX 240 合并高，不能用来填补真实 09:31 high。即便符合也不能立即宣称来源独立、入正式 Parquet。预设只对最关键 688001.SH 做样本，不批量全市场。纯只读。
+Windows 单行命令（联网只向新浪/腾讯公开数据域名发起最多 2 请求，不触碰正式库）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_public_minute_crossprobe.py -q; if($LASTEXITCODE -ne 0){throw "Public minute source offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_public_minute_crossprobe.py --codes "688001.SH" --days "2026-10-14,2026-10-15,2026-10-16"; if($LASTEXITCODE -ne 0){throw "Public crossprobe unavailable"}
+
+新增 qmt_241_l2_csv_crossprobe.py：若用户愿意从 2026-10 免费 L2 索引提取单个 688001.SH/20261016/逐笔成交.csv，则支持本地严格只读 CSV UTF8/GB18030、SHA256、事件代码和 9 位毫秒时间戳，并由调用者明确指定非自动推测的 price_divisor=10000（仅适合 Wind-like 价格×10000 的真实文件；不同来源先看其字段单位）。只认可事件代码 0 作为临时成交筛选；取消类事件 C 与未知标记保留计数但不参与 OHLC 汇总。将 09:25 正式成交和 09:30~09:31 连续交易的价格极值、量（QMT手×100）、派生成交额逐项与 QMT **只读验收**比对。若 09:31 观测高匹配 QMT 且不同 TDX 合并高，则为新的证据；但 CSV 来源真实性、完整逐笔和事件编码均未认证，不能标记生产可用。只使用一个真实的股票/日期，不能处理压缩包、不得运行来源附带安装程序。严禁正式写库。
+
+单行命令（需将文件路径替换为你实际提取的 2026-10-16 688001.SH 逐笔成交.csv）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_l2_csv_crossprobe.py -q; if($LASTEXITCODE -ne 0){throw "L2 source schema offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_l2_csv_crossprobe.py --csv "D:\path\to\688001.SH\l2\20261016\逐笔成交.csv" --price-divisor 10000
+
+只有上述免费候选确实包含 2026-10-16 09:31 独立价格且价格/交易时标/事件类型经过核验时，才进入扩容研究；否则仍诚实标记 240→241 严格无损不能在所有股票日由现有来源完成。

@@ -217,3 +217,20 @@ One PowerShell line, offline (no QMT or eltdx network calls):
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_targeted_triage.py -q; if($LASTEXITCODE -ne 0){throw "Targeted triage tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_targeted_triage.py --root D:\stock; if($LASTEXITCODE -ne 0){throw "Targeted minute amount forensic analysis failed"}
 
 Send only ELTDX_TARGETED_TRIAGE_SUMMARY, never vendor raw 1-minute bars. The full 554-case evidence stays in the private workspace; the 261/15 gap triage stays in the separate latest_gap_queue.private.json. The sole QMT source has already been verified for each case; no need to rerun all-market source acquisition.
+
+
+## 2026-11-13 eltdx 历史 09:25 正式撮合拆分 240→241 的可行性试验
+
+eltdx 的 client.auctions.series(code,date) / 0x056a 返回竞价过程的虚拟匹配量和未匹配量，并非成交，绝对不能直接累加为 09:30 成交。历史 09:25 **正式成交**应使用 client.trades.opening_match_history(code,date) / 0x0fc6（或 client.helpers.auction_data(...).snapshot_0925）。它返回撮合价格、成交量（手）和由 price * volume * 100 派生的成交额。历史日期能否返回取决于远端服务器保存范围。
+
+历史购买 Parquet 的 1min 正常日采用 241 根网格（09:30 独立开盘 + 09:31..11:30 + 13:01..15:00），通达信 eltdx 原生 240 根；原已购 600000.SH/2026-09-30 的只读 .lc1 对账发现 **Parquet 的 09:30 + 09:31 合并后**与通达信 09:31 首根 OHLCVA 全六字段吻合，剩余 239 根也吻合。这给 09:25 开盘竞价撮合=Parquet 09:30 提供了可检验的假说，但未证明所有股票/日期同理。
+
+新增 qmt_eltdx_auction_241_probe.py：直接复用之前 3 股（600000.SH、000001.SZ、688001.SH）的 SHA 验证 QMT 241 根和 eltdx 240 根私有快照，只联网逐股取所选交易日历史正式 09:25 成交。检查正式竞价价是否等于 QMT 09:30 四价、量与成交额在股/手量纲下相符，及 QMT 首两根聚合后是否等于 TDX 首根全六字段。绝不把虚拟委托盘的 matched_volume 作为实际成交；金额是 price×lots×100 的派生值而非第二份独立交易金额证据。
+
+这项试验并不直接**生成** 241 根新行情：当 QMT 09:30 原始数据本身缺失时，即便已知正式竞价 OHLCVA 与合并 09:31 量额之差，也无法凭一根合并 K 线唯一求出连续交易的 09:31 **open/high/low**（其 high/low 可能由竞价价格取得极值）。要无损恢复须进一步审计 eltdx.trades.all_history(code,date) 历史成交明细的完整性、价格极值和分钟分桶，并与已有 241 根原始 Parquet 逐字段对比。该接口时间精度只有分钟、并非 L2 逐笔撮合；如果欠缺可唯一确定的开盘或极值，就保持隔离而非造 K 线。买来的 241 根 Parquet 仍为目标格式，不允许自动合并。
+
+本机有限范围联网试点（只查 3 股 2026-10-14 历史正式竞价，不重下已缓存的 240/241 完整分钟源，也不写正式 Parquet/H5）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_probe.py -q; if($LASTEXITCODE -ne 0){throw "Auction split offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_probe.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Historical 09:25 split feasibility probe failed"}
+
+回传 ELTDX_AUCTION_241_FEASIBILITY_SUMMARY 和三条 ELTDX_AUCTION_SPLIT_STOCK 的状态，不要分享非公开原始分钟行情。完整源 SHA 绑定试验报告位于 private work/qmt_1min_market/eltdx_1m_probe/20261014_20261112/auction_0925_split_pilot/。所有结果维持 production_merge_authorized=false。

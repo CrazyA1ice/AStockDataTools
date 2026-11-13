@@ -190,8 +190,8 @@ def save_partial(root, code, approved_rows, approved_days, bad_days, fingerprint
     root = Path(root)
     target = root / "source_parquet" / (code.replace(".", "_") + ".parquet")
     receipt = root / "receipts" / (code.replace(".", "_") + ".json")
-    if receipt.exists() or receipt.is_symlink() or target.exists() or target.is_symlink():
-        raise ValueError("Recovery output already exists; refuse to overwrite")
+    if receipt.exists() or receipt.is_symlink() or target.is_symlink():
+        raise ValueError("Recovery receipt exists or output redirected; refuse to overwrite")
     target.parent.mkdir(parents=True, exist_ok=True)
     receipt.parent.mkdir(parents=True, exist_ok=True)
     rows = [
@@ -208,15 +208,24 @@ def save_partial(root, code, approved_rows, approved_days, bad_days, fingerprint
     # A stock with no valid days still gets a receipt, but no Parquet artifact.
     digest = None
     if rows:
-        temp = target.with_suffix(".parquet.part")
-        if temp.is_symlink():
-            raise ValueError("Unsafe recovery temp file")
-        pq.write_table(table, temp, compression="zstd", row_group_size=8192)
-        readback = pq.read_table(temp)
-        if not readback.equals(table, check_metadata=False):
-            raise ValueError("Recovered Parquet Arrow read-back mismatch")
-        del readback
-        retry_private_atomic(temp, target)
+        if target.exists():
+            # An interrupted first run may have atomically saved a Parquet
+            # before its receipt. Reattach ONLY if bytes decode to EXACTLY
+            # the independently validated source rows. Never overwrite it.
+            verified = pq.read_table(target)
+            if not verified.equals(table, check_metadata=False):
+                raise ValueError("Orphan QMT recovery Parquet differs; refuse overwrite")
+            del verified
+        else:
+            temp = target.with_suffix(".parquet.part")
+            if temp.is_symlink():
+                raise ValueError("Unsafe recovery temp file")
+            pq.write_table(table, temp, compression="zstd", row_group_size=8192)
+            readback = pq.read_table(temp)
+            if not readback.equals(table, check_metadata=False):
+                raise ValueError("Recovered Parquet Arrow read-back mismatch")
+            del readback
+            retry_private_atomic(temp, target)
         digest = L.hash_file(target)
     result = {"format":FORMAT, "status":"private_day_subset_only",
               "symbol":code, "approved_days":sorted(approved_days),

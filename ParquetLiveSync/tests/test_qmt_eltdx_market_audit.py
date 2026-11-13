@@ -135,6 +135,29 @@ class Tests(unittest.TestCase):
             self.assertFalse(result["production_merge_authorized"])
             self.assertTrue((folder/"private_market"/"receipts"/"600000_SH.json").is_file())
 
+    def test_recent_listing_uses_first_certified_day_not_global_start(self):
+        listed=date(2026,11,10)
+        stocks=["600000.SH"]+[f"{i:06d}.SH" for i in range(1,2501)]
+        originals={code:{"sha256":"fake"} for code in stocks}
+        daymap={listed:{code:{"open":10.} for code in stocks}}
+        class Client:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+        from tempfile import TemporaryDirectory
+        with TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with patch.object(M.P,"BASE",root),\
+                 patch.object(M.R,"load_bound_context",return_value=(daymap,stocks,{"calibration_sha256":"fake"},{})),\
+                 patch.object(M.R,"validate_original",return_value=originals),\
+                 patch.object(M.D,"source_original",return_value=({"sha256":"QMTsha"},sample(listed),"QMTsha")),\
+                 patch.object(M.X,"connect_host",return_value=Client()),\
+                 patch.object(M.X,"fetch_history",return_value=(sample(listed,qt=False),{"dense_days":1})) as fetch:
+                report=M.audit(root,limit=1,workspace=root/"private",pause=0,log=lambda _:None)
+        self.assertEqual(report["source_stocks_staged"],1)
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[2],listed)
+        self.assertEqual(fetch.call_args.kwargs["required_dense_days"],1)
+
     def test_network_failure_is_quarantined_not_false_source_agreement(self):
         # Source host errors are captured; three consecutive failures alone
         # do not take down the entire QMT private dataset.

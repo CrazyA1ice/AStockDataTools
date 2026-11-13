@@ -335,3 +335,24 @@ Windows 单行 PowerShell：先拉取分支，运行 6 项该试点离线测试�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_241_cross_day_holdout.py -q; if($LASTEXITCODE -ne 0){throw "241 holdout offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_cross_day_holdout.py --preflight-only; if($LASTEXITCODE -ne 0){throw "241 local SHA/full-grid preflight failed, no 7709 request made"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_cross_day_holdout.py; if($LASTEXITCODE -ne 0){throw "241 two-day holdout failed"}
 
 发送每个股票日一行 ELTDX_241_HOLDOUT_CASE 和最后一行 ELTDX_241_HOLDOUT_SUMMARY。若本地 SHA/241/240 完整日不齐则发预检报错即可，不尝试绕过 SHA 或伪造其他日期。该阶段没有设置自动合并或数据迁移行为。
+
+
+## 2026-11-13 240→241 跨日期真机留出检验：5/6 六字段候选完整，单例极值仍不可确定
+
+用户 Windows 真机结果：6 项离线测试 OK，本地原三股 2026-10-15/16 的 241(QMT)/240(eltdx) 6 个股票日 SHA、Arrow、完整日期网格预检通过。6/6 均验证历史实际成交 09:30→QMT 09:31 与 09:31→QMT 09:32 的严格成交量/容差成交额匹配，且首条 09:30 成交记录价格严格等于 QMT 09:31 open。然而 0x0fc6 返回仅分钟时间标签，不能证明那条记录就是严格按秒排序的连续交易开盘价。
+- 2026-10-15 600000.SH 与 2026-10-16 000001.SZ 为 HOLDOUT_ALL_SIX_STRICTLY_MATCH_SOURCE_CANDIDATE (2/6)；
+- 2026-10-15 000001.SZ、688001.SH 与 2026-10-16 600000.SH 为 HOLDOUT_ALL_SIX_TOLERANTLY_MATCH_NOT_STRICT (3/6)；
+- 2026-10-16 688001.SH 为 HOLDOUT_PRICE_EXTREME_OR_FIELD_NOT_IDENTIFIABLE，尽管它的已知字段均满足原容差，但 source_only_09:31 候选缺少 1 个无法从合并 K 唯一推断的字段。这个案例绝对不能将 QMT 原值作为“补缺”直接转生产 K。
+- 上述 5/6 是 **3 股票×2 日期的六字段已知候选**，不是已经无损恢复 5 个完整 241-bar 股票日；后续 239 根是原始 eltdx 240 bar 的时间和 volume 单位对齐，源仍依赖通达信分钟 K 且历史交易开盘先后未独立认证。任何结果都保留 production_merge_authorized=false。
+
+新增 qmt_eltdx_241_holdout_postmortem.py 和 test_qmt_eltdx_241_holdout_postmortem.py：
+- 零行情网络请求，读取已生成的 20261015_20261016_holdout_summary.private.json；逐股票日用私有报告保存的 SHA256 检查各历史 trade 子集/候选报告字节未变更，重校验原始 eltdx 240/QMT 241 来源 SHA、Arrow schema，再利用保存的 **正式 09:25 撮合**和真实 09:30/09:31 成交 + eltdx 240 开盘首根重新**独立**构造两个候选，只将 QMT 用于最终验收。
+- 分别列出 09:30 和 09:31 的严格不匹配字段、容差不匹配字段、未知字段。对于未确定高低价，报告**是否恰好等于竞价价、历史真实成交记录是否到达竞价极值、QMT 验收时的极值是否等于竞价价**；尽量辨析是高、低哪个字段缺证据，绝不填入缺失极值。
+- 每股只打印成交额误差基点及绝对额区间（<=1、<=10、<=100、<=1000、>1000 CNY），分开显示竞价 09:30、连续交易 09:31、聚合首分钟合计、历史真实成交估算金额；保存细节在 Git 忽略私有目录。**不能把原容差金额匹配等同于精确金额恢复**，也不能把历史成交分组记录顺序当成 L2 秒级时序。
+- 原始 SHA、日历和私有报告一旦不匹配则立即停止，不会重新抓行情、修改已购 Parquet/H5，不能生成生产 241 数据集。
+
+PowerShell 单行命令：先更新代码+五项离线测试，然后仅使用已缓存的六个案例生成私有归因报告：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_241_holdout_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "241 held-out SHA postmortem unit tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_holdout_postmortem.py; if($LASTEXITCODE -ne 0){throw "241 held-out SHA replay failed"}
+
+回传 ELTDX_241_HOLDOUT_POSTMORTEM_CASE 的 6 行和 ELTDX_241_HOLDOUT_POSTMORTEM_SUMMARY 的 1 行。下一阶段只根据真实缺口决定能否获得更权威的秒级成交排序/权威金额来源；绝不能把 241 已恢复给所有股票当作结论。

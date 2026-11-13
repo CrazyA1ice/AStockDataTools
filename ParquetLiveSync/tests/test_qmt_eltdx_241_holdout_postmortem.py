@@ -48,7 +48,30 @@ class Tests(unittest.TestCase):
         self.assertFalse(low["qmt_oracle_extreme_equals_auction"])
         self.assertFalse(low["independent_field_value_known"])
         self.assertFalse(low["can_promote_unknown_to_production"])
+        self.assertTrue(low["trade_volume_matches_reconstructed_regular_volume_strict"])
+        self.assertTrue(low["observed_trades_extreme_strict_match_to_qmt"])
+        self.assertFalse(low["historical_trade_price_extreme_complete_independently_proven"])
+        self.assertTrue(low["source_only_production_field_stays_null"])
         self.assertFalse(output["production_merge_authorized"])
+
+    def test_exact_trade_volume_does_not_guarantee_observed_price_low_is_true_low(self):
+        # Simulate a physically possible aggregated trade record sequence:
+        # true 09:31 low 10.05 lies below all observed trade prices (10.1),
+        # while the native merged minute low equals the auction price (10).
+        # The trade rows still sum to the full 09:31 trading volume.
+        day=date(2026,10,16)
+        q,t,record=one(day,highlow=False)
+        q[1]["low"]=10.05
+        record["source_only_candidate_and_separate_validation"]=M.H.per_day(
+            q,t,record["formal_0925_source"],
+            record["historical_opening_0930_0931_trades"])
+        result=M.diagnose(record,q,t,record["historical_opening_0930_0931_trades"])
+        low=result["unidentifiable_0931_extrema"]["low"]
+        self.assertTrue(low["trade_volume_matches_reconstructed_regular_volume_strict"])
+        self.assertFalse(low["observed_trades_extreme_strict_match_to_qmt"])
+        self.assertFalse(low["historical_trade_price_extreme_complete_independently_proven"])
+        self.assertFalse(low["can_promote_unknown_to_production"])
+        self.assertIn("low",result["regular_0931"]["unknown_fields"])
 
     def test_original_0930_0931_amount_strict_gap_and_merged_gap_reported(self):
         day=date(2026,10,15)

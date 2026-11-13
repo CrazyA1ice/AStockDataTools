@@ -1,0 +1,40 @@
+name: Optional live eltdx Rust 7709 true one-minute probe
+
+on:
+  push:
+    branches: [feat/qmt-one-minute-history-probe-20261112]
+    paths:
+      - ".github/workflows/qmt-eltdx-live-minute-probe.yml"
+      - "ParquetLiveSync/qmt_eltdx_1m_probe.py"
+      - "ParquetLiveSync/tests/test_qmt_eltdx_1m_probe.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-minute-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Rust eltdx binary wheel and Arrow
+        run: python -m pip install --only-binary=:all: eltdx "pyarrow>=15,<30"
+      - name: Verify offline code/data handling
+        run: python -B -m unittest discover -s ParquetLiveSync/tests -p "test_qmt_eltdx_1m_probe.py" -v
+      - name: Actually fetch sh600000 historical 1-minute OHLCVA via eltdx
+        shell: bash
+        run: |
+          set +e
+          python -u -B ParquetLiveSync/qmt_eltdx_1m_probe.py --remote-only --symbols 600000.SH --max-hosts 6 --max-pages 16
+          result=$?
+          echo "ELTDX_REAL_REMOTE_PROBE_EXIT_CODE=$result"
+          if [ "$result" -eq 0 ]; then
+            echo "ELTDX_REAL_22_DAY_ONE_MINUTE_AVAILABLE"
+          else
+            echo "ELTDX_REAL_22_DAY_ONE_MINUTE_NOT_VERIFIED_ON_GITHUB_RUNNER"
+          fi
+          exit 0

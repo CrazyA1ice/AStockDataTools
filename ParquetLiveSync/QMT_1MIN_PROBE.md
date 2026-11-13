@@ -371,3 +371,21 @@ PowerShell 单行命令：先更新代码+五项离线测试，然后仅使用�
 单行 PowerShell（更新 Git 代码后其余部分全离线）：
 
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_241_holdout_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Historical extremes offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_241_holdout_postmortem.py; if($LASTEXITCODE -ne 0){throw "Extrema forensic SHA replay failed"}
+
+
+## 2026-11-13 通达信本地盘后文件只读探针（完全不需要 BigQuant）
+
+用户截图本地安装根目录 D:\software\TDX\vipdoc\sh\fzline，存在大量 sh000001.lc5 等文件、显示 192 KB、更新时间 2026-11-13。经 pytdx 官方 reader 文档和 TDX 本地读取器交叉确认：
+- vipdoc/sh|sz|bj/minline/*.lc1 是本地 **1 分钟 K 线**，用户目标是寻找它以独立验证 2026-10-16 688001.SH 的 09:31 high；
+- vipdoc/sh|sz|bj/fzline/*.lc5 是本地 **5 分钟 K 线**，只读 .lc5 对照可验证分钟覆盖/更高周期，但不能直接恢复 1min 最初高低价；
+- sh000001.lc5 是上证综指，不是 600000.SH/688001.SH 个股。还需核验三股对应文件 sh600000.lc5、sz000001.lc5、sh688001.lc5 以及 .lc1；
+- .lc1/.lc5 均为每条 32 字节的小端记录，HHfffffII：16 位压缩日期 (year-2004)*2048+month*100+day、16 位分钟数、四个 float32 OHLC、float32 成交额、uint32 原始成交量、uint32 保留。正常已完成交易日分钟线常见 1min=240、5min=48，但只统计实际记录，不预先改成 QMT 241、不补造竞价 K，股票/指数成交量单位可能不同；
+- 截图 192 KB 是 Windows 大小显示值，不代表已核准真实字节数或历史日期；以本机文件长度、SHA 和解码结果为准。
+
+开发分支新增 ParquetLiveSync/tdx_local_lc_probe.py / tests/test_tdx_local_lc_probe.py，纯标准库，无网络行情依赖、零 Parquet/H5 写入。传入本机 vipdoc 根目录，定向读取三只原股票 600000.SH、000001.SZ、688001.SH，并单独扫描 sh000001 指数；同时仅枚举 sh/sz/bj 的 minline/fzline 内文件数，区分是否实际拥有任何 .lc1 1min 文件。逐文件 SHA256、完整的 32 字节记录、字段合理性、异常/重复时间戳、首末日期、交易日根数分布、2026-10-14/15/16 样本分时、09:30/09:31/09:32/09:35/15:00 标签存在与否。日志不输出原始 OHLCVA 值；所有读数只留在内存，禁止批量改写、移动、转换源数据。
+
+用户 Windows **单行** PowerShell：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_tdx_local_lc_probe.py -q; if($LASTEXITCODE -ne 0){throw "Local TDX LC tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\tdx_local_lc_probe.py --vipdoc "D:\software\TDX\vipdoc" --codes "600000.SH,000001.SZ,688001.SH" --dates "2026-10-14,2026-10-15,2026-10-16"; if($LASTEXITCODE -ne 0){throw "Local vipdoc LC read-only scan failed"}
+
+回传 8 条 TDX_LOCAL_BAR_FILE 和 TDX_LOCAL_BAR_SUMMARY。若 .lc1 不存在，则第一步应在通达信软件中检查盘后数据下载是否提供“1分钟”历史下载，**而不是把 5min K 线拆成 1min 或强制填补 09:31 high**。如果 .lc1 存在且目标日期完整，下一阶段才安排 SHA 单分钟标记对照 QMT 原始 241，用作第二来源的只读严格校验。

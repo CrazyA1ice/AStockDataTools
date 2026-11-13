@@ -63,7 +63,30 @@ def missing_extreme(case,q,t):
         q_val=float(q[1][field])
         native=float(t[0][field])
         observed=[float(v["price"]) for v in ticks]
+        if not observed:
+            raise ValueError("No regular 09:30 trade records to bound unknown extreme")
+        candidate_extreme=(max(observed) if field=="high" else min(observed))
+        trade_total_lots=sum(float(v["lots"]) for v in ticks)
+        regular_lots=float(candidate["volume"])
+        # Historical 0x0fc6 "trade" prices can reflect aggregated records;
+        # exact quantity coverage alone does NOT prove price-extreme coverage.
+        bound_price=price
+        if field=="high":
+            observed_bounded_by_merged=(candidate_extreme<=bound_price+0.0001)
+            observed_gap_bps=(bound_price-candidate_extreme)/bound_price*10000
+        else:
+            observed_bounded_by_merged=(candidate_extreme>=bound_price-0.0001)
+            observed_gap_bps=(candidate_extreme-bound_price)/bound_price*10000
         report[field]={
+            "source_only_observed_extreme_candidate":candidate_extreme,
+            "source_only_observed_extreme_between_regular_and_auction":
+                observed_bounded_by_merged,
+            "gap_from_auction_extreme_basis_points":round(observed_gap_bps,6),
+            "trade_volume_matches_reconstructed_regular_volume_strict":
+                J.strict_fit(trade_total_lots,regular_lots,"volume"),
+            "historical_trade_price_extreme_complete_independently_proven":False,
+            "observed_price_extreme_is_only_an_unverified_candidate":True,
+            "source_only_production_field_stays_null":True,
             "native_merged_extreme_equals_auction":
                 J.strict_fit(native,price,field),
             "qmt_oracle_extreme_equals_auction":
@@ -74,9 +97,8 @@ def missing_extreme(case,q,t):
             "trade_rows_reach_qmt_oracle_extreme":
                 any(J.strict_fit(v,q_val,field) for v in observed),
             "observed_trades_extreme_strict_match_to_qmt":
-                bool(observed) and J.strict_fit(
-                    max(observed) if field=="high" else min(observed),
-                    q_val,field),
+                J.strict_fit(candidate_extreme,q_val,field),
+            "observed_extreme_matches_oracle_not_production_certification":True,
             "independent_field_value_known":False,
             "can_promote_unknown_to_production":False,
         }
@@ -133,6 +155,7 @@ def diagnose(existing,q,t,raw_rows):
         "auction_0930":groups["auction_0930"],
         "regular_0931":groups["regular_0931"],
         "unidentifiable_0931_extrema":ambiguous,
+        "candidate_extrema_not_promoted_even_if_oracle_matches":True,
         "first_regular_trade_as_returned_strict_open_match":
             J.strict_fit(first[0]["price"],q[1]["open"],"open"),
         "last_regular_trade_as_returned_strict_open_match":

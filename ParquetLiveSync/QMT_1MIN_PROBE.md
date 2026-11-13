@@ -304,3 +304,21 @@ Windows 用户按以下**单行**命令试点（本次仅新查询三只股票�
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_opening_tick_alignment.py -q; if($LASTEXITCODE -ne 0){throw "Opening inference offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_opening_tick_alignment.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Opening inference local SHA audit failed"}
 
 请回传三条 ELTDX_OPENING_LABEL_STOCK 与一条 ELTDX_OPENING_LABEL_SUMMARY。特别检查 status 是否为 NEXT_MINUTE_LABEL_SUPPORTED_BY_EXACT_VOLUME_AND_TOLERANT_AMOUNT，及 inferred_0931_bounds.known_field_match_to_qmt / high_uniquely_determined_by_merged_extreme / low_uniquely_determined_by_merged_extreme / trade_0930_first_as_returned_open_match。以上仍仅能为三只 SHA 源历史样本提供研究结果。
+
+
+## 2026-11-13 独立 09:25 竞价与 240→241 候选构造（隔离试点）
+
+用户最新实测 2026-10-14 三股：历史 0x0fc6 成交标记 09:30 的成交量严格对应 QMT 的 09:31，标记 09:31 严格对应 QMT 的 09:32；两分钟的估算成交额在旧容差下均吻合。模型分类 3/3 均 NEXT_MINUTE_LABEL_SUPPORTED_BY_EXACT_VOLUME_AND_TOLERANT_AMOUNT。三股 QMT 09:31 的 open 都与 09:30 成交源返回的第一笔价格吻合，而反向顺序不吻合；然而成交源有且仅有分钟时间标签，20 条/分钟，不能据此认证精确逐笔成交先后顺序。原诊断 inferred_0931_bounds 的 high/low/close/volume/amount 在三股全部与 QMT 09:31 匹配，且原合并首根高/低均分别超出竞价单价格；**但该结果依赖 QMT 09:30 竞价价量额作为临时 oracle，并非独立重建成功。**
+
+新增 qmt_eltdx_source_independent_241_pilot.py，将竞价价量额补上真实原始来源：
+- 读取 SHA 验证的原三股 240 通达信原生 K、241 QMT 验收参考源及前面只读的 09:30/09:31 成交明细 SHA 收据；不重新下载 1min 或逐笔。
+- 只联网重新查询每股指定日期 eltdx.trades.opening_match_history(code,date)，强制 event_kind=opening_match、09:25、正常成交且非 status=8 竞价过程快照；将**正式拍卖价、手数与 price×lots×100 派生成交额**完整记录在 Git 忽略私有文件并做 SHA 溯源，修复此前只有布尔匹配、不保存真实竞价值的问题。
+- 研究候选 QMT 格式 09:30: OHLC=真实正式撮合价，volume=正式拍卖手数，amount=正式价×手数×100；研究候选 QMT 09:31: close=TDX 09:31.close, volume=TDX 09:31 原始 volume_wire_value ×0.01 减去竞价成交手数, amount=TDX 09:31.amount 减去正式撮合派生额；high 当合并首根高于拍卖价时确定为合并高，low 当合并首根低于拍卖价时确定为合并低；如果极值恰等于拍卖价但存在历史真实 09:30 分组成交记录在该价，则暂定该极值可确定；如果无法唯一确定则保存 null，**绝不猜测高低价**。
+- 09:31 候选 open 使用历史成交 09:30 组源返回第一条实际成交价，但显式标注 sequence_chronology_certified=false、independent_0931_open_certified=false。即使该价与 QMT 原 09:31 开价完全吻合，也不允许以当前分钟精度和 20 条/分钟成交明细声称已独立证明真实开盘价。
+- 只有完成来源独立构造后，才使用**独立只读** QMT 241 参考列逐项验收 source-only 候选，输出已知字段匹配情况与缺失字段，不以 QMT 数值补任何候选 K。保存私有候选、真实 09:25 撮合数值和SHA；不写/回填正式 Parquet/H5，production_merge_authorized=false。候选在开盘时序未被额外认证前不可自动正式发布。
+
+Windows 单行 PowerShell（最多新增查询三只股票该日 09:25 正式成交，一次证券一个；不重新下载 1min 或成交明细）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_source_independent_241_pilot.py -q; if($LASTEXITCODE -ne 0){throw "Source-independent 241 pilot tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_source_independent_241_pilot.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Source-independent 241 candidate pilot failed"}
+
+回传 ELTDX_241_SOURCE_ONLY_STOCK 3 行与 ELTDX_241_SOURCE_ONLY_SUMMARY 1 行。重点检查各股是否 09:30 和 09:31 已知六字段逐一符合原 QMT 241 参考、是否存在未知高低价以及开盘价排序能否在新独立来源中进一步认证。任何候选全部匹配仍不能授权正式入库。

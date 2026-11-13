@@ -67,6 +67,60 @@ def independently_compare_tdx_day_to_official(rows, official):
             "auction_0930_not_reconstructed":True}
 
 
+
+def reference_source(day, plan):
+    """Infer the pinned DAY source, not assume it is provider-independent.
+
+    QMT month stage may use TDX DAILY private overlay for days not present
+    in purchased/physical Parquet. TDX-1m vs TDX-DAY does not count as a
+    third independent provider confirmation.
+    """
+    versions=plan.get("day_file_sha256",{})
+    if not isinstance(versions,dict):
+        return "DAY_REFERENCE_ORIGIN_UNKNOWN"
+    overlay=versions.get("tdx_overlay",{})
+    if isinstance(overlay,dict) and day.isoformat() in overlay:
+        return "TDX_DAY_OVERLAY_SAME_VENDOR_FAMILY"
+    physical=versions.get("physical",{})
+    if isinstance(physical,dict) and day.strftime("%Y-%m")+".parquet" in physical:
+        return "PHYSICAL_PARQUET_DAY_PROVIDER_UNVERIFIED"
+    return "DAY_REFERENCE_ORIGIN_UNKNOWN"
+
+
+def categorize_review(result):
+    """One exclusive operational triage class; NOT a data acceptance result."""
+    if result.get("status")!="MINUTE_SOURCE_DIFFERENCE_REVIEW":
+        raise ValueError("Only discrepancy days can be triaged")
+    if result.get("offset_ambiguous"):
+        return "TIME_OFFSET_NEEDS_REVIEW"
+    if result.get("tdx_count")!=240 or result.get("qmt_count")!=241:
+        return "MINUTE_GRID_NEEDS_REVIEW"
+    if result.get("ohlc_all_fields_fit",0)<.95:
+        return "PRICE_DISAGREEMENT_NEEDS_REVIEW"
+    am=result.get("amount_factor",{}) or {}
+    vm=result.get("volume_factor",{}) or {}
+    if am.get("pairs",0)<30 or vm.get("pairs",0)<30:
+        return "THIN_TRADING_UNIT_FACTOR_UNPROVEN"
+    if result.get("amount_minute_raw_fit",0)<.85:
+        return "PRICES_ALIGN_AMOUNT_NEEDS_REVIEW"
+    if vm.get("matching_fraction",0)<.85:
+        return "PRICES_ALIGN_VOLUME_NEEDS_REVIEW"
+    return "FACTOR_OR_OTHER_NEEDS_REVIEW"
+
+
+def classify_gap_candidate(diagnostic, day_source):
+    """A DAY price match is diagnostic, never a license to fabricate 241m."""
+    if diagnostic.get("status")!="TDX_240_VS_OFFICIAL_DAY_OHLC_DIAGNOSTIC_ONLY":
+        return "REJECT_INCOMPLETE_INDEPENDENT_MINUTES"
+    if not diagnostic.get("all_four_fit",False):
+        return "REJECT_DAY_OHLC_CONFLICT"
+    if day_source=="TDX_DAY_OVERLAY_SAME_VENDOR_FAMILY":
+        return "TDX_FAMILY_SELF_CONSISTENT_NOT_INDEPENDENT"
+    if day_source=="PHYSICAL_PARQUET_DAY_PROVIDER_UNVERIFIED":
+        return "OHLC_CONSISTENT_DAY_PROVIDER_UNVERIFIED"
+    return "DAY_SOURCE_UNKNOWN_FURTHER_PROOF_REQUIRED"
+
+
 def inspect(root, *, workspace=WORK, logger=print):
     stage=P.BASE/f"{X.START:%Y%m%d}_{X.END:%Y%m%d}"
     official,stocks,plan,calibration=R.load_bound_context(Path(root),stage,X.START,X.END)
@@ -91,6 +145,10 @@ def inspect(root, *, workspace=WORK, logger=print):
     verified_stocks=0
     verified_days=0
     legacy_no_detail=0
+    review_items=[]
+    review_category=Counter()
+    gap_quality=Counter()
+    gap_provenance=Counter()
     for i,code in enumerate(stocks):
         receipt=Path(workspace)/"receipts"/(code.replace(".","_")+".json")
         source=Path(workspace)/"source_parquet"/(code.replace(".","_")+".parquet")
@@ -133,6 +191,8 @@ def inspect(root, *, workspace=WORK, logger=print):
                 gap_days.append(d)
             if k=="MINUTE_SOURCE_DIFFERENCE_REVIEW":
                 causes=review_reason(result)
+                category=categorize_review(result)
+                review_category[category]+=1
                 reason.update(causes)
                 minute=item.get("minute_diagnostics",{}) or {}
                 counts=minute.get("field_mismatch_counts")
@@ -141,6 +201,18 @@ def inspect(root, *, workspace=WORK, logger=print):
                 else:
                     for field in FIELDS:
                         field_minutes[field]+=int(counts.get(field,0))
+                review_record={"stock":code,"day":ds,"review_class":category,
+                               "reasons":causes,
+                               "minute_field_mismatches":counts,
+                               "offset_ms":result.get("tdx_to_qmt_time_offset_ms"),
+                               "qmt_bars":result.get("qmt_count"),
+                               "tdx_bars":result.get("tdx_count"),
+                               "OHLC_fit":result.get("ohlc_all_fields_fit"),
+                               "amount_raw_fit":result.get("amount_minute_raw_fit"),
+                               "amount_factor":result.get("amount_factor"),
+                               "volume_factor":result.get("volume_factor"),
+                               "production_merge_authorized":False}
+                review_items.append(review_record)
                 if len(review_examples)<16:
                     review_examples.append({
                         "stock":code,"day":ds,"reasons":causes,
@@ -162,10 +234,17 @@ def inspect(root, *, workspace=WORK, logger=print):
             for d in gap_days:
                 rows=sorted(by_day.get(d,[]),key=lambda x:x["ts"])
                 diag=independently_compare_tdx_day_to_official(rows,official[d][code])
+                provenance=reference_source(d,plan)
+                disposition=classify_gap_candidate(diag,provenance)
+                gap_quality[disposition]+=1
+                gap_provenance[provenance]+=1
                 gap_candidates.append({
                     "stock":code,"day":d.isoformat(),
                     "result":diag,
-                    "source":"independent eltdx 1m 240 bars; QMT 241 not reconstructed"})
+                    "day_reference_provenance":provenance,
+                    "review_disposition":disposition,
+                    "auto_fill_prohibited":True,
+                    "source":"eltdx native 240m + source-tagged DAY; QMT 241 not reconstructed"})
         if i and i%1000==0:
             logger("ELTDX_FORENSICS_VERIFIED_SOURCE_SHA="+str(verified_stocks))
     official_days=sum(len(v) for v in official.values())
@@ -183,6 +262,9 @@ def inspect(root, *, workspace=WORK, logger=print):
         "source_failure_first_trading_dates":failed,
         "stock_day_statuses":dict(status),
         "review_reason_days_nonexclusive":dict(reason),
+        "review_exclusive_day_classes":dict(review_category),
+        "gap_review_dispositions":dict(gap_quality),
+        "gap_reference_provenance":dict(gap_provenance),
         "review_field_minute_mismatch_counts":dict(field_minutes),
         "review_days_without_minute_details":legacy_no_detail,
         "review_examples_no_market_prices":review_examples,
@@ -198,6 +280,20 @@ def inspect(root, *, workspace=WORK, logger=print):
     if output.is_symlink():
         raise ValueError("Redirected forensic report")
     P.safe_save(output,P.canonical(result))
+    # Complete case queues, not only first 12/16 examples in summary.
+    # These are private diagnostic metadata, not licensed raw market bars.
+    if len(review_items)!=status.get("MINUTE_SOURCE_DIFFERENCE_REVIEW",0):
+        raise ValueError("Private review queue count does not reconcile")
+    if len(gap_candidates)!=status.get("NO_MINUTE_TIME_OVERLAP",0):
+        raise ValueError("Private gap queue count does not reconcile")
+    for name,items in (("latest_review_queue.private.json",review_items),
+                       ("latest_gap_queue.private.json",gap_candidates)):
+        dest=Path(workspace)/name
+        if dest.is_symlink():
+            raise ValueError("Symlinked private forensic queue")
+        P.safe_save(dest,P.canonical({"format":FORMAT,"plan_sha256":plan_hash,
+                 "cases":items,"market_files_modified":False,
+                 "production_merge_authorized":False}))
     concise={k:v for k,v in result.items() if k not in (
         "source_failure_first_trading_dates","review_examples_no_market_prices",
         "gap_candidate_examples","daily_statuses")}

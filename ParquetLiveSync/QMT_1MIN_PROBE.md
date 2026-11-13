@@ -247,3 +247,14 @@ eltdx 的 client.auctions.series(code,date) / 0x056a 返回竞价过程的虚拟
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Auction field tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_postmortem.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Auction field postmortem failed"}
 
 请返回 ELTDX_AUCTION_241_FIELD_DIAGNOSTIC (3 行) 与 ELTDX_AUCTION_241_FIELD_SUMMARY (1 行)。之后才考虑针对失败的具体字段调取历史真实成交明细（不是 0x056a 虚拟委托快照），并拿旧购买的 .lc1+241 Parquet 样本做同日交叉印证。正式目标始终保留 241 网格、不得伪造 09:31 high/low/open，也不得因 3 个样本匹配某规则就在全市场自动合成。
+
+
+## 2026-11-13 三股分钟字段审计揭示疑似股/手 ×100 而非真实 09:31 价格错误
+
+用户本机 2026-10-14 三只 SHA 认证源回显：QMT 09:30+09:31 合并后与 eltdx 09:31 **OHLC 四项及成交额 amount 均匹配，仅 volume 不匹配**，三股的 volume 归一化相对差都为 0.99。之后 239 根各股 OHLC+amount 都是 239/239，通过原值比较的 volume 只有 1/239 或 2/239（很可能是双方均为零的无成交 K 线）。此时模型的原标签 MERGE_PRICES_ONLY_VOLUME_AMOUNT_DISAGREE 只是过宽的分类名，不应误以为 amount 也不匹配。这组证据非常符合 raw eltdx volume_wire_value（常为股）相对 QMT volume（可能为手）的 100 倍量纲差异，但不能只凭 0.99 决定倍率方向或单位。
+
+增强 qmt_eltdx_auction_241_postmortem.py 的 v2 输出：使用既有 SHA 认证的 QMT 241 与 eltdx 240、09:25 正式竞价收据，严格按现有时间戳，在 TDX 240 根的首根与 QMT 首两根合并后、其余 239 根直接对应的条件下，检验 QMT_volume = raw_eltdx_volume × {0.01,1,100} 的全日 240 根配对。**只用正成交量分钟判别量纲**，单独报告双方都为零的分钟和只有一方为零的异常；候选需要至少 40 对有效分钟、>=98% 正量分钟拟合、其他倍率低于 80% 且无单侧零成交，才能称为唯一候选。即便 240/240 在单位归一化后全通过，也只是源端口径诊断，绝不授权修改原始 Parquet、H5 或交易值，仍未证明由 240 根 + 09:25 快照能独立无损恢复 09:31 连续竞价 open/high/low。
+
+一条离线 PowerShell 命令（不会重新下载行情，使用原先 2026-10-14 的原 SHA 证据，需回传三条诊断和汇总中的 volume_candidate_factors_raw_tdx_to_qmt）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_eltdx_auction_241_postmortem.py -q; if($LASTEXITCODE -ne 0){throw "Volume scale tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_eltdx_auction_241_postmortem.py --day 2026-10-14; if($LASTEXITCODE -ne 0){throw "Volume scale diagnosis failed"}

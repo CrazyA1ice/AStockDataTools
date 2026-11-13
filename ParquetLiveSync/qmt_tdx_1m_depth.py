@@ -81,58 +81,79 @@ class TdxPages:
     def __init__(self,client_factory=None,pause=.07,sleep=time.sleep):
         if client_factory is None:
             from pytdx.hq import TdxHq_API
-            client_factory=lambda:TdxHq_API(heartbeat=True)
+            # pytdx otherwise silently turns socket/parser errors into None,
+            # hiding the root cause of a bad TDX endpoint.
+            client_factory=lambda:TdxHq_API(heartbeat=False,raise_exception=True)
         self.client_factory=client_factory
         self.pause=pause
         self.sleep=sleep
         self.client=None
         self.index=0
         self.endpoint=None
+        self.failures=[]
+        self.category=int(os.environ.get("ASTOCK_TDX_CATEGORY",TDX_CATEGORY_1MIN))
+        if self.category not in (7,8):
+            raise ValueError("Unverified TDX minute category")
+        selected=os.environ.get("ASTOCK_TDX_HOST","").strip()
+        port=int(os.environ.get("ASTOCK_TDX_PORT","7709"))
+        if selected and (not selected.replace(".","").isdigit() or not 1<=port<=65535):
+            raise ValueError("Invalid selected TDX endpoint")
+        selected_host=(selected,port) if selected else None
+        self.hosts=(selected_host,)+tuple(x for x in HOSTS if x!=selected_host) if selected_host else HOSTS
 
     def connect(self):
         if self.client is not None:
             try:self.client.disconnect()
             except Exception:pass
             self.client=None
-        for n in range(len(HOSTS)):
-            index=(self.index+n)%len(HOSTS)
-            ip,port=HOSTS[index]
+        for n in range(len(self.hosts)):
+            index=(self.index+n)%len(self.hosts)
+            ip,port=self.hosts[index]
             api=self.client_factory()
             try:
-                if api.connect(ip,port,time_out=7):
+                if api.connect(ip,port,time_out=4):
                     self.client=api
                     self.index=index
                     self.endpoint=f"{ip}:{port}"
                     return
-            except Exception:
-                pass
+                self.failures.append(f"{ip}:{port} SOCKET_CONNECT_FALSE")
+            except Exception as exc:
+                self.failures.append(f"{ip}:{port} CONNECT_{type(exc).__name__}: {str(exc)[:140]}")
             try:api.disconnect()
             except Exception:pass
-        raise ConnectionError("No TDX 7709 minute source server reachable")
+        raise ConnectionError("No TDX 7709 server connected: "+"; ".join(self.failures[-6:]))
 
     def request(self,code,start):
         if self.client is None:
             self.connect()
-        category=TDX_CATEGORY_1MIN
         market=1 if code.endswith(".SH") else 0
         last=None
         for attempt in range(3):
             try:
                 result=self.client.get_security_bars(
-                    category,market,code[:6],start,PAGE)
+                    self.category,market,code[:6],start,PAGE)
                 if result is None:
-                    raise IOError("TDX returned None")
+                    raise IOError("TDX_API_NONE: legacy pytdx silently swallowed server/socket error")
                 if len(result)>PAGE:
                     raise ValueError("TDX exceeded hard page-size limit")
                 if self.pause:
                     self.sleep(self.pause)
                 return result
-            except (OSError,ConnectionError,TimeoutError) as exc:
-                last=exc
-                self.index=(self.index+1)%len(HOSTS)
-                self.connect()
-                self.sleep(.25*(attempt+1))
-        raise ConnectionError("TDX paging failed after retries: "+str(last))
+            except ValueError:
+                raise
+            except Exception as exc:
+                original=getattr(exc,"original_exception",None)
+                detail=f"{type(exc).__name__}: {str(exc)[:100]}"
+                if original is not None:
+                    detail+=f" INNER={type(original).__name__}: {str(original)[:140]}"
+                self.failures.append(f"{self.endpoint} category={self.category} {detail}")
+                last=detail
+                if attempt<2:
+                    self.index=(self.index+1)%len(self.hosts)
+                    self.connect()
+                    self.sleep(.25*(attempt+1))
+        raise ConnectionError("TDX minute paging failed after endpoint rotation: "+
+                              str(last)+"; attempts="+"; ".join(self.failures[-6:]))
 
     def fetch(self,code,start=START,end=END,max_pages=MAX_PAGES):
         received=[]
@@ -174,7 +195,9 @@ class TdxPages:
                          "source_newest_cn":datetime.fromtimestamp(latest/1000,CN).isoformat(),
                          "retention_covers_requested_start":
                          datetime.fromtimestamp(oldest/1000,CN).date()<=start,
-                         "source_endpoint":self.endpoint}
+                         "source_endpoint":self.endpoint,
+                         "source_category":self.category,
+                         "endpoint_failures":self.failures[-4:]}
 
     def close(self):
         if self.client is not None:
@@ -395,7 +418,8 @@ def run(root,*,start=START,end=END,limit=0,workspace=BASE,
                 "format":FORMAT,"symbol":code,
                 "plan_sha256":original_plan_sha,
                 "qmt_private_sha256":qsha,"reference_days":[str(x) for x in days],
-                "frequency":"1min","tdx_original_units":True}))
+                "frequency":"1min","tdx_original_units":True,
+                "source_category":int(os.environ.get("ASTOCK_TDX_CATEGORY",TDX_CATEGORY_1MIN))}))
             try:
                 cached_receipt=reuse_stock(folder,code,fp)
                 if cached_receipt:

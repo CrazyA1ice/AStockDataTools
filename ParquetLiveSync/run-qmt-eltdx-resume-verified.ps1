@@ -20,15 +20,26 @@ if ($LASTEXITCODE -ne 0) {throw "Offline source regression failed before live wo
 Write-Host "QMT_ELTDX_RESUME_STEP_2_SHA_VERIFY_ALL_PRIOR_184_STOCK_RECOVERY_RECEIPTS"
 # Native invocation uses $LASTEXITCODE, not Start-Process .ExitCode. Python
 # qmt_recovery_receipt_preflight imports no xtquant and makes no vendor calls.
-& $py -u -B "ParquetLiveSync\qmt_recovery_receipt_preflight.py" --root "D:\stock"
-if ($LASTEXITCODE -ne 0) {
+$previousErrorAction = $ErrorActionPreference
+try {
+  # Windows PowerShell 5.1 can turn benign Python stderr warnings into a
+  # terminating NativeCommandError. Verify native exit status explicitly.
+  $ErrorActionPreference = "Continue"
+  & $py -u -B "ParquetLiveSync\qmt_recovery_receipt_preflight.py" --root "D:\stock"
+  $preflightExit = $LASTEXITCODE
+} finally { $ErrorActionPreference = $previousErrorAction }
+if ($preflightExit -ne 0) {
   throw "SHA verification of already-completed QMT recovery failed; refusing live source download"
 }
 Write-Host "QMT_ELTDX_RESUME_STEP_3_REUSE_THREE_PILOT_AND_AUDIT_UP_TO_5223_STOCKS"
 # This stage audits every QMT/TDX receipt SHA independently. Each new eltdx
 # source is privately staged, resume-safe and never merged into market files.
-& $py -u -B "ParquetLiveSync\qmt_eltdx_market_audit.py" --root "D:\stock" --limit-stocks $MaxStocks --max-hosts $MaxHosts --max-pages $MaxPages
-if ($LASTEXITCODE -ne 0) {throw "eltdx 1m crosscheck failed; private receipts remain reusable"}
+try {
+  $ErrorActionPreference = "Continue"
+  & $py -u -B "ParquetLiveSync\qmt_eltdx_market_audit.py" --root "D:\stock" --limit-stocks $MaxStocks --max-hosts $MaxHosts --max-pages $MaxPages
+  $marketExit = $LASTEXITCODE
+} finally { $ErrorActionPreference = $previousErrorAction }
+if ($marketExit -ne 0) {throw "eltdx 1m crosscheck failed; private receipts remain reusable"}
 $report = Join-Path $PSScriptRoot "work\qmt_1min_market\eltdx_1m_probe\20261014_20261112\latest_market_report.json"
 if (-not (Test-Path -LiteralPath $report -PathType Leaf)) {throw "Missing SHA-bound private market report"}
 $summary = Get-Content -LiteralPath $report -Raw -Encoding UTF8 | ConvertFrom-Json

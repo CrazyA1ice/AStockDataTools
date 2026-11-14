@@ -61,7 +61,12 @@ def fingerprint(path):
 def parse_timestamp(raw):
     if isinstance(raw,datetime):
         return raw.replace(tzinfo=CN) if raw.tzinfo is None else raw.astimezone(CN)
-    s=str(raw).strip()
+    if isinstance(raw,(int,float)) and not isinstance(raw,bool):
+        if not math.isfinite(float(raw)) or float(raw)!=int(raw):
+            raise ValueError("Unsupported non-integer QMT timestamp")
+        s=str(int(raw))
+    else:
+        s=str(raw).strip()
     try:
         if s.isdigit():
             if len(s)==13:
@@ -203,7 +208,10 @@ def read_xtdata(code,root,reader=None):
             data_dir=str(root))
     except Exception as exc:
         return [],"XT_LOCAL_READ_UNAVAILABLE",type(exc).__name__+":"+str(exc)[:160]
-    rows,mode=normalize(response,code)
+    try:
+        rows,mode=normalize(response,code)
+    except (ValueError,TypeError,KeyError) as exc:
+        return [],"XT_NATIVE_SCHEMA_OR_DATA_INVALID",type(exc).__name__+":"+str(exc)[:160]
     return rows,mode,None
 
 

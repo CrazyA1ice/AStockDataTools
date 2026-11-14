@@ -26,7 +26,7 @@ def safe_dir(root,market,period):
     if market not in MARKETS or period not in PERIODS:
         raise ValueError("Only 60, 300, 86400 source directories")
     path=root/market/period
-    if path.is_symlink():
+    if path.is_symlink() or path.parent.is_symlink():
         raise ValueError("Redirected QMT market folder")
     return path
 

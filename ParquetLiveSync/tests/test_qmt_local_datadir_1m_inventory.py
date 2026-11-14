@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT=Path(__file__).resolve().parents[1]/"qmt_local_datadir_1m_inventory.py"
 spec=importlib.util.spec_from_file_location("qmt_local_datadir_1m_inventory",SCRIPT)
@@ -66,7 +67,7 @@ class TestQmtDatadirInventory(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);path=root/"SH"/"60";path.mkdir(parents=True)
             f=path/"688001.dat";f.write_bytes(b"large")
-            with unittest.mock.patch.object(T,"MAX_HASH_BYTES",2):
+            with patch.object(T,"MAX_HASH_BYTES",2):
                 report=T.one_directory(root,"SH","60")
             self.assertEqual(report["selected_anchor_files"][0]["hash_status"],
                              "SIZE_GT_64_MIB_NO_HASH")

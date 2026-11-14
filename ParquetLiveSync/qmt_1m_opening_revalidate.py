@@ -182,8 +182,12 @@ def _save_stock(folder, code, source, approved, refused, provenance):
     source_path = folder / "source_parquet" / (code.replace(".", "_") + ".parquet")
     if receipt_path.exists() or receipt_path.is_symlink():
         raise ValueError("Immutable opening receipt already exists: " + code)
+    if source_path.parent.is_symlink() or receipt_path.parent.is_symlink():
+        raise ValueError("Redirected opening output subdirectory")
     source_path.parent.mkdir(parents=True, exist_ok=True)
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    if source_path.parent.is_symlink() or receipt_path.parent.is_symlink():
+        raise ValueError("Redirected opening output after directory creation")
     table = _source_table(code, source)
     if table.num_rows != len(approved) * 241:
         raise ValueError("Opening source rows not equal to approved stock/day keys")
@@ -240,6 +244,9 @@ def _reuse(folder, code, provenance, days):
             or data.get("rows") != len(data.get("approved_days", [])) * 241):
         raise ValueError("Immutable opening receipt identity mismatch: " + code)
     source = Path(folder) / "source_parquet" / (code.replace(".", "_") + ".parquet")
+    if (Path(folder).is_symlink() or receipt.parent.is_symlink()
+            or source.parent.is_symlink()):
+        raise ValueError("Redirected opening receipt/source directory")
     if data["approved_days"]:
         if _digest(source) != data.get("sha256"):
             raise ValueError("Immutable opening source SHA mismatch: " + code)

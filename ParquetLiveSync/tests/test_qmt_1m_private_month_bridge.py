@@ -29,6 +29,97 @@ def bars(days, symbol="SH600000"):
 
 
 class PrivateMonthTests(unittest.TestCase):
+    def _sealed_fixture(self, folder):
+        stage = Path(folder) / "private_stage"
+        orig = stage / "receipts"
+        rec = stage / "day_recovery" / "receipts"
+        orig.mkdir(parents=True)
+        rec.mkdir(parents=True)
+        days = ("2026-10-14", "2026-10-15")
+        original = {"symbol": "600000.SH", "status": "private_ohlcva_source_verified",
+                    "market_modified": False, "traded_days": list(days)}
+        recovered = {"symbol": "000001.SZ", "format": B.R.FORMAT,
+                     "status": "private_day_subset_only", "market_modified": False,
+                     "production_merge_authorized": False,
+                     "approved_days": [days[0]],
+                     "quarantined_days": {days[1]: {"reason": "INVALID_OHLCVA"}}}
+        (orig / "600000_SH.json").write_bytes(B.P.canonical(original))
+        (rec / "000001_SZ.json").write_bytes(B.P.canonical(recovered))
+        # The original DAY month hash is a past *pinned reference*, not the
+        # presently mutable D:/stock/day month file.
+        sources = {"physical": {"2026-10.parquet": "a" * 64},
+                   "tdx_overlay": {"2026-10-14": "b" * 64}}
+        keys = sorted((day, code) for day in days
+                      for code in ("600000.SH", "000001.SZ"))
+        calendar = B.P.sha_bytes(B.P.canonical({
+            "physical_month_sha256": sources["physical"],
+            "used_tdx_day_overlay_sha256": sources["tdx_overlay"],
+            "days": keys}))
+        cal_base = Path(folder) / "calibration"
+        cal_base.mkdir()
+        providers = {}
+        anchors = (("SH_OTHER", "600000.SH"), ("SZ", "000001.SZ"),
+                   ("STAR", "688001.SH"))
+        for category, code in anchors:
+            paid = Path(folder) / (category + ".parquet")
+            paid.write_bytes(("purchased-source-" + category).encode())
+            providers[category] = {
+                "symbol": code, "paid_source_path": str(paid),
+                "paid_source_sha256": B.L.hash_file(paid)}
+        calibration = {"calibration_passed": True, "providers": providers}
+        (cal_base / "latest.json").write_bytes(B.P.canonical(calibration))
+        plan = {"format": B.P.FORMAT, "window": [str(B.START), str(B.END)],
+                "stock_count": 2, "trading_days": list(days),
+                "day_file_sha256": sources, "calendar_sha256": calendar,
+                "calibration_sha256": B.P.sha_bytes(B.P.canonical(calibration))}
+        (stage / "plan.json").write_bytes(B.P.canonical(plan))
+        return stage, cal_base, plan
+
+    def test_sealed_universe_unchanged_by_later_day_month_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage, cal_base, plan = self._sealed_fixture(temp)
+            newer_day = Path(temp) / "current_2026_10.parquet"
+            newer_day.write_bytes(b"updated-DAY-source-v2")
+            with (patch.object(B.P, "BASE", cal_base),
+                  patch.object(B.P, "official_day_universe",
+                               side_effect=AssertionError("MUST NOT READ CURRENT DAY"))):
+                expected, stocks, sealed, calib = B.load_sealed_context(
+                    stage, min_daily_stocks=1)
+                self.assertEqual(len(stocks), 2)
+                self.assertEqual(len(expected), 2)
+                self.assertEqual(sealed["calendar_sha256"], plan["calendar_sha256"])
+                newer_day.write_bytes(b"updated-DAY-source-v3")
+                again = B.load_sealed_context(stage, min_daily_stocks=1)
+                self.assertEqual(again[2], sealed)
+
+    def test_sealed_original_calendar_sha_tamper_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage, cal_base, plan = self._sealed_fixture(temp)
+            plan["day_file_sha256"]["physical"]["2026-10.parquet"] = "f" * 64
+            (stage / "plan.json").write_bytes(B.P.canonical(plan))
+            with patch.object(B.P, "BASE", cal_base):
+                with self.assertRaisesRegex(ValueError, "calendar SHA mismatch"):
+                    B.load_sealed_context(stage, min_daily_stocks=1)
+
+    def test_sealed_receipt_day_membership_tamper_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage, cal_base, plan = self._sealed_fixture(temp)
+            file = stage / "day_recovery" / "receipts" / "000001_SZ.json"
+            doc = json.loads(file.read_bytes())
+            doc["approved_days"] = []
+            file.write_bytes(B.P.canonical(doc))
+            with patch.object(B.P, "BASE", cal_base):
+                with self.assertRaisesRegex(ValueError, "calendar SHA mismatch"):
+                    B.load_sealed_context(stage, min_daily_stocks=1)
+
+    def test_sealed_purchased_calibration_sha_tamper_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage, cal_base, plan = self._sealed_fixture(temp)
+            (Path(temp) / "SH_OTHER.parquet").write_bytes(b"changed-paid-source")
+            with patch.object(B.P, "BASE", cal_base):
+                with self.assertRaisesRegex(ValueError, "purchased source SHA changed"):
+                    B.load_sealed_context(stage, min_daily_stocks=1)
+
     def test_calibration_time_volume_amount_and_values(self):
         t = bars(["2026-10-14"]).slice(0, 1)
         output = B.calibrate_table(t, {"offset_ms": 60000,

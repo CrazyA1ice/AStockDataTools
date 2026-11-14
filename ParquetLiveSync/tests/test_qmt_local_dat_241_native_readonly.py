@@ -6,8 +6,6 @@ import sys
 import tempfile
 import unittest
 
-import pandas as pd
-
 HERE=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location(
     "qmt_local_dat_241_native_readonly",HERE/"qmt_local_dat_241_native_readonly.py")
@@ -16,10 +14,30 @@ spec.loader.exec_module(M)
 from test_qmt_eltdx_auction_241_probe import sample
 
 
+class FakeField:
+    """Minimal xtdata field-by-stock frame, no pandas dependency in CI."""
+    def __init__(self,code,stamps,values):
+        self.index=[code]
+        self.columns=list(stamps)
+        self.data=dict(zip(stamps,values))
+        self.loc=self
+    def __getitem__(self,key):
+        return self.data[key[1]]
+
+
+class FakeStockFrame:
+    def __init__(self,bars):
+        self.bars=bars
+        self.columns=(*M.FIELDS,"time")
+    def iterrows(self):
+        for index,b in enumerate(self.bars):
+            yield index,{**{k:b[k] for k in M.FIELDS},"time":b["ts"]}
+
+
 def xtdata_fields(bars,code="688001.SH"):
     stamps=[b["ts"] for b in bars]
-    return {key:pd.DataFrame([[b[key] if key!="time" else b["ts"] for b in bars]],
-                             index=[code],columns=stamps)
+    return {key:FakeField(code,stamps,
+                  [b[key] if key!="time" else b["ts"] for b in bars])
             for key in (*M.FIELDS,"time")}
 
 
@@ -48,9 +66,7 @@ class Tests(unittest.TestCase):
 
     def test_stock_frame_adaptor_and_240_is_not_mislabelled_241(self):
         day,q,tdx=sample()
-        frame=pd.DataFrame([{**{k:b[k] for k in M.FIELDS},
-                             "time":b["ts"]} for b in q[1:]])
-        loaded={"688001.SH":frame}
+        loaded={"688001.SH":FakeStockFrame(q[1:])}
         rows,shape=M.normalize(loaded,"688001.SH")
         self.assertEqual(shape,"XT_STOCK_FRAME")
         self.assertEqual(len(rows),240)
@@ -131,12 +147,12 @@ class Tests(unittest.TestCase):
     def test_nan_duplicate_time_or_bad_ohlc_fails_closed(self):
         day,q,_=sample()
         loaded=xtdata_fields(q)
-        loaded["high"].iloc[0,0]=float("nan")
+        loaded["high"].data[q[0]["ts"]]=float("nan")
         with self.assertRaisesRegex(ValueError,"Invalid"):
             M.normalize(loaded,"688001.SH")
         rows,_=M.normalize(xtdata_fields(q),"688001.SH")
         with self.assertRaisesRegex(ValueError,"Duplicate"):
-            M.normalize(xtdata_fields(q+[q[-1]]),"688001.SH")
+            M.normalize({"688001.SH":FakeStockFrame(q+[q[-1]])},"688001.SH")
 
 if __name__=="__main__":
     unittest.main()

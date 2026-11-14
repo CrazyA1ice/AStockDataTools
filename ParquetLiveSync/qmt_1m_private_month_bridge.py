@@ -185,7 +185,9 @@ def resolve(root, stage, progress=print):
         months[mon] = {"stock_days_expected": exp, "stock_days_accepted": valid,
                        "stock_days_quarantined": exp - valid,
                        "minute_rows_expected_from_accepted": valid * 241,
-                       "incomplete_window": (mon == "2026-10")}
+                       "incomplete_window": True,
+                       "window_limited_to": ["2026-10-14", "2026-10-30"]
+                           if mon == "2026-10" else ["2026-11-02", "2026-11-12"]}
     records = sorted(entries, key=lambda x: (x["code"], x["kind"]))
     identity = {"format": FORMAT, "window": [str(START), str(END)],
                 "original_plan_sha256": original_plan_sha,
@@ -300,6 +302,8 @@ def build(root=Path("D:/stock"), stage=P.BASE / "20261014_20261112",
                "total_accepted_stock_days":
                    plan["original"] + plan["recovered"] + plan["opening"],
                "remaining_quarantined_stock_days": len(plan["gaps"]),
+               "remaining_quarantined_keys": [
+                   {"day": day, "symbol": code} for day, code in plan["gaps"]],
                "month_coverage": plan["months"],
                "source_entries": len(plan["entries"]),
                "source_identity_sha256": plan["identity_sha256"],
@@ -354,6 +358,8 @@ def build(root=Path("D:/stock"), stage=P.BASE / "20261014_20261112",
                     or L.hash_file(source) != entry["source_sha256"]):
                 raise ValueError("SHA-verified input source changed: " + entry["code"])
             source_table = pq.read_table(source)
+            if L.hash_file(source) != entry["source_sha256"]:
+                raise ValueError("QMT input changed during private monthly read: " + entry["code"])
             validate_source_table(source_table, entry, timestamps)
             gate = _calibration(plan["calib"], entry["code"])
             bymonth = defaultdict(list)
@@ -384,6 +390,9 @@ def build(root=Path("D:/stock"), stage=P.BASE / "20261014_20261112",
                            "calibration_sha256": plan["plan"]["calibration_sha256"],
                            "rows": count[mon], "groups": groups[mon],
                            "month_coverage": plan["months"][mon],
+                           "remaining_quarantined_keys": [
+                               {"day": day, "symbol": code} for day, code in plan["gaps"]
+                               if day.startswith(mon)],
                            "sha256": L.hash_file(tmp),
                            "market_modified": False, "production_merge_authorized": False,
                            "not_a_full_month_where_window_is_partial": True}

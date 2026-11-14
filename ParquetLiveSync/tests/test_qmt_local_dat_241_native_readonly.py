@@ -133,13 +133,14 @@ class Tests(unittest.TestCase):
                       logger=lambda _:None)
 
     def test_missing_sdk_explicitly_classified_and_not_substituted(self):
+        day,q,_=sample()
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
             make_source(root)
             r=M.run(root=root,codes=("688001.SH",),
-                    days=(date(2026,10,16),),
+                    days=(day,),
                     reader=lambda **kw:{},
-                    reference_loader=lambda code:([], "sealed"),
+                    reference_loader=lambda code:(q, "sealed"),
                     logger=lambda _:None)
             self.assertEqual(r["statuses"],{"EMPTY_OR_UNSUPPORTED_SHAPE":1})
             self.assertFalse(r["production_merge_authorized"])

@@ -62,6 +62,24 @@ class PrivateMonthTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "grid/ordering"):
             B.validate_source_table(broken, entry, grid)
 
+    def test_logical_digest_is_stable_across_arrow_chunks_and_parquet(self):
+        day = "2026-10-14"
+        source = bars([day])
+        split = pa.concat_tables([source.slice(0, 120),
+                                  source.slice(120, 121)])
+        self.assertEqual(source.to_pylist(), split.to_pylist())
+        self.assertEqual(B._arrow_digest(source), B._arrow_digest(split))
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "roundtrip.parquet"
+            pq.write_table(split, path, compression="zstd")
+            from_disk = pq.read_table(path)
+            self.assertEqual(source.to_pylist(), from_disk.to_pylist())
+            self.assertEqual(B._arrow_digest(source), B._arrow_digest(from_disk))
+        altered = source.to_pylist()
+        altered[0]["amount"] += 1.
+        changed = pa.Table.from_pylist(altered, schema=B.P.PRIVATE_SCHEMA)
+        self.assertNotEqual(B._arrow_digest(source), B._arrow_digest(changed))
+
     def test_source_ownership_prevents_duplicate_stock_day(self):
         ledger = []
         seen = {}

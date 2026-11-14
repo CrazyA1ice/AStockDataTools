@@ -80,7 +80,7 @@ class PrivateMonthTests(unittest.TestCase):
             stage, cal_base, plan = self._sealed_fixture(temp)
             newer_day = Path(temp) / "current_2026_10.parquet"
             newer_day.write_bytes(b"updated-DAY-source-v2")
-            with (patch.object(B.P, "BASE", cal_base),
+            with (patch.object(B.P, "BASE", cal_base.parent),
                   patch.object(B.P, "official_day_universe",
                                side_effect=AssertionError("MUST NOT READ CURRENT DAY"))):
                 expected, stocks, sealed, calib = B.load_sealed_context(
@@ -97,7 +97,7 @@ class PrivateMonthTests(unittest.TestCase):
             stage, cal_base, plan = self._sealed_fixture(temp)
             plan["day_file_sha256"]["physical"]["2026-10.parquet"] = "f" * 64
             (stage / "plan.json").write_bytes(B.P.canonical(plan))
-            with patch.object(B.P, "BASE", cal_base):
+            with patch.object(B.P, "BASE", cal_base.parent):
                 with self.assertRaisesRegex(ValueError, "calendar SHA mismatch"):
                     B.load_sealed_context(stage, min_daily_stocks=1)
 
@@ -108,7 +108,7 @@ class PrivateMonthTests(unittest.TestCase):
             doc = json.loads(file.read_bytes())
             doc["approved_days"] = []
             file.write_bytes(B.P.canonical(doc))
-            with patch.object(B.P, "BASE", cal_base):
+            with patch.object(B.P, "BASE", cal_base.parent):
                 with self.assertRaisesRegex(ValueError, "calendar SHA mismatch"):
                     B.load_sealed_context(stage, min_daily_stocks=1)
 
@@ -116,7 +116,7 @@ class PrivateMonthTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             stage, cal_base, plan = self._sealed_fixture(temp)
             (Path(temp) / "SH_OTHER.parquet").write_bytes(b"changed-paid-source")
-            with patch.object(B.P, "BASE", cal_base):
+            with patch.object(B.P, "BASE", cal_base.parent):
                 with self.assertRaisesRegex(ValueError, "purchased source SHA changed"):
                     B.load_sealed_context(stage, min_daily_stocks=1)
 

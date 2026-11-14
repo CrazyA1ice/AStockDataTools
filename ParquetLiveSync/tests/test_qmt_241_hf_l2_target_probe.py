@@ -96,7 +96,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(R.clock(93001250),9*3600000+30*60000+1250)
         self.assertEqual(R.clock(92500010),9*3600000+25*60000+10)
         with self.assertRaisesRegex(ValueError,"Invalid"):
-            R.clock(93600010)
+            R.clock(99600010)
         with self.assertRaisesRegex(ValueError,"Invalid"):
             R.clock(1000000000)
 

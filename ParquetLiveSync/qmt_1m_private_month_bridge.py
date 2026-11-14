@@ -90,12 +90,109 @@ def _add_entry(entries, occupied, expected, code, days, kind, path, receipt_sha,
                         "source_sha256": file_sha})
 
 
+def load_sealed_context(stage, *, min_daily_stocks=2500):
+    """Recover historical DAY stock-days from immutable receipts and pinned SHA.
+
+    Physical DAY months can be legitimately updated after original QMT intake.
+    This reconstructs the exact OLD stock-day calendar and checks its digest
+    against the original plan, not a new mutable physical DAY snapshot.
+    """
+    stage = Path(stage)
+    plan = _json(stage / "plan.json")
+    sources = plan.get("day_file_sha256")
+    if (plan.get("format") != P.FORMAT
+            or plan.get("window") != [str(START), str(END)]
+            or not isinstance(sources, dict)
+            or set(sources) != {"physical", "tdx_overlay"}
+            or any(not isinstance(sources[k], dict) for k in sources)
+            or any(not _hex(v) for m in sources.values() for v in m.values())
+            or not _hex(plan.get("calendar_sha256"))
+            or not _hex(plan.get("calibration_sha256"))
+            or type(plan.get("stock_count")) is not int
+            or not isinstance(plan.get("trading_days"), list)):
+        raise ValueError("Original stage DAY plan identity invalid")
+    original_dir = stage / "receipts"
+    recovery_dir = stage / "day_recovery" / "receipts"
+    if (not original_dir.is_dir() or original_dir.is_symlink()
+            or not recovery_dir.is_dir() or recovery_dir.is_symlink()):
+        raise ValueError("Missing original/recovery receipt inventory")
+    expected = defaultdict(dict)
+    owners = set()
+    for kind, folder in (("original", original_dir), ("recovery", recovery_dir)):
+        for path in sorted(folder.glob("*.json")):
+            doc = _json(path)
+            code = doc.get("symbol")
+            if (not isinstance(code, str)
+                    or path.name != code.replace(".", "_") + ".json"
+                    or P.normalize_code(code) != code or code in owners):
+                raise ValueError("Duplicate or invalid original stock receipt")
+            owners.add(code)
+            if kind == "original":
+                if (doc.get("status") != "private_ohlcva_source_verified"
+                        or doc.get("market_modified") is not False):
+                    raise ValueError("Original QMT stock status changed " + code)
+                days = doc.get("traded_days")
+            else:
+                good, bad = doc.get("approved_days"), doc.get("quarantined_days")
+                if (doc.get("format") != R.FORMAT
+                        or doc.get("status") != "private_day_subset_only"
+                        or doc.get("market_modified") is not False
+                        or doc.get("production_merge_authorized") is not False
+                        or not isinstance(good, list) or not isinstance(bad, dict)
+                        or set(good) & set(bad)):
+                    raise ValueError("Recovery stock receipt invalid " + code)
+                days = good + list(bad)
+            if (not isinstance(days, list) or not days
+                    or len(days) != len(set(days))):
+                raise ValueError("Invalid original traded-day list " + code)
+            for iso in days:
+                if not isinstance(iso, str):
+                    raise ValueError("Invalid stock/day key type")
+                day = date.fromisoformat(iso)
+                if not START <= day <= END or iso != day.isoformat():
+                    raise ValueError("Stock/day outside original stage " + code)
+                if code in expected[day]:
+                    raise ValueError("Duplicate original stock/day")
+                expected[day][code] = None
+    symbols = sorted(owners)
+    if (len(symbols) != plan["stock_count"]
+            or sorted(d.isoformat() for d in expected) != plan["trading_days"]
+            or any(len(codes) < min_daily_stocks for codes in expected.values())):
+        raise ValueError("Sealed DAY stock/date inventory changed")
+    # This is the EXACT proof construction in P.official_day_universe,
+    # but using the old, original source SHA values already in plan.json.
+    proof = P.sha_bytes(P.canonical({
+        "physical_month_sha256": sources["physical"],
+        "used_tdx_day_overlay_sha256": sources["tdx_overlay"],
+        "days": sorted((str(day), code)
+                       for day, codes in expected.items() for code in codes)}))
+    if proof != plan["calendar_sha256"]:
+        raise ValueError("Reconstructed historical DAY calendar SHA mismatch")
+    calib = _json(P.BASE / "calibration" / "latest.json")
+    if (calib.get("calibration_passed") is not True
+            or not isinstance(calib.get("providers"), dict)
+            or len(calib["providers"]) != 3
+            or P.sha_bytes(P.canonical(calib)) != plan["calibration_sha256"]):
+        raise ValueError("Sealed paid-provider calibration changed")
+    purchased = set()
+    for item in calib["providers"].values():
+        old = Path(item["paid_source_path"])
+        if (old.is_symlink() or not old.is_file()
+                or L.hash_file(old) != item.get("paid_source_sha256")):
+            raise ValueError("Original purchased source SHA changed")
+        purchased.add(item["symbol"])
+    if purchased != set(P.ANCHORS):
+        raise ValueError("Original purchased calibration anchors changed")
+    return expected, symbols, plan, calib
+
+
 def resolve(root, stage, progress=print):
     """Prove three disjoint sources against original calendar/calibration and recovery."""
     stage = Path(stage)
     if not stage.is_dir() or stage.is_symlink():
         raise ValueError("Original QMT private stage missing or redirected")
-    expected, all_stocks, plan, calib = R.load_bound_context(Path(root), stage, START, END)
+    expected, all_stocks, plan, calib = load_sealed_context(stage)
+    progress("QMT_PRIVATE_MONTH_SOURCE_BINDING=SEALED_ORIGINAL_DAY_CALENDAR_SHA_VERIFIED")
     report = _json(stage / "day_recovery" / "latest_report.json")
     orig = R.validate_original(stage, expected, all_stocks, progress=progress)
     original_plan_sha = L.hash_file(stage / "plan.json")

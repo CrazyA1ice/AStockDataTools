@@ -443,3 +443,24 @@ Windows 单行命令（联网只向新浪/腾讯公开数据域名发起最多 2
 - 备选 submato/ashare-l2 GitHub 免费 2026-10 月逐笔档案仅为下载索引，仓库内只有 DEMO.SZ 示例，真实目标股票日的来源真实性、全面性和行情授权尚待查验。若腾讯和新浪仍失败，优先提取 688001.SH/20261016 的单股逐笔成交及行情快照 CSV，避免全市场盲目下载。
 
 Windows 本机单行指令：Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_public_minute_recovery_probe.py -q; if($LASTEXITCODE -ne 0){throw "Public recovery tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_public_minute_recovery_probe.py; if($LASTEXITCODE -ne 0){throw "Public recovery probe failed"}
+
+
+## 2026-11-14 新浪/腾讯公开 1min 的最终真实历史深度与研究用途 L2 新来源
+
+用户 688001.SH 2026-10-16 Windows 真实备用网络测试：测试 6 项 OK；新浪 JSONP 1970 条最早 2026-11-03、普通 JSON 1023 条最早 2026-11-09；腾讯 proxy m1 最早 2026-11-12、共 320 条，直连 TLS EOF。原 241/240 SHA 源未更改。因此**这些已实际调用的免费分钟接口本身不覆盖目标 2026-10-16**，不再反复试相同参数/端点。
+
+新增更有价值的真实历史 L2 研究来源：Hugging Face 数据集 venvoo/china-a-share-l2-level2-limit-order-book-tick-data，研究用途许可、需要登录和作者准入，README 标注涵盖 2017-01 至 2026-11-13，并提供 YYYYMMDD/{行情.parquet,逐笔委托.parquet,逐笔成交.parquet} 和 20261016 理论日期覆盖。数据按 wind_code 聚集，逐笔有 time HHMMSSmmm、trade_id、trade_code、price、volume；快照有 amount/cum_amount。资料**没有保证某证券某日完整，也没有向本工具确认用户已经得到访问权限**。HfFileSystem 与 PyArrow 支持远程基于统计值的行组筛选，而 hf_hub_download 会下载整个多 GB 交易日文件，所以绝对不要为了仅验证 688001.SH 高价就下载多 GB 整份。
+
+已加 qmt_241_hf_l2_target_probe.py，单日单股严格研究用途：
+- 默认无市场数据下载，仅通过 Hugging Face 官方 API 列举 20261016 目录的 行情.parquet 和 逐笔成交.parquet 是否存在，区分 401/403 gated access、目标文件缺少与接口故障；只向 huggingface.co 发 token，避免日志包含凭据。
+- 仅在获得授权并明确 --sample 后才使用 Hugging Face CLI 本机 token、HfFileSystem 和 PyArrow。先 QMT 241+TDX240 SHA/Arrow 网格核验，固定仓库提交版本 SHA；查看远端 Parquet 页脚 wind_code min/max，**若缺失统计、相关行组超过四个、涉及列压缩总量超过 48MiB、单个行组超过 500000 行则直接停止，不允许悄悄下载整个全市场日文件**；从少量逐笔行组筛出 688001.SH 09:25/09:30 成交和取消、时间戳，分别与 QMT 竞价量额及 09:31 开高低量额只读核验。
+- 该数据的价格采用价×10000，交易金额仍由 tick 价×股数**派生**，不是交易所独立成交金额；time 只有业务时间、未认证为完整撮合顺序；即使匹配 QMT 也不能把研究用途 L2 源直接写入生产 Parquet/H5。原价量均不打印、不持久化。
+- 许可 research-use-only，适用学术/非商业研究，**不应将下载数据投入任何商业或许可不兼容的数据库、产品或再分发**。需遵循作者和底层数据权利人条款。
+
+用户最少操作：先跑无需 token 的只读访问预检；如返回 HF_DATASET_ACCESS_REQUIRES_APPROVAL，请使用用户自己 HF 账号登录数据集页面、Like、Follow 作者并申请准入，再用官方 Hugging Face CLI 认证（不要把 token 粘贴到聊天或 PowerShell 命令里）。需要先在当前 venv 安装 huggingface_hub 才能读取 CLI 认证 token：.venv\Scripts\python.exe -m pip install huggingface_hub。授权完成后才允许手动 --sample；程序不会自动触发大数据下载。
+
+单行 PowerShell（仅 Git 拉代码 + Hugging Face 目录元数据 GET，0 数据行下载）：
+
+    Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_hf_l2_target_probe.py -q; if($LASTEXITCODE -ne 0){throw "HF L2 research test failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_hf_l2_target_probe.py; if($LASTEXITCODE -ne 0){throw "HF L2 access preflight failed"}
+
+回传 HF_241_L2_ACCESS_PREFLIGHT 一条，无需上传任何原始行情。程序不会向第三方发送 QMT 241 或本机原有数据，研究样本阶段也不会修改正式库。

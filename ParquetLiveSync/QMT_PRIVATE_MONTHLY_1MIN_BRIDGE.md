@@ -33,6 +33,19 @@ Private outputs are created under ignored
 These are **partial-month increments**: October includes only Oct 14-30,
 November only Nov 2-12. Neither is a full canonical physical month.
 
+Historical DAY version binding (important): the older QMT intake's
+`plan.json` records the original 2026-10/11 physical DAY file SHA values
+and the exact full-market (day, stock) calendar fingerprint. Newer DAY
+month files may be updated independently. The private-month bridge does
+**not** re-run `official_day_universe()` against current `D:\\stock`
+DAY files. Instead, it reconstructs the full 5223-stock historical
+calendar from the original complete-stock and day-recovery receipts, then
+recalculates the exact original plan calendar SHA using the original pinned
+source file hashes. Any mismatch in stock/day membership, old plan SHA,
+original paid-source SHA, source Parquet or opening receipt is fatal.
+This is an immutable historical-source verification, NOT permission to
+accept arbitrary new DAY versions.
+
 Entry gates: original official DAY calendar and month SHA source,
 purchased 2026-09 calibration receipts, all original 5039 source SHA files
 and original receipts, recovery 184 source/receipt hashes, opening

@@ -245,10 +245,16 @@ def calibrate_table(table, gate, year_month):
 
 
 def _arrow_digest(table):
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, P.PRIVATE_SCHEMA) as writer:
-        writer.write_table(table.combine_chunks())
-    return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+    """Hash logical values, not Arrow IPC buffers/chunk framing.
+
+    Parquet roundtrips can change Arrow buffer or batch layout while
+    preserving every ts/symbol/OHLCVA value. JSON canonicalisation matches
+    our existing SHA receipt convention and is deterministic across batches.
+    Each call covers one bounded stock/month row group, not an entire market.
+    """
+    if table.schema != P.PRIVATE_SCHEMA:
+        raise ValueError("Private monthly Arrow digest schema changed")
+    return hashlib.sha256(P.canonical(table.to_pylist())).hexdigest()
 
 
 def verify_private_month(path, manifest, identity):

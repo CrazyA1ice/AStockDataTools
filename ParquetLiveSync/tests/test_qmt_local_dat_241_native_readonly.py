@@ -7,6 +7,8 @@ import tempfile
 import unittest
 
 HERE=Path(__file__).resolve().parents[1]
+if str(HERE) not in sys.path:
+    sys.path.insert(0,str(HERE))
 spec=importlib.util.spec_from_file_location(
     "qmt_local_dat_241_native_readonly",HERE/"qmt_local_dat_241_native_readonly.py")
 M=importlib.util.module_from_spec(spec)

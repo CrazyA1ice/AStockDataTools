@@ -464,3 +464,15 @@ Windows 本机单行指令：Set-Location -LiteralPath "D:\ChatGPT\AStockDataToo
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_hf_l2_target_probe.py -q; if($LASTEXITCODE -ne 0){throw "HF L2 research test failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_hf_l2_target_probe.py; if($LASTEXITCODE -ne 0){throw "HF L2 access preflight failed"}
 
 回传 HF_241_L2_ACCESS_PREFLIGHT 一条，无需上传任何原始行情。程序不会向第三方发送 QMT 241 或本机原有数据，研究样本阶段也不会修改正式库。
+
+
+## 2026-11-14 QMT 内置下载器盘后一分钟数据：60目录优先，0目录暂停
+
+用户截图 D:\software\JHQMT\datadir\SH 中包含 0/60/300/86400。迅投 QMT 官方社区确认 0=Tick，60=1min，300=5min，86400=day。用户误下载 2026-11-13 全市场 Tick，量很大，仅保留当天作为今后小实验，不再获取全量 Tick；当前最重要的是 QMT 内置下载器 60 内是否有可直接取用的原生 241 根/日分钟数据。大 QMT 下载器的 datadir 可能与 MiniQMT 的 userdata_mini\datadir 不同，不能混淆；目录存在不代表目标股票、日期已经下载完成。
+
+新增 qmt_local_datadir_1m_inventory.py 和对应离线测试：纯标准库，只读枚举 SH/SZ/BJ 的 60/300/86400 三个周期目录，输出每市场/周期文件数量、总字节、后缀分布、最近修改时间与三股 600000.SH/000001.SZ/688001.SH 的文件大小及 64MiB 以内 SHA256。永远不枚举或读取 0 Tick 文件夹、不修改正式 QMT/Parquet/H5、不把 QMT .DAT 当 TDX .lc1 猜格式、不判定未经实际解码的 241/240 根。
+
+一行 PowerShell：
+Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_local_datadir_1m_inventory.py -q; if($LASTEXITCODE -ne 0){throw "QMT inventory offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_local_datadir_1m_inventory.py --root "D:\software\JHQMT\datadir"; if($LASTEXITCODE -ne 0){throw "QMT local 1m inventory failed"}
+
+后续收到 QMT_LOCAL_DATADIR_PERIOD 与 QMT_LOCAL_DATADIR_SUMMARY 后，用迅投支持的 xtdata.get_local_data（指向实际数据目录）或内置 ContextInfo.get_local_data 做只读原生解析，先确认 2026-10-16 的 688001.SH 和其他两股是否实为 241 根、09:30/09:31 原生高低价/量额是否完整。正式库保护不变。禁止在验证时调用 download_history_data、主动订阅或启动另一套数据服务。若本地尚未下载旧时间段，可先经 GUI 下载仅 1m 小样本，再复验。

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 if str(HERE) not in sys.path:
@@ -149,6 +150,52 @@ class OpeningTests(unittest.TestCase):
                          {"source_recovery_receipt_sha256": "changed",
                           "source_stage_plan_sha256": "y"},
                          {"2026-10-14": {}})
+
+    def test_end_to_end_readonly_and_idempotent_private_source(self):
+        rows, evidence = example()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "ParquetLiveSync"
+            stage = root / "work" / "qmt_1min_market" / "20261014_20261112"
+            receipt_dir = stage / "day_recovery" / "receipts"
+            receipt_dir.mkdir(parents=True)
+            (stage / "plan.json").write_text('{"format":"test-plan"}', encoding="utf-8")
+            receipt = {"format": M.R.FORMAT, "status": "private_day_subset_only",
+                       "symbol": "600000.SH", "approved_days": [],
+                       "quarantined_days": {"2026-10-14": evidence}, "rows": 0,
+                       "sha256": None, "market_modified": False,
+                       "production_merge_authorized": False}
+            (receipt_dir / "600000_SH.json").write_text(
+                json.dumps(receipt), encoding="utf-8")
+            (stage / "day_recovery" / "latest_report.json").write_text(
+                json.dumps({"remaining_stock_day_gaps": 1,
+                            "quarantined_reason_counts": {M.ORIGINAL_REASON: 1}}),
+                encoding="utf-8")
+            datadir = Path(temp) / "QMT_DAT"
+            dat = datadir / "SH" / "60" / "600000.DAT"
+            dat.parent.mkdir(parents=True)
+            dat.write_bytes(b"native-DAT")
+            calls = []
+            def reader(code, directory):
+                calls.append(code)
+                return rows, "TEST_ONLY", None
+            with patch.object(M, "__file__", str(root / "qmt_1m_opening_revalidate.py")):
+                checked = M.run(stage, datadir, native_reader=reader,
+                                progress=lambda _: None)
+                self.assertEqual(checked["newly_passed_stock_days"], 1)
+                self.assertFalse(checked["private_written"])
+                self.assertFalse((stage / "opening_first_trade_v1").exists())
+                saved = M.run(stage, datadir, native_reader=reader,
+                              write_private=True, progress=lambda _: None)
+                self.assertEqual(saved["newly_passed_stock_days"], 1)
+                self.assertTrue(saved["private_written"])
+                reuse = M.run(stage, datadir, native_reader=reader,
+                              write_private=True, progress=lambda _: None)
+                self.assertEqual(reuse["reused_stocks"], 1)
+                self.assertEqual(len(calls), 2)  # no repeat local DAT extraction
+                self.assertEqual(dat.read_bytes(), b"native-DAT")
+                self.assertFalse(saved["production_merge_authorized"])
+            self.assertTrue((stage / "opening_first_trade_v1" / "receipts"
+                             / "600000_SH.json").exists())
 
 
 if __name__ == "__main__":

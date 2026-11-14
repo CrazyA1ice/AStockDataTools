@@ -430,3 +430,16 @@ Windows 单行命令（联网只向新浪/腾讯公开数据域名发起最多 2
     Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_l2_csv_crossprobe.py -q; if($LASTEXITCODE -ne 0){throw "L2 source schema offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_l2_csv_crossprobe.py --csv "D:\path\to\688001.SH\l2\20261016\逐笔成交.csv" --price-divisor 10000
 
 只有上述免费候选确实包含 2026-10-16 09:31 独立价格且价格/交易时标/事件类型经过核验时，才进入扩容研究；否则仍诚实标记 240→241 严格无损不能在所有股票日由现有来源完成。
+
+
+## 2026-11-14 新浪、腾讯首轮 HTTP 失败与备用路径的读源诊断
+
+用户本机：旧版公共源探针 13 个单元测试 OK，实际 688001.SH/2026-10-16 新浪返回无 JSON 分钟数组、腾讯 web.ifzq.gtimg.cn TLS EOF。不能因此推断该历史日期不存在。
+新版 qmt_241_public_minute_recovery_probe.py + 离线单测：
+- 新浪优先 API jsonp_v2.php 的 1970 根，备用 json_v2.php 的 1023 根；辨别有效 JSONP / 普通 JSON、HTML 阻断页、null 响应及未覆盖日期。
+- 腾讯优先 proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline 的 m1 8000 根试探，备用直接 web.ifzq.gtimg.cn 的 800 根；固定 HTTPS 主机白名单、不禁用 TLS 证书，最多四个真实公共请求。
+- 仅在 SHA 绑定 QMT 241 和原通达信 240 源已核验时，针对 688001.SH 2026-10-16 验证真正不同于竞价合并最高价的第三来源 09:31 high；只输出格式/日期/布尔字段，不打印或保存原始行情，不写生产 Parquet/H5。
+- 公开案例 simonlin1212/a-stock-data issue 57 显示腾讯 m1 曾有 241 行含 09:30，但量可能与 TDX 官方盘后差若干股，绝不可视作自动恢复正确的保证。
+- 备选 submato/ashare-l2 GitHub 免费 2026-10 月逐笔档案仅为下载索引，仓库内只有 DEMO.SZ 示例，真实目标股票日的来源真实性、全面性和行情授权尚待查验。若腾讯和新浪仍失败，优先提取 688001.SH/20261016 的单股逐笔成交及行情快照 CSV，避免全市场盲目下载。
+
+Windows 本机单行指令：Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_241_public_minute_recovery_probe.py -q; if($LASTEXITCODE -ne 0){throw "Public recovery tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_241_public_minute_recovery_probe.py; if($LASTEXITCODE -ne 0){throw "Public recovery probe failed"}

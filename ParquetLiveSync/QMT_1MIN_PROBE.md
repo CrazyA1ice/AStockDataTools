@@ -476,3 +476,21 @@ Windows 本机单行指令：Set-Location -LiteralPath "D:\ChatGPT\AStockDataToo
 Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_local_datadir_1m_inventory.py -q; if($LASTEXITCODE -ne 0){throw "QMT inventory offline tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_local_datadir_1m_inventory.py --root "D:\software\JHQMT\datadir"; if($LASTEXITCODE -ne 0){throw "QMT local 1m inventory failed"}
 
 后续收到 QMT_LOCAL_DATADIR_PERIOD 与 QMT_LOCAL_DATADIR_SUMMARY 后，用迅投支持的 xtdata.get_local_data（指向实际数据目录）或内置 ContextInfo.get_local_data 做只读原生解析，先确认 2026-10-16 的 688001.SH 和其他两股是否实为 241 根、09:30/09:31 原生高低价/量额是否完整。正式库保护不变。禁止在验证时调用 download_history_data、主动订阅或启动另一套数据服务。若本地尚未下载旧时间段，可先经 GUI 下载仅 1m 小样本，再复验。
+
+
+## 2026-11-14 QMT main DATADIR 51,130 native 1m files and official local data read
+
+User Windows QMT inventory: SH/60 26,230 .DAT, SZ/60 24,540 .DAT, BJ/60 360 .DAT, total 51,130 native one-minute files. Many may be indices/ETFs/other instruments, not proof of 51,130 A-share stocks. Original anchor 600000.SH, 688001.SH, 000001.SZ each has 386,888-byte 1m .DAT, private SHA256 stable. Five-minute 300 and daily 86400 directories present. No tick 0 was read. Native .DAT file byte size is NOT known Kline record count or verified date range.
+
+Xuntou official xtquant.xtdata.get_local_data supports period '1m' and explicit data_dir (https://dict.thinktrader.net/nativeApi/xtdata.html). It may expect MiniQMT userdata_mini path on some versions; here the user has LARGE QMT main datadir, so keep the explicit root D:\software\JHQMT\datadir and **never silently fall back** to MiniQMT/another source or start a new service.
+
+New ParquetLiveSync/qmt_local_dat_241_native_readonly.py and its offline tests:
+- SHA256 original three DAT sources before AND after local API call; only periods 1m, 2026-10-14..2026-11-13, three original stock codes. No datacenter init, no xtdata download_history_data, no tick 0, no database or file writes.
+- Use official xtdata.get_local_data with fill_data=False, no adjustment, count=-1 and explicit data_dir. Support vendor standard field-to-stock DataFrame and per-stock DataFrame returns, fixed Asia/Shanghai time.
+- Print only original data count and range, first five time labels and per-day 2026-10-14/15/16 and 2026-11-13 exact bar count, classification 241 09:30+09:31 or 240 09:31 only. If real 241, compare each source-derived field to the SHA-pinned Oct QMT private reference using exact timestamp and strict match count. Do not print actual purchased OHLCVA values. Lack of 241 is not proof the DAT binary has no deeper unexposed data: report what official API returns.
+- Treat absent xtquant, missing source dates, SDK schema or data_dir incompatibility separately. Do not write or trigger any history download. All results production_merge_authorized false.
+
+Windows one-line PowerShell:
+Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="Stop"; $b="feat/qmt-one-minute-history-probe-20261112"; if((git branch --show-current).Trim() -ne $b){throw "Branch mismatch"}; git -c http.sslBackend=schannel -c http.version=HTTP/1.1 pull --ff-only origin $b; if($LASTEXITCODE -ne 0){throw "Git pull failed"}; & .\.venv\Scripts\python.exe -B -m unittest discover -s ParquetLiveSync\tests -p test_qmt_local_dat_241_native_readonly.py -q; if($LASTEXITCODE -ne 0){throw "Native QMT 1m tests failed"}; & .\.venv\Scripts\python.exe -u -B ParquetLiveSync\qmt_local_dat_241_native_readonly.py --root "D:\software\JHQMT\datadir"; if($LASTEXITCODE -ne 0){throw "Native QMT 1m read failed"}
+
+Send QMT_NATIVE_1M_STOCK three lines + QMT_NATIVE_1M_SUMMARY. Do not request full-market Tick again.

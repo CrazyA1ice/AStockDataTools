@@ -143,6 +143,22 @@ class HigherMinuteTests(unittest.TestCase):
         self.assertAlmostEqual(rules["amount_factor"],10.)
         self.assertGreaterEqual(rules["price_match"],.99)
 
+    def test_purchased_anchor_collector_retains_239_without_creating_bar(self):
+        original={}
+        for sym in ("SH600000","SZ000001","SH688001"):
+            records=minute_rows(sym)
+            for row in records[1:]:
+                original[(sym,row["ts"])]=row
+        accepted=D._collect_anchor_minutes(original,{})
+        self.assertEqual(set(accepted),
+                         {"SH600000","SZ000001","SH688001"})
+        self.assertEqual({sym:len(rows) for sym,rows in accepted.items()},
+                         {sym:239 for sym in accepted})
+        for sym in accepted:
+            self.assertNotIn(
+                minute_rows(sym)[0]["ts"],
+                {row["ts"] for row in accepted[sym]})
+
     def test_239_purchased_minute_anchor_calibrates_complete_windows_only(self):
         # Legitimate purchased 239-minute days may lack a single label.
         # Missing minutes must not be synthesized or published.

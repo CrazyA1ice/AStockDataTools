@@ -346,8 +346,10 @@ def _upsert_quote(extra, kind, cycle, symbol, raw, *, today, workspace):
 def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
     """Year-bounded QMT calls; never allocate 16 years of 1m in memory."""
     rows_added = {}
+    any_rows_observed = False
     for cycle, api in API_PERIODS.items():
         total = 0
+        observed = 0
         begin = since
         while begin <= today:
             end = min(today, date(begin.year, 12, 31))
@@ -361,16 +363,26 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
                 period=api, start_time=begin.strftime("%Y%m%d"),
                 end_time=end.strftime("%Y%m%d"),
                 count=-1, dividend_type="none", fill_data=False)
-            if not isinstance(reply, dict) or code not in reply:
-                raise ValueError("QMT missing requested " + kind + " " + cycle +
+            if not isinstance(reply, dict):
+                raise ValueError("QMT returned invalid " + kind + " " + cycle +
                                  " response: " + code + " year=" + str(begin.year))
+            if code not in reply:
+                # The asset may not have existed in this historical year.
+                # Do not fabricate records; later years are still queried.
+                begin = end + timedelta(days=1)
+                continue
             rows = _normalize_quote(
                 code, reply[code], since=begin, until=end)
+            observed += len(rows)
             total += _upsert_quote(
                 extra, kind, cycle, code, rows, today=today,
                 workspace=workspace)
             begin = end + timedelta(days=1)
-        rows_added[cycle] = total
+        rows_added[cycle] = {"added": total, "observed": observed}
+        any_rows_observed = any_rows_observed or observed > 0
+    if not any_rows_observed:
+        raise ValueError("QMT returned zero index/ETF OHLCVA for all eight "
+                         "periods: "+kind+" "+code)
     return rows_added
 
 

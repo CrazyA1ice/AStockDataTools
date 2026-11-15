@@ -303,6 +303,130 @@ class MarketUpdaterTests(unittest.TestCase):
                                 workspace=Path(temp) / "work", progress=lambda _: None)
             self.assertEqual(target.read_bytes(), b"unknown-market-data")
 
+    def test_pytdx_built_in_hosts_retry_and_actual_date_bars(self):
+        import types
+        market = "SZ"
+        day = date(2026, 11, 13)
+        calls = []
+        hq = types.ModuleType("pytdx.hq")
+        hosts = types.ModuleType("pytdx.config.hosts")
+        hosts.hq_hosts = [("live", "127.0.0.18", 7709),
+                          ("legacy", "127.0.0.19", 7709)]
+        data = [{"datetime": "2026-11-13 09:31:00",
+                 "open": 10., "high": 10.2, "low": 9.8, "close": 10.,
+                 "vol": 200., "amount": 20000.}]
+        class FakeAPI:
+            def __init__(self, heartbeat=False):
+                self.connected = False
+            def connect(self, host, port, time_out=None):
+                calls.append((host, port))
+                self.connected = host == "127.0.0.18"
+                return self.connected
+            def get_security_bars(self, category, mkt, code, start, count):
+                self.asserted = (category, mkt, code, start, count)
+                if self.asserted != (8, 0, "000001", 0, 800):
+                    raise ValueError("Incorrect pytdx Kline request")
+                return data
+            def disconnect(self):
+                pass
+        hq.TdxHq_API = FakeAPI
+        mods = {"pytdx": types.ModuleType("pytdx"),
+                "pytdx.hq": hq,
+                "pytdx.config": types.ModuleType("pytdx.config"),
+                "pytdx.config.hosts": hosts}
+        with patch.dict(sys.modules, mods):
+            options = {"servers": [["127.0.0.2", 7709]],
+                       "discover_builtin_hosts": True, "max_servers": 3}
+            bars = X.pytdx_1m("000001.SZ", day, options)
+        self.assertEqual(len(bars), 1)
+        self.assertEqual(calls, [("127.0.0.18", 7709)])
+        self.assertEqual(options["_working_host"], ["127.0.0.18", 7709])
+
+    def test_pytdx_all_hosts_down_fast_break_other_provider_still_runs(self):
+        stocks = ["SH600%03d" % i for i in range(8)]
+        primary = {symbol: [{"ts": 1000 + i * 60000,
+                             "open": 10., "high": 10., "low": 10.,
+                             "close": 10., "volume": 1., "amount": 10.}
+                            for i in range(100)] for symbol in stocks}
+        counters = {"down": 0, "ok": 0}
+        def down(symbol, day, options):
+            counters["down"] += 1
+            raise X.MinuteSourceUnavailable("PYTDX_NO_USABLE_HQ_HOST")
+        def up(symbol, day, options):
+            counters["ok"] += 1
+            return list(primary[symbol])
+        cfg = {"sample_stocks": 8,
+               "pytdx": {"enabled": True},
+               "eltdx": {"enabled": True}}
+        with patch.dict(X.ADAPTERS, {"pytdx": down, "eltdx": up}):
+            result = X.sample_check(date(2026, 11, 13), primary, cfg,
+                                    progress=lambda _: None)
+        self.assertEqual(counters, {"down": 1, "ok": 8})
+        self.assertEqual(result["results"]["pytdx"]["status"], "UNAVAILABLE")
+        self.assertEqual(result["results"]["pytdx"]["attempted"], 1)
+        self.assertEqual(result["results"]["pytdx"]["skipped_after_outage"], 7)
+        self.assertEqual(result["results"]["eltdx"]["status"], "AGREE")
+        self.assertEqual(result["results"]["eltdx"]["agreed_stocks"], 8)
+
+    def test_readonly_recheck_sources_from_previously_staged_daily_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "market_update"
+            day = date(2026, 11, 13)
+            staged = workspace / "daily"
+            staged.mkdir(parents=True)
+            rows = []
+            symbols = ["SH600000", "SZ000001", "SZ000002"]
+            for symbol in symbols:
+                for n in range(240):
+                    ts = U.P.stamp_ms(
+                        datetime(2026, 11, 13, 9, 31,
+                                 tzinfo=L.UTC8).isoformat()) + n * 60000
+                    rows.append({"ts": ts, "symbol": symbol,
+                                 "open": 10., "high": 10.,
+                                 "low": 10., "close": 10.,
+                                 "volume": 100., "amount": 1000.})
+            f = staged / (day.isoformat() + ".parquet")
+            pq.write_table(pa.Table.from_pylist(rows,
+                                                 schema=U.P.PRIVATE_SCHEMA),
+                           f, row_group_size=240)
+            digest = L.hash_file(f)
+            (staged / (day.isoformat() + ".json")).write_bytes(
+                U.P.canonical({"format": U.FORMAT,
+                               "date": day.isoformat(), "sha256": digest,
+                               "rows": len(rows),
+                               "stock_days_accepted": len(symbols)}))
+            def faux_sample(d, stock_data, settings, progress=print):
+                self.assertEqual(d, day)
+                self.assertEqual(set(stock_data), set(symbols))
+                self.assertTrue(all(len(v) == 240 for v in stock_data.values()))
+                return {"sampled": len(stock_data), "results": {}}
+            before = sorted(str(p) for p in Path(temp).rglob("*"))
+            with patch.object(U.X, "sample_check", side_effect=faux_sample):
+                report = U.recheck_sources(day, workspace=workspace,
+                                           progress=lambda _: None)
+            self.assertTrue(report["qmt_refetched"] is False)
+            self.assertTrue(report["production_market_modified"] is False)
+            self.assertEqual(report["qmt_sha256"], digest)
+            self.assertEqual(before, sorted(str(p) for p in
+                                           Path(temp).rglob("*")))
+            self.assertEqual(L.hash_file(f), digest)
+
+    def test_readonly_recheck_rejects_tampered_daily_candidate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp) / "market_update"
+            folder = work / "daily"
+            folder.mkdir(parents=True)
+            day = date(2026, 11, 13)
+            (folder / "2026-11-13.parquet").write_bytes(b"changed")
+            (folder / "2026-11-13.json").write_bytes(
+                U.P.canonical({"format": U.FORMAT,
+                               "date": "2026-11-13",
+                               "sha256": "0"*64, "rows": 240,
+                               "stock_days_accepted": 1}))
+            with self.assertRaisesRegex(ValueError, "source SHA changed"):
+                U.recheck_sources(day, workspace=work,
+                                  progress=lambda _: None)
+
     def test_dry_run_requires_no_qmt_or_market_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture(tmp)

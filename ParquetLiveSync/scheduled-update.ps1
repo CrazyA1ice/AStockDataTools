@@ -42,34 +42,36 @@ try{
     & $engine -NoProfile -ExecutionPolicy Bypass -File $runner -Mode auto
     if($LASTEXITCODE -ne 0){throw ('Unified eight-cycle market updater failed with exit '+$LASTEXITCODE)}
     Write-Host 'MARKET_SCHEDULE_ALL_EIGHT_CYCLE_SUCCESS'
-    # Explicit local opt-in only, after QMT extras have passed Windows
-    # real-data preflight. This is the SAME task, not a second scheduler.
-    $extrasOptIn=Join-Path $module 'work\qmt_extra\schedule-enabled.json'
-    $extrasRan=$false
-    if(Test-Path -LiteralPath $extrasOptIn -PathType Leaf){
-        $opt=Get-Content -LiteralPath $extrasOptIn -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Opt-in extra QMT data in the SAME existing task, only after on-host
+    # read-only/physical validation. Absent config keeps old eight-period job.
+    $optPath=Join-Path $module 'work\qmt_extra\schedule-enabled.json'
+    $extraRan=$false
+    if(Test-Path -LiteralPath $optPath -PathType Leaf){
+        $opt=Get-Content -LiteralPath $optPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        [int]$stocks=0
+        [int]$assets=0
         if($opt.format -ne 'qmt_extra_schedule_v1' -or
-           $opt.stock_limit -isnot [int] -or $opt.stock_limit -lt 1 -or $opt.stock_limit -gt 1000 -or
-           $opt.asset_limit -isnot [int] -or $opt.asset_limit -lt 1 -or $opt.asset_limit -gt 100 -or
-           [string]$opt.start -notmatch '^20[0-9]{2}-[01][0-9]-[0-3][0-9]
-}catch{
-    $reason=$_.Exception.Message
-    Write-Host ('MARKET_SCHEDULE_RUN_FAILED='+$reason)
-    Save-RunStatus -State 'FAILED' -Details $reason
-    throw
-}finally{
-    Stop-Transcript | Out-Null
-}
-){
-            throw 'Invalid QMT extras schedule opt-in; no extra downloads started'
+           -not [int]::TryParse([string]$opt.stock_limit,[ref]$stocks) -or
+           -not [int]::TryParse([string]$opt.asset_limit,[ref]$assets) -or
+           $stocks -lt 1 -or $stocks -gt 1000 -or
+           $assets -lt 1 -or $assets -gt 100){
+            throw 'Invalid QMT extras opt-in batch size; no supplementary downloads run'
         }
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $runner -Mode extras -ExtraStart ([string]$opt.start) -ExtraStockLimit ([int]$opt.stock_limit) -ExtraAssetLimit ([int]$opt.asset_limit)
-        if($LASTEXITCODE -ne 0){throw ('Optional QMT extra data batch failed with exit '+$LASTEXITCODE)}
-        $extrasRan=$true
+        $start=[string]$opt.start
+        try{
+            [void][datetime]::ParseExact($start,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)
+        }catch{
+            throw 'Invalid QMT extras opt-in start date'
+        }
+        & $engine -NoProfile -ExecutionPolicy Bypass -File $runner -Mode extras -ExtraStart $start -ExtraStockLimit $stocks -ExtraAssetLimit $assets
+        if($LASTEXITCODE -ne 0){
+            throw ('QMT extras batch failed with exit '+$LASTEXITCODE)
+        }
+        $extraRan=$true
         Write-Host 'MARKET_SCHEDULE_QMT_EXTRA_BATCH_SUCCESS'
     }
-    $detail=if($extrasRan){'Eight periods and opted-in QMT extras batch finished'}else{'Eight periods finished; QMT extras not enabled'}
-    Save-RunStatus -State 'SUCCESS' -Details $detail
+    $details=if($extraRan){'Eight-period updater and QMT extras batch finished'}else{'Eight-period updater finished; QMT extras disabled'}
+    Save-RunStatus -State 'SUCCESS' -Details $details
 }catch{
     $reason=$_.Exception.Message
     Write-Host ('MARKET_SCHEDULE_RUN_FAILED='+$reason)

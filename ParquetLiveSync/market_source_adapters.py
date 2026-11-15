@@ -7,9 +7,13 @@ is separately calibrated against purchased Parquet and official TDX DAY.
 """
 from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
+import json
 import math
 import statistics
 import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 CN = timezone(timedelta(hours=8))
 FIELDS = ("open", "high", "low", "close")
@@ -87,6 +91,23 @@ def _tencent_parse_minute_payload(payload, symbol, day):
     return sorted(result, key=lambda r: r["ts"])
 
 
+def _tencent_http_json(host, params, timeout):
+    """Fetch one Tencent minute Kline JSON using stdlib only.
+
+    Deliberately avoids requests/AKShare/pytdx imports: the project's
+    original .venv already contains everything needed for this adapter.
+    urllib has one per-socket timeout rather than requests' split
+    connect/read deadline. Bound response bytes before JSON decoding.
+    """
+    url = host + "/appstock/app/kline/mkline?" + urlencode(params)
+    request = Request(url, headers={"Referer": "https://gu.qq.com/"})
+    with urlopen(request, timeout=timeout) as response:
+        body = response.read(2_000_001)
+    if len(body) > 2_000_000:
+        raise ValueError("TENCENT_M1_RESPONSE_TOO_LARGE")
+    return json.loads(body.decode("utf-8-sig"))
+
+
 def tencent_1m(symbol, day, settings=None):
     """Recent unadjusted Tencent m1 OHLCV: 320 latest bars, no amount.
 
@@ -94,7 +115,6 @@ def tencent_1m(symbol, day, settings=None):
     correlated mirrors of the same provider. It only performs sampled
     price checks; QMT remains the sole purchased-calibrated minute writer.
     """
-    import requests
     market, code = code_parts(symbol)
     cfg = settings or {}
     hosts = cfg.get("hosts") or TENCENT_KLINE_HOSTS
@@ -120,12 +140,7 @@ def tencent_1m(symbol, day, settings=None):
     errors = []
     for host in candidates:
         try:
-            response = requests.get(
-                host + "/appstock/app/kline/mkline", params=params,
-                headers={"Referer": "https://gu.qq.com/"},
-                timeout=(conn, read))
-            response.raise_for_status()
-            payload = response.json()
+            payload = _tencent_http_json(host, params, max(conn, read))
             if isinstance(payload, dict) and payload.get("msg") == "param error":
                 raise ValueError("TENCENT_M1_BAD_PARAMETER")
             result = _tencent_parse_minute_payload(payload, prefix, day)
@@ -133,8 +148,8 @@ def tencent_1m(symbol, day, settings=None):
             # Empty matched day is normal for a requested day outside the
             # most recent 320-minute window; not a price discrepancy.
             return result
-        except (requests.exceptions.RequestException, ValueError,
-                TypeError, KeyError) as exc:
+        except (HTTPError, URLError, TimeoutError, OSError,
+                ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
             errors.append(type(exc).__name__ + ":" + str(exc)[:85])
             _TENCENT_HOST_DOWN_UNTIL[host] = (
                 time.monotonic() + _TENCENT_COOLDOWN_SECONDS)

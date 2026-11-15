@@ -4,7 +4,7 @@ param(
     [string]$Root = "D:\stock",
     [string]$Day = "",
     [ValidateRange(1,30)]
-    [int]$MaxDays = 7,
+    [int]$MaxDays = 30,
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"

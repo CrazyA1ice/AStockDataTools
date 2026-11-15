@@ -381,9 +381,14 @@ def _fetch_financial(xt, extra, code, today, workspace):
     return summary
 
 
-def _fetch_adjustments(xt, extra, code, today, workspace):
+def _fetch_adjustments(xt, extra, code, today, since, workspace):
     if not hasattr(xt, "get_divid_factors"):
         raise ValueError("QMT get_divid_factors API not supported")
+    # Keep the underlying unadjusted DAILY history available in the QMT
+    # cache before reading associated historical corporate actions.
+    xt.download_history_data(code, period="1d",
+                             start_time=since.strftime("%Y%m%d"),
+                             end_time=today.strftime("%Y%m%d"))
     frame = xt.get_divid_factors(code)
     rows = dataframe_records(frame)
     if not rows:
@@ -479,6 +484,11 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
         state = _state(extra, workspace)
         results["sectors"] = _fetch_sector_snapshot(xt, extra, today, workspace)
         results["etf_catalog"] = _fetch_etf_catalog(xt, extra, today, workspace)
+        if hasattr(xt, "download_index_weight"):
+            xt.download_index_weight()
+            results["index_weight_cache"] = "DOWNLOAD_REQUESTED"
+        else:
+            results["index_weight_cache"] = "API_UNAVAILABLE"
         for key in ("financial", "adjustments", "index", "etf"):
             limit = stock_limit if key in ("financial", "adjustments") else asset_limit
             selected = _batch(universe[key], state["cursor"].get(key, ""), limit)
@@ -487,7 +497,7 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                 if key == "financial":
                     item = _fetch_financial(xt, extra, code, today, workspace)
                 elif key == "adjustments":
-                    item = _fetch_adjustments(xt, extra, code, today, workspace)
+                    item = _fetch_adjustments(xt, extra, code, today, since, workspace)
                 else:
                     # Once the full historic ticker range is downloaded,
                     # use an overlapping rolling window, rather than asking

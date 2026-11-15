@@ -9,7 +9,7 @@
     "sample_stocks": 8,
     "eltdx": {
       "enabled": true,
-      "purpose": "minute_kline_cross_check_only_not_independent_from_pytdx",
+      "purpose": "independent_TDX_7709_minute_Kline_OHLCVA_crosscheck",
       "package": "eltdx",
       "timeout": 4
     },

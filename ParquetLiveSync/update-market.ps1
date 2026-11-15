@@ -20,8 +20,8 @@ if ($LASTEXITCODE -ne 0) { throw "Market updater synthetic safety tests failed" 
 $a = @("-u","-B","ParquetLiveSync\update_market.py","--mode",$Mode,"--root",$Root,"--max-days",[string]$MaxDays)
 if ($Day) { $a += @("--day",$Day) }
 if ($Config) { $a += @("--config",$Config) }
-elseif (Test-Path -LiteralPath "ParquetLiveSync\\work\\market_update\\sources.local.json" -PathType Leaf) {
-    $a += @("--config","ParquetLiveSync\\work\\market_update\\sources.local.json")
+elseif (Test-Path -LiteralPath "ParquetLiveSync\work\market_update\sources.local.json" -PathType Leaf) {
+    $a += @("--config","ParquetLiveSync\work\market_update\sources.local.json")
 }
 if ($DryRun) { $a += "--dry-run" }
 & $python @a

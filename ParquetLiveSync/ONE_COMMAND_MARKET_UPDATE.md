@@ -46,7 +46,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 | eltdx (electkismet/eltdx) | 通达信体系 1 分钟 OHLCVA，已于 2026-11-13 对 QMT 抽样 8/8 一致 | 开启 |
 | AKShare 东方财富 | 1min 仅近 5 个交易日，额外的短期对照；与 QMT 不同的提供者 | 关闭，可选开启 |
 
-eltdx 与腾讯财经分属不同行情体系；腾讯的三个镜像入口**不能算三个独立来源**。金额/数量未经跨源量纲认证不得从这些次源静默替换 QMT。次源连接失败记录为告警；独立 TDX 官方 DAY 对每只股票的 OHLCVA 闸门始终启用。次源实际返回的相同分钟价格如果显著冲突，将阻止该日静默入库，保留私有候选供排查。
+eltdx 与腾讯财经分属不同行情体系；腾讯的三个镜像入口**不能算三个独立来源**。金额/数量未经跨源量纲认证不得从这些次源静默替换 QMT。次源连接失败记录为告警；独立 TDX 官方 DAY 对每只股票的 OHLCVA 闸门始终启用。**eltdx** 同分钟 OHLC 显著冲突时阻止该日入库；**腾讯** 已知存在深市整分钟成交跨格点、竞价首根等口径差异，单纯分钟分桶误差先输出 `MARKET_TENCENT_MINUTE_BUCKET_VARIANCE`，不否定已经通过官方 DAY 与 eltdx 的 QMT 全天数据，也绝不直接覆盖正式 Parquet。
 
 两份参考项目：
 - https://github.com/tiantianlaolao/astock-data-toolkit/tree/main/minute

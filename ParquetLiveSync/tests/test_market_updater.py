@@ -279,6 +279,20 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertNotIn("tencent", X.TDX_FAMILY)
         self.assertIn("eltdx", X.TDX_FAMILY)
 
+    def test_legacy_local_pytdx_config_migrates_without_file_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = U.config_file()
+            cfg["minute_cross_checks"].pop("tencent")
+            cfg["minute_cross_checks"]["pytdx"] = {"enabled": True}
+            path = Path(tmp) / "sources.local.json"
+            content = json.dumps(cfg, ensure_ascii=False)
+            path.write_text(content, encoding="utf-8")
+            loaded = U.config_file(path)
+            self.assertNotIn("pytdx", loaded["minute_cross_checks"])
+            self.assertTrue(loaded["minute_cross_checks"]["tencent"]["enabled"])
+            self.assertTrue(loaded["minute_cross_checks"]["eltdx"]["enabled"])
+            self.assertEqual(path.read_text(encoding="utf-8"), content)
+
     def test_bootstrap_short_circuits_historical_5403_receipts_daily(self):
         fake = {"periods": {"1min": {
             m: {"sources": ["BOOTSTRAP:approved:" + m]}

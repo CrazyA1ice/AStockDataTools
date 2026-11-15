@@ -427,7 +427,7 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("auto", "bootstrap", "daily"), default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--day", type=date.fromisoformat)
-    parser.add_argument("--max-days", type=int, default=7)
+    parser.add_argument("--max-days", type=int, default=30)
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     args = parser.parse_args(argv)
     results = update(args.root, mode=args.mode, apply=not args.dry_run,

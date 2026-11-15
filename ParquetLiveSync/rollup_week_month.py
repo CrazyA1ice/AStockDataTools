@@ -302,6 +302,16 @@ def build_candidates(stock_root,state,audits,*,asof=None,trade_dates=None):
     accepted_dates={
         str(source_day(ts)) for ts in daily["ts"].to_pylist()
     }
+    if trade_dates is not None:
+        # A stale/incorrect QMT holiday list must never remove a
+        # known independently accepted official TDX trading day.
+        conflict=sorted(
+            d for d in state["days"]
+            if BASE_DAY<date.fromisoformat(d)<=asof
+            and date.fromisoformat(d) not in trade_dates)
+        if conflict:
+            raise ValueError("QMT exchange calendar conflicts with accepted official DAY "+
+                             ",".join(conflict[:8]))
     # The accepted old October slice was physically carried into the
     # 2026-10 month on first new TDX day. Require all four previously
     # SHA-pinned purchased trading days before deriving a week or month

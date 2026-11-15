@@ -338,7 +338,7 @@ def last_eligible_day():
 
 
 def update(root, *, mode="auto", apply=True, requested_date=None,
-           config=CONFIG_PATH, max_days=7, progress=print):
+           config=CONFIG_PATH, max_days=30, progress=print):
     cfg = config_file(config)
     if mode not in ("auto", "bootstrap", "daily"):
         raise ValueError("Invalid updater mode")

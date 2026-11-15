@@ -29,7 +29,7 @@ import market_month_storage as S
 FORMAT = "qmt_supplementary_parquet_v1"
 WORK = Path(__file__).resolve().parent / "work" / "qmt_extra"
 FIN_TABLES = ("Balance", "Income", "CashFlow", "Capital", "Top10FlowHolder",
-              "Top10Holder", "HolderNum", "PershareIndex")
+              "Top10Holder", "HolderNum", "PershareIndex", "PerShare")
 API_PERIODS = {"1min": "1m", "5min": "5m", "15min": "15m",
                "30min": "30m", "60min": "1h", "day": "1d",
                "week": "1w", "month": "1mon"}
@@ -399,28 +399,43 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
     return rows_added
 
 
-def _fetch_financial(xt, extra, code, today, workspace):
-    # Empty table lists request every table supported by this particular
-    # QMT SDK (Holdernum/HolderNum capitalization differs by release).
-    xt.download_financial_data([code], [])
-    data = xt.get_financial_data([code], [],
-                                 start_time="", end_time="",
-                                 report_type="report_time")
-    if not isinstance(data, dict) or not isinstance(data.get(code), dict):
-        raise ValueError("QMT financial response missing requested symbol " + code)
+def _fetch_financial(xt, extra, code, today, workspace, progress=print):
+    """Download one QMT financial table at a time, emitting exact stop point.
+
+    QMT's empty table_list expands to every report internally with no
+    per-table visibility. Each verified table remains durable if the next
+    table fails; the stock cursor advances only after all tables succeed.
+    """
     summary = {}
-    for name, frame in data[code].items():
-        if not isinstance(name, str) or not re.fullmatch(
-                r"[A-Za-z][A-Za-z0-9_.]{0,95}", name):
-            raise ValueError("Unsafe QMT financial table name: "+repr(name))
-        values = dataframe_records(frame)
+    for name in FIN_TABLES:
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_START=" +
+                 canonical_json({"symbol": code, "table": name,
+                                 "api": "download_financial_data"}))
+        xt.download_financial_data([code], [name])
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
+                 canonical_json({"symbol": code, "table": name}))
+        data = xt.get_financial_data([code], [name],
+                                     start_time="", end_time="",
+                                     report_type="report_time")
+        if not isinstance(data, dict) or not isinstance(data.get(code), dict):
+            raise ValueError("QMT financial response missing requested symbol " + code
+                             + " table=" + name)
+        received = data[code]
+        if set(received) - {name}:
+            raise ValueError("QMT financial response unexpected table for " +
+                             code + " requested=" + name +
+                             " keys=" + canonical_json(sorted(received)))
+        values = dataframe_records(received.get(name))
         if not values:
-            continue
-        table = snapshot_table(today.isoformat(), code, name, values)
-        path = _snapshot_path(extra, "financial/" + name + "/" + code,
-                              today.isoformat(), table)
-        result = _atomic_parquet(path, table, workspace=workspace)
-        summary[name] = {"rows": len(values), "status": result["status"]}
+            summary[name] = {"rows": 0, "status": "NO_SOURCE_RECORDS"}
+        else:
+            table = snapshot_table(today.isoformat(), code, name, values)
+            path = _snapshot_path(extra, "financial/" + name + "/" + code,
+                                  today.isoformat(), table)
+            result = _atomic_parquet(path, table, workspace=workspace)
+            summary[name] = {"rows": len(values), "status": result["status"]}
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_COMPLETE=" +
+                 canonical_json({"symbol": code, "table": name, **summary[name]}))
     return summary
 
 
@@ -540,25 +555,34 @@ def _fetch_etf_catalog(xt, extra, today, workspace):
 
 
 def run(root, *, xt, apply=False, today=None, since=SINCE,
-        stock_limit=40, asset_limit=5, workspace=WORK, progress=print):
+        stock_limit=40, asset_limit=5, section="all",
+        workspace=WORK, progress=print):
     """One bounded, repeatable batch. A complete historical import takes batches."""
     today = today or datetime.now(L.UTC8).date()
     if not isinstance(today, date) or not isinstance(since, date) or today < since:
         raise ValueError("Invalid supplementary requested date range")
     if stock_limit < 0 or asset_limit < 0:
         raise ValueError("Negative batch size")
+    if section not in ("all", "sectors", "financial",
+                       "adjustments", "index", "etf"):
+        raise ValueError("Unsupported QMT extras section " + str(section))
+    selected_sections = (("financial", "adjustments", "index", "etf")
+                         if section == "all" else (section,))
     extra = _storage(root)
     if not apply:
-        universe = discover(xt)
+        universe = discover(xt) if section != "sectors" else {}
         state = _state(extra, workspace)
         report = {
             "status": "READONLY_PREVIEW", "dataset": str(extra),
-            "counts": {key: len(values) for key, values in universe.items()},
+            "section": section,
+            "counts": {key: len(values) for key, values in universe.items()
+                       if key in selected_sections},
             "next": {key: _batch(values, state["cursor"].get(key, ""),
                                 stock_limit if key in ("financial", "adjustments")
                                 else asset_limit)
-                     for key, values in universe.items()},
-            "sectors_will_be_downloaded": True,
+                     for key, values in universe.items()
+                     if key in selected_sections},
+            "sectors_will_be_downloaded": section in ("all", "sectors"),
             "data_files_modified": False,
             "windows_schedule_modified": False,
         }
@@ -568,31 +592,45 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
     with LIVE.exclusive_writer():
         # Refresh QMT's sector cache BEFORE deriving all stock/index/ETF
         # universes; never guess unavailable membership.
-        xt.download_sector_data()
-        universe = discover(xt)
+        if section in ("all", "sectors"):
+            progress("MARKET_QMT_EXTRA_STAGE_START=download_sector_data")
+            xt.download_sector_data()
+            progress("MARKET_QMT_EXTRA_STAGE_DONE=download_sector_data")
+        universe = discover(xt) if section != "sectors" else {}
         state = _state(extra, workspace)
-        results["sectors"] = _fetch_sector_snapshot(xt, extra, today, workspace)
-        results["etf_catalog"] = _fetch_etf_catalog(xt, extra, today, workspace)
-        progress("MARKET_QMT_EXTRA_ETF_CATALOG=" +
-                 canonical_json(results["etf_catalog"]))
-        if hasattr(xt, "download_index_weight"):
-            index_fetch = _optional_capability(
-                "download_index_weight", xt.download_index_weight)
-            results["index_weight_cache"] = (
-                index_fetch if isinstance(index_fetch, dict)
-                else {"status": "DOWNLOADED"})
-        else:
-            results["index_weight_cache"] = {
-                "status": "API_NOT_EXPOSED", "api": "download_index_weight"}
-        progress("MARKET_QMT_EXTRA_INDEX_WEIGHT_CACHE=" +
-                 canonical_json(results["index_weight_cache"]))
+        if section in ("all", "sectors"):
+            progress("MARKET_QMT_EXTRA_STAGE_START=sector_snapshot")
+            results["sectors"] = _fetch_sector_snapshot(xt, extra, today, workspace)
+            progress("MARKET_QMT_EXTRA_STAGE_DONE=sector_snapshot")
+        if section in ("all", "etf"):
+            results["etf_catalog"] = _fetch_etf_catalog(xt, extra, today, workspace)
+            progress("MARKET_QMT_EXTRA_ETF_CATALOG=" +
+                     canonical_json(results["etf_catalog"]))
+        if section in ("all", "index"):
+            progress("MARKET_QMT_EXTRA_STAGE_START=download_index_weight")
+            if hasattr(xt, "download_index_weight"):
+                index_fetch = _optional_capability(
+                    "download_index_weight", xt.download_index_weight)
+                results["index_weight_cache"] = (
+                    index_fetch if isinstance(index_fetch, dict)
+                    else {"status": "DOWNLOADED"})
+            else:
+                results["index_weight_cache"] = {
+                    "status": "API_NOT_EXPOSED", "api": "download_index_weight"}
+            progress("MARKET_QMT_EXTRA_INDEX_WEIGHT_CACHE=" +
+                     canonical_json(results["index_weight_cache"]))
         for key in ("financial", "adjustments", "index", "etf"):
+            if key not in selected_sections:
+                continue
             limit = stock_limit if key in ("financial", "adjustments") else asset_limit
             selected = _batch(universe[key], state["cursor"].get(key, ""), limit)
             done = []
             for code in selected:
+                progress("MARKET_QMT_EXTRA_SYMBOL_START=" +
+                         canonical_json({"section": key, "symbol": code}))
                 if key == "financial":
-                    item = _fetch_financial(xt, extra, code, today, workspace)
+                    item = _fetch_financial(xt, extra, code, today, workspace,
+                                            progress=progress)
                 elif key == "adjustments":
                     item = _fetch_adjustments(xt, extra, code, today, since, workspace)
                 else:
@@ -639,11 +677,15 @@ def main(argv=None):
                         help="Equity symbols for financial and dividend each run; 0=all")
     parser.add_argument("--asset-limit", type=int, default=5,
                         help="Index and ETF symbols each run; 0=all")
+    parser.add_argument("--section", choices=("all", "sectors", "financial",
+                                              "adjustments", "index", "etf"),
+                        default="all")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     from xtquant import xtdata
     run(args.root, xt=xtdata, apply=args.apply, today=args.day, since=args.start,
-        stock_limit=args.stock_limit, asset_limit=args.asset_limit)
+        stock_limit=args.stock_limit, asset_limit=args.asset_limit,
+        section=args.section)
 
 
 if __name__ == "__main__":

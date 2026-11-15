@@ -60,11 +60,24 @@ def aggregate_stock_day(rows, period, *, one_minute_offset_ms,
     n = BARS[period]
     if len(rows) != 240:
         raise ValueError("INCOMPLETE_1MIN_STOCK_DAY: " + str(len(rows)))
+    if (type(one_minute_offset_ms) is not int
+            or one_minute_offset_ms not in [m*60000 for m in P.OFFSET_MINUTES]):
+        raise ValueError("Invalid purchased 1minute grid offset")
+    if (type(period_label_shift_ms) is not int
+            or period_label_shift_ms%60000):
+        raise ValueError("Invalid purchased higher-period timestamp shift")
     ordered = sorted(rows, key=lambda r: r["ts"])
+    if any(type(r["ts"]) is not int for r in ordered):
+        raise ValueError("Non-integer original 1minute timestamp")
     if any(ordered[i]["ts"] >= ordered[i+1]["ts"] for i in range(239)):
         raise ValueError("Duplicate/unsorted original 1minute timestamps")
-    slots = [((int(r["ts"])+CN_MS-int(one_minute_offset_ms))//60000)%1440
-             for r in ordered]
+    # Integer-minute binning alone can silently accept :00:45 and :00:59.
+    # Require *exact* calibrated exchange-local whole-minute labels before
+    # deriving any higher-period bar. Never floor off-grid source timestamps.
+    shifted_ms = [r["ts"]+CN_MS-one_minute_offset_ms for r in ordered]
+    if any(stamp%60000 for stamp in shifted_ms):
+        raise ValueError("Purchased original 240-minute trading grid has off-minute timestamps")
+    slots = [(stamp//60000)%1440 for stamp in shifted_ms]
     if slots != BASE_CLOCK:
         raise ValueError("Purchased original 240-minute trading grid mismatch")
     for row in ordered:

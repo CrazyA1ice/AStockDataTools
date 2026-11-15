@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import date, timedelta, datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -131,35 +132,101 @@ def _canonical(source):
     return result
 
 
-def adapt_241_private(source, category_offset_ms, month):
-    """Drop ONLY proven zero-volume native 09:30 from 241-label QMT.
+def _fold_241_day(day_rows, offset_ms, month):
+    """Fold genuine 09:30 auction trade into the first regular 09:31 bar.
 
-    Purchased minute history uses 240 trading-minute bars; DO NOT silently
-    import a 241st auction placeholder as a real market trade.
+    Native QMT is 241 labels; purchased 1m format uses 240 interval-end
+    labels. A real 09:30 auction MUST NOT be discarded. Unlike the earlier
+    assumption that 09:30 always has zero volume/amount, use its evidence:
+    positive volume AND amount are merged, zero/zero is placeholder,
+    mismatched zero-ness is quarantined. All source rows remain preserved
+    in their immutable private Parquet/receipts.
+    """
+    if len(day_rows) != 241:
+        raise ValueError("QMT native day does not have exactly 241 bars")
+    day = L.market_ts_day(int(day_rows[0]["ts"])-int(offset_ms))
+    if day.strftime("%Y-%m") != month:
+        raise ValueError("QMT private source day outside requested month")
+    minute_grid = [h*60 + m for h, m in sorted(B.P.GRID)]
+    actual = [((int(row["ts"]) + CN_MS - int(offset_ms)) // 60000) % 1440
+              for row in day_rows]
+    if actual != minute_grid:
+        raise ValueError("QMT native original 241-minute grid differs on " +
+                         day.isoformat() + " " + str(day_rows[0]["symbol"]))
+    if any(L.market_ts_day(int(row["ts"])-int(offset_ms)) != day
+           for row in day_rows):
+        raise ValueError("QMT native minute crosses stock/day boundary")
+    if any(not math.isfinite(float(row[field])) or float(row[field]) < 0
+           for row in day_rows for field in ("volume", "amount")):
+        raise ValueError("Non-finite or negative QMT minute volume/amount")
+    auction, first_regular = day_rows[:2]
+    v = float(auction["volume"])
+    a = float(auction["amount"])
+    if (v > 0) != (a > 0):
+        raise ValueError("QMT 09:30 has unpaired volume/amount on " +
+                         day.isoformat() + " " + str(auction["symbol"]) +
+                         " volume=" + str(v) + " amount=" + str(a))
+    adjusted = [r.copy() for r in day_rows[1:]]
+    kind = "ZERO_PLACEHOLDER"
+    if v > 0:
+        kind = "REAL_AUCTION_FOLDED_TO_0931"
+        regular = adjusted[0]
+        # Keep exact auction opening price, the combined OHLC range and the
+        # end of the 09:31 interval; preserve all traded quantity/value.
+        regular["open"] = float(auction["open"])
+        regular["high"] = max(float(auction["high"]), float(regular["high"]))
+        regular["low"] = min(float(auction["low"]), float(regular["low"]))
+        regular["volume"] = v + float(regular["volume"])
+        regular["amount"] = a + float(regular["amount"])
+        if (not all(math.isfinite(float(regular[k])) for k in B.P.PRIVATE_SCHEMA.names[2:])
+                or regular["high"] < max(regular["open"], regular["close"])
+                or regular["low"] > min(regular["open"], regular["close"])):
+            raise ValueError("QMT 09:30 auction fold produced invalid OHLCVA")
+        # All original QMT daily totals must be conserved in the 240 bars.
+        for field in ("volume", "amount"):
+            original = sum(float(row[field]) for row in day_rows)
+            merged = sum(float(row[field]) for row in adjusted)
+            if not math.isclose(original, merged, rel_tol=1e-12, abs_tol=1e-6):
+                raise ValueError("QMT auction fold changed daily " + field)
+        original_ohlc = (float(day_rows[0]["open"]),
+                         max(float(r["high"]) for r in day_rows),
+                         min(float(r["low"]) for r in day_rows),
+                         float(day_rows[-1]["close"]))
+        folded_ohlc = (float(adjusted[0]["open"]),
+                       max(float(r["high"]) for r in adjusted),
+                       min(float(r["low"]) for r in adjusted),
+                       float(adjusted[-1]["close"]))
+        if original_ohlc != folded_ohlc:
+            raise ValueError("QMT auction fold changed verified daily OHLC")
+    return adjusted, kind
+
+
+def adapt_241_private(source, category_offset_ms, month, *, stats=None):
+    """Return 240 purchased-compatible bars without losing a real auction.
+
+    The 241st 09:30 bar is either zero/zero and discarded, or a genuine
+    positive/positive auction folded into 09:31 with value conservation.
     """
     raw = _canonical(source)
-    local = np.asarray(raw["ts"].to_numpy(zero_copy_only=False), dtype=np.int64)
-    native_label = ((local + CN_MS - int(category_offset_ms)) // 60000) % 1440
-    placeholder = native_label == 9 * 60 + 30
-    if not np.any(placeholder):
-        raise ValueError("Private 241 QMT source lacks explicit 09:30 placeholder")
-    volume = raw["volume"].to_numpy(zero_copy_only=False)
-    amount = raw["amount"].to_numpy(zero_copy_only=False)
-    if np.any(volume[placeholder] != 0) or np.any(amount[placeholder] != 0):
-        raise ValueError("QMT 09:30 is not a verified zero-trade placeholder")
-    out = raw.filter(pa.array(~placeholder))
-    output = out["ts"].to_numpy(zero_copy_only=False)
-    # Verify the original 240 QMT trade-minute positions *before*
-    # the already measured purchased-vendor clock offset. Vendor minute
-    # labels may denote interval start or end; offset=0 is not assumed.
-    times = ((output + CN_MS - int(category_offset_ms)) // 60000) % 1440
-    standard = (((times >= 571) & (times <= 690))
-                | ((times >= 781) & (times <= 900)))
-    if not np.all(standard):
-        raise ValueError("Calibrated QMT timestamps do not match 240 purchased minute labels")
-    if any(d[:7] != month for d in _daily_group_rows(out)):
-        raise ValueError("Private QMT day moved outside target month")
-    return out, int(np.sum(placeholder))
+    if raw.num_rows == 0 or raw.num_rows % 241 != 0:
+        raise ValueError("QMT private Parquet must be full 241-row stock-days")
+    if type(category_offset_ms) is not int or category_offset_ms % 60000:
+        raise ValueError("Uncertified QMT minute timestamp offset")
+    counts = Counter()
+    converted = []
+    original = raw.to_pylist()
+    for pos in range(0, len(original), 241):
+        folded, kind = _fold_241_day(original[pos:pos+241], category_offset_ms, month)
+        counts[kind] += 1
+        converted.extend(folded)
+    output = pa.Table.from_pylist(converted, schema=SCHEMA)
+    L.checked_records(output, target_year=int(month[:4]),
+                      target_month=int(month[5:]))
+    if output.num_rows != 240*(raw.num_rows//241):
+        raise ValueError("Native QMT 241→240 day-row conservation mismatch")
+    if stats is not None:
+        stats.update(counts)
+    return output, int(sum(counts.values()))
 
 
 def legacy_october_batches(root, *, baseline_loader=None):
@@ -233,16 +300,29 @@ def private_oct_nov_batches(month, *, stage=B.P.BASE / "20261014_20261112",
     try:
         if reader.num_row_groups != len(receipt["groups"]):
             raise ValueError("QMT private month row group inventory changed")
+        auction_stats = Counter()
         for i, group in enumerate(receipt["groups"]):
             raw = reader.read_row_group(i)
             if B._arrow_digest(raw) != group["arrow_sha256"]:
                 raise ValueError("QMT private month content SHA changed")
             code = group["symbol"]
             gate = B._calibration(plan["calib"], code[2:] + "." + code[:2])
-            out, skipped = adapt_241_private(raw, gate["offset_ms"], month)
+            try:
+                out, skipped = adapt_241_private(
+                    raw, gate["offset_ms"], month, stats=auction_stats)
+            except ValueError as exc:
+                raise ValueError("QMT bootstrap source conversion failed " +
+                                 month + " stock=" + code +
+                                 " source_kind=" + str(group.get("source_kind")) +
+                                 " row_group=" + str(i) + ": " + str(exc)) from exc
             if out.num_rows != group["rows"] - skipped:
                 raise ValueError("QMT private minute count inconsistent with removed placeholder")
             yield out
+        print("MARKET_QMT_0930_CONVERSION_SUMMARY=" + json.dumps(
+            {"month": month, "zero_placeholder_days": auction_stats["ZERO_PLACEHOLDER"],
+             "genuine_auction_folded_days": auction_stats["REAL_AUCTION_FOLDED_TO_0931"],
+             "stock_days": sum(auction_stats.values()), "traded_0930_volume_dropped": 0,
+             "traded_0930_amount_dropped": 0}, sort_keys=True), flush=True)
     finally:
         reader.close()
 

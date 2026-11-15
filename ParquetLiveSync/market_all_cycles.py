@@ -8,7 +8,7 @@ cross-calibration. Each period has its own resumable physical commit.
 No duplicate scheduler, no second QMT ingestion, no vendor H5 mutation.
 """
 from __future__ import annotations
-from datetime import date
+from datetime import date,datetime,timedelta
 import json
 from pathlib import Path
 
@@ -57,6 +57,47 @@ def week_month_rules(root, *, logger=print, workspace=S.STATE_DIR):
     return rules
 
 
+def verified_qmt_trading_calendar(asof=None):
+    """Actual SH exchange trading days; no invented holiday shortcuts.
+
+    QMT xtdata returns Unix-ms integers or 8-digit YYYYMMDD strings,
+    depending on the installed SDK. Reject ambiguous/empty responses.
+    """
+    from xtquant import xtdata
+    asof=asof or datetime.now(L.UTC8).date()
+    since=date(2026,10,13)
+    raw=xtdata.get_trading_dates(
+        "SH",start_time=since.strftime("%Y%m%d"),
+        end_time=asof.strftime("%Y%m%d"),count=-1)
+    if not isinstance(raw,(list,tuple)) or not raw:
+        raise ValueError("QMT exchange trading calendar is unavailable")
+    accepted=set()
+    for item in raw:
+        if isinstance(item,str):
+            if len(item)!=8 or not item.isdigit():
+                raise ValueError("Unexpected QMT trading date string")
+            parsed=date(int(item[:4]),int(item[4:6]),int(item[6:]))
+        elif type(item) in (int,float):
+            number=int(item)
+            if 20000101<=number<=20991231:
+                txt=str(number)
+                parsed=date(int(txt[:4]),int(txt[4:6]),int(txt[6:]))
+            elif number>10**12:
+                parsed=datetime.fromtimestamp(number/1000,tz=L.UTC8).date()
+            elif number>10**9:
+                parsed=datetime.fromtimestamp(number,tz=L.UTC8).date()
+            else:
+                raise ValueError("Unknown QMT trading-date epoch")
+        else:
+            raise ValueError("Unsupported QMT exchange trading calendar entry")
+        if not since<=parsed<=asof or parsed.weekday()>=5:
+            raise ValueError("QMT trading calendar returned an invalid date "+str(parsed))
+        accepted.add(parsed)
+    if len(accepted)<12 and (asof-since).days>35:
+        raise ValueError("QMT exchange calendar appears incomplete")
+    return accepted
+
+
 def run(root, *, mode="auto", apply=True, requested_day=None,
         max_days=30, config=U.CONFIG_PATH, logger=print):
     """Update eight periods in dependency order, reporting all phase failures.
@@ -87,6 +128,7 @@ def run(root, *, mode="auto", apply=True, requested_day=None,
     phase("CLOSED_WEEK_MONTH",lambda:R.run(
         root,apply=apply,log=logger,
         audits=week_month_rules(root,logger=logger),
+        trade_dates=verified_qmt_trading_calendar(requested_day),
         asof=requested_day))
     status=("PREVIEW" if not apply and not errors
             else "ALL_EIGHT_PERIOD_PHASES_COMPLETE" if not errors

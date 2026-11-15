@@ -1,0 +1,38 @@
+{
+  "format": "one_command_qmt_market_update_v1",
+  "primary": "qmt",
+  "calibration": "reuse_sha_pinned_2026_09_purchased_1minute",
+  "official_day_source": "TDX_accepted_daily_overlay",
+  "target": "D:/stock/AllCycleAStockData",
+  "max_failure_fraction": 0.02,
+  "minute_cross_checks": {
+    "sample_stocks": 8,
+    "pytdx": {
+      "enabled": true,
+      "purpose": "recent_1min_ohlcva_cross_check_only",
+      "package": "pytdx",
+      "servers": [
+        ["180.153.18.170", 7709],
+        ["180.153.18.172", 80],
+        ["202.108.253.139", 80],
+        ["60.191.117.167", 7709]
+      ]
+    },
+    "eltdx": {
+      "enabled": true,
+      "purpose": "minute_kline_cross_check_only_not_independent_from_pytdx",
+      "package": "eltdx",
+      "timeout": 4
+    },
+    "akshare": {
+      "enabled": false,
+      "purpose": "optional_recent_five_trading_days_1min_eastmoney_check",
+      "package": "akshare",
+      "short_history_only": true
+    }
+  },
+  "minutes_primary_policy": "QMT_only_unless_provider_ohlcva_and_units_independently_certified",
+  "existing_key_policy": "keep_existing_never_blind_overwrite",
+  "native_qmt_0930_placeholder_policy": "discard_only_when_zero_volume_and_zero_amount",
+  "scheduled_default": "after_20_00_Asia_Shanghai"
+}

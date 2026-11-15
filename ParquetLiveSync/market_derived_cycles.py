@@ -260,8 +260,12 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
     scratch={}
     for period in PERIODS:
         target=work/(period+"-"+month+".parquet.part")
-        if target.is_symlink() or target.exists():
-            raise ValueError("Unresolved minute period candidate scratch: "+str(target))
+        if target.is_symlink():
+            raise ValueError("Linked private cycle candidate scratch: "+str(target))
+        if target.exists():
+            # Only this exact disposable private .part candidate is
+            # restarted; accepted source Parquet and receipts are untouched.
+            target.unlink()
         scratch[period]=target
     reader=pq.ParquetFile(path)
     try:
@@ -361,6 +365,13 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
     root=Path(root)
     market=S.state_for(root)
     period_state=_ledger(root,workspace)
+    for period in PERIODS:
+        for month,receipt in period_state["months"][period].items():
+            target=L.storage_root(root)/period/(month+".parquet")
+            if (not target.is_file() or target.is_symlink()
+                    or L.hash_file(target)!=receipt["sha256"]):
+                raise ValueError("Higher-minute Parquet changed after recorded commit "+
+                                 period+" "+month)
     rules=paid_rules(root,progress=progress,workspace=workspace)
     sealed=_sealed_calibration(root)
     report=[]

@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import local_layout as L
+import live_sync as LIVE
 import qmt_1m_pipeline as P
 import qmt_1m_private_month_bridge as B
 import market_month_storage as S
@@ -254,6 +255,7 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
     rows=Counter()
     errors=Counter()
     days=defaultdict(set)
+    buffers={p:[] for p in PERIODS}
     scratch={}
     for period in PERIODS:
         target=work/(period+"-"+month+".parquet.part")
@@ -283,15 +285,23 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
                         period_label_shift_ms=spec["timestamp_shift_from_1min_last_ms"],
                         volume_factor=spec["volume_factor"],
                         amount_factor=spec["amount_factor"])
-                    derived=pa.Table.from_pylist(aggregate,schema=S.SCHEMA)
-                    writers[period].write_table(derived)
-                    rows[period]+=derived.num_rows
+                    buffers[period].extend(aggregate)
+                    if len(buffers[period])>=32768:
+                        writers[period].write_table(
+                            pa.Table.from_pylist(buffers[period],schema=S.SCHEMA),
+                            row_group_size=32768)
+                        buffers[period].clear()
+                    rows[period]+=len(aggregate)
                     days[period].add(day.isoformat())
             if (group_id+1)%1000==0:
                 progress("MARKET_FOUR_CYCLE_PROGRESS="+month+" rowgroups="+str(group_id+1))
     finally:
         reader.close()
-        for writer in writers.values():
+        for period,writer in writers.items():
+            if buffers[period]:
+                writer.write_table(
+                    pa.Table.from_pylist(buffers[period],schema=S.SCHEMA),
+                    row_group_size=32768)
             writer.close()
     for period in PERIODS:
         if rows[period]:
@@ -314,23 +324,22 @@ def _protect_existing(root,period,month,record,workspace):
     old_by_key={(int(r["ts"]),L.normal_symbol(r["symbol"])):r
                 for r in old.to_pylist()}
     collided=0
-    for batch in pq.ParquetFile(record["path"]).iter_batches(batch_size=32768):
-        for new in pa.Table.from_batches([batch]).to_pylist():
-            key=(int(new["ts"]),L.normal_symbol(new["symbol"]))
-            oldrow=old_by_key.get(key)
-            if oldrow is None:
-                continue
-            collided+=1
-            if not all(math.isclose(float(oldrow[f]),float(new[f]),
-                                    rel_tol=.012,abs_tol=.03)
-                       for f in ("open","high","low","close")):
-                raise ValueError("Existing purchased higher-minute price conflict "+
-                                 period+" "+month+" "+str(key))
+    for new in record["table"].to_pylist():
+        key=(int(new["ts"]),L.normal_symbol(new["symbol"]))
+        oldrow=old_by_key.get(key)
+        if oldrow is None:
+            continue
+        collided+=1
+        if not all(math.isclose(float(oldrow[f]),float(new[f]),
+                                rel_tol=.012,abs_tol=.03)
+                   for f in ("open","high","low","close")):
+            raise ValueError("Existing purchased higher-minute price conflict "+
+                             period+" "+month+" "+str(key))
     return collided
 
 
-def run(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
-    """Incremental catchup; preview is never allowed to modify market files."""
+def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
+    """Incremental catchup under the caller's writer lock for apply."""
     root=Path(root)
     market=S.state_for(root)
     period_state=_ledger(root,workspace)
@@ -379,7 +388,7 @@ def run(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
                 if not filtered.num_rows:
                     continue
                 collisions=_protect_existing(
-                    root,period,month,{"path":source[period]["path"]},workspace)
+                    root,period,month,{"table":filtered},workspace)
                 if not apply:
                     report.append({"month":month,"period":period,
                                    "status":"PREVIEW","candidate_rows":filtered.num_rows,
@@ -407,3 +416,11 @@ def run(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
             for item in source.values():
                 Path(item["path"]).unlink(missing_ok=True)
     return report
+
+
+def run(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
+    """Public cycle updater: retain the same OS single-writer lock as QMT."""
+    if apply:
+        with LIVE.exclusive_writer():
+            return _run_unlocked(root,apply=True,progress=progress,workspace=workspace)
+    return _run_unlocked(root,apply=False,progress=progress,workspace=workspace)

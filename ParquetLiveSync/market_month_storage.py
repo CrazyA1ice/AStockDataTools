@@ -71,16 +71,18 @@ def state_for(root, *, workspace=STATE_DIR):
 
 
 def target_path(root, month):
-    if month[:4] != "2026" or month not in ("2026-10", "2026-11"):
-        # First supported rollout; later months require an explicit
-        # rolling-window upgrade, not a hidden broad write.
-        raise ValueError("Uncertified first-run target month " + month)
+    import re
+    if re.fullmatch(r"20[0-9]{2}-(0[1-9]|1[0-2])", month) is None:
+        raise ValueError("Invalid month target: " + str(month))
+    year = int(month[:4])
+    if year != datetime.now(L.UTC8).year:
+        raise ValueError("Automated monthly writes are current-year only; yearly archival is separate")
     market = L.storage_root(root) / "1min"
     if market.is_symlink():
         raise ValueError("Linked market minute folder")
-    annual = market / "2026.parquet"
+    annual = market / (str(year) + ".parquet")
     if annual.exists() or annual.is_symlink():
-        raise ValueError("2026 annual 1min Parquet already exists")
+        raise ValueError("Annual 1min Parquet exists; cannot also update monthly file")
     output = market / (month + ".parquet")
     if output.is_symlink():
         raise ValueError("Linked target 1min month")
@@ -351,10 +353,10 @@ def recover_intent(root, *, workspace=STATE_DIR):
     """Finish crash after atomic swap; never overwrite unrelated external bytes."""
     work = Path(workspace)
     ledger = state_for(root, workspace=work)
-    for month in ("2026-10", "2026-11"):
-        path = work / ("intent-" + month + ".json")
-        if not path.exists():
-            continue
+    if not work.exists():
+        return ledger
+    for path in sorted(work.glob("intent-20??-??.json")):
+        month = path.name.removeprefix("intent-").removesuffix(".json")
         intent = _json(path)
         if (intent.get("format") != FORMAT or intent.get("month") != month
                 or intent.get("target") != str(target_path(root, month))):

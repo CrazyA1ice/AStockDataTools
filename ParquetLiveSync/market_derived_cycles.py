@@ -256,6 +256,7 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
     errors=Counter()
     days=defaultdict(set)
     buffers={p:[] for p in PERIODS}
+    pending={}
     scratch={}
     for period in PERIODS:
         target=work/(period+"-"+month+".parquet.part")
@@ -273,9 +274,22 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
             for (sym,day),single in grouped_source(batch).items():
                 if day.isoformat() not in selected_days:
                     continue
-                if len(single)!=240:
-                    errors["incomplete_stockday"]+=1
+                key=(sym,day)
+                if day < date(2026,10,14) and len(single)!=240:
+                    # The four pre-cutoff H5 fragments have no guaranteed
+                    # 240 bars per stock-day. Never invent missing minutes.
+                    errors["pre_cutoff_incomplete_stockday_fragment"]+=1
                     continue
+                if key in pending:
+                    single=pending.pop(key)+single
+                if len(single)<240:
+                    pending[key]=single
+                    if len(pending)>40:
+                        raise ValueError("Too many discontiguous QMT stock-days; original source ordering changed")
+                    continue
+                if len(single)!=240:
+                    raise ValueError("Duplicate or malformed QMT 1minute stock-day "+
+                                     sym+" "+str(day)+" bars="+str(len(single)))
                 code=sym[2:]+"."+sym[:2]
                 gate=B._calibration(sealed,code)
                 for period in PERIODS:
@@ -295,6 +309,10 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
                     days[period].add(day.isoformat())
             if (group_id+1)%1000==0:
                 progress("MARKET_FOUR_CYCLE_PROGRESS="+month+" rowgroups="+str(group_id+1))
+        if pending:
+            raise ValueError("Accepted QMT minute stock-days remain incomplete after streaming: "+
+                             str([(x[0],str(x[1]),len(v)) for x,v in
+                                  list(pending.items())[:5]]))
     finally:
         reader.close()
         for period,writer in writers.items():

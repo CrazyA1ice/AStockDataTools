@@ -481,11 +481,39 @@ def _fetch_instrument(xt, extra, kind, code, today, workspace):
                             today.isoformat(), table, workspace)
 
 
+def _qmt_client_unsupported(exc):
+    """Classify only the observed QMT terminal ErrorID=300000 failure.
+
+    Never convert arbitrary SDK/network, permission, corrupted data, or
+    filesystem errors into an apparently successful optional API skip.
+    """
+    msg = str(exc)
+    return (isinstance(exc, RuntimeError) and "300000" in msg
+            and ("function not realize" in msg
+                 or "当前客户端未支持此功能" in msg))
+
+
+def _optional_capability(name, callback):
+    try:
+        return callback()
+    except RuntimeError as exc:
+        if not _qmt_client_unsupported(exc):
+            raise
+        return {"status": "UNSUPPORTED_CLIENT_FUNCTION",
+                "api": name, "qmt_error_id": 300000,
+                "detail": "QMT client does not implement or license this API"}
+
+
 def _fetch_etf_catalog(xt, extra, today, workspace):
     if not hasattr(xt, "download_etf_info") or not hasattr(xt, "get_etf_info"):
-        raise ValueError("QMT ETF information APIs unavailable")
-    xt.download_etf_info()
-    info = xt.get_etf_info()
+        return {"status": "API_NOT_EXPOSED",
+                "api": "download_etf_info/get_etf_info"}
+    download = _optional_capability("download_etf_info", xt.download_etf_info)
+    if isinstance(download, dict) and download.get("status") == "UNSUPPORTED_CLIENT_FUNCTION":
+        return download
+    info = _optional_capability("get_etf_info", xt.get_etf_info)
+    if isinstance(info, dict) and info.get("status") == "UNSUPPORTED_CLIENT_FUNCTION":
+        return info
     if not isinstance(info, dict) or not info:
         raise ValueError("QMT ETF information response is empty")
     table = snapshot_table(today.isoformat(), "*", "etf_info",
@@ -530,11 +558,19 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
         state = _state(extra, workspace)
         results["sectors"] = _fetch_sector_snapshot(xt, extra, today, workspace)
         results["etf_catalog"] = _fetch_etf_catalog(xt, extra, today, workspace)
+        progress("MARKET_QMT_EXTRA_ETF_CATALOG=" +
+                 canonical_json(results["etf_catalog"]))
         if hasattr(xt, "download_index_weight"):
-            xt.download_index_weight()
-            results["index_weight_cache"] = "DOWNLOAD_REQUESTED"
+            index_fetch = _optional_capability(
+                "download_index_weight", xt.download_index_weight)
+            results["index_weight_cache"] = (
+                index_fetch if isinstance(index_fetch, dict)
+                else {"status": "DOWNLOADED"})
         else:
-            results["index_weight_cache"] = "API_UNAVAILABLE"
+            results["index_weight_cache"] = {
+                "status": "API_NOT_EXPOSED", "api": "download_index_weight"}
+        progress("MARKET_QMT_EXTRA_INDEX_WEIGHT_CACHE=" +
+                 canonical_json(results["index_weight_cache"]))
         for key in ("financial", "adjustments", "index", "etf"):
             limit = stock_limit if key in ("financial", "adjustments") else asset_limit
             selected = _batch(universe[key], state["cursor"].get(key, ""), limit)

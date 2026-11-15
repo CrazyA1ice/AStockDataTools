@@ -116,3 +116,28 @@ ErrorID: 300000; ErrorMsg: function not realize
 - **股票财务、除权、板块成分、指数及 ETF 历史 OHLCVA 的既有接口按原闸门继续运行**。任何不符合确切错误码的 QMT RuntimeError 或数据冲突仍阻止虚假的完成标记。
 
 此前失败已写入的板块快照是允许的、且不会被重复覆盖。真实首批下载与定时调度仍需这版代码在用户 Windows 环境验收；未安装第二个定时任务。
+
+## 2026-11-15 深夜首批财务下载长时间无输出：阶段诊断版本
+
+第二次 QMT 真机尝试：`18/18` 离线测试通过，QMT 连接成功，`etf_catalog=UNSUPPORTED_CLIENT_FUNCTION`，`index_weight_cache=DOWNLOADED`，此后长时间无新的输出。源码执行顺序下一步是 `financial/000001.SZ`，首先同步调用 `download_financial_data([code], [])`。此处尚无法确定是 QMT 服务等待、网络耗时或客户端锁，且之前没有打印每张表的开始状态；**不应声称已经完成 1 只股票财务或指数/ETF 实际入库。**
+
+改动：
+1. 默认财务下载不再用 `[]` 隐式连下全部表，而按 QMT 的 9 个官方表名逐个下载：`Balance`, `Income`, `CashFlow`, `Capital`, `Top10FlowHolder`, `Top10Holder`, `HolderNum`, `PershareIndex`, `PerShare`。
+2. 每张表打印 `MARKET_QMT_EXTRA_FINANCIAL_TABLE_START` → `FETCHED` → `COMPLETE`，即使某个表卡住也能定位是**下载接口**还是查询/写盘；每张表的成功快照独立持久化，直到全部表都完成才推进该股票游标。
+3. 指数、ETF 每个 **年 × 周期** 下载窗口打印 START/DONE/EMPTY；除权因子打印下载日线及查询因子阶段标记。长时间的同步 QMT 调用仍可能阻塞，此修改是**诊断和隔离**，不是保证自动超时。
+4. 新增隔离入口：`-Mode extras -ExtraSection financial|adjustments|index|etf|sectors`，仅在实际要求的类别上调用 QMT 下载；缺省 `all` 行为不变。用户 Windows 21:30 的八周期自动任务、H5、原有 8 个股票周期都不改动。
+5. 当前正在运行的旧 Python 进程不会自动载入新代码。**先在原运行窗口 Ctrl+C 中止旧版采集，确认不再有 `qmt_extra_data.py` 进程，再执行 Git 拉取和新版本预检。** 若 Ctrl+C 无响应，应只终止命令行明确包含 `qmt_extra_data.py` 的 Python 进程，不能误杀运行正常的 QMT 客户端、其他 Python 或 Windows 计划任务。
+
+独立财务试验：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-market.ps1 -Mode extras -ExtraSection financial -ExtraStockLimit 1 -ExtraAssetLimit 1 -ExtraStart "2011-01-01"
+```
+
+只想验证 QMT 其他接口而不重新触发卡住的财务：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-market.ps1 -Mode extras -ExtraSection adjustments -ExtraStockLimit 1 -ExtraStart "2011-01-01"
+```
+
+这些命令真实写入 `qmt_extra`，只有首批完成并检查记录后才考虑全市场批量或定时加入。

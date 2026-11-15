@@ -99,3 +99,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 - https://knowledge.thinktrader.net/docs/xtquant/code_examples.html
 
 **当前开发状态**：代码及离线模拟测试已提交，实际 Windows QMT 执行及新增文件的真实落盘结果尚待本机运行；不应声称新类别已全量下载。原股票八周期已正式落盘且重复运行验证通过，两者状态应分开记录。
+
+## QMT 客户端可选接口限制（2026-11-15 Windows 首次实测）
+
+真实 QMT 连接与 15/15 离线测试成功后，首批 `-Mode extras -ExtraStockLimit 1 -ExtraAssetLimit 1` 在 `xtdata.download_etf_info()` 报错：
+
+```text
+RuntimeError: 当前客户端未支持此功能，请更新客户端或升级投研版
+ErrorID: 300000; ErrorMsg: function not realize
+```
+
+这来自券商客户端的 `etfredemptionlist` 下载，**不能据此断言所有 ETF 行情均不支持**。修订后的逻辑只对同样的 QMT 客户端不支持代码做明确兼容降级：
+
+- `download_etf_info`/`get_etf_info` → `etf_catalog.status=UNSUPPORTED_CLIENT_FUNCTION`，**不生成虚假的 ETF 申赎清单**；
+- `download_index_weight`/`get_index_weight` → 保留 `index_weight_cache` / 各指数权重的明确缺失状态，**不伪造指数权重**；
+- **股票财务、除权、板块成分、指数及 ETF 历史 OHLCVA 的既有接口按原闸门继续运行**。任何不符合确切错误码的 QMT RuntimeError 或数据冲突仍阻止虚假的完成标记。
+
+此前失败已写入的板块快照是允许的、且不会被重复覆盖。真实首批下载与定时调度仍需这版代码在用户 Windows 环境验收；未安装第二个定时任务。

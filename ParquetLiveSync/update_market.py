@@ -53,7 +53,8 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             state["periods"]["1min"].get(month, {}).get("sources", []))
         for month in B.MONTHS
     )
-    if completed and state.get("qmt_calibration_sha256"):
+    if (completed and state.get("qmt_calibration_sha256")
+            and state.get("original_day_bootstrap_attempted")):
         # The current November file can evolve daily. Ledger + transaction
         # checks protect each append; NEVER rescan 5403 historical receipts
         # when bootstrap is already committed.
@@ -124,7 +125,7 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
     if apply and state.get("qmt_calibration_sha256") is None:
         state["qmt_calibration_sha256"] = plan["plan"]["calibration_sha256"]
         S._save(S.STATE_FILE, state)
-    if apply and not state.get("original_day_bootstrap_complete"):
+    if apply and not state.get("original_day_bootstrap_attempted"):
         # TDX DAY overlays already accepted during the old QMT discovery
         # phase are appended to the physical day months ONLY ONCE.
         # Legacy October DAY purchased-first prefix is handled by the
@@ -144,9 +145,10 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
         if unavailable:
             progress("MARKET_BOOTSTRAP_OFFICIAL_DAY_NOT_IN_ACCEPTED_OVERLAYS=" +
                      json.dumps(unavailable, ensure_ascii=False))
-        else:
-            state["original_day_bootstrap_complete"] = True
-            S._save(S.STATE_FILE, state)
+        state["original_day_bootstrap_attempted"] = True
+        state["original_day_bootstrap_complete"] = not unavailable
+        state["pending_original_day_dates"] = unavailable
+        S._save(S.STATE_FILE, state)
         progress("MARKET_BOOTSTRAP_DAY_MATERIALIZED=" +
                  json.dumps({"accepted_overlay_days": len(completed_days),
                              "unavailable_overlay_dates": unavailable}, sort_keys=True))

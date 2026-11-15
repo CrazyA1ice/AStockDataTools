@@ -48,6 +48,17 @@ def config_file(path=CONFIG_PATH):
 def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20261112"):
     """Initialize canonical 2026-10/11 once; no rewriting existing asof baseline."""
     state = S.recover_intent(root)
+    completed = all(
+        any(str(src).startswith("BOOTSTRAP:") for src in
+            state["periods"]["1min"].get(month, {}).get("sources", []))
+        for month in B.MONTHS
+    )
+    if completed and state.get("qmt_calibration_sha256"):
+        # The current November file can evolve daily. Ledger + transaction
+        # checks protect each append; NEVER rescan 5403 historical receipts
+        # when bootstrap is already committed.
+        progress("MARKET_BOOTSTRAP_ALREADY_INSTALLED_SKIP_HISTORY")
+        return [{"status": "ALREADY_BOOTSTRAPPED", "months": list(B.MONTHS)}]
     plan = B.resolve(root, stage, progress=progress)
     if (sum(len(codes) for codes in plan["expected"].values()) != 114749
             or plan["original"] + plan["recovered"] + plan["opening"] != 114739
@@ -113,6 +124,32 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
     if apply and state.get("qmt_calibration_sha256") is None:
         state["qmt_calibration_sha256"] = plan["plan"]["calibration_sha256"]
         S._save(S.STATE_FILE, state)
+    if apply and not state.get("original_day_bootstrap_complete"):
+        # TDX DAY overlays already accepted during the old QMT discovery
+        # phase are appended to the physical day months ONLY ONCE.
+        # Legacy October DAY purchased-first prefix is handled by the
+        # existing LIVE.materialize_day_in_original_layout() implementation.
+        day_state = LIVE.read_state()
+        payload = LIVE.baseline()
+        completed_days = []
+        unavailable = []
+        for day in sorted(plan["expected"]):
+            label = day.isoformat()
+            if label in day_state.get("days", {}):
+                LIVE.materialize_day_in_original_layout(
+                    root, day, day_state, payload, progress)
+                completed_days.append(label)
+            else:
+                unavailable.append(label)
+        if unavailable:
+            progress("MARKET_BOOTSTRAP_OFFICIAL_DAY_NOT_IN_ACCEPTED_OVERLAYS=" +
+                     json.dumps(unavailable, ensure_ascii=False))
+        else:
+            state["original_day_bootstrap_complete"] = True
+            S._save(S.STATE_FILE, state)
+        progress("MARKET_BOOTSTRAP_DAY_MATERIALIZED=" +
+                 json.dumps({"accepted_overlay_days": len(completed_days),
+                             "unavailable_overlay_dates": unavailable}, sort_keys=True))
     return results
 
 

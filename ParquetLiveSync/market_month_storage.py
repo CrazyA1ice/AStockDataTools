@@ -89,6 +89,26 @@ def target_path(root, month):
     return output
 
 
+def _original_symbol_style(root, month):
+    """Detect vendor code spelling from a tiny prior physical-minute sample."""
+    directory = L.storage_root(root) / "1min"
+    prior = sorted(p for p in directory.glob("20??-??.parquet")
+                   if p.name[:7] < month and not p.is_symlink())
+    if not prior:
+        return "prefix"
+    reader = pq.ParquetFile(prior[-1])
+    try:
+        L.validate_schema(reader.schema_arrow)
+        chunks = reader.iter_batches(batch_size=4096,
+                                     columns=["symbol"], use_threads=False)
+        sample = next(chunks, None)
+    finally:
+        reader.close()
+    if sample is None:
+        raise ValueError("Cannot detect previous purchased 1minute code convention")
+    return L.symbol_style(pa.Table.from_batches([sample]))
+
+
 def _daily_group_rows(table):
     ts = table["ts"].to_numpy(zero_copy_only=False)
     days = np.unique((ts + CN_MS) // DAY_MS)
@@ -272,6 +292,9 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
     if scratch.is_symlink() or scratch.exists():
         raise ValueError("Unresolved previous updater temporary file: " + str(scratch))
     original_sha = current["sha256"] if current else None
+    target_style = current.get("symbol_style") if current else _original_symbol_style(root, month)
+    if target_style not in ("prefix", "suffix", "suffix_exchange"):
+        raise ValueError("Unrecognized original vendor stock symbol style")
     new_rows = 0
     old_rows = current["rows"] if current else 0
     accepted_days = set()
@@ -296,7 +319,8 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
                     if day not in expected_days:
                         raise ValueError("Incoming market rows outside expected date inventory")
                     accepted_days.add(day)
-                writer.write_table(chunk, row_group_size=BATCH)
+                written = L.in_original_schema(chunk, SCHEMA, target_style)
+                writer.write_table(written, row_group_size=BATCH)
                 new_rows += chunk.num_rows
         finally:
             writer.close()
@@ -323,6 +347,7 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
         else:
             backup = None
         next_entry = {"sha256": digest, "rows": old_rows + new_rows,
+                      "symbol_style": target_style,
                       "days": sorted(present | accepted_days),
                       "sources": sorted(set(current["sources"] if current else []) | {source_id}),
                       "previous_sha256": original_sha,

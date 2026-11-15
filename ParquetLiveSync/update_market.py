@@ -1,0 +1,367 @@
+#!/usr/bin/env python3
+"""One-command QMT → canonical 1min Parquet daily updater.
+
+First run: attach verified legacy Oct 1..13 + existing calibrated
+Oct 14..Nov 12 private increments to real AllCycleAStockData/1min.
+Subsequent runs: fetch only not-yet-committed trading days using official
+TDX DAY + QMT 1m, sampled pytdx/eltdx/AKShare checks, and append atomically.
+No full history replay and no independent monthly preflight handoffs.
+"""
+from __future__ import annotations
+import argparse
+from collections import Counter
+from datetime import date, datetime, timedelta
+import itertools
+import json
+import math
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+import live_sync as LIVE
+import local_layout as L
+import qmt_1m_pipeline as P
+import qmt_1m_private_month_bridge as B
+import market_month_storage as S
+import market_source_adapters as X
+from qmt_1m_probe import FIELDS, normalize_code
+
+FORMAT = "one_command_qmt_market_update_v1"
+BOOTSTRAP_START = date(2026, 10, 14)
+BOOTSTRAP_END = date(2026, 11, 12)
+BASELINE_OCT_DAYS = ["2026-10-08", "2026-10-09",
+                     "2026-10-12", "2026-10-13"]
+CONFIG_PATH = Path(__file__).resolve().parent / "market_sources.json"
+
+
+def config_file(path=CONFIG_PATH):
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if (raw.get("format") != FORMAT or raw.get("primary") != "qmt"
+            or not isinstance(raw.get("minute_cross_checks"), dict)
+            or not isinstance(raw.get("max_failure_fraction"), (int, float))
+            or not 0 <= raw["max_failure_fraction"] <= .10):
+        raise ValueError("Unknown market source config or unsafe primary policy")
+    return raw
+
+
+def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20261112"):
+    """Initialize canonical 2026-10/11 once; no rewriting existing asof baseline."""
+    state = S.recover_intent(root)
+    plan = B.resolve(root, stage, progress=progress)
+    if (sum(len(codes) for codes in plan["expected"].values()) != 114749
+            or plan["original"] + plan["recovered"] + plan["opening"] != 114739
+            or len(plan["gaps"]) != 10):
+        raise ValueError("Legacy October/November bootstrapping source count changed")
+    expected_sha = {"2026-10": "ec6c8bb53f15ab885b122e0a15b43d39c41169ddfbf4cc4066561202c43753e0",
+                    "2026-11": "d942d8036841fe6053ec49fbdf66d2229bcd07303b5a2de7f08aa5a0c509abc0"}
+    for month, sha in expected_sha.items():
+        f = Path(stage) / B.TARGET / (month + ".parquet")
+        if f.is_symlink() or not f.is_file() or L.hash_file(f) != sha:
+            raise ValueError("Real Windows SHA-verified private monthly source changed " + month)
+        receipt = B._json(f.with_suffix(".receipt.json"))
+        B.verify_private_month(f, receipt, plan["identity_sha256"])
+    results = []
+    for month in B.MONTHS:
+        dates = sorted(d.isoformat() for d in plan["expected"] if str(d).startswith(month))
+        if month == "2026-10":
+            dates = sorted(set(dates) | set(BASELINE_OCT_DAYS))
+        source_id = "BOOTSTRAP:" + plan["identity_sha256"] + ":" + month
+        old = state["periods"]["1min"].get(month)
+        if old is not None and source_id in old["sources"]:
+            results.append({"month": month, "status": "ALREADY_INSTALLED",
+                            "rows": old["rows"], "sha256": old["sha256"]})
+            continue
+        progress("MARKET_BOOTSTRAP_READY=" + json.dumps(
+            {"month": month, "trading_dates": dates,
+             "qmt_source_stockdays": plan["months"][month]["stock_days_accepted"],
+             "historical_original_included": month == "2026-10",
+             "write": apply}, sort_keys=True))
+        if not apply:
+            results.append({"month": month, "status": "DRY_RUN", "trading_dates": dates})
+            continue
+        if month == "2026-10":
+            streams = itertools.chain(
+                S.legacy_october_batches(root),
+                S.private_oct_nov_batches(month, stage=stage, plan=plan))
+        else:
+            streams = S.private_oct_nov_batches(month, stage=stage, plan=plan)
+        result = S.install_month(root, month, streams, source_id=source_id,
+                                 days=dates, state=state, progress=progress)
+        results.append(result)
+        state = S.state_for(root)
+    return results
+
+
+def _reference_for_day(root, day):
+    state = LIVE.read_state()
+    entry = state.get("days", {}).get(day.isoformat())
+    if not entry:
+        return {}
+    path = LIVE.checked_path(LIVE.WORK, entry["file"])
+    if L.hash_file(path) != entry["sha256"]:
+        raise ValueError("Official DAY accepted daily source SHA changed")
+    t = pq.read_table(path, columns=list(L.COLS))
+    L.validate_schema(t.schema)
+    out = {}
+    for bar in t.to_pylist():
+        code = L.normal_symbol(bar["symbol"])
+        if (code[:2] not in ("SH", "SZ") or len(code) != 8
+                or code[2:].isdigit() is False):
+            continue
+        if code in out:
+            raise ValueError("Official DAY duplicates same security")
+        if float(bar["volume"]) <= 0 or float(bar["amount"]) <= 0:
+            continue
+        out[code] = bar
+    return out
+
+
+def normal_qmt_day(raw, code, day, expected, calibration):
+    """One stock/day; validate traded OHLC + volume/amount vs official DAY."""
+    if len(raw) not in (240, 241):
+        raise ValueError("QMT day must contain 240/241 native 1minute bars")
+    grid = sorted(P.GRID)
+    clock = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
+             for r in raw]
+    observed = [(d.hour, d.minute) for d in clock]
+    if observed != (grid if len(raw) == 241 else grid[1:]):
+        raise ValueError("QMT minute grid differs from accepted Shanghai 241/240 labels")
+    if len(raw) == 241:
+        if float(raw[0]["volume"]) != 0 or float(raw[0]["amount"]) != 0:
+            raise ValueError("Native 09:30 is not the zero-trade placeholder")
+        source = raw[1:]
+    else:
+        source = raw
+    traded = [r for r in source if float(r["volume"]) > 0 and float(r["amount"]) > 0]
+    if not traded:
+        raise ValueError("QMT day contains no genuine trading minutes")
+    if any((float(r["volume"]) > 0) != (float(r["amount"]) > 0) for r in source):
+        raise ValueError("QMT minute volume/amount zero pairing invalid")
+    cand = {"open": traded[0]["open"], "high": max(r["high"] for r in traded),
+            "low": min(r["low"] for r in traded),
+            "close": traded[-1]["close"]}
+    for name, value in cand.items():
+        if not math.isclose(float(value), float(expected[name]),
+                            rel_tol=.006, abs_tol=.04):
+            raise ValueError("Independent official DAY OHLC discrepancy: " + name)
+    records = pa.Table.from_pylist([
+        {"ts": P.stamp_ms(r["datetime_cn"]),
+         "symbol": L.normal_symbol(code),
+         **{k: float(r[k]) for k in FIELDS}}
+        for r in source
+    ], schema=P.PRIVATE_SCHEMA)
+    gate = B._calibration(calibration, code)
+    calibrated = B.calibrate_table(records, gate, day.strftime("%Y-%m"))
+    approved = S._canonical(calibrated)
+    L.checked_records(approved, target_year=day.year, target_month=day.month)
+    target_grid = sorted(P.GRID - {(9, 30)})
+    times = [datetime.fromtimestamp(int(ts)/1000, L.UTC8)
+             for ts in approved["ts"].to_pylist()]
+    if [(x.hour, x.minute) for x in times] != target_grid:
+        raise ValueError("QMT calibrated time labels do not match canonical 240-grid")
+    for name, factor in (("volume", gate["volume_factor"]),
+                         ("amount", gate["amount_factor"])):
+        total = sum(float(r[name]) for r in source) * factor
+        ref = float(expected[name])
+        # Exchange-vendor rounding, auction and turnover quantization may
+        # differ slightly. This is a conservative 3% cross-source sanity
+        # threshold, not a claim that two providers are byte-identical.
+        if not math.isclose(total, ref, rel_tol=.03,
+                            abs_tol=200 if name == "volume" else 1000):
+            raise ValueError("Independent official DAY " + name + " discrepancy")
+    return approved
+
+
+def fetch_one(xtdata, code, day):
+    """Only one missing day per code, not a repeated 90-day/history scan."""
+    return P.fetch_qmt(xtdata, code, day, day)
+
+
+def stage_day(root, day, reference, calib, sources_config, *,
+              reader=None, progress=print,
+              workspace=S.STATE_DIR):
+    """QMT acquisition with per-stock quarantine; one daily private file."""
+    from xtquant import xtdata as real_xtdata
+    xtdata = reader or real_xtdata
+    folder = Path(workspace) / "daily"
+    folder.mkdir(parents=True, exist_ok=True)
+    output = folder / (day.isoformat() + ".parquet")
+    receipt = folder / (day.isoformat() + ".json")
+    if output.is_symlink() or receipt.is_symlink():
+        raise ValueError("Linked private daily candidate")
+    if output.exists() or receipt.exists():
+        if not output.is_file() or not receipt.is_file():
+            raise ValueError("Incomplete daily candidate pair")
+        meta = S._json(receipt)
+        if (meta.get("format") != FORMAT or meta.get("date") != day.isoformat()
+                or meta.get("sha256") != L.hash_file(output)):
+            raise ValueError("Saved daily candidate SHA changed")
+        return output, meta
+    scratch = folder / (day.isoformat() + ".parquet.part")
+    if scratch.exists() or scratch.is_symlink():
+        raise ValueError("Interrupted daily stage; inspect temporary source first")
+    codes = sorted(reference)
+    bad = {}
+    valid = 0
+    selected_samples = {}
+    import random
+    target_count = int(sources_config.get("sample_stocks", 8))
+    sample = set(random.Random(day.isoformat()).sample(
+        codes, min(target_count, len(codes)))) if codes else set()
+    try:
+        with pq.ParquetWriter(scratch, P.PRIVATE_SCHEMA, compression="zstd") as writer:
+            for i, symbol in enumerate(codes, 1):
+                code = normalize_code(symbol)
+                try:
+                    raw = fetch_one(xtdata, code, day)
+                    ready = normal_qmt_day(raw, code, day, reference[symbol], calib)
+                    writer.write_table(ready, row_group_size=240)
+                    valid += 1
+                    if symbol in sample:
+                        selected_samples[symbol] = ready.to_pylist()
+                except (ValueError, RuntimeError, TypeError, KeyError, OSError) as exc:
+                    bad[symbol] = type(exc).__name__ + ": " + str(exc)[:160]
+                if i % 250 == 0:
+                    progress("MARKET_DAILY_QMT_PROGRESS=" + str(day) + " " +
+                             str(i) + "/" + str(len(codes)) +
+                             " valid=" + str(valid))
+        if (valid == 0 or valid / len(codes) <
+                (1. - sources_config.get("max_failure_fraction", .02))):
+            raise ValueError("Too many missing/incompatible QMT stocks: " +
+                             str(len(bad)) + "/" + str(len(codes)))
+        check = X.sample_check(day, selected_samples,
+                               sources_config["minute_cross_checks"], progress=progress)
+        # Mismatched independent 1m samples block blind daily publication.
+        disagreement = [(name, item) for name, entry in check["results"].items()
+                        for item in entry["disagreements"]
+                        if item.get("status") == "PRICE_DISAGREES"]
+        if disagreement:
+            raise ValueError("Cross-source sampled minute OHLC mismatch: " +
+                             json.dumps(disagreement[:4], ensure_ascii=False))
+        tmp = pq.ParquetFile(scratch)
+        try:
+            if (tmp.schema_arrow != P.PRIVATE_SCHEMA
+                    or tmp.metadata.num_rows != valid * 240):
+                raise ValueError("Daily QMT staged 240-grid row count invalid")
+        finally:
+            tmp.close()
+        import os
+        os.replace(scratch, output)
+        doc = {"format": FORMAT, "date": day.isoformat(),
+               "sha256": L.hash_file(output), "rows": valid * 240,
+               "stock_days_accepted": valid, "expected_stock_days": len(codes),
+               "quarantined": bad, "source_family": "QMT_AND_TDX_OFFICIAL_DAY",
+               "sampled_minute_sources": check, "production_merge_authorized": False}
+        S._save(receipt, doc)
+        progress("MARKET_DAILY_STAGED=" + json.dumps(
+            {"date": doc["date"], "accepted": valid, "quarantine": len(bad),
+             "rows": doc["rows"], "sha256": doc["sha256"]}, sort_keys=True))
+        return output, doc
+    finally:
+        if scratch.exists() and not scratch.is_symlink():
+            scratch.unlink()
+
+
+def last_eligible_day():
+    """At/after 20:00 Shanghai time; otherwise previous calendar day."""
+    now = datetime.now(L.UTC8)
+    cutoff = now.date() if now.hour >= 20 else now.date() - timedelta(days=1)
+    while cutoff.weekday() >= 5:
+        cutoff -= timedelta(days=1)
+    return cutoff
+
+
+def update(root, *, mode="auto", apply=True, requested_date=None,
+           config=CONFIG_PATH, max_days=7, progress=print):
+    cfg = config_file(config)
+    if mode not in ("auto", "bootstrap", "daily"):
+        raise ValueError("Invalid updater mode")
+    if not 1 <= max_days <= 30:
+        raise ValueError("Daily catch-up must be <=30 calendar days")
+    with LIVE.exclusive_writer():
+        state = S.recover_intent(root)
+        logs = []
+        if mode in ("auto", "bootstrap"):
+            logs.extend(bootstrap(root, apply=apply, progress=progress))
+            state = S.state_for(root)
+        if mode == "bootstrap":
+            return logs
+        if not state["periods"]["1min"]:
+            raise ValueError("First run needs the verified private Oct/Nov bootstrap")
+        existing_days = sorted({d for entry in state["periods"]["1min"].values()
+                                for d in entry["days"]})
+        if not existing_days:
+            raise ValueError("No physical market minute-day ledger")
+        latest = date.fromisoformat(existing_days[-1])
+        end = requested_date or last_eligible_day()
+        if end > last_eligible_day():
+            raise ValueError("Do not automatically ingest unconfirmed intraday trading bars")
+        begin = latest + timedelta(days=1)
+        if end < begin:
+            progress("MARKET_DAILY_ALREADY_CURRENT=" + latest.isoformat())
+            return logs
+        if (end - begin).days + 1 > max_days:
+            raise ValueError("More than max_days of missed market history; increase --max-days")
+        calibration = S._json(P.BASE / "calibration" / "latest.json")
+        if (calibration.get("calibration_passed") is not True
+                or len(calibration.get("providers", {})) != 3):
+            raise ValueError("Missing previously verified QMT purchased calibration")
+        for n in range((end - begin).days + 1):
+            day = begin + timedelta(days=n)
+            if day.weekday() >= 5:
+                continue
+            # Existing TDX DAY download, accepted Parquet source and local
+            # monthly day materialization are reused, never reimplemented.
+            if apply:
+                LIVE._sync_unlocked(root, day, day, max_days=1,
+                                    materialize_local=True, logger=progress)
+                reference = _reference_for_day(root, day)
+            else:
+                reference = _reference_for_day(root, day)
+            if not reference:
+                progress("MARKET_DAILY_NO_OFFICIAL_DAY=" + day.isoformat())
+                continue
+            if not apply:
+                logs.append({"date": str(day), "status": "DRY_RUN",
+                             "official_sh_sz_stocks": len(reference)})
+                continue
+            src, doc = stage_day(root, day, reference, calibration, cfg,
+                                 progress=progress)
+            month = day.strftime("%Y-%m")
+            result = S.install_month(
+                root, month,
+                (pa.Table.from_batches([b]) for b in
+                 pq.ParquetFile(src).iter_batches(batch_size=32768, use_threads=False)),
+                source_id="DAILY:" + str(day) + ":" + doc["sha256"],
+                days=[str(day)], state=state, progress=progress)
+            logs.append({**result, "date": str(day),
+                         "quarantined_stocks": len(doc["quarantined"])})
+            state = S.state_for(root)
+        progress("MARKET_UPDATE_SUMMARY=" + json.dumps(
+            {"jobs": logs, "market_root": str(L.storage_root(root)),
+             "original_history_reprocessed": False,
+             "qmt_0930_zero_trade_discarded": True,
+             "current_month_only": True}, ensure_ascii=False, sort_keys=True))
+        return logs
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path("D:/stock"))
+    parser.add_argument("--mode", choices=("auto", "bootstrap", "daily"), default="auto")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--day", type=date.fromisoformat)
+    parser.add_argument("--max-days", type=int, default=7)
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    args = parser.parse_args(argv)
+    results = update(args.root, mode=args.mode, apply=not args.dry_run,
+                     requested_date=args.day, config=args.config,
+                     max_days=args.max_days)
+    print("MARKET_UPDATE_COMPLETE=" + json.dumps(
+        {"mode": args.mode, "dry_run": args.dry_run,
+         "steps": len(results)}, ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

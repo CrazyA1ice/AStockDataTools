@@ -42,6 +42,14 @@ def config_file(path=CONFIG_PATH):
             or not isinstance(raw.get("max_failure_fraction"), (int, float))
             or not 0 <= raw["max_failure_fraction"] <= .10):
         raise ValueError("Unknown market source config or unsafe primary policy")
+    providers = raw["minute_cross_checks"]
+    # Legacy user-owned local JSON may still list the retired pytdx
+    # adapter. Migrate in memory, never write or overwrite their file.
+    if "pytdx" in providers:
+        providers.pop("pytdx")
+        if "tencent" not in providers:
+            bundled = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            providers["tencent"] = bundled["minute_cross_checks"]["tencent"]
     return raw
 
 

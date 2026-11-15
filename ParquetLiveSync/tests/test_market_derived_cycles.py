@@ -143,6 +143,78 @@ class HigherMinuteTests(unittest.TestCase):
         self.assertAlmostEqual(rules["amount_factor"],10.)
         self.assertGreaterEqual(rules["price_match"],.99)
 
+    def test_239_purchased_minute_anchor_calibrates_complete_windows_only(self):
+        # Legitimate purchased 239-minute days may lack a single label.
+        # Missing minutes must not be synthesized or published.
+        complete=minute_rows("SH600000")
+        incomplete=complete[1:]
+        for period,n in D.BARS.items():
+            with self.subTest(period=period):
+                partial=D._anchor_complete_buckets(
+                    incomplete,period,one_minute_offset_ms=0)
+                self.assertEqual(len(partial),240//n-1)
+                all_buckets=D.aggregate_stock_day(
+                    complete,period,one_minute_offset_ms=0)
+                self.assertEqual(partial,all_buckets[1:])
+                with self.assertRaisesRegex(ValueError,"INCOMPLETE"):
+                    D.aggregate_stock_day(
+                        incomplete,period,one_minute_offset_ms=0)
+
+    def test_238_purchased_anchor_can_prove_only_genuine_buckets(self):
+        full=minute_rows()
+        partial=[row for i,row in enumerate(full) if i not in (0,140)]
+        for period,n in D.BARS.items():
+            with self.subTest(period=period):
+                actual=D._anchor_complete_buckets(
+                    partial,period,one_minute_offset_ms=0)
+                self.assertEqual(len(actual),240//n-2)
+        with self.assertRaisesRegex(ValueError,">=238 genuine"):
+            D._anchor_complete_buckets(
+                partial[:-1],"5min",one_minute_offset_ms=0)
+
+    def test_partial_purchased_anchor_infers_real_high_cycle_time_and_units(self):
+        full={sym:minute_rows(sym) for sym in
+              ("SH600000","SZ000001","SH688001")}
+        partial={sym:records[1:] for sym,records in full.items()}
+        sealed={"providers":{
+            "SH_OTHER":{"category":"SH_OTHER","offset_ms":0,
+                        "volume":{"factor":1},"amount":{"factor":1}},
+            "SZ":{"category":"SZ","offset_ms":0,
+                  "volume":{"factor":1},"amount":{"factor":1}},
+            "STAR":{"category":"STAR","offset_ms":0,
+                    "volume":{"factor":1},"amount":{"factor":1}}}}
+        for period in D.PERIODS:
+            with self.subTest(period=period):
+                original={}
+                for sym,records in full.items():
+                    for row in D.aggregate_stock_day(
+                            records,period,one_minute_offset_ms=0,
+                            period_label_shift_ms=60000,
+                            volume_factor=.01,amount_factor=10):
+                        original[(sym,row["ts"])]=row
+                rules=D._infer_one(period,original,partial,sealed)
+                self.assertEqual(
+                    rules["timestamp_shift_from_1min_last_ms"],60000)
+                self.assertAlmostEqual(rules["volume_factor"],.01)
+                self.assertAlmostEqual(rules["amount_factor"],10.)
+                self.assertGreater(rules["price_match"],.99)
+
+    def test_partial_anchor_does_not_floor_off_grid_or_assume_unknown_bars(self):
+        for missing in (0,120):
+            source=minute_rows()
+            source.pop(missing)
+            corrupted=source.copy()
+            corrupted[1]={**corrupted[1],
+                          "ts":corrupted[1]["ts"]+45000}
+            with self.assertRaisesRegex(ValueError,
+                                        "sub-minute timestamp drift"):
+                D._anchor_complete_buckets(
+                    corrupted,"15min",one_minute_offset_ms=0)
+        with self.assertRaisesRegex(ValueError,
+                                    "Unverified purchased source minute offset"):
+            D._anchor_complete_buckets(
+                minute_rows(),"5min",one_minute_offset_ms=45000)
+
     def test_calibration_rejects_wrong_ohlc_and_inconsistent_units(self):
         sources={sym:minute_rows(sym) for sym in ("SH600000","SZ000001")}
         sealed={"providers":{

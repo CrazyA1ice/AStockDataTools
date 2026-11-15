@@ -278,12 +278,16 @@ def verified_recent_days(stock_root,state):
         raise ValueError("October/November day physical Parquet not yet available")
     return read_months(stock_root,"day",dates)
 
-def ensure_weekday_complete(period,key,accepted_dates,state):
+def ensure_weekday_complete(period,key,accepted_dates,state,trade_dates=None):
     begin=start_of(key,period)
     end=next_start(key,period)
     current=begin
     while current<end:
-        if current>BASE_DAY and current.weekday()<5:
+        # Known SH exchange non-trading holidays do not need a DAY ZIP.
+        # Unknown weekdays remain required instead of being guessed away.
+        expected=(current in trade_dates if trade_dates is not None
+                  else current.weekday()<5)
+        if current>BASE_DAY and expected:
             if (str(current) not in accepted_dates
                     or str(current) not in state["days"]):
                 raise ValueError(
@@ -291,7 +295,7 @@ def ensure_weekday_complete(period,key,accepted_dates,state):
                     " weekday missing, not silently assuming holiday")
         current+=timedelta(days=1)
 
-def build_candidates(stock_root,state,audits,*,asof=None):
+def build_candidates(stock_root,state,audits,*,asof=None,trade_dates=None):
     asof=asof or datetime.now(CN).date()
     daily=verified_recent_days(stock_root,state)
     aggregated={p:aggregate_day(daily,p) for p in PERIODS}
@@ -329,7 +333,7 @@ def build_candidates(stock_root,state,audits,*,asof=None):
                 continue
             if period=="month" and begin<date(2026,10,1):
                 continue
-            ensure_weekday_complete(period,key,accepted_dates,state)
+            ensure_weekday_complete(period,key,accepted_dates,state,trade_dates=trade_dates)
             label_day=timestamp_candidates(key,period,bar)[audit["rule"]]
             offset=audit["intraday_offset_ms"]
             if not 0<=offset<86400000:
@@ -384,7 +388,7 @@ def verify_existing_period_keys(root,period,year,month,derived):
     return {"existing_checked":len(prior),"same_keys":same}
 
 
-def run(root,*,apply=False,log=print,asof=None,audits=None):
+def run(root,*,apply=False,log=print,asof=None,audits=None,trade_dates=None):
     root=Path(root)
     L.storage_root(root)
     state=read_state()
@@ -402,7 +406,8 @@ def run(root,*,apply=False,log=print,asof=None,audits=None):
     for period,result in audits.items():
         log("PASSED_HISTORICAL_"+period.upper()+"_PURCHASED_ROLLUP_AUDIT="+
             json.dumps(result,sort_keys=True))
-    built=build_candidates(root,state,audits,asof=asof)
+    built=build_candidates(root,state,audits,asof=asof,
+                           trade_dates=trade_dates)
     targets={}
     for period,table in built.items():
         targets[period]=dict(sorted(Counter(

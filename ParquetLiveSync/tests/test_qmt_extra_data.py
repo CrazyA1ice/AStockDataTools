@@ -184,8 +184,16 @@ class QmtExtraTests(unittest.TestCase):
             self.assertTrue(list((extra / "index" / "instruments").rglob("*.parquet")))
             self.assertTrue(list((extra / "index" / "weights").rglob("*.parquet")))
             self.assertTrue(list((extra / "etf" / "info").rglob("*.parquet")))
-            self.assertFalse(any((base / period).rglob("*.parquet")
-                                 for period in L.PERIODS))
+            # Inspect files INSIDE each generator, not its truthy iterator.
+            # A generator exists even when the purchased period is empty.
+            unexpected = {
+                period: [str(path.relative_to(base))
+                         for path in (base / period).rglob("*.parquet")]
+                for period in L.PERIODS
+            }
+            self.assertEqual(
+                {period: paths for period, paths in unexpected.items() if paths},
+                {}, "QMT extras leaked into purchased 8-cycle directories")
             for kind, ticker in (("index", "000001.SH"), ("etf", "510050.SH")):
                 for period in L.PERIODS:
                     with self.subTest(kind=kind, period=period):

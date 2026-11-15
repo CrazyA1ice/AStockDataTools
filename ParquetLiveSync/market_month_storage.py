@@ -159,6 +159,15 @@ def _fold_241_day(day_rows, offset_ms, month):
     if any(not math.isfinite(float(row[field])) or float(row[field]) < 0
            for row in day_rows for field in ("volume", "amount")):
         raise ValueError("Non-finite or negative QMT minute volume/amount")
+    for index, row in enumerate(day_rows):
+        v_check, a_check = float(row["volume"]), float(row["amount"])
+        if (v_check > 0) != (a_check > 0):
+            label = f"{actual[index] // 60:02}:{actual[index] % 60:02}"
+            raise ValueError("QMT original 1min has unpaired volume/amount: " +
+                             str(day) + " " + str(row["symbol"]) +
+                             " native_label=" + label +
+                             " volume=" + str(v_check) +
+                             " amount=" + str(a_check))
     auction, first_regular = day_rows[:2]
     v = float(auction["volume"])
     a = float(auction["amount"])

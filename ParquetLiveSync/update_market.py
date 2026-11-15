@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""One-command QMT → canonical 1min Parquet daily updater.
+"""One-command QMT → original canonical eight-period Parquet daily updater.
 
 First run: attach verified legacy Oct 1..13 + existing calibrated
 Oct 14..Nov 12 private increments to real AllCycleAStockData/1min.
 Subsequent runs: fetch only not-yet-committed trading days using official
-TDX DAY + QMT 1m, sampled pytdx/eltdx/AKShare checks, and append atomically.
-No full history replay and no independent monthly preflight handoffs.
+TDX DAY + QMT 1m, sampled eltdx/Tencent checks, and append atomically.
+Calibrated minute rollups and closed WEEK/MONTH are coordinated by
+market_all_cycles.py; never replay the entire original historical archive.
 """
 from __future__ import annotations
 import argparse
@@ -508,7 +509,7 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("D:/stock"))
-    parser.add_argument("--mode", choices=("auto", "bootstrap", "daily", "sources"), default="auto")
+    parser.add_argument("--mode", choices=("auto", "bootstrap", "daily", "cycles", "sources"), default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--day", type=date.fromisoformat)
     parser.add_argument("--max-days", type=int, default=30)
@@ -520,9 +521,11 @@ def main(argv=None):
         recheck_sources(args.day, config=args.config)
         results = [{"status": "SOURCE_RECHECK_ONLY", "date": str(args.day)}]
     else:
-        results = update(args.root, mode=args.mode, apply=not args.dry_run,
-                         requested_date=args.day, config=args.config,
-                         max_days=args.max_days)
+        import market_all_cycles as AC
+        result = AC.run(args.root, mode=args.mode, apply=not args.dry_run,
+                        requested_day=args.day, config=args.config,
+                        max_days=args.max_days)
+        results = [result]
     print("MARKET_UPDATE_COMPLETE=" + json.dumps(
         {"mode": args.mode, "dry_run": args.dry_run,
          "steps": len(results)}, ensure_ascii=False, sort_keys=True))

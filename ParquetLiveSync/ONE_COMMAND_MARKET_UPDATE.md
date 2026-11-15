@@ -24,6 +24,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 
 确认后，还是上面的同一条日常命令即可。如在某个工作日盘后定时运行，建议 **北京时间20:30以后**（TDX DAY 官方日包可能晚于收盘发布），使用 Windows 任务计划程序调用。不需要长时间保持每根分钟线在线订阅。
 
+## 只诊断多源分钟线，不重做 5215 只股票的历史采集
+
+首次日常更新后，已验收的当日 QMT 分钟记录在私有 `work/market_update/daily/YYYY-MM-DD.parquet` 保存并做了 SHA256 回执。如果某个交叉来源网络故障，可直接对这一份已缓存的当天数据重跑**仅8只股票**的分钟源抽样，不重抓 QMT、不断点回放、也不修改正式 Parquet：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-market.ps1 -Mode sources -Day "2026-11-13"
+```
+
+`pytdx` 优先尝试当前 Python 安装的 `pytdx.config.hosts.hq_hosts` 内置行情节点，其次使用配置中的固定备用节点。节点数与超时受 `market_sources.json` 的 `max_servers`、`connect_timeout_seconds` 限制。若全部不可用，将以 `status=UNAVAILABLE` 标记并记录尝试数/响应情况；这**不是行情不一致**，且同一天不再对另外7只股票重复做无用连接。其它来源（如已通过的 eltdx）仍会继续检查。此功能无法保证网络侧总有可用的 pytdx 节点，节点故障应作为来源可用性问题，而不是允许填入未经独立校验的数据。
+
 ## 配置数据源
 
 编辑 `ParquetLiveSync/market_sources.json`，或通过 Python 的 `--config` 参数指定单独的本机配置文件。

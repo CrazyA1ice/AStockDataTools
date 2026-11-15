@@ -197,6 +197,34 @@ class QmtExtraTests(unittest.TestCase):
             # All purchased 8 period directories stay completely empty.
             self.assertEqual(xt.download_calls.count(("sectors",)), 2)
 
+    def test_prelisting_quote_windows_may_be_missing_but_later_data_valid(self):
+        class NewEtfXt(FakeXt):
+            def get_market_data_ex(self, *, stock_list, period, **kwargs):
+                if kwargs["end_time"][:4] < "2026":
+                    return {}
+                return super().get_market_data_ex(
+                    stock_list=stock_list, period=period, **kwargs)
+        with tempfile.TemporaryDirectory() as tmp:
+            xt = NewEtfXt()
+            extra = Path(tmp) / "market"
+            changes = E._fetch_quotes(
+                xt, extra, "etf", "510050.SH",
+                date(2026, 11, 15), date(2025, 1, 1),
+                workspace=Path(tmp) / "private")
+            self.assertEqual(set(changes), set(E.API_PERIODS))
+            self.assertGreater(changes["day"]["observed"], 0)
+
+    def test_no_price_periods_means_not_a_successful_asset_download(self):
+        class EmptyXt(FakeXt):
+            def get_market_data_ex(self, *, stock_list, period, **kwargs):
+                return {}
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "zero index/ETF OHLCVA"):
+                E._fetch_quotes(
+                    EmptyXt(), Path(tmp) / "market", "etf", "510050.SH",
+                    date(2026, 11, 15), date(2026, 1, 1),
+                    workspace=Path(tmp) / "private")
+
     def test_quote_historical_overlap_must_be_exact(self):
         with tempfile.TemporaryDirectory() as tmp:
             extra = Path(tmp) / "qmt_extra"

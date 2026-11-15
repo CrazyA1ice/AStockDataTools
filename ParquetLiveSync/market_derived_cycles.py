@@ -133,19 +133,20 @@ def _sealed_calibration(root):
 
 
 def _collect_anchor_minutes(original, sealed):
-    """Observe real purchased 1m stock-days; do NOT require an invented 240th.
+    """Keep actual purchased 238-241 bars without inventing any minute.
 
-    Some real paid/H5 days have 239 genuine minute bars, while the later
-    canonical QMT daily publisher has an explicit 240-bar representation.
-    239-point sources can prove *complete* higher-cycle buckets; they must
-    never be used to synthesize a full minute stock-day for publication.
+    The real 2026-09-30 paid anchors are 241: 09:30 through 15:00,
+    including a separate auction label. In contrast, canonical updated
+    QMT stock-days are exactly 240 after the auction is safely folded.
+    Incomplete purchased anchors are used for *calibration only* and only
+    through their fully observed aggregation buckets.
     """
     grouped = grouped_source(pa.Table.from_pylist(
         list(original.values()),schema=S.SCHEMA))
     return {
         sym: sorted(rows,key=lambda r:r["ts"])
         for (sym,d),rows in grouped.items() if d==REFERENCE
-        and 238<=len(rows)<=240
+        and 238<=len(rows)<=241
     }
 
 
@@ -159,8 +160,20 @@ def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
     if (type(one_minute_offset_ms) is not int
             or one_minute_offset_ms not in [m*60000 for m in P.OFFSET_MINUTES]):
         raise ValueError("Unverified purchased source minute offset")
-    if len(rows)<238 or len(rows)>240:
-        raise ValueError("Purchased anchor lacks >=238 genuine minute bars")
+    if len(rows)<238 or len(rows)>241:
+        raise ValueError("Purchased anchor needs 238-241 genuine minute bars")
+    # 09:30 is a real source label, NOT an extra 09:31 interval. Where the
+    # purchase has all 241 labels, apply the same proved auction folding
+    # rule as the QMT physical 1m writer. Never silently discard traded
+    # volume/amount or substitute a synthetic minute.
+    if len(rows)==241:
+        ordered=sorted(rows,key=lambda r:r["ts"])
+        for raw in ordered:
+            if type(raw["ts"]) is not int or (
+                    raw["ts"]+CN_MS-one_minute_offset_ms)%60000:
+                raise ValueError("Purchased minute anchor sub-minute timestamp drift")
+        rows,_=S._fold_241_day(
+            ordered,one_minute_offset_ms,REFERENCE.strftime("%Y-%m"))
     canonical={}
     stamp_seen=set()
     label_seen=set()
@@ -318,7 +331,7 @@ def paid_rules(root, *, progress=print, workspace=S.STATE_DIR):
     old_minutes=_collect_anchor_minutes(one,sealed)
     if len(old_minutes)<2:
         raise ValueError("Purchased 2026-09-30 1minute anchors unavailable for "
-                         ">=238/240 real minutes: "+
+                         "238-241 real minutes: "+
                          json.dumps({sym:len(rows) for
                                     (sym,day),rows in grouped_source(
                                         pa.Table.from_pylist(

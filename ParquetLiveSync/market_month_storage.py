@@ -75,8 +75,9 @@ def target_path(root, month):
     if re.fullmatch(r"20[0-9]{2}-(0[1-9]|1[0-2])", month) is None:
         raise ValueError("Invalid month target: " + str(month))
     year = int(month[:4])
-    if year != datetime.now(L.UTC8).year:
-        raise ValueError("Automated monthly writes are current-year only; yearly archival is separate")
+    active_year = datetime.now(L.UTC8).year
+    if year not in (active_year, active_year - 1):
+        raise ValueError("Automated minute updates support only current/prior calendar year")
     market = L.storage_root(root) / "1min"
     if market.is_symlink():
         raise ValueError("Linked market minute folder")

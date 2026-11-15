@@ -133,13 +133,84 @@ def _sealed_calibration(root):
 
 
 def _collect_anchor_minutes(original, sealed):
+    """Observe real purchased 1m stock-days; do NOT require an invented 240th.
+
+    Some real paid/H5 days have 239 genuine minute bars, while the later
+    canonical QMT daily publisher has an explicit 240-bar representation.
+    239-point sources can prove *complete* higher-cycle buckets; they must
+    never be used to synthesize a full minute stock-day for publication.
+    """
     grouped = grouped_source(pa.Table.from_pylist(
         list(original.values()),schema=S.SCHEMA))
     return {
         sym: sorted(rows,key=lambda r:r["ts"])
         for (sym,d),rows in grouped.items() if d==REFERENCE
-        and len(rows)==240
+        and 238<=len(rows)<=240
     }
+
+
+def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
+    """Calibrate from ONLY genuinely observed entire 5/15/30/60m windows.
+
+    During production, aggregate_stock_day() still requires 240/240 source
+    minute bars. This helper is for purchased-source overlap only.
+    """
+    n=BARS[period]
+    if (type(one_minute_offset_ms) is not int
+            or one_minute_offset_ms not in [m*60000 for m in P.OFFSET_MINUTES]):
+        raise ValueError("Unverified purchased source minute offset")
+    if len(rows)<238 or len(rows)>240:
+        raise ValueError("Purchased anchor lacks >=238 genuine minute bars")
+    canonical={}
+    stamp_seen=set()
+    label_seen=set()
+    expect=set(BASE_CLOCK)
+    symbol=None
+    for raw in rows:
+        stamp=raw["ts"]
+        if type(stamp) is not int or stamp in stamp_seen:
+            raise ValueError("Purchased minute anchor duplicate/invalid timestamp")
+        stamp_seen.add(stamp)
+        shifted=stamp+CN_MS-one_minute_offset_ms
+        if shifted%60000:
+            raise ValueError("Purchased minute anchor sub-minute timestamp drift")
+        label=(shifted//60000)%1440
+        if label not in expect or label in label_seen:
+            raise ValueError("Purchased minute anchor outside exact exchange time grid")
+        label_seen.add(label)
+        sym=L.normal_symbol(raw["symbol"])
+        if symbol is None:
+            symbol=sym
+        elif sym!=symbol:
+            raise ValueError("Purchased minute anchor mixes equities")
+        if any(raw[k] is None or not math.isfinite(float(raw[k]))
+               for k in FIELDS):
+            raise ValueError("Purchased minute anchor non-finite OHLCVA")
+        if not (float(raw["low"])>0 and
+                float(raw["low"])<=min(float(raw["open"]),float(raw["close"])) and
+                float(raw["high"])>=max(float(raw["open"]),float(raw["close"])) and
+                float(raw["volume"])>=0 and float(raw["amount"])>=0):
+            raise ValueError("Purchased minute anchor OHLCVA invalid")
+        canonical[label]=raw
+    out=[]
+    for session in (BASE_CLOCK[:120],BASE_CLOCK[120:]):
+        for start in range(0,120,n):
+            slots=session[start:start+n]
+            if any(slot not in canonical for slot in slots):
+                continue
+            group=[canonical[slot] for slot in slots]
+            out.append({
+                "ts":int(group[-1]["ts"]),"symbol":symbol,
+                "open":float(group[0]["open"]),
+                "high":max(float(x["high"]) for x in group),
+                "low":min(float(x["low"]) for x in group),
+                "close":float(group[-1]["close"]),
+                "volume":math.fsum(float(x["volume"]) for x in group),
+                "amount":math.fsum(float(x["amount"]) for x in group),
+            })
+    if len(out)<(240//n)-2:
+        raise ValueError("Purchased anchor has too few complete higher-minute buckets")
+    return out
 
 
 def _infer_one(period, original, anchor_1m, sealed):
@@ -150,7 +221,7 @@ def _infer_one(period, original, anchor_1m, sealed):
         try:
             code=sym[2:]+"."+sym[:2]
             gate=B._calibration(sealed,code)
-            base[sym]=aggregate_stock_day(
+            base[sym]=_anchor_complete_buckets(
                 one,period,one_minute_offset_ms=gate["offset_ms"])
             valid_symbols.append(sym)
         except (ValueError,KeyError):
@@ -230,7 +301,13 @@ def paid_rules(root, *, progress=print, workspace=S.STATE_DIR):
     one,original_source=_purchased_anchors(root,"1min")
     old_minutes=_collect_anchor_minutes(one,sealed)
     if len(old_minutes)<2:
-        raise ValueError("Purchased 2026-09-30 1minute anchor bars unavailable")
+        raise ValueError("Purchased 2026-09-30 1minute anchors unavailable for "
+                         ">=238/240 real minutes: "+
+                         json.dumps({sym:len(rows) for
+                                    (sym,day),rows in grouped_source(
+                                        pa.Table.from_pylist(
+                                            list(one.values()),schema=S.SCHEMA)).items()
+                                    if day==REFERENCE},sort_keys=True))
     rules={}
     sources={"1min":original_source}
     for period in PERIODS:

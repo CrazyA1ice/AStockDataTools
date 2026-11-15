@@ -392,6 +392,18 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
             raise ValueError("Physical 1minute source differs from accepted ledger "+month)
         selected[month]={"file":target,"days":union,"source_sha":meta["sha256"],
                          "pending":pending}
+    if not apply:
+        preview=[{"period":period,"month":month,
+                  "status":"CALIBRATION_PASSED_SOURCE_SHA_VERIFIED",
+                  "pending_dates":job["pending"][period],
+                  "source_1min_sha256":job["source_sha"]}
+                 for month,job in sorted(selected.items())
+                 for period in PERIODS if job["pending"][period]]
+        progress("MARKET_FOUR_CYCLE_READONLY_PLAN="+json.dumps(
+            {"candidate_period_months":len(preview),
+             "one_minute_original_market_files_read_in_full":False,
+             "physical_market_files_modified":False},sort_keys=True))
+        return preview
     for month,job in sorted(selected.items()):
         source,missing=_derive_from_source(
             job["file"],job["days"],rules,sealed,

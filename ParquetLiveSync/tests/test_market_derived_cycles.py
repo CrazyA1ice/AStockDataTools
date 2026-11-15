@@ -159,6 +159,78 @@ class HigherMinuteTests(unittest.TestCase):
                 minute_rows(sym)[0]["ts"],
                 {row["ts"] for row in accepted[sym]})
 
+    def test_real_241_purchased_auction_folds_without_dropping_value(self):
+        for auction_volume in (0., 450.):
+            for period,n in D.BARS.items():
+                with self.subTest(period=period,auction=auction_volume):
+                    full=minute_rows()
+                    auction={**full[0],
+                             "ts":full[0]["ts"]-60000,
+                             "open":9.91,"high":10.08,"low":9.88,
+                             "close":10.,"volume":auction_volume,
+                             "amount":auction_volume*10.}
+                    paid=[auction]+full
+                    self.assertEqual(len(paid),241)
+                    observed=D._anchor_complete_buckets(
+                        paid,period,one_minute_offset_ms=0)
+                    folded,_=D.S._fold_241_day(
+                        paid,0,"2026-09")
+                    expected=D.aggregate_stock_day(
+                        folded,period,one_minute_offset_ms=0)
+                    self.assertEqual(observed,expected)
+                    self.assertEqual(len(observed),240//n)
+                    self.assertAlmostEqual(
+                        sum(x["volume"] for x in observed),
+                        sum(x["volume"] for x in paid),places=6)
+                    self.assertAlmostEqual(
+                        sum(x["amount"] for x in observed),
+                        sum(x["amount"] for x in paid),places=4)
+                    if auction_volume:
+                        self.assertEqual(observed[0]["open"],auction["open"])
+                        self.assertGreaterEqual(observed[0]["high"],
+                                                auction["high"])
+                        self.assertLessEqual(observed[0]["low"],
+                                             auction["low"])
+
+    def test_real_241_auction_rejects_invalid_source_without_faking_bars(self):
+        full=minute_rows()
+        auction={**full[0],"ts":full[0]["ts"]-60000,
+                 "volume":200.,"amount":2000.}
+        paid=[auction]+full
+        with self.assertRaisesRegex(ValueError,"sub-minute timestamp drift"):
+            invalid=paid.copy()
+            invalid[0]={**invalid[0],"ts":invalid[0]["ts"]+45000}
+            D._anchor_complete_buckets(
+                invalid,"15min",one_minute_offset_ms=0)
+        with self.assertRaisesRegex(ValueError,"unpaired volume/amount"):
+            invalid=paid.copy()
+            invalid[0]={**invalid[0],"amount":0.}
+            D._anchor_complete_buckets(
+                invalid,"5min",one_minute_offset_ms=0)
+        with self.assertRaisesRegex(ValueError,"241-minute grid"):
+            invalid=paid.copy()
+            invalid[1]={**invalid[1],"ts":invalid[1]["ts"]+60000}
+            D._anchor_complete_buckets(
+                invalid,"5min",one_minute_offset_ms=0)
+
+    def test_three_real_241_anchor_categories_are_not_preemptively_excluded(self):
+        original={}
+        for symbol in ("SH600000","SH688001","SZ000001"):
+            data=minute_rows(symbol)
+            auction={**data[0],"ts":data[0]["ts"]-60000,
+                     "volume":0.,"amount":0.}
+            for row in [auction]+data:
+                original[(symbol,row["ts"])]=row
+        collected=D._collect_anchor_minutes(original,{})
+        self.assertEqual(set(collected),{"SH600000","SH688001","SZ000001"})
+        self.assertTrue(all(len(rows)==241 for rows in collected.values()))
+        for sym,rows in collected.items():
+            for period in D.PERIODS:
+                with self.subTest(symbol=sym,period=period):
+                    buckets=D._anchor_complete_buckets(
+                        rows,period,one_minute_offset_ms=0)
+                    self.assertEqual(len(buckets),240//D.BARS[period])
+
     def test_239_purchased_minute_anchor_calibrates_complete_windows_only(self):
         # Legitimate purchased 239-minute days may lack a single label.
         # Missing minutes must not be synthesized or published.

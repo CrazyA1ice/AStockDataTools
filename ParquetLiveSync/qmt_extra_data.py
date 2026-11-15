@@ -261,6 +261,8 @@ def _normalize_quote(symbol, frame, *, until):
         if isinstance(tick, bool) or tick is None:
             raise ValueError("QMT Kline lacks numeric Unix-millisecond time")
         stamp = int(tick)
+        if float(tick) != stamp:
+            raise ValueError("Fractional QMT index/ETF timestamp")
         if stamp < 946684800000 or stamp > 4102444800000:
             raise ValueError("Unsupported QMT Kline timestamp: " + repr(tick))
         trading = L.market_ts_day(stamp)
@@ -382,7 +384,7 @@ def _fetch_financial(xt, extra, code, today, workspace):
 def _fetch_adjustments(xt, extra, code, today, workspace):
     if not hasattr(xt, "get_divid_factors"):
         raise ValueError("QMT get_divid_factors API not supported")
-    frame = xt.get_divid_factors(code, "", "")
+    frame = xt.get_divid_factors(code)
     rows = dataframe_records(frame)
     if not rows:
         return {"rows": 0, "status": "NO_SOURCE_RECORDS"}
@@ -393,7 +395,7 @@ def _fetch_adjustments(xt, extra, code, today, workspace):
 
 
 def _fetch_sector_snapshot(xt, extra, today, workspace):
-    xt.download_sector_data()
+    # Caller refreshed QMT's sector cache before discovering equity/assets.
     names = xt.get_sector_list()
     if not isinstance(names, (list, tuple)) or not names:
         raise ValueError("QMT sector catalog is empty")

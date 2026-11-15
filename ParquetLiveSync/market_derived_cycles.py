@@ -467,7 +467,12 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
     report=[]
     selected={}
     for month,meta in sorted(market["periods"]["1min"].items()):
-        dates=set(meta["days"])
+        # 2026-10-08..13 are the immutable purchased/H5 eight-period
+        # baseline, not QMT-backed new stock-days. Some real 1m files
+        # have 239 bars. Never regenerate or credit that historical slice
+        # as a successfully completed 240-bar derived period.
+        dates={d for d in meta["days"]
+               if date.fromisoformat(d)>=date(2026,10,14)}
         pending={period:sorted(dates-set(
             period_state["months"][period].get(month,{}).get("processed_days",[])))
                  for period in PERIODS}
@@ -503,6 +508,15 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
             "staged_rows":{k:v["rows"] for k,v in source.items()},
             "partial_stockday_groups":missing.get("incomplete_stockday",0),
             "apply":apply},sort_keys=True))
+        if missing.get("incomplete_stockday",0):
+            raise ValueError("Cannot credit incomplete QMT stock-days as complete "+
+                             month+" count="+str(missing["incomplete_stockday"]))
+        for period in PERIODS:
+            observed=set(source.get(period,{}).get("days",[]))
+            if observed!=set(job["days"]):
+                raise ValueError("Derived "+period+" coverage does not include "+
+                                 "all eligible QMT dates in "+month+" missing="+
+                                 str(sorted(set(job["days"])-observed)[:8]))
         try:
             for period in PERIODS:
                 if period not in source:

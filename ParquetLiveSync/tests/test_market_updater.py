@@ -174,7 +174,7 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(accepted["amount"][0].as_py(), 600.)
         self.assertEqual(accepted["ts"][0].as_py(),
                          U.P.stamp_ms(source[1]["datetime_cn"]) + 60000)
-        reference["volume"] = 47000.
+        reference["volume"] = 40000.
         with self.assertRaisesRegex(ValueError, "official DAY volume"):
             U.normal_qmt_day(source, "600000.SH",
                              date(2026, 11, 13), reference, factor)

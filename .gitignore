@@ -38,3 +38,6 @@ __pycache__/
 /H5ParquetReconciler/*-audit.json
 /H5ParquetReconciler/*-audit.md
 /H5ParquetReconciler/*.tmp
+
+# QMT supplementary cursor, private financial receipts, scheduled opt-in.
+/ParquetLiveSync/work/qmt_extra/

@@ -278,8 +278,9 @@ def sample_check(day, primary_by_symbol, config, *, progress=print):
                         "skipped_after_outage": len(chosen) - attempted if outage else 0,
                         "outage_reason": outage,
                         "disagreements": bad[:12], "fetch_errors": failures[:12],
-                        "evidence_family": "TDX_7709" if name in TDX_FAMILY
-                        else "EASTMONEY"}
+                        "evidence_family": ("TDX_7709" if name in TDX_FAMILY
+                                            else "TENCENT_FINANCE" if name == "tencent"
+                                            else "EASTMONEY")}
         progress("MARKET_SOURCE_SAMPLE=" + name +
                  " status=" + status + " agreed=" + str(matched) +
                  "/" + str(len(chosen)) + " attempted=" + str(attempted))

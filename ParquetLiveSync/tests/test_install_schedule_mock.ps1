@@ -1,16 +1,16 @@
-# Windows PowerShell 5.1 non-destructive regression for PowerShell's case-insensitive
-# variable names. Must exercise the real Install control flow, not only parse.
+# Safe Windows PowerShell 5.1 mock: NEVER creates a scheduled task.
+# The installed task must run ONE QMT + all-eight-cycle updater, not
+# the old day-only three-cycle script. No second scheduler is created.
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $installer=Join-Path (Split-Path -Parent $PSScriptRoot) 'install-schedule.ps1'
 if(-not ([System.IO.File]::Exists($installer))){throw 'Cannot find Task Scheduler installer'}
-$global:ParquetLiveSyncMockRegistrations=New-Object System.Collections.ArrayList
-# Register-ScheduledTask and all dependency cmdlets are shadowed by these
-# harmless functions. This CI test NEVER installs a Windows task.
+$global:MarketMockRegistrations=New-Object System.Collections.ArrayList
 function Test-Path {
     param([string]$LiteralPath,[string]$Path,[string]$PathType)
     $item=if($LiteralPath){$LiteralPath}else{$Path}
-    if($item -eq 'D:\stock' -or $item.EndsWith('.venv\Scripts\python.exe')){
+    if($item -eq 'D:\stock\AllCycleAStockData\1min' -or
+       $item.EndsWith('.venv\Scripts\python.exe')){
         return $true
     }
     return [System.IO.File]::Exists($item)
@@ -27,48 +27,65 @@ function New-ScheduledTaskTrigger {
     return [pscustomobject]@{Kind='MockTrigger';Daily=[bool]$Daily;At=$At}
 }
 function New-ScheduledTaskSettingsSet {
-    param([switch]$StartWhenAvailable)
-    return [pscustomobject]@{Kind='MockSettings';StartWhenAvailable=[bool]$StartWhenAvailable}
+    param([switch]$StartWhenAvailable,[string]$MultipleInstances,
+          [TimeSpan]$ExecutionTimeLimit)
+    return [pscustomobject]@{
+        Kind='MockSettings';StartWhenAvailable=[bool]$StartWhenAvailable
+        MultipleInstances=$MultipleInstances;ExecutionTimeLimit=$ExecutionTimeLimit
+    }
+}
+function New-ScheduledTaskPrincipal {
+    param([string]$UserId,[string]$LogonType,[string]$RunLevel)
+    return [pscustomobject]@{UserId=$UserId;LogonType=$LogonType;RunLevel=$RunLevel}
 }
 function Register-ScheduledTask {
-    param([string]$TaskName,$Action,$Trigger,$Settings,
+    param([string]$TaskName,$Action,$Trigger,$Settings,$Principal,
           [string]$Description,[switch]$Force)
     if($Action.Kind -ne 'MockTaskExecAction'){
         throw 'Task argument is not mock exec action'
     }
-    [void]$global:ParquetLiveSyncMockRegistrations.Add([pscustomobject]@{
-        Name=$TaskName;Action=$Action;Trigger=$Trigger;
-        Settings=$Settings;Description=$Description;Force=[bool]$Force
+    [void]$global:MarketMockRegistrations.Add([pscustomobject]@{
+        Name=$TaskName;Action=$Action;Trigger=$Trigger
+        Settings=$Settings;Principal=$Principal
+        Description=$Description;Force=[bool]$Force
     })
     return [pscustomobject]@{MockRegistered=$true}
 }
-# Original bug: param([ValidateSet('Install',..)]$Action) then assigning
-# $action=New-ScheduledTaskAction raises ValidateSetFailure on Windows.
-& $installer -Action Install -IncludeClosedWeekMonth
 & $installer -Action Install
-if($global:ParquetLiveSyncMockRegistrations.Count -ne 2){
-    throw 'Both mock installation paths must register exactly one action'
+& $installer -Action Install -At '20:45'
+if($global:MarketMockRegistrations.Count -ne 2){
+    throw 'Expected exactly two mocked task-install calls'
 }
-$three=$global:ParquetLiveSyncMockRegistrations[0]
-$day=$global:ParquetLiveSyncMockRegistrations[1]
-if($three.Name -ne 'AStockDataTools-ParquetLiveSync' -or
-   $day.Name -ne 'AStockDataTools-ParquetLiveSync'){
-    throw 'Installer changed its documented task name'
+$default=$global:MarketMockRegistrations[0]
+$custom=$global:MarketMockRegistrations[1]
+if($default.Name -ne 'AStockDataTools-ParquetLiveSync' -or
+   $custom.Name -ne 'AStockDataTools-ParquetLiveSync'){
+    throw 'Must replace ONLY the documented existing stock data task'
 }
-if(-not $three.Action.Argument.Contains(' -IncludeClosedWeekMonth')){
-    throw 'Opt-in three-period flag missing in scheduled command'
+if($default.Action.Argument -notmatch 'scheduled-update.ps1'){
+    throw 'Scheduler must launch the unified scheduled runner'
 }
-if($day.Action.Argument.Contains('-IncludeClosedWeekMonth')){
-    throw 'Default task unexpectedly enables WEEK/MONTH instead of DAY_ONLY'
+if($default.Action.Argument -match 'IncludeClosedWeekMonth' -or
+   $default.Action.Argument -match 'live_sync.py'){
+    throw 'Scheduler still uses legacy day-only updates'
 }
-if($three.Trigger.At -ne '21:30' -or $day.Trigger.At -ne '21:30'){
-    throw 'Daily 21:30 local-time trigger changed'
+if($default.Trigger.At -ne '21:30' -or
+   $custom.Trigger.At -ne '20:45'){
+    throw 'Scheduling local time invalid'
 }
-if(-not $three.Trigger.Daily -or -not $three.Settings.StartWhenAvailable){
-    throw 'Task trigger/recovery configuration invalid'
+if(-not $default.Trigger.Daily -or
+   -not $default.Settings.StartWhenAvailable -or
+   $default.Settings.MultipleInstances -ne 'IgnoreNew' -or
+   $default.Settings.ExecutionTimeLimit.TotalHours -ne 4){
+    throw 'Task catchup/overlap/runtime policy invalid'
 }
-if(-not $three.Force -or -not $day.Force){
-    throw 'Task update/installation cannot reuse existing task name'
+if($default.Principal.LogonType -ne 'Interactive' -or
+   $default.Principal.RunLevel -ne 'Limited' -or
+   [string]::IsNullOrEmpty($default.Principal.UserId)){
+    throw 'QMT scheduler must run in logged-in user session'
 }
-Write-Host 'PASS_INSTALL_SCHEDULE_MOCK_NO_REAL_TASKS THREE_PERIOD_AND_DAY_ONLY'
-Remove-Variable -Name ParquetLiveSyncMockRegistrations -Scope Global -ErrorAction SilentlyContinue
+if(-not $default.Force -or -not $custom.Force){
+    throw 'Installer cannot update original task name idempotently'
+}
+Write-Host 'PASS_INSTALL_SCHEDULE_MOCK_NO_REAL_TASKS UNIFIED_EIGHT_PERIOD_2130'
+Remove-Variable -Name MarketMockRegistrations -Scope Global -ErrorAction SilentlyContinue

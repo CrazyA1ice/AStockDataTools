@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("auto","bootstrap","daily","sources")]
+    [ValidateSet("auto","bootstrap","daily","cycles","sources")]
     [string]$Mode = "auto",
     [string]$Root = "D:\stock",
     [string]$Day = "",
@@ -16,9 +16,15 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Missing proje
 $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
 Write-Host "MARKET_UPDATE_ONE_COMMAND mode=$Mode dry_run=$DryRun"
 $ledger = "ParquetLiveSync\work\market_update\commits.json"
-if ($Mode -in @("bootstrap", "sources") -or -not (Test-Path -LiteralPath $ledger -PathType Leaf)) {
+if ($Mode -in @("bootstrap", "sources", "cycles") -or -not (Test-Path -LiteralPath $ledger -PathType Leaf)) {
     & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_market_updater.py" -q
-    if ($LASTEXITCODE -ne 0) { throw "Market updater synthetic safety tests failed" }
+    if ($LASTEXITCODE -ne 0) { throw "Market updater source safety tests failed" }
+    & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_market_derived_cycles.py" -q
+    if ($LASTEXITCODE -ne 0) { throw "Market eight-cycle derivation safety tests failed" }
+    & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_rollup_week_month.py" -q
+    if ($LASTEXITCODE -ne 0) { throw "Market week/month source safety tests failed" }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\tests\test_install_schedule_mock.ps1"
+    if ($LASTEXITCODE -ne 0) { throw "Windows all-cycle Task Scheduler mock tests failed" }
 } else {
     Write-Host "MARKET_DAILY_SKIP_REPEATED_OFFLINE_TESTS"
 }

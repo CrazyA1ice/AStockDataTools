@@ -278,12 +278,16 @@ def verified_recent_days(stock_root,state):
         raise ValueError("October/November day physical Parquet not yet available")
     return read_months(stock_root,"day",dates)
 
-def ensure_weekday_complete(period,key,accepted_dates,state):
+def ensure_weekday_complete(period,key,accepted_dates,state,trade_dates=None):
     begin=start_of(key,period)
     end=next_start(key,period)
     current=begin
     while current<end:
-        if current>BASE_DAY and current.weekday()<5:
+        # Known SH exchange non-trading holidays do not need a DAY ZIP.
+        # Unknown weekdays remain required instead of being guessed away.
+        expected=(current in trade_dates if trade_dates is not None
+                  else current.weekday()<5)
+        if current>BASE_DAY and expected:
             if (str(current) not in accepted_dates
                     or str(current) not in state["days"]):
                 raise ValueError(
@@ -291,13 +295,23 @@ def ensure_weekday_complete(period,key,accepted_dates,state):
                     " weekday missing, not silently assuming holiday")
         current+=timedelta(days=1)
 
-def build_candidates(stock_root,state,audits,*,asof=None):
+def build_candidates(stock_root,state,audits,*,asof=None,trade_dates=None):
     asof=asof or datetime.now(CN).date()
     daily=verified_recent_days(stock_root,state)
     aggregated={p:aggregate_day(daily,p) for p in PERIODS}
     accepted_dates={
         str(source_day(ts)) for ts in daily["ts"].to_pylist()
     }
+    if trade_dates is not None:
+        # A stale/incorrect QMT holiday list must never remove a
+        # known independently accepted official TDX trading day.
+        conflict=sorted(
+            d for d in state["days"]
+            if BASE_DAY<date.fromisoformat(d)<=asof
+            and date.fromisoformat(d) not in trade_dates)
+        if conflict:
+            raise ValueError("QMT exchange calendar conflicts with accepted official DAY "+
+                             ",".join(conflict[:8]))
     # The accepted old October slice was physically carried into the
     # 2026-10 month on first new TDX day. Require all four previously
     # SHA-pinned purchased trading days before deriving a week or month
@@ -316,13 +330,20 @@ def build_candidates(stock_root,state,audits,*,asof=None):
         for (sym,key),bar in aggregated[period].items():
             begin=start_of(key,period)
             end=next_start(key,period)
-            if end>asof or end<=BASE_DAY:
+            # A weekly bar is closed after the last regular Friday
+            # session; Saturday/Sunday cannot change its OHLCVA. Monthly
+            # bars require the calendar month to be fully over.
+            if ((period=="week" and
+                 asof<begin+timedelta(days=4)) or
+                (period=="month" and
+                 asof<end-timedelta(days=1)) or
+                end<=BASE_DAY):
                 continue
             if period=="week" and begin<date(2026,10,12):
                 continue
             if period=="month" and begin<date(2026,10,1):
                 continue
-            ensure_weekday_complete(period,key,accepted_dates,state)
+            ensure_weekday_complete(period,key,accepted_dates,state,trade_dates=trade_dates)
             label_day=timestamp_candidates(key,period,bar)[audit["rule"]]
             offset=audit["intraday_offset_ms"]
             if not 0<=offset<86400000:
@@ -377,17 +398,26 @@ def verify_existing_period_keys(root,period,year,month,derived):
     return {"existing_checked":len(prior),"same_keys":same}
 
 
-def run(root,*,apply=False,log=print,asof=None):
+def run(root,*,apply=False,log=print,asof=None,audits=None,trade_dates=None):
     root=Path(root)
     L.storage_root(root)
     state=read_state()
     if not state["calibration"]:
         raise ValueError("Official TDX DAY volume/amount unit calibration is absent")
-    audits={p:audit_one(root,p) for p in PERIODS}
+    audits=audits or {p:audit_one(root,p) for p in PERIODS}
+    if set(audits)!=set(PERIODS) or any(
+            audits[p].get("period",p)!=p
+            or audits[p].get("intraday_offset_ms") is None
+            or audits[p].get("rule") not in ("first_calendar","last_calendar",
+                                           "first_traded","last_traded",
+                                           "friday","next_monday","next_first")
+            for p in PERIODS):
+        raise ValueError("Untrusted cached purchased weekly/monthly timestamp rules")
     for period,result in audits.items():
         log("PASSED_HISTORICAL_"+period.upper()+"_PURCHASED_ROLLUP_AUDIT="+
             json.dumps(result,sort_keys=True))
-    built=build_candidates(root,state,audits,asof=asof)
+    built=build_candidates(root,state,audits,asof=asof,
+                           trade_dates=trade_dates)
     targets={}
     for period,table in built.items():
         targets[period]=dict(sorted(Counter(

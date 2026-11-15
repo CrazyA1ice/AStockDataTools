@@ -320,24 +320,31 @@ class MarketUpdaterTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), b"unknown-market-data")
 
     def test_tencent_m1_http_fallback_and_no_fabricated_amount(self):
-        from unittest.mock import Mock
-        import requests
+        from unittest.mock import MagicMock
+        from urllib.parse import parse_qs, urlparse
         day = date(2026, 11, 13)
         calls = []
         candle = ["202611130931", "10.0", "10.1", "10.2", "9.9", "300"]
-        def mock_get(url, params=None, headers=None, timeout=None):
-            calls.append(url)
-            self.assertEqual(params, {"param": "sz000001,m1,,320"})
-            self.assertEqual(headers, {"Referer": "https://gu.qq.com/"})
+        body = json.dumps({"code": 0,
+            "data": {"sz000001": {"m1": [candle,
+                ["202611120931", "9", "9", "9", "9", "100"]]}}}).encode("utf-8")
+        def mock_urlopen(request, timeout=None):
+            calls.append(request.full_url)
+            url = urlparse(request.full_url)
+            self.assertEqual(url.path.endswith("/appstock/app/kline/mkline"), True)
+            self.assertEqual(parse_qs(url.query),
+                             {"param": ["sz000001,m1,,320"]})
+            self.assertEqual(request.get_header("Referer"),
+                             "https://gu.qq.com/")
+            self.assertEqual(timeout, 8)
             if len(calls) == 1:
-                raise requests.exceptions.Timeout("temporary endpoint outage")
-            response = Mock()
-            response.raise_for_status.return_value = None
-            response.json.return_value = {"code": 0,
-                "data": {"sz000001": {"m1": [candle,
-                    ["202611120931", "9", "9", "9", "9", "100"]]}}}
+                raise TimeoutError("temporary endpoint outage")
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = body
             return response
-        with patch("requests.get", side_effect=mock_get):
+        with (patch.object(X, "urlopen", side_effect=mock_urlopen),
+              patch.dict(X._TENCENT_HOST_DOWN_UNTIL, {}, clear=True),
+              patch.object(X, "_TENCENT_LAST_GOOD", None)):
             got = X.tencent_1m("000001.SZ", day)
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(got), 1)
@@ -347,6 +354,23 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(got[0]["low"], 9.9)
         self.assertEqual(got[0]["volume"], 300.)
         self.assertNotIn("amount", got[0])
+
+    def test_tencent_stdlib_http_rejects_oversize_or_invalid_json(self):
+        from unittest.mock import MagicMock
+        def make_response(body):
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = body
+            return response
+        with patch.object(X, "urlopen",
+                          return_value=make_response(b"x" * 2_000_001)):
+            with self.assertRaisesRegex(ValueError, "RESPONSE_TOO_LARGE"):
+                X._tencent_http_json(X.TENCENT_KLINE_HOSTS[0],
+                                     {"param": "sh600000,m1,,320"}, 8)
+        with patch.object(X, "urlopen",
+                          return_value=make_response(b"not-a-json-document")):
+            with self.assertRaises(ValueError):
+                X._tencent_http_json(X.TENCENT_KLINE_HOSTS[0],
+                                     {"param": "sh600000,m1,,320"}, 8)
 
     def test_tencent_m1_rejects_duplicate_bad_or_nonfinite_rows(self):
         day = date(2026, 11, 13)

@@ -316,7 +316,14 @@ def build_candidates(stock_root,state,audits,*,asof=None):
         for (sym,key),bar in aggregated[period].items():
             begin=start_of(key,period)
             end=next_start(key,period)
-            if end>asof or end<=BASE_DAY:
+            # A weekly bar is closed after the last regular Friday
+            # session; Saturday/Sunday cannot change its OHLCVA. Monthly
+            # bars require the calendar month to be fully over.
+            if ((period=="week" and
+                 asof<begin+timedelta(days=4)) or
+                (period=="month" and
+                 asof<end-timedelta(days=1)) or
+                end<=BASE_DAY):
                 continue
             if period=="week" and begin<date(2026,10,12):
                 continue

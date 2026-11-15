@@ -230,6 +230,14 @@ def discover(xt):
     stocks = _tickers(xt, ("沪深A股",), required=True)
     indices = _tickers(xt, ("沪深指数", "板块指数"), required=True)
     explicit_etfs = set(_tickers(xt, ("ETF", "ETF基金", "沪深ETF")))
+    if hasattr(xt, "get_ETF_list"):
+        try:
+            explicit_etfs.update(
+                valid_code(code) for code in (xt.get_ETF_list() or []))
+        except (ValueError, KeyError, TypeError, RuntimeError):
+            # Some broker builds expose the method name but not its service.
+            # Independently classified fund sector members remain available.
+            pass
     fund_candidates = _tickers(xt, ("沪深基金",))
     etfs = set(explicit_etfs)
     for code in fund_candidates:
@@ -428,10 +436,12 @@ def _fetch_instrument(xt, extra, kind, code, today, workspace):
                     today.isoformat(), table, workspace)
     if kind == "index" and hasattr(xt, "get_index_weight"):
         weights = xt.get_index_weight(code)
-        if isinstance(weights, dict) and weights:
+        rows = ([{"member": k, "weight": v}
+                 for k, v in sorted(weights.items())]
+                if isinstance(weights, dict) else dataframe_records(weights))
+        if rows:
             table = snapshot_table(today.isoformat(), code, "index_weight",
-                                   [{"member": k, "weight": v}
-                                    for k, v in sorted(weights.items())])
+                                   rows)
             _snapshot_write(extra, "index/weights/" + code,
                             today.isoformat(), table, workspace)
 
@@ -444,7 +454,8 @@ def _fetch_etf_catalog(xt, extra, today, workspace):
     if not isinstance(info, dict) or not info:
         raise ValueError("QMT ETF information response is empty")
     table = snapshot_table(today.isoformat(), "*", "etf_info",
-                           [{"key": k, "value": v} for k, v in sorted(info.items())])
+                           [{"key": k, "value": v} for k, v in
+                            sorted(info.items(), key=lambda pair: str(pair[0]))])
     result = _snapshot_write(extra, "etf/info", today.isoformat(),
                              table, workspace)
     return {"records": len(info), "status": result["status"]}

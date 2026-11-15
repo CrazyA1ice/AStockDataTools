@@ -180,59 +180,65 @@ def _reference_for_day(root, day):
 
 
 def normal_qmt_day(raw, code, day, expected, calibration):
-    """One stock/day; validate traded OHLC + volume/amount vs official DAY."""
+    """Normalize one QMT stock/day while conserving genuine 09:30 auction.
+
+    Keep the original native 241 labels in the QMT API; convert to the paid
+    provider's 240 intervals using the SAME conservation logic as the
+    historical bootstrap. Independently compare the final 240 traded OHLCVA
+    against the official accepted DAY reference before admission.
+    """
     if len(raw) not in (240, 241):
         raise ValueError("QMT day must contain 240/241 native 1minute bars")
-    grid = sorted(P.GRID)
-    clock = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
-             for r in raw]
-    observed = [(d.hour, d.minute) for d in clock]
-    if observed != (grid if len(raw) == 241 else grid[1:]):
-        raise ValueError("QMT minute grid differs from accepted Shanghai 241/240 labels")
-    if len(raw) == 241:
-        if float(raw[0]["volume"]) != 0 or float(raw[0]["amount"]) != 0:
-            raise ValueError("Native 09:30 is not the zero-trade placeholder")
-        source = raw[1:]
-    else:
-        source = raw
-    traded = [r for r in source if float(r["volume"]) > 0 and float(r["amount"]) > 0]
-    if not traded:
-        raise ValueError("QMT day contains no genuine trading minutes")
-    if any((float(r["volume"]) > 0) != (float(r["amount"]) > 0) for r in source):
-        raise ValueError("QMT minute volume/amount zero pairing invalid")
-    cand = {"open": traded[0]["open"], "high": max(r["high"] for r in traded),
-            "low": min(r["low"] for r in traded),
-            "close": traded[-1]["close"]}
-    for name, value in cand.items():
-        if not math.isclose(float(value), float(expected[name]),
-                            rel_tol=.006, abs_tol=.04):
-            raise ValueError("Independent official DAY OHLC discrepancy: " + name)
+    native = sorted(P.GRID)
+    clocks = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
+              for r in raw]
+    observed = [(d.hour, d.minute) for d in clocks]
+    if any(d.date() != day for d in clocks):
+        raise ValueError("QMT source minute outside official requested date")
+    if observed != (native if len(raw) == 241 else native[1:]):
+        raise ValueError("QMT native minute grid differs from accepted 241/240 labels")
+    gate = B._calibration(calibration, code)
     records = pa.Table.from_pylist([
         {"ts": P.stamp_ms(r["datetime_cn"]),
          "symbol": L.normal_symbol(code),
          **{k: float(r[k]) for k in FIELDS}}
-        for r in source
+        for r in raw
     ], schema=P.PRIVATE_SCHEMA)
-    gate = B._calibration(calibration, code)
     calibrated = B.calibrate_table(records, gate, day.strftime("%Y-%m"))
-    approved = S._canonical(calibrated)
+    if len(raw) == 241:
+        approved, _ = S.adapt_241_private(
+            calibrated, gate["offset_ms"], day.strftime("%Y-%m"))
+    else:
+        approved = S._canonical(calibrated)
+    if approved.num_rows != 240:
+        raise ValueError("QMT calibrated day is not 240 compatible intervals")
     L.checked_records(approved, target_year=day.year, target_month=day.month)
     target_grid = sorted(P.GRID - {(9, 30)})
-    # Compare native 240 session grid after reversing the purchased
-    # vendor's measured clock offset (which need not be zero).
-    times = [datetime.fromtimestamp(
-                 (int(ts)-gate["offset_ms"])/1000, L.UTC8)
-             for ts in approved["ts"].to_pylist()]
-    if [(x.hour, x.minute) for x in times] != target_grid:
-        raise ValueError("QMT calibrated time labels do not match canonical 240-grid")
-    for name, factor in (("volume", gate["volume_factor"]),
-                         ("amount", gate["amount_factor"])):
-        total = sum(float(r[name]) for r in source) * factor
-        ref = float(expected[name])
-        # Exchange-vendor rounding, auction and turnover quantization may
-        # differ slightly. This is a conservative 3% cross-source sanity
-        # threshold, not a claim that two providers are byte-identical.
-        if not math.isclose(total, ref, rel_tol=.03,
+    clocks = [datetime.fromtimestamp((int(ts)-gate["offset_ms"])/1000, L.UTC8)
+              for ts in approved["ts"].to_pylist()]
+    if [(d.hour, d.minute) for d in clocks] != target_grid:
+        raise ValueError("QMT converted 240-grid differs from purchased minute convention")
+    rows = approved.to_pylist()
+    for bar in rows:
+        v, a = float(bar["volume"]), float(bar["amount"])
+        if not (math.isfinite(v) and math.isfinite(a)
+                and v >= 0 and a >= 0 and (v > 0) == (a > 0)):
+            raise ValueError("QMT traded minute invalid volume/amount pair")
+    traded = [r for r in rows if r["volume"] > 0]
+    if not traded:
+        raise ValueError("QMT day contains no genuine trading minutes")
+    ohlc = {"open": traded[0]["open"],
+            "high": max(r["high"] for r in traded),
+            "low": min(r["low"] for r in traded),
+            "close": traded[-1]["close"]}
+    for name, value in ohlc.items():
+        if not math.isclose(float(value), float(expected[name]),
+                            rel_tol=.006, abs_tol=.04):
+            raise ValueError("Independent official DAY OHLC discrepancy: " + name)
+    for name in ("volume", "amount"):
+        total = sum(float(r[name]) for r in rows)
+        reference = float(expected[name])
+        if not math.isclose(total, reference, rel_tol=.03,
                             abs_tol=200 if name == "volume" else 1000):
             raise ValueError("Independent official DAY " + name + " discrepancy")
     return approved

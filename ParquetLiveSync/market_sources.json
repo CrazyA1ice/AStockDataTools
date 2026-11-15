@@ -7,25 +7,26 @@
   "max_failure_fraction": 0.02,
   "minute_cross_checks": {
     "sample_stocks": 8,
-    "pytdx": {
-      "enabled": true,
-      "purpose": "recent_1min_ohlcva_cross_check_only",
-      "package": "pytdx",
-      "discover_builtin_hosts": true,
-      "max_servers": 8,
-      "connect_timeout_seconds": 2,
-      "servers": [
-        ["180.153.18.170", 7709],
-        ["180.153.18.172", 80],
-        ["202.108.253.139", 80],
-        ["60.191.117.167", 7709]
-      ]
-    },
     "eltdx": {
       "enabled": true,
       "purpose": "minute_kline_cross_check_only_not_independent_from_pytdx",
       "package": "eltdx",
       "timeout": 4
+    },
+    "tencent": {
+      "enabled": true,
+      "purpose": "independent_tencent_1min_ohlc_time_crosscheck_only_no_amount",
+      "source_repository": "simonlin1212/a-stock-data",
+      "upstream": "Tencent Finance appstock/app/kline/mkline",
+      "period": "m1",
+      "bar_limit": 320,
+      "connect_timeout_seconds": 3,
+      "read_timeout_seconds": 8,
+      "hosts": [
+        "https://web.ifzq.gtimg.cn",
+        "https://proxy.finance.qq.com/ifzqgtimg",
+        "https://ifzq.gtimg.cn"
+      ]
     },
     "akshare": {
       "enabled": false,

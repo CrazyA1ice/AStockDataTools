@@ -291,7 +291,7 @@ class HigherMinuteTests(unittest.TestCase):
                 actual=D._anchor_complete_buckets(
                     partial,period,one_minute_offset_ms=0)
                 self.assertEqual(len(actual),240//n-2)
-        with self.assertRaisesRegex(ValueError,">=238 genuine"):
+        with self.assertRaisesRegex(ValueError,"238-241 genuine minute bars"):
             D._anchor_complete_buckets(
                 partial[:-1],"5min",one_minute_offset_ms=0)
 

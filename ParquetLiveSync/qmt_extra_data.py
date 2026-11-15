@@ -258,7 +258,7 @@ def discover(xt):
             "index": indices, "etf": sorted(etfs)}
 
 
-def _normalize_quote(symbol, frame, *, until):
+def _normalize_quote(symbol, frame, *, until, since=None):
     if frame is None:
         return []
     records = dataframe_records(frame)
@@ -274,7 +274,7 @@ def _normalize_quote(symbol, frame, *, until):
         if stamp < 946684800000 or stamp > 4102444800000:
             raise ValueError("Unsupported QMT Kline timestamp: " + repr(tick))
         trading = L.market_ts_day(stamp)
-        if trading > until:
+        if trading > until or (since is not None and trading < since):
             continue
         if stamp in seen:
             raise ValueError("QMT duplicate Kline timestamp " + symbol)
@@ -344,23 +344,33 @@ def _upsert_quote(extra, kind, cycle, symbol, raw, *, today, workspace):
 
 
 def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
+    """Year-bounded QMT calls; never allocate 16 years of 1m in memory."""
     rows_added = {}
     for cycle, api in API_PERIODS.items():
-        # Only ask QMT for history it can provide; no synthetic OHLCVA.
-        xt.download_history_data(code, period=api,
-                                 start_time=since.strftime("%Y%m%d"),
-                                 end_time=today.strftime("%Y%m%d"))
-        reply = xt.get_market_data_ex(
-            field_list=["time", *L.COLS[2:]], stock_list=[code],
-            period=api, start_time=since.strftime("%Y%m%d"),
-            end_time=today.strftime("%Y%m%d"),
-            count=-1, dividend_type="none", fill_data=False)
-        if not isinstance(reply, dict) or code not in reply:
-            raise ValueError("QMT missing requested " + kind + " " + cycle +
-                             " response: " + code)
-        rows = _normalize_quote(code, reply[code], until=today)
-        rows_added[cycle] = _upsert_quote(
-            extra, kind, cycle, code, rows, today=today, workspace=workspace)
+        total = 0
+        begin = since
+        while begin <= today:
+            end = min(today, date(begin.year, 12, 31))
+            # QMT data availability is provider-specific; an empty response
+            # never authorizes creating artificial bars.
+            xt.download_history_data(code, period=api,
+                                     start_time=begin.strftime("%Y%m%d"),
+                                     end_time=end.strftime("%Y%m%d"))
+            reply = xt.get_market_data_ex(
+                field_list=["time", *L.COLS[2:]], stock_list=[code],
+                period=api, start_time=begin.strftime("%Y%m%d"),
+                end_time=end.strftime("%Y%m%d"),
+                count=-1, dividend_type="none", fill_data=False)
+            if not isinstance(reply, dict) or code not in reply:
+                raise ValueError("QMT missing requested " + kind + " " + cycle +
+                                 " response: " + code + " year=" + str(begin.year))
+            rows = _normalize_quote(
+                code, reply[code], since=begin, until=end)
+            total += _upsert_quote(
+                extra, kind, cycle, code, rows, today=today,
+                workspace=workspace)
+            begin = end + timedelta(days=1)
+        rows_added[cycle] = total
     return rows_added
 
 

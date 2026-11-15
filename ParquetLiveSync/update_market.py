@@ -218,7 +218,10 @@ def normal_qmt_day(raw, code, day, expected, calibration):
     approved = S._canonical(calibrated)
     L.checked_records(approved, target_year=day.year, target_month=day.month)
     target_grid = sorted(P.GRID - {(9, 30)})
-    times = [datetime.fromtimestamp(int(ts)/1000, L.UTC8)
+    # Compare native 240 session grid after reversing the purchased
+    # vendor's measured clock offset (which need not be zero).
+    times = [datetime.fromtimestamp(
+                 (int(ts)-gate["offset_ms"])/1000, L.UTC8)
              for ts in approved["ts"].to_pylist()]
     if [(x.hour, x.minute) for x in times] != target_grid:
         raise ValueError("QMT calibrated time labels do not match canonical 240-grid")

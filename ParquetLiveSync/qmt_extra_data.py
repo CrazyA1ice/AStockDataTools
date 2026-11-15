@@ -469,16 +469,31 @@ def _fetch_instrument(xt, extra, kind, code, today, workspace):
     table = snapshot_table(today.isoformat(), code, "instrument", [info])
     _snapshot_write(extra, kind + "/instruments/" + code,
                     today.isoformat(), table, workspace)
-    if kind == "index" and hasattr(xt, "get_index_weight"):
-        weights = xt.get_index_weight(code)
+    result = {"instrument": "SNAPSHOT_COMMITTED"}
+    if kind == "index":
+        if not hasattr(xt, "get_index_weight"):
+            result["index_weights"] = {
+                "status": "API_NOT_EXPOSED", "api": "get_index_weight"}
+            return result
+        weights = _optional_capability(
+            "get_index_weight", lambda: xt.get_index_weight(code))
+        if (isinstance(weights, dict) and
+                weights.get("status") == "UNSUPPORTED_CLIENT_FUNCTION"):
+            result["index_weights"] = weights
+            return result
         rows = ([{"member": k, "weight": v}
                  for k, v in sorted(weights.items())]
                 if isinstance(weights, dict) else dataframe_records(weights))
         if rows:
             table = snapshot_table(today.isoformat(), code, "index_weight",
                                    rows)
-            _snapshot_write(extra, "index/weights/" + code,
-                            today.isoformat(), table, workspace)
+            save = _snapshot_write(extra, "index/weights/" + code,
+                                   today.isoformat(), table, workspace)
+            result["index_weights"] = {
+                "status": save["status"], "records": len(rows)}
+        else:
+            result["index_weights"] = {"status": "NO_SOURCE_RECORDS"}
+    return result
 
 
 def _qmt_client_unsupported(exc):
@@ -589,9 +604,11 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                     start = (max(since, date.fromisoformat(previous)
                                  - timedelta(days=15))
                              if previous else since)
-                    _fetch_instrument(xt, extra, key, code, today, workspace)
-                    item = _fetch_quotes(
-                        xt, extra, key, code, today, start, workspace=workspace)
+                    instrument = _fetch_instrument(
+                        xt, extra, key, code, today, workspace)
+                    item = {"instrument": instrument, "quotes": _fetch_quotes(
+                        xt, extra, key, code, today, start,
+                        workspace=workspace)}
                     state["last_asset_fetch"][key][code] = today.isoformat()
                 _advance(state, key, code, workspace)
                 done.append({"symbol": code, "result": item})

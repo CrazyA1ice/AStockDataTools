@@ -148,7 +148,10 @@ def adapt_241_private(source, category_offset_ms, month):
         raise ValueError("QMT 09:30 is not a verified zero-trade placeholder")
     out = raw.filter(pa.array(~placeholder))
     output = out["ts"].to_numpy(zero_copy_only=False)
-    times = ((output + CN_MS) // 60000) % 1440
+    # Verify the original 240 QMT trade-minute positions *before*
+    # the already measured purchased-vendor clock offset. Vendor minute
+    # labels may denote interval start or end; offset=0 is not assumed.
+    times = ((output + CN_MS - int(category_offset_ms)) // 60000) % 1440
     standard = (((times >= 571) & (times <= 690))
                 | ((times >= 781) & (times <= 900)))
     if not np.all(standard):

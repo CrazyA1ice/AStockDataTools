@@ -10,6 +10,8 @@ param(
     [int]$ExtraStockLimit = 40,
     [ValidateRange(0,100000)]
     [int]$ExtraAssetLimit = 5,
+    [ValidateSet("all","sectors","financial","adjustments","index","etf")]
+    [string]$ExtraSection = "all",
     [string]$ExtraStart = "2011-01-01",
     [switch]$DryRun
 )
@@ -23,7 +25,7 @@ Write-Host "MARKET_UPDATE_ONE_COMMAND mode=$Mode dry_run=$DryRun"
 if ($Mode -eq "extras") {
     & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_qmt_extra_data.py" -q
     if ($LASTEXITCODE -ne 0) { throw "QMT supplementary data safety tests failed" }
-    $extra = @("-u","-B","ParquetLiveSync\qmt_extra_data.py","--root",$Root,"--start",$ExtraStart,"--stock-limit",[string]$ExtraStockLimit,"--asset-limit",[string]$ExtraAssetLimit)
+    $extra = @("-u","-B","ParquetLiveSync\qmt_extra_data.py","--root",$Root,"--start",$ExtraStart,"--stock-limit",[string]$ExtraStockLimit,"--asset-limit",[string]$ExtraAssetLimit,"--section",$ExtraSection)
     if ($Day) { $extra += @("--day",$Day) }
     if (-not $DryRun) { $extra += "--apply" }
     & $python @extra

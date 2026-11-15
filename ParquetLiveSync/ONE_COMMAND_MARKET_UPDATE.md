@@ -1,4 +1,6 @@
-# 一条命令更新 A 股 Parquet（一期：1min + 官方 day）
+# 一条命令更新 A 股八周期 Parquet（QMT 主源 + 多源交叉验证）
+
+**八周期和 Windows 定时任务安装说明：请先阅读 [EIGHT_PERIOD_AUTO_UPDATE.md](EIGHT_PERIOD_AUTO_UPDATE.md)。** 一期 1min/day 已在 Windows 验证；二期 5/15/30/60min、week、month 仍需本机购买格式校准预览。
 
 ## 用法：每天只执行同一条命令
 
@@ -48,10 +50,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 
 eltdx 与腾讯财经分属不同行情体系；腾讯的三个镜像入口**不能算三个独立来源**。金额/数量未经跨源量纲认证不得从这些次源静默替换 QMT。次源连接失败记录为告警；独立 TDX 官方 DAY 对每只股票的 OHLCVA 闸门始终启用。**eltdx** 同分钟 OHLC 显著冲突时阻止该日入库；**腾讯** 已知存在深市整分钟成交跨格点、竞价首根等口径差异，单纯分钟分桶误差先输出 `MARKET_TENCENT_MINUTE_BUCKET_VARIANCE`，不否定已经通过官方 DAY 与 eltdx 的 QMT 全天数据，也绝不直接覆盖正式 Parquet。
 
-两份参考项目：
-- https://github.com/tiantianlaolao/astock-data-toolkit/tree/main/minute
+参考数据源：
 - https://github.com/electkismet/eltdx
-- https://akshare.akfamily.xyz/data/stock/stock.html
+- https://github.com/simonlin1212/a-stock-data （腾讯 m1）
+- https://akshare.akfamily.xyz/data/stock/stock.html （可选，默认关闭）
 
 ## 正式月文件安全边界
 
@@ -65,8 +67,8 @@ eltdx 与腾讯财经分属不同行情体系；腾讯的三个镜像入口**不
 
 磁盘需留足 **新增月文件、正在更新月文件的临时文件以及旧文件备份** 的空间。首次运行可能较长：历史已验证 27m 根分钟线仍需要一次真实复制进现有目标目录；以后不会重复。每次修改的是当年月文件，不执行 2026 年年度归档。
 
-## 一期没有宣称完成的能力
+## 二期新增的六周期及定时任务
 
-本期落地真实 `1min` 和现有 TDX `day` 写入，其它 5/15/30/60min、week、month 的同一个调度入口和独立已验证聚合规则尚未接入，**不能把 1min 派生数据冒充已核验的原始多周期格式**。2026-10-08..13 原有 minute 源的合法性和 10-14..11-12 新 QMT 241 验收由之前的已验收源目录、清单及 SHA 承担。2026-11-13 后的实时新分钟采集没有在此次 GitHub 代码环境执行，必须在用户的 Windows QMT 环境通过真实回归。
+二期已将 `5/15/30/60min` 的完整 1m 交易日严格聚合、`week/month` 的官方 DAY 闭合聚合接到相同入口。**首次必须实际验证 2026-09 买入版时间标签/单位校准，校准失败不能写入；尚不宣称六周期已在用户 Windows 正式发布。**2026-10-08..13 原有 minute 源的合法性和 10-14..11-12 新 QMT 241 验收由之前的已验收源目录、清单及 SHA 承担。2026-11-13 后的实时新分钟采集没有在此次 GitHub 代码环境执行，必须在用户的 Windows QMT 环境通过真实回归。
 
 预计用户长期每天只需要一个入口；详细审计与失败库存是内部日志，不应再让用户手工运行 4~5 层分支脚本。

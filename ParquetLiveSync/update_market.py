@@ -61,6 +61,9 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             raise ValueError("Real Windows SHA-verified private monthly source changed " + month)
         receipt = B._json(f.with_suffix(".receipt.json"))
         B.verify_private_month(f, receipt, plan["identity_sha256"])
+    if apply and state.get("qmt_calibration_sha256") not in (
+            None, plan["plan"]["calibration_sha256"]):
+        raise ValueError("Existing updater calibration SHA differs from sealed bootstrap")
     results = []
     for month in B.MONTHS:
         dates = sorted(d.isoformat() for d in plan["expected"] if str(d).startswith(month))
@@ -90,6 +93,9 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
                                  days=dates, state=state, progress=progress)
         results.append(result)
         state = S.state_for(root)
+    if apply and state.get("qmt_calibration_sha256") is None:
+        state["qmt_calibration_sha256"] = plan["plan"]["calibration_sha256"]
+        S._save(S.STATE_FILE, state)
     return results
 
 
@@ -182,8 +188,11 @@ def stage_day(root, day, reference, calib, sources_config, *,
               reader=None, progress=print,
               workspace=S.STATE_DIR):
     """QMT acquisition with per-stock quarantine; one daily private file."""
-    from xtquant import xtdata as real_xtdata
-    xtdata = reader or real_xtdata
+    if reader is None:
+        from xtquant import xtdata as real_xtdata
+        xtdata = real_xtdata
+    else:
+        xtdata = reader
     folder = Path(workspace) / "daily"
     folder.mkdir(parents=True, exist_ok=True)
     output = folder / (day.isoformat() + ".parquet")
@@ -307,6 +316,13 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
         if (calibration.get("calibration_passed") is not True
                 or len(calibration.get("providers", {})) != 3):
             raise ValueError("Missing previously verified QMT purchased calibration")
+        pinned = state.get("qmt_calibration_sha256")
+        if pinned is None or P.sha_bytes(P.canonical(calibration)) != pinned:
+            raise ValueError("QMT calibration SHA differs from initial accepted physical update")
+        for provider in calibration["providers"].values():
+            paid = Path(provider["paid_source_path"])
+            if paid.is_symlink() or not paid.is_file() or L.hash_file(paid) != provider.get("paid_source_sha256"):
+                raise ValueError("Purchased calibration source changed; refusing daily QMT write")
         for n in range((end - begin).days + 1):
             day = begin + timedelta(days=n)
             if day.weekday() >= 5:

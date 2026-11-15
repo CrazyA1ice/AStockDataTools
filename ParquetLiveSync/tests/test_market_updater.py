@@ -123,8 +123,80 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(output.num_rows, 240)
         self.assertEqual(output["ts"][0].as_py(), rows[1]["ts"])
         rows[0]["amount"] = 1.
-        with self.assertRaisesRegex(ValueError, "zero-trade"):
+        with self.assertRaisesRegex(ValueError, "unpaired"):
             S.adapt_241_private(canonical(rows), 0, "2026-10")
+
+    def test_real_0930_auction_is_folded_without_losing_any_ohlcva(self):
+        source = stock_day("2026-10-14")
+        source[0].update({"open": 9.95, "high": 10.25, "low": 9.7,
+                          "close": 10.05, "volume": 4., "amount": 400.})
+        converted = canonical([{
+            "ts": U.P.stamp_ms(bar["datetime_cn"]),
+            **{key: bar[key] for key in U.FIELDS}
+        } for bar in source])
+        counters = {}
+        folded, removed = S.adapt_241_private(
+            converted, 0, "2026-10", stats=counters)
+        self.assertEqual(folded.num_rows, 240)
+        self.assertEqual(removed, 1)
+        self.assertEqual(counters["REAL_AUCTION_FOLDED_TO_0931"], 1)
+        first = folded.slice(0, 1).to_pylist()[0]
+        self.assertEqual(first["open"], 9.95)
+        self.assertEqual(first["high"], 10.25)
+        self.assertEqual(first["low"], 9.7)
+        self.assertEqual(first["close"], 10.)
+        self.assertEqual(first["volume"], 6.)
+        self.assertEqual(first["amount"], 600.)
+        self.assertAlmostEqual(sum(row["volume"] for row in folded.to_pylist()),
+                               sum(row["volume"] for row in converted.to_pylist()))
+        self.assertAlmostEqual(sum(row["amount"] for row in folded.to_pylist()),
+                               sum(row["amount"] for row in converted.to_pylist()))
+        rawohlc = (source[0]["open"], max(x["high"] for x in source),
+                   min(x["low"] for x in source), source[-1]["close"])
+        values = folded.to_pylist()
+        newohlc = (values[0]["open"], max(x["high"] for x in values),
+                   min(x["low"] for x in values), values[-1]["close"])
+        self.assertEqual(rawohlc, newohlc)
+
+    def test_real_0930_auction_daily_official_verification_and_clock(self):
+        source = stock_day("2026-11-13")
+        source[0].update({"open": 9.95, "high": 10.25, "low": 9.7,
+                          "close": 10.05, "volume": 4., "amount": 400.})
+        reference = {"open": 9.95, "high": 10.25, "low": 9.7,
+                     "close": 10., "volume": 48400., "amount": 48400.}
+        factor = {"providers": {"SH_OTHER": {
+            "category": "SH_OTHER", "offset_ms": 60000,
+            "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
+        accepted = U.normal_qmt_day(source, "600000.SH",
+                                    date(2026, 11, 13), reference, factor)
+        self.assertEqual(accepted.num_rows, 240)
+        self.assertEqual(accepted["volume"][0].as_py(), 600.)
+        self.assertEqual(accepted["amount"][0].as_py(), 600.)
+        self.assertEqual(accepted["ts"][0].as_py(),
+                         U.P.stamp_ms(source[1]["datetime_cn"]) + 60000)
+        reference["volume"] = 47000.
+        with self.assertRaisesRegex(ValueError, "official DAY volume"):
+            U.normal_qmt_day(source, "600000.SH",
+                             date(2026, 11, 13), reference, factor)
+
+    def test_zero_0930_remains_placeholder_and_two_days_stay_distinct(self):
+        first = stock_day("2026-10-14")
+        second = stock_day("2026-10-15")
+        second[0].update({"open": 9.95, "high": 10.25, "low": 9.7,
+                          "close": 10.05, "volume": 4., "amount": 400.})
+        combined = canonical([{
+            "ts": U.P.stamp_ms(bar["datetime_cn"]),
+            **{key: bar[key] for key in U.FIELDS}
+        } for bar in first+second])
+        counters = {}
+        output, removed = S.adapt_241_private(combined, 0, "2026-10",
+                                              stats=counters)
+        self.assertEqual(removed, 2)
+        self.assertEqual(output.num_rows, 480)
+        self.assertEqual(S._daily_group_rows(output),
+                         ["2026-10-14", "2026-10-15"])
+        self.assertEqual(counters, {"ZERO_PLACEHOLDER": 1,
+                                    "REAL_AUCTION_FOLDED_TO_0931": 1})
 
     def test_canonical_month_append_idempotence_and_old_vendor_symbol(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -12,7 +12,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 - 同时从原有、已验收的截至 2026-10-13 八周期数据集的来源清单中补入 2026-10-08、09、12、13 分钟数据；不重建 2011~2026 完整购买历史。
 - 真实 QMT 1min 每股票日有 241 个分钟标签，其中 09:30 **并非总是零成交**。转换为原购买数据的 240 根/日时，若该根成交量/额都为零，则按占位根丢弃；若两者都大于零，视为真实集合竞价成交，将其开盘价、高低价范围和成交量额**合并进 09:31 第一根常规分钟线**，日级 OHLC 与量额严格守恒；若量额一零一正则拒绝，不猜测。来源 241 根原始数据仍保存在 SHA 绑定的私有 Parquet。
 - 2026-10-14..11-12 的 114,739 个已验收股票交易日变为 **27,537,360 根标准 240 分钟线**，加上旧版 10 月 1~13 的实际已验收 1min 记录。 对有真实 09:30 成交的股票日，量额归并而非丢失。之前私有原生 241 格子的 27,652,099 行不受影响，仍可追溯。10 个 `301139.SZ` 旧日异常保留未补齐，不伪造。
-- 初始化完成后自动检查新交易日：官方 TDX DAY → QMT 1min → pytdx/eltdx/AKShare可选分钟对照 → 240 分钟规范化 → 当前月 Parquet 的追加与校验。
+- 初始化完成后自动检查新交易日：官方 TDX DAY → QMT 1min → eltdx / 腾讯分钟 K 线抽样核对（AKShare可选） → 240 分钟规范化 → 当前月 Parquet 的追加与校验。
 - 每日只处理游标之后尚未成功写入的日期；会跳过非交易日和无官方 DAY 数据的日期；不会每天重复验证 5,039 份历史原始收据。
 - `--mode bootstrap` 只做一次性历史衔接，`--mode daily` 只更新当天/落后的几天，默认 `auto` 两者按需执行。
 
@@ -32,7 +32,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-market.ps1 -Mode sources -Day "2026-11-13"
 ```
 
-`pytdx` 优先尝试当前 Python 安装的 `pytdx.config.hosts.hq_hosts` 内置行情节点，其次使用配置中的固定备用节点。节点数与超时受 `market_sources.json` 的 `max_servers`、`connect_timeout_seconds` 限制。若全部不可用，将以 `status=UNAVAILABLE` 标记并记录尝试数/响应情况；这**不是行情不一致**，且同一天不再对另外7只股票重复做无用连接。其它来源（如已通过的 eltdx）仍会继续检查。此功能无法保证网络侧总有可用的 pytdx 节点，节点故障应作为来源可用性问题，而不是允许填入未经独立校验的数据。
+**pytdx 已彻底退出自动行情源。** 针对 [simonlin1212/a-stock-data](https://github.com/simonlin1212/a-stock-data) 的 §1.2 源码适配腾讯财经 HTTP 1 分钟 K 线：`web.ifzq.gtimg.cn` / `proxy.finance.qq.com/ifzqgtimg` / `ifzq.gtimg.cn` 三个入口轮换，最多返回最近 320 根、分钟只有不复权 OHLCV **没有成交额**。腾讯当日分钟成交量可能与次日回填的精度不同，**只把其时间与开高低收作为独立价格证据**，量额仅记录样本比例而不用于覆盖 QMT。与 eltdx 属不同上游，两个数据源独立核对。腾讯请求失败或所指定日不在最近320根窗口时会标记不可用或证据不足，而非强行填入0或编造一分钟成交额。腾讯逐笔成交也在同仓库，但与腾讯分钟线同一来源、而且只保留最近交易日，因此不作为第二个独立分钟数据源。
 
 ## 配置数据源
 
@@ -42,11 +42,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 |---|---|---|
 | QMT xtquant | A股 1min 完整 OHLCVA **唯一自动入库主源** | 必选 |
 | TDX 官方日包 | 全市场日 OHLC、成交量、成交额独立对照，亦可更新 day Parquet | 必选 |
-| pytdx (tiantianlaolao/astock-data-toolkit 的策略) | category=8, 1min OHLCVA；滚动历史，抽样对照 | 开启（未安装可记录错误） |
-| eltdx (electkismet/eltdx) | `client.bars.get(period="1m",bar_time="end")` OHLCVA；也支持历史分时（分时仅价量不用于替代 OHLCVA） | 开启（未安装可记录错误） |
+| 腾讯财经 m1 (simonlin1212/a-stock-data 的 §1.2) | 1 分钟近期 OHLCV，3 个 HTTP 入口；**无成交额**，只校验价格/时间 | 开启 |
+| eltdx (electkismet/eltdx) | 通达信体系 1 分钟 OHLCVA，已于 2026-11-13 对 QMT 抽样 8/8 一致 | 开启 |
 | AKShare 东方财富 | 1min 仅近 5 个交易日，额外的短期对照；与 QMT 不同的提供者 | 关闭，可选开启 |
 
-pytdx 与 eltdx 均为 TDX 7709 协议家族，**不当作两个独立行情证据投票**。金额/数量未经跨源量纲认证不得从这些次源静默替换 QMT。次源连接失败记录为告警；独立 TDX 官方 DAY 对每只股票的 OHLCVA 闸门始终启用。次源实际返回的相同分钟价格如果显著冲突，将阻止该日静默入库，保留私有候选供排查。
+eltdx 与腾讯财经分属不同行情体系；腾讯的三个镜像入口**不能算三个独立来源**。金额/数量未经跨源量纲认证不得从这些次源静默替换 QMT。次源连接失败记录为告警；独立 TDX 官方 DAY 对每只股票的 OHLCVA 闸门始终启用。次源实际返回的相同分钟价格如果显著冲突，将阻止该日静默入库，保留私有候选供排查。
 
 两份参考项目：
 - https://github.com/tiantianlaolao/astock-data-toolkit/tree/main/minute

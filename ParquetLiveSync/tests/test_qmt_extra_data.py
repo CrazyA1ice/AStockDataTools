@@ -139,6 +139,69 @@ class QmtExtraTests(unittest.TestCase):
             E._normalize_quote("510050.SH", FakeFrame([data]),
                                until=date(2026, 11, 15))
 
+    def test_qmt_300000_etf_redemption_unsupported_does_not_block_core(self):
+        """Observed QMT broker error is capability limitation, not corruption."""
+        import contextlib
+        message = ('当前客户端未支持此功能，请更新客户端或升级投研版 '
+                   'func:commonControl, error:{ "error" : { '
+                   '"ErrorID" : 300000, "ErrorMsg" : "function not realize" } }')
+
+        class BrokerXt(FakeXt):
+            def download_etf_info(self):
+                raise RuntimeError(message)
+            def download_index_weight(self):
+                raise RuntimeError(message)
+            def get_index_weight(self, code):
+                raise RuntimeError(message)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = root / "AllCycleAStockData" / "qmt_extra"
+            private = Path(tmp) / "private"
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = E.run(
+                    root, xt=BrokerXt(), apply=True,
+                    today=date(2026,11,15), since=date(2026,1,1),
+                    stock_limit=1, asset_limit=1,
+                    workspace=private, progress=lambda _: None)
+            self.assertEqual(result["sections"]["etf_catalog"]["status"],
+                             "UNSUPPORTED_CLIENT_FUNCTION")
+            self.assertEqual(result["sections"]["index_weight_cache"]["status"],
+                             "UNSUPPORTED_CLIENT_FUNCTION")
+            self.assertEqual(result["sections"]["index"]["symbols_processed"], 1)
+            self.assertEqual(result["sections"]["etf"]["symbols_processed"], 1)
+            self.assertTrue(list((extra / "financial").rglob("*.parquet")))
+            self.assertTrue(list((extra / "adjustments").rglob("*.parquet")))
+            self.assertTrue(list((extra / "index" / "day").rglob("*.parquet")))
+            self.assertTrue(list((extra / "etf" / "day").rglob("*.parquet")))
+            self.assertFalse((extra / "etf" / "info").exists())
+            self.assertFalse((extra / "index" / "weights").exists())
+            self.assertFalse(any(list((root / "AllCycleAStockData" / p).rglob("*.parquet"))
+                                 for p in L.PERIODS))
+
+    def test_unknown_qmt_runtime_errors_still_fail_closed(self):
+        class BrokenXt(FakeXt):
+            def download_etf_info(self):
+                raise RuntimeError("QMT network broke unexpectedly")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "network broke"):
+                E._fetch_etf_catalog(
+                    BrokenXt(), Path(tmp) / "extras",
+                    date(2026,11,15), Path(tmp) / "private")
+        self.assertFalse(E._qmt_client_unsupported(
+            RuntimeError("ErrorID 300000, authentication timed out")))
+        self.assertFalse(E._qmt_client_unsupported(
+            RuntimeError("function not realize, ErrorID 200000")))
+
+    def test_if_etf_catalog_api_absent_financial_still_processes(self):
+        class MissingEtfAPI:
+            pass
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = E._fetch_etf_catalog(MissingEtfAPI(), Path(tmp) / "extras",
+                                         date(2026,11,15), Path(tmp) / "private")
+            self.assertEqual(reply["status"], "API_NOT_EXPOSED")
+
     def test_readonly_preview_makes_no_file_and_no_network_download(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture_root(tmp)

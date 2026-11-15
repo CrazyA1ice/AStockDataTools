@@ -138,7 +138,7 @@ class HigherMinuteTests(unittest.TestCase):
             additional=minute_rows("SZ000001",day)
             raw=pa.Table.from_pylist(original+additional,schema=S.SCHEMA)
             src=Path(tmp)/"original_1m.parquet"
-            pq.write_table(raw,src,row_group_size=240)
+            pq.write_table(raw,src,row_group_size=139)
             rules={p:{"timestamp_shift_from_1min_last_ms":0,
                       "volume_factor":1.,"amount_factor":1.}
                    for p in D.PERIODS}
@@ -157,6 +157,50 @@ class HigherMinuteTests(unittest.TestCase):
                         self.assertEqual(file.metadata.num_rows,expected)
                     finally:
                         file.close()
+
+    def test_first_four_period_commit_then_second_run_is_idempotent(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"stock"
+            for period in L.PERIODS:
+                (root/"AllCycleAStockData"/period).mkdir(parents=True)
+            day=date(2026,11,13)
+            label="2026-11"
+            table=pa.Table.from_pylist(
+                minute_rows("SH600000",day)+minute_rows("SZ000001",day),
+                schema=S.SCHEMA)
+            original=root/"AllCycleAStockData"/"1min"/(label+".parquet")
+            pq.write_table(table,original,row_group_size=139)
+            source_sha=L.hash_file(original)
+            fake_state={"periods":{"1min":{label:{
+                "sha256":source_sha,"days":[str(day)]}}},
+                "qmt_calibration_sha256":"a"*64}
+            rules={p:{"timestamp_shift_from_1min_last_ms":0,
+                      "volume_factor":1.,"amount_factor":1.}
+                   for p in D.PERIODS}
+            with (patch.object(D.S,"state_for",return_value=fake_state),
+                  patch.object(D,"paid_rules",return_value=rules),
+                  patch.object(D,"_sealed_calibration",return_value={}),
+                  patch.object(D.B,"_calibration",
+                               return_value={"offset_ms":0}),
+                  patch.object(D.LIVE,"exclusive_writer",
+                               return_value=contextlib.nullcontext())):
+                work=Path(tmp)/"work"
+                first=D.run(root,apply=True,workspace=work,progress=lambda _:None)
+                self.assertEqual(len(first),4)
+                self.assertTrue(all(x["status"]=="COMMITTED" for x in first))
+                digests={}
+                for period,n in D.BARS.items():
+                    target=root/"AllCycleAStockData"/period/(label+".parquet")
+                    frame=pq.read_table(target)
+                    self.assertEqual(frame.num_rows,2*240//n)
+                    digests[period]=L.hash_file(target)
+                repeated=D.run(root,apply=True,workspace=work,
+                               progress=lambda _:None)
+                self.assertEqual(repeated,[])
+                for period in D.PERIODS:
+                    target=root/"AllCycleAStockData"/period/(label+".parquet")
+                    self.assertEqual(L.hash_file(target),digests[period])
 
     def test_week_month_calibration_caches_source_identity(self):
         with tempfile.TemporaryDirectory() as tmp:

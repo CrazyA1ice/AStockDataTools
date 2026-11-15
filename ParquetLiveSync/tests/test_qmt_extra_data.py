@@ -197,6 +197,68 @@ class QmtExtraTests(unittest.TestCase):
             # All purchased 8 period directories stay completely empty.
             self.assertEqual(xt.download_calls.count(("sectors",)), 2)
 
+    def test_windows_atomic_replace_closes_all_parquet_readers(self):
+        """Both scratch readback and existing snapshot close before rename."""
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "financial.parquet"
+            workspace = Path(tmp) / "private"
+            first = E.snapshot_table(
+                "2026-11-15", "600000.SH", "Balance", [{"value": 1}])
+            second = E.snapshot_table(
+                "2026-11-15", "600000.SH", "Balance", [{"value": 2}])
+            native_reader = pq.ParquetFile
+            native_replace = os.replace
+            readers = []
+            renames = []
+
+            class TrackedReader:
+                def __init__(self, filename):
+                    self.native = native_reader(filename)
+                    self.closed = False
+                    readers.append(self)
+                def read(self):
+                    return self.native.read()
+                def close(self):
+                    self.native.close()
+                    self.closed = True
+
+            def checked_replace(src, dst):
+                self.assertTrue(readers)
+                self.assertTrue(all(reader.closed for reader in readers),
+                                "Windows file replace attempted with open Parquet reader")
+                renames.append((str(src), str(dst)))
+                return native_replace(src, dst)
+
+            with patch.object(E.pq, "ParquetFile", side_effect=TrackedReader), \
+                 patch.object(E.os, "replace", side_effect=checked_replace):
+                created = E._atomic_parquet(path, first, workspace=workspace)
+                updated = E._atomic_parquet(
+                    path, second, workspace=workspace, allow_changed=True)
+                unchanged = E._atomic_parquet(
+                    path, second, workspace=workspace, allow_changed=True)
+            self.assertEqual(created["status"], "CREATED")
+            self.assertEqual(updated["status"], "UPDATED")
+            self.assertEqual(unchanged["status"], "UNCHANGED")
+            self.assertEqual(len(renames), 2)
+            self.assertGreaterEqual(len(readers), 4)
+            self.assertTrue(all(reader.closed for reader in readers))
+            self.assertTrue(list((workspace / "backups").rglob("*.bak")))
+
+    def test_parquet_reader_close_even_if_read_raises(self):
+        class BadReader:
+            def __init__(self):
+                self.closed = False
+            def read(self):
+                raise ValueError("Synthetic corrupt Parquet")
+            def close(self):
+                self.closed = True
+        bad = BadReader()
+        with patch.object(E.pq, "ParquetFile", return_value=bad):
+            with self.assertRaisesRegex(ValueError, "Synthetic corrupt"):
+                E._read_closed_parquet("not-opened.parquet")
+        self.assertTrue(bad.closed)
+
     def test_prelisting_quote_windows_may_be_missing_but_later_data_valid(self):
         class NewEtfXt(FakeXt):
             def get_market_data_ex(self, *, stock_list, period, **kwargs):

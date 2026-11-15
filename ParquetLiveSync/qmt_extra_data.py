@@ -110,6 +110,19 @@ def _path_check(path):
             raise ValueError("Linked QMT supplementary output rejected: " + str(parent))
 
 
+def _read_closed_parquet(path):
+    """Read Arrow rows and deterministically release Windows file handles.
+
+    pq.read_table(path) may keep a native dataset handle alive until GC.
+    An explicit ParquetFile reader/close is required before os.replace().
+    """
+    reader = pq.ParquetFile(path)
+    try:
+        return reader.read()
+    finally:
+        reader.close()
+
+
 def _atomic_parquet(path, table, *, workspace=WORK, allow_changed=False):
     """Single-file transactional replacement; backup changed previous bytes."""
     path = Path(path)
@@ -119,7 +132,7 @@ def _atomic_parquet(path, table, *, workspace=WORK, allow_changed=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     _path_check(path)
     if path.exists():
-        old = pq.read_table(path)
+        old = _read_closed_parquet(path)
         if old.schema != table.schema:
             raise ValueError("QMT supplementary schema changed: " + str(path))
         if old.equals(table, check_metadata=False):
@@ -133,7 +146,7 @@ def _atomic_parquet(path, table, *, workspace=WORK, allow_changed=False):
     if scratch.exists():
         scratch.unlink()
     pq.write_table(table, scratch, compression="zstd", row_group_size=65536)
-    check = pq.read_table(scratch)
+    check = _read_closed_parquet(scratch)
     if not check.equals(table, check_metadata=False):
         scratch.unlink(missing_ok=True)
         raise ValueError("QMT supplementary Parquet roundtrip changed")
@@ -319,7 +332,7 @@ def _upsert_quote(extra, kind, cycle, symbol, raw, *, today, workspace):
         grouped[target].append(row)
     changed = 0
     for path, fresh in sorted(grouped.items()):
-        old = pq.read_table(path).to_pylist() if path.exists() else []
+        old = _read_closed_parquet(path).to_pylist() if path.exists() else []
         by_stamp = {int(r["ts"]): r for r in old}
         if len(by_stamp) != len(old):
             raise ValueError("Duplicate timestamps in existing QMT index/ETF file")

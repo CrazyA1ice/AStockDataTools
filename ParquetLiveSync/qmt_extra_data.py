@@ -295,8 +295,14 @@ def _upsert_quote(extra, kind, cycle, symbol, raw, *, today, workspace):
     for row in raw:
         trading = L.market_ts_day(row["ts"])
         # Never publish a not-yet-closed QMT WEEK/MONTH bar.
-        if cycle == "week" and trading >= today - timedelta(days=today.weekday()):
-            continue
+        if cycle == "week":
+            # On Saturday/Sunday the preceding Friday is *closed*.
+            upcoming_monday = today + timedelta(days=7-today.weekday())
+            this_monday = today - timedelta(days=today.weekday())
+            open_week_start = (
+                upcoming_monday if today.weekday() >= 5 else this_monday)
+            if trading >= open_week_start:
+                continue
         if cycle == "month" and trading >= today.replace(day=1):
             continue
         target = _quote_target(extra, kind, cycle, symbol, trading, today=today)
@@ -349,16 +355,19 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
 
 
 def _fetch_financial(xt, extra, code, today, workspace):
-    xt.download_financial_data([code], list(FIN_TABLES))
-    data = xt.get_financial_data([code], list(FIN_TABLES),
+    # Empty table lists request every table supported by this particular
+    # QMT SDK (Holdernum/HolderNum capitalization differs by release).
+    xt.download_financial_data([code], [])
+    data = xt.get_financial_data([code], [],
                                  start_time="", end_time="",
                                  report_type="report_time")
     if not isinstance(data, dict) or not isinstance(data.get(code), dict):
         raise ValueError("QMT financial response missing requested symbol " + code)
     summary = {}
     for name, frame in data[code].items():
-        if name not in FIN_TABLES:
-            continue
+        if not isinstance(name, str) or not re.fullmatch(
+                r"[A-Za-z][A-Za-z0-9_.]{0,95}", name):
+            raise ValueError("Unsafe QMT financial table name: "+repr(name))
         values = dataframe_records(frame)
         if not values:
             continue
@@ -443,9 +452,9 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
     if stock_limit < 0 or asset_limit < 0:
         raise ValueError("Negative batch size")
     extra = _storage(root)
-    universe = discover(xt)
-    state = _state(extra, workspace)
     if not apply:
+        universe = discover(xt)
+        state = _state(extra, workspace)
         report = {
             "status": "READONLY_PREVIEW", "dataset": str(extra),
             "counts": {key: len(values) for key, values in universe.items()},
@@ -461,7 +470,10 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
         return report
     results = {}
     with LIVE.exclusive_writer():
-        # Another process may have committed supplementary progress meanwhile.
+        # Refresh QMT's sector cache BEFORE deriving all stock/index/ETF
+        # universes; never guess unavailable membership.
+        xt.download_sector_data()
+        universe = discover(xt)
         state = _state(extra, workspace)
         results["sectors"] = _fetch_sector_snapshot(xt, extra, today, workspace)
         results["etf_catalog"] = _fetch_etf_catalog(xt, extra, today, workspace)

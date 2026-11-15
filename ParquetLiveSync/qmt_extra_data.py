@@ -356,7 +356,8 @@ def _upsert_quote(extra, kind, cycle, symbol, raw, *, today, workspace):
     return changed
 
 
-def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
+def _fetch_quotes(xt, extra, kind, code, today, since, *,
+                  workspace, progress=print):
     """Year-bounded QMT calls; never allocate 16 years of 1m in memory."""
     rows_added = {}
     any_rows_observed = False
@@ -368,6 +369,9 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
             end = min(today, date(begin.year, 12, 31))
             # QMT data availability is provider-specific; an empty response
             # never authorizes creating artificial bars.
+            progress("MARKET_QMT_EXTRA_QUOTE_WINDOW_START=" + canonical_json(
+                {"section": kind, "symbol": code, "period": cycle,
+                 "since": begin.isoformat(), "until": end.isoformat()}))
             xt.download_history_data(code, period=api,
                                      start_time=begin.strftime("%Y%m%d"),
                                      end_time=end.strftime("%Y%m%d"))
@@ -382,14 +386,22 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *, workspace):
             if code not in reply:
                 # The asset may not have existed in this historical year.
                 # Do not fabricate records; later years are still queried.
+                progress("MARKET_QMT_EXTRA_QUOTE_WINDOW_EMPTY=" + canonical_json(
+                    {"section": kind, "symbol": code, "period": cycle,
+                     "since": begin.isoformat(), "until": end.isoformat()}))
                 begin = end + timedelta(days=1)
                 continue
             rows = _normalize_quote(
                 code, reply[code], since=begin, until=end)
             observed += len(rows)
-            total += _upsert_quote(
+            changed = _upsert_quote(
                 extra, kind, cycle, code, rows, today=today,
                 workspace=workspace)
+            total += changed
+            progress("MARKET_QMT_EXTRA_QUOTE_WINDOW_DONE=" + canonical_json(
+                {"section": kind, "symbol": code, "period": cycle,
+                 "since": begin.isoformat(), "until": end.isoformat(),
+                 "observed": len(rows), "added": changed}))
             begin = end + timedelta(days=1)
         rows_added[cycle] = {"added": total, "observed": observed}
         any_rows_observed = any_rows_observed or observed > 0
@@ -439,14 +451,17 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print):
     return summary
 
 
-def _fetch_adjustments(xt, extra, code, today, since, workspace):
+def _fetch_adjustments(xt, extra, code, today, since, workspace,
+                       progress=print):
     if not hasattr(xt, "get_divid_factors"):
         raise ValueError("QMT get_divid_factors API not supported")
     # Keep the underlying unadjusted DAILY history available in the QMT
     # cache before reading associated historical corporate actions.
+    progress("MARKET_QMT_EXTRA_DIVIDEND_DAILY_START=" + code)
     xt.download_history_data(code, period="1d",
                              start_time=since.strftime("%Y%m%d"),
                              end_time=today.strftime("%Y%m%d"))
+    progress("MARKET_QMT_EXTRA_DIVIDEND_FACTORS_START=" + code)
     frame = xt.get_divid_factors(code)
     rows = dataframe_records(frame)
     if not rows:
@@ -632,7 +647,8 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                     item = _fetch_financial(xt, extra, code, today, workspace,
                                             progress=progress)
                 elif key == "adjustments":
-                    item = _fetch_adjustments(xt, extra, code, today, since, workspace)
+                    item = _fetch_adjustments(xt, extra, code, today, since,
+                                              workspace, progress=progress)
                 else:
                     # Once the full historic ticker range is downloaded,
                     # use an overlapping rolling window, rather than asking
@@ -646,7 +662,7 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                         xt, extra, key, code, today, workspace)
                     item = {"instrument": instrument, "quotes": _fetch_quotes(
                         xt, extra, key, code, today, start,
-                        workspace=workspace)}
+                        workspace=workspace, progress=progress)}
                     state["last_asset_fetch"][key][code] = today.isoformat()
                 _advance(state, key, code, workspace)
                 done.append({"symbol": code, "result": item})

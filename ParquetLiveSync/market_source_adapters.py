@@ -34,125 +34,99 @@ class MinuteSourceUnavailable(RuntimeError):
     """Network/provider outage. Not a price disagreement, not missing bars."""
 
 
-def _pytdx_candidates(settings=None):
-    """Bounded, deduplicated server list; include pytdx-distributed HQ hosts.
+# Adapted from the verified Tencent m1 payload and 3-host failover design
+# documented by simonlin1212/a-stock-data SKILL.md, §1.2.
+# Tencent 1m is OHLCV-only, so amount MUST NEVER be fabricated.
+TENCENT_KLINE_HOSTS = (
+    "https://web.ifzq.gtimg.cn",
+    "https://proxy.finance.qq.com/ifzqgtimg",
+    "https://ifzq.gtimg.cn",
+)
 
-    Four legacy fixed IPs can disappear or reject clients. A live server
-    from the installed pytdx package should be attempted first, without
-    requiring any extra network discovery or third-party dependencies.
-    """
-    cfg = settings or {}
-    max_servers = int(cfg.get("max_servers", 12))
-    if not 1 <= max_servers <= 24:
-        raise ValueError("pytdx max_servers must be in [1,24]")
-    raw = []
-    if cfg.get("discover_builtin_hosts", True):
-        try:
-            from pytdx.config.hosts import hq_hosts
-        except (ImportError, AttributeError):
-            hq_hosts = ()
-        for entry in hq_hosts:
-            if isinstance(entry, (tuple, list)) and len(entry) >= 3:
-                raw.append([entry[1], entry[2]])
-            elif isinstance(entry, (tuple, list)) and len(entry) == 2:
-                raw.append([entry[0], entry[1]])
-    raw += list(cfg.get("servers") or [])
+
+def _tencent_parse_minute_payload(payload, symbol, day):
+    """Strict Tencent m1 row: YYYYmmddHHMM, open, close, high, low, volume."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        raise ValueError("TENCENT_BAD_PAYLOAD_ROOT")
+    node = payload["data"].get(symbol)
+    rows = node.get("m1") if isinstance(node, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("TENCENT_M1_LIST_MISSING")
+    result = []
     seen = set()
-    chosen = []
-    for item in raw:
-        if not isinstance(item, (tuple, list)) or len(item) != 2:
-            raise ValueError("pytdx server must be [host,port]")
-        host = str(item[0]).strip()
-        try:
-            port = int(item[1])
-        except (ValueError, TypeError) as exc:
-            raise ValueError("pytdx server port invalid") from exc
-        if (not host or len(host) > 253 or
-                not all(c.isascii() and (c.isalnum() or c in ".:-")
-                        for c in host) or not 1 <= port <= 65535):
-            raise ValueError("Invalid pytdx host/port")
-        if (host, port) not in seen:
-            seen.add((host, port))
-            chosen.append((host, port))
-        if len(chosen) == max_servers:
-            break
-    if not chosen:
-        raise ValueError("No configured or installed pytdx market hosts")
-    preferred = cfg.get("_working_host")
-    if preferred:
-        endpoint = tuple(preferred)
-        if endpoint in chosen:
-            chosen.remove(endpoint)
-            chosen.insert(0, endpoint)
-    return chosen
+    for item in rows:
+        if not isinstance(item, list) or len(item) < 6:
+            raise ValueError("TENCENT_M1_ROW_SHAPE_CHANGED")
+        stamp = str(item[0])
+        if len(stamp) != 12 or not stamp.isdigit():
+            raise ValueError("TENCENT_M1_BAD_TIME")
+        moment = datetime.strptime(stamp, "%Y%m%d%H%M")
+        if moment.date() != day:
+            continue
+        values = [item[i] for i in (1, 3, 4, 2, 5)]
+        if any(isinstance(v, bool) or v is None or
+               (isinstance(v, str) and not v.strip()) for v in values):
+            raise ValueError("TENCENT_M1_MISSING_OR_INVALID_PRICE_VOLUME")
+        nums = [float(v) for v in values]
+        if not all(math.isfinite(v) for v in nums):
+            raise ValueError("TENCENT_M1_NONFINITE_OHLCV")
+        op, hi, lo, close, vol = nums
+        if not (0 < lo <= op <= hi and lo <= close <= hi and vol >= 0):
+            raise ValueError("TENCENT_M1_IMPOSSIBLE_OHLCV")
+        ts = timestamp(moment)
+        if ts in seen:
+            raise ValueError("TENCENT_M1_DUPLICATE_MINUTE")
+        seen.add(ts)
+        result.append({"ts": ts, "open": op, "high": hi,
+                       "low": lo, "close": close,
+                       "volume": vol})
+    return sorted(result, key=lambda r: r["ts"])
 
 
-def pytdx_1m(symbol, day, settings=None):
-    """pytdx 1m Kline; rotate configured and installed TDX HQ endpoints.
+def tencent_1m(symbol, day, settings=None):
+    """Recent unadjusted Tencent m1 OHLCV: 320 latest bars, no amount.
 
-    Distinguish network/empty-service failures from date-window absence
-    and from genuine OHLC disagreement. Never fill QMT from this adapter.
+    Uses Tencent's three HTTP gateways from a-stock-data, which are
+    correlated mirrors of the same provider. It only performs sampled
+    price checks; QMT remains the sole purchased-calibrated minute writer.
     """
-    from pytdx.hq import TdxHq_API
-    market, number = code_parts(symbol)
-    cfg = settings if isinstance(settings, dict) else {}
-    endpoints = _pytdx_candidates(cfg)
-    timeout = float(cfg.get("connect_timeout_seconds", 2.5))
-    if not .5 <= timeout <= 8:
-        raise ValueError("pytdx connection timeout outside [.5,8] seconds")
-    connected, empty, failed = 0, 0, 0
+    import requests
+    market, code = code_parts(symbol)
+    cfg = settings or {}
+    hosts = cfg.get("hosts") or TENCENT_KLINE_HOSTS
+    if not isinstance(hosts, (tuple, list)) or not 1 <= len(hosts) <= 3:
+        raise ValueError("Tencent hosts must contain one to three endpoints")
+    conn = float(cfg.get("connect_timeout_seconds", 3))
+    read = float(cfg.get("read_timeout_seconds", 8))
+    if not 0.5 <= conn <= 8 or not 1 <= read <= 20:
+        raise ValueError("Tencent minute timeout outside safe bounds")
+    prefix = market.lower() + code
+    params = {"param": f"{prefix},m1,,320"}
     errors = []
-    for host, port in endpoints:
-        api = TdxHq_API(heartbeat=False)
+    for host in hosts:
+        if host not in TENCENT_KLINE_HOSTS:
+            raise ValueError("Untrusted Tencent Kline host: " + str(host))
         try:
-            try:
-                ok = api.connect(host, port, time_out=timeout)
-            except Exception as exc:
-                failed += 1
-                if len(errors) < 4:
-                    errors.append(host + ":" + str(port) + "=" +
-                                  type(exc).__name__ + ":" + str(exc)[:65])
-                continue
-            if not ok:
-                failed += 1
-                if len(errors) < 4:
-                    errors.append(host + ":" + str(port) + "=connect_false")
-                continue
-            connected += 1
-            try:
-                rows = api.get_security_bars(
-                    8, 1 if market == "SH" else 0, number, 0, 800)
-            except Exception as exc:
-                failed += 1
-                if len(errors) < 4:
-                    errors.append(host + ":" + str(port) + "=" +
-                                  type(exc).__name__ + ":" + str(exc)[:65])
-                continue
-            if not rows:
-                empty += 1
-                continue
-            # Cache an actual responding endpoint only within this process.
-            cfg["_working_host"] = [host, port]
-            result = []
-            for raw in rows:
-                if str(raw["datetime"])[:10] != day.isoformat():
-                    continue
-                result.append({
-                    "ts": timestamp(raw["datetime"]),
-                    **{name: float(raw[name]) for name in FIELDS},
-                    "volume": float(raw.get("vol", raw.get("volume", 0))),
-                    "amount": float(raw.get("amount", 0)),
-                })
+            response = requests.get(
+                host + "/appstock/app/kline/mkline", params=params,
+                headers={"Referer": "https://gu.qq.com/"},
+                timeout=(conn, read))
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict) and payload.get("msg") == "param error":
+                raise ValueError("TENCENT_M1_BAD_PARAMETER")
+            result = _tencent_parse_minute_payload(payload, prefix, day)
+            # Empty matched day is normal for a requested day outside the
+            # most recent 320-minute window; not a price discrepancy.
             return result
-        finally:
-            try:
-                api.disconnect()
-            except Exception:
-                pass
+        except (requests.exceptions.RequestException, ValueError,
+                TypeError, KeyError) as exc:
+            errors.append(type(exc).__name__ + ":" + str(exc)[:85])
+            continue
     raise MinuteSourceUnavailable(
-        "PYTDX_NO_USABLE_HQ_HOST: attempted=" + str(len(endpoints)) +
-        " connected=" + str(connected) + " empty_bars=" + str(empty) +
-        " failures=" + str(failed) + " examples=" + ";".join(errors))
+        "TENCENT_M1_ALL_HTTP_GATEWAYS_UNAVAILABLE tried=" +
+        str(len(hosts)) + " examples=" + ";".join(errors[:3]))
+
 
 
 def eltdx_1m(symbol, day, settings=None):
@@ -196,8 +170,8 @@ def akshare_1m(symbol, day, settings=None):
             for _, row in df.iterrows()]
 
 
-ADAPTERS = {"pytdx": pytdx_1m, "eltdx": eltdx_1m, "akshare": akshare_1m}
-TDX_FAMILY = frozenset({"pytdx", "eltdx"})
+ADAPTERS = {"eltdx": eltdx_1m, "tencent": tencent_1m, "akshare": akshare_1m}
+TDX_FAMILY = frozenset({"eltdx"})
 
 
 def compare_minutes(primary, external, *, require=80):
@@ -311,4 +285,4 @@ def sample_check(day, primary_by_symbol, config, *, progress=print):
                  "/" + str(len(chosen)) + " attempted=" + str(attempted))
     return {"enabled": enabled, "sampled": len(chosen),
             "results": result, "independent_reference": "official_TDX_DAY",
-            "warning": "TDX pytdx and eltdx share an underlying source family"}
+            "warning": "Tencent OHLCV is independent of TDX; Tencent amount is not provided"}

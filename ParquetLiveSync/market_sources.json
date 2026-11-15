@@ -33,6 +33,6 @@
   },
   "minutes_primary_policy": "QMT_only_unless_provider_ohlcva_and_units_independently_certified",
   "existing_key_policy": "keep_existing_never_blind_overwrite",
-  "native_qmt_0930_placeholder_policy": "discard_only_when_zero_volume_and_zero_amount",
+  "native_qmt_0930_placeholder_policy": "zero_zero_discard;positive_positive_fold_into_0931;unpaired_reject",
   "scheduled_default": "after_20_00_Asia_Shanghai"
 }

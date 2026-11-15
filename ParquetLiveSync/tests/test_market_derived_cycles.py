@@ -60,12 +60,41 @@ class HigherMinuteTests(unittest.TestCase):
                     sum(x["amount"] for x in made),
                     sum(x["amount"] for x in bars),places=4)
                 stamp=datetime.fromtimestamp(made[0]["ts"]/1000,L.UTC8)
+                # Normalize the expected clock across the hour boundary:
+                # 09:30 + 30 minutes is 10:00, never 09:60.
+                first_end=9*60+30+n
                 self.assertEqual((stamp.hour,stamp.minute),
-                                 (9+n//60,30+n%60))
+                                 divmod(first_end,60))
                 midday=datetime.fromtimestamp(
                     made[120//n]["ts"]/1000,L.UTC8)
                 self.assertEqual(midday.strftime("%H:%M"),
                                  f"{13+(n//60):02}:{n%60:02}")
+
+    def test_subminute_source_grid_drift_is_rejected_for_every_period(self):
+        clean=minute_rows()
+        for period in D.PERIODS:
+            for delta_ms in (1, 45000, 59999):
+                with self.subTest(period=period, delta_ms=delta_ms):
+                    modified=clean.copy()
+                    modified[12]={**modified[12],
+                                  "ts":modified[12]["ts"]+delta_ms}
+                    with self.assertRaisesRegex(ValueError, "off-minute"):
+                        D.aggregate_stock_day(
+                            modified,period,one_minute_offset_ms=0)
+        shifted=minute_rows(offset_ms=60000)
+        # A whole-minute vendor offset is calibrated and still supported.
+        self.assertEqual(len(D.aggregate_stock_day(
+            shifted,"30min",one_minute_offset_ms=60000)),8)
+
+    def test_reject_unverified_minute_label_offsets(self):
+        clean=minute_rows()
+        with self.assertRaisesRegex(ValueError,"grid offset"):
+            D.aggregate_stock_day(
+                clean,"5min",one_minute_offset_ms=45000)
+        with self.assertRaisesRegex(ValueError,"timestamp shift"):
+            D.aggregate_stock_day(
+                clean,"5min",one_minute_offset_ms=0,
+                period_label_shift_ms=45000)
 
     def test_paid_one_minute_vendor_offset_and_scale(self):
         rows=minute_rows(offset_ms=60000)

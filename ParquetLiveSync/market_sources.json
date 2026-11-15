@@ -11,6 +11,9 @@
       "enabled": true,
       "purpose": "recent_1min_ohlcva_cross_check_only",
       "package": "pytdx",
+      "discover_builtin_hosts": true,
+      "max_servers": 8,
+      "connect_timeout_seconds": 2,
       "servers": [
         ["180.153.18.170", 7709],
         ["180.153.18.172", 80],

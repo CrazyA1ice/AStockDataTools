@@ -297,6 +297,9 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
         if mode == "bootstrap":
             return logs
         if not state["periods"]["1min"]:
+            if not apply and mode == "auto":
+                progress("MARKET_AUTO_DRY_RUN=BOOTSTRAP_PENDING_DAILY_NOT_STARTED")
+                return logs
             raise ValueError("First run needs the verified private Oct/Nov bootstrap")
         existing_days = sorted({d for entry in state["periods"]["1min"].values()
                                 for d in entry["days"]})

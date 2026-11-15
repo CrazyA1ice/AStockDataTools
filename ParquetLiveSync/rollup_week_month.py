@@ -377,13 +377,21 @@ def verify_existing_period_keys(root,period,year,month,derived):
     return {"existing_checked":len(prior),"same_keys":same}
 
 
-def run(root,*,apply=False,log=print,asof=None):
+def run(root,*,apply=False,log=print,asof=None,audits=None):
     root=Path(root)
     L.storage_root(root)
     state=read_state()
     if not state["calibration"]:
         raise ValueError("Official TDX DAY volume/amount unit calibration is absent")
-    audits={p:audit_one(root,p) for p in PERIODS}
+    audits=audits or {p:audit_one(root,p) for p in PERIODS}
+    if set(audits)!=set(PERIODS) or any(
+            audits[p].get("period",p)!=p
+            or audits[p].get("intraday_offset_ms") is None
+            or audits[p].get("rule") not in ("first_calendar","last_calendar",
+                                           "first_traded","last_traded",
+                                           "friday","next_monday","next_first")
+            for p in PERIODS):
+        raise ValueError("Untrusted cached purchased weekly/monthly timestamp rules")
     for period,result in audits.items():
         log("PASSED_HISTORICAL_"+period.upper()+"_PURCHASED_ROLLUP_AUDIT="+
             json.dumps(result,sort_keys=True))

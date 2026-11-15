@@ -227,6 +227,32 @@ class HigherMinuteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"source changed"):
                 A.week_month_rules(root,workspace=work,logger=lambda _:None)
 
+    def test_trading_calendar_handles_qmt_ms_and_yyyymmdd(self):
+        import types
+        import sys
+        first=date(2026,10,13)
+        stamp=int(datetime(2026,10,14,tzinfo=L.UTC8).timestamp()*1000)
+        fake=types.ModuleType("xtquant")
+        fake.xtdata=types.SimpleNamespace(get_trading_dates=lambda *args,**kw:
+                                          ["20261013",stamp])
+        with patch.dict(sys.modules,{"xtquant":fake}):
+            result=A.verified_qmt_trading_calendar(date(2026,10,15))
+        self.assertEqual(result,{first,date(2026,10,14)})
+
+    def test_trading_calendar_rejects_weekend_or_no_entries(self):
+        import types
+        import sys
+        fake=types.ModuleType("xtquant")
+        fake.xtdata=types.SimpleNamespace(get_trading_dates=lambda *args,**kw:
+                                          ["20261017"])
+        with patch.dict(sys.modules,{"xtquant":fake}):
+            with self.assertRaisesRegex(ValueError,"invalid date"):
+                A.verified_qmt_trading_calendar(date(2026,10,18))
+        fake.xtdata.get_trading_dates=lambda *args,**kw:[]
+        with patch.dict(sys.modules,{"xtquant":fake}):
+            with self.assertRaisesRegex(ValueError,"unavailable"):
+                A.verified_qmt_trading_calendar(date(2026,10,18))
+
     def test_orchestration_reports_incomplete_phase_not_false_eight_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"stock"
@@ -235,6 +261,8 @@ class HigherMinuteTests(unittest.TestCase):
             with (patch.object(A.U,"update",return_value=[{"status":"DONE"}]),
                   patch.object(A.D,"run",side_effect=ValueError("UNKNOWN_PERIOD_UNIT")),
                   patch.object(A.R,"run",return_value={"commits":[]}),
+                  patch.object(A,"verified_qmt_trading_calendar",
+                               return_value={date(2026,11,13)}),
                   patch.object(A,"week_month_rules",return_value={
                     "week":{"rule":"friday","intraday_offset_ms":0},
                     "month":{"rule":"last_traded","intraday_offset_ms":0}})):

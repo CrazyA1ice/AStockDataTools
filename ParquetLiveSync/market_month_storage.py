@@ -175,7 +175,7 @@ def legacy_october_batches(root, *, baseline_loader=None):
         # Only the source fragments that could contain Oct1..13:
         # all private H5 minute references and the purchased 2026 shard.
         if category == "purchased_original":
-            if "2026" not in item["relative_file"]:
+            if not Path(item["relative_file"]).name.startswith("2026"):
                 continue
             path = checked_path(root, item["relative_file"])
             # Purchased-source stats are intentionally not rewritten.

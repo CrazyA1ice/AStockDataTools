@@ -60,7 +60,24 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
         if f.is_symlink() or not f.is_file() or L.hash_file(f) != sha:
             raise ValueError("Real Windows SHA-verified private monthly source changed " + month)
         receipt = B._json(f.with_suffix(".receipt.json"))
-        B.verify_private_month(f, receipt, plan["identity_sha256"])
+        if (receipt.get("format") != B.FORMAT
+                or receipt.get("status") != "PRIVATE_MONTH_ONLY"
+                or receipt.get("identity_sha256") != plan["identity_sha256"]
+                or receipt.get("month_coverage") != plan["months"][month]
+                or receipt.get("rows") != plan["months"][month]["minute_rows_expected_from_accepted"]
+                or receipt.get("market_modified") is not False
+                or receipt.get("production_merge_authorized") is not False):
+            raise ValueError("QMT private month source identity or row-count receipt changed")
+        physical = pq.ParquetFile(f)
+        try:
+            if (physical.schema_arrow != P.PRIVATE_SCHEMA
+                    or physical.metadata.num_rows != receipt["rows"]
+                    or physical.num_row_groups != len(receipt["groups"])):
+                raise ValueError("QMT private monthly footer does not match accepted receipt")
+        finally:
+            physical.close()
+        # A single streamed read in S.private_oct_nov_batches independently
+        # checks every row group's logical SHA. Avoid reading 27m rows twice.
     if apply and state.get("qmt_calibration_sha256") not in (
             None, plan["plan"]["calibration_sha256"]):
         raise ValueError("Existing updater calibration SHA differs from sealed bootstrap")

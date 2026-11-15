@@ -153,6 +153,27 @@ class WeekMonthStrictPurchasedCalibration(unittest.TestCase):
             {str(L.market_ts_day(ts)) for ts in monthly["ts"].to_pylist()},
             {"2026-10-30"})
 
+    def test_friday_close_can_publish_week_after_verified_friday_day(self):
+        overlay=self.create_recent()
+        self.work_state["days"]=overlay
+        rules={"week":{"rule":"friday","intraday_offset_ms":34200000},
+               "month":{"rule":"last_traded","intraday_offset_ms":34200000}}
+        built=R.build_candidates(
+            self.root,self.work_state,rules,asof=date(2026,10,16))
+        self.assertEqual(built["week"].num_rows,len(self.symbols))
+        self.assertEqual(built["month"].num_rows,0)
+
+    def test_known_exchange_holiday_does_not_require_fictitious_day_zip(self):
+        week_key=R.period_key(date(2026,10,19),"week")
+        trading={date(2026,10,19),date(2026,10,20),
+                 date(2026,10,22),date(2026,10,23)}
+        accepted={str(day) for day in trading}
+        official={"days":{str(day):{} for day in trading}}
+        R.ensure_weekday_complete("week",week_key,accepted,official,
+                                  trade_dates=trading)
+        with self.assertRaisesRegex(ValueError,"UNVERIFIED_WEEK_SOURCE_DAY=2026-10-21"):
+            R.ensure_weekday_complete("week",week_key,accepted,official)
+
     def test_missing_midweek_official_zip_prevents_deriving_closed_week(self):
         overlay=self.create_recent(all_days=False)
         self.work_state["days"]=overlay

@@ -231,6 +231,41 @@ class HigherMinuteTests(unittest.TestCase):
                         rows,period,one_minute_offset_ms=0)
                     self.assertEqual(len(buckets),240//D.BARS[period])
 
+    def test_paid_241_anchors_infer_all_four_periods_from_actual_auction(self):
+        prices={}
+        purchased={}
+        sealed={"providers":{
+            "SH_OTHER":{"category":"SH_OTHER","offset_ms":0,
+                        "volume":{"factor":1},"amount":{"factor":1}},
+            "SZ":{"category":"SZ","offset_ms":0,
+                  "volume":{"factor":1},"amount":{"factor":1}},
+            "STAR":{"category":"STAR","offset_ms":0,
+                    "volume":{"factor":1},"amount":{"factor":1}}}}
+        for symbol in ("SH600000","SH688001","SZ000001"):
+            day=minute_rows(symbol)
+            auction={**day[0],"ts":day[0]["ts"]-60000,
+                     "open":9.95,"high":10.07,"low":9.93,
+                     "close":10.,"volume":310.,"amount":3100.}
+            purchased[symbol]=[auction]+day
+            normalized,_=D.S._fold_241_day(purchased[symbol],0,"2026-09")
+            prices[symbol]=normalized
+        for period in D.PERIODS:
+            with self.subTest(period=period):
+                purchased_higher={}
+                for symbol,values in prices.items():
+                    derived=D.aggregate_stock_day(
+                        values,period,one_minute_offset_ms=0,
+                        period_label_shift_ms=60000,
+                        volume_factor=.01,amount_factor=10.)
+                    for row in derived:
+                        purchased_higher[(symbol,row["ts"])]=row
+                matched=D._infer_one(period,purchased_higher,purchased,sealed)
+                self.assertEqual(
+                    matched["timestamp_shift_from_1min_last_ms"],60000)
+                self.assertAlmostEqual(matched["volume_factor"],.01)
+                self.assertAlmostEqual(matched["amount_factor"],10.)
+                self.assertGreater(matched["price_match"],.99)
+
     def test_239_purchased_minute_anchor_calibrates_complete_windows_only(self):
         # Legitimate purchased 239-minute days may lack a single label.
         # Missing minutes must not be synthesized or published.

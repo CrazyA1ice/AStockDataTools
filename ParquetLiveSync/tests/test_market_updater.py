@@ -271,10 +271,12 @@ class MarketUpdaterTests(unittest.TestCase):
         config = U.config_file()
         self.assertEqual(config["primary"], "qmt")
         checks = config["minute_cross_checks"]
-        self.assertTrue(checks["pytdx"]["enabled"])
+        self.assertNotIn("pytdx", checks)
+        self.assertNotIn("pytdx", X.ADAPTERS)
+        self.assertTrue(checks["tencent"]["enabled"])
         self.assertTrue(checks["eltdx"]["enabled"])
         self.assertFalse(checks["akshare"]["enabled"])
-        self.assertIn("pytdx", X.TDX_FAMILY)
+        self.assertNotIn("tencent", X.TDX_FAMILY)
         self.assertIn("eltdx", X.TDX_FAMILY)
 
     def test_bootstrap_short_circuits_historical_5403_receipts_daily(self):
@@ -303,70 +305,77 @@ class MarketUpdaterTests(unittest.TestCase):
                                 workspace=Path(temp) / "work", progress=lambda _: None)
             self.assertEqual(target.read_bytes(), b"unknown-market-data")
 
-    def test_pytdx_built_in_hosts_retry_and_actual_date_bars(self):
-        import types
-        market = "SZ"
+    def test_tencent_m1_http_fallback_and_no_fabricated_amount(self):
+        from unittest.mock import Mock
+        import requests
         day = date(2026, 11, 13)
         calls = []
-        hq = types.ModuleType("pytdx.hq")
-        hosts = types.ModuleType("pytdx.config.hosts")
-        hosts.hq_hosts = [("live", "127.0.0.18", 7709),
-                          ("legacy", "127.0.0.19", 7709)]
-        data = [{"datetime": "2026-11-13 09:31:00",
-                 "open": 10., "high": 10.2, "low": 9.8, "close": 10.,
-                 "vol": 200., "amount": 20000.}]
-        class FakeAPI:
-            def __init__(self, heartbeat=False):
-                self.connected = False
-            def connect(self, host, port, time_out=None):
-                calls.append((host, port))
-                self.connected = host == "127.0.0.18"
-                return self.connected
-            def get_security_bars(self, category, mkt, code, start, count):
-                self.asserted = (category, mkt, code, start, count)
-                if self.asserted != (8, 0, "000001", 0, 800):
-                    raise ValueError("Incorrect pytdx Kline request")
-                return data
-            def disconnect(self):
-                pass
-        hq.TdxHq_API = FakeAPI
-        mods = {"pytdx": types.ModuleType("pytdx"),
-                "pytdx.hq": hq,
-                "pytdx.config": types.ModuleType("pytdx.config"),
-                "pytdx.config.hosts": hosts}
-        with patch.dict(sys.modules, mods):
-            options = {"servers": [["127.0.0.2", 7709]],
-                       "discover_builtin_hosts": True, "max_servers": 3}
-            bars = X.pytdx_1m("000001.SZ", day, options)
-        self.assertEqual(len(bars), 1)
-        self.assertEqual(calls, [("127.0.0.18", 7709)])
-        self.assertEqual(options["_working_host"], ["127.0.0.18", 7709])
+        candle = ["202611130931", "10.0", "10.1", "10.2", "9.9", "300"]
+        def mock_get(url, params=None, headers=None, timeout=None):
+            calls.append(url)
+            self.assertEqual(params, {"param": "sz000001,m1,,320"})
+            self.assertEqual(headers, {"Referer": "https://gu.qq.com/"})
+            if len(calls) == 1:
+                raise requests.exceptions.Timeout("temporary endpoint outage")
+            response = Mock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {"code": 0,
+                "data": {"sz000001": {"m1": [candle,
+                    ["202611120931", "9", "9", "9", "9", "100"]]}}}
+            return response
+        with patch("requests.get", side_effect=mock_get):
+            got = X.tencent_1m("000001.SZ", day)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["open"], 10.)
+        self.assertEqual(got[0]["close"], 10.1)
+        self.assertEqual(got[0]["high"], 10.2)
+        self.assertEqual(got[0]["low"], 9.9)
+        self.assertEqual(got[0]["volume"], 300.)
+        self.assertNotIn("amount", got[0])
 
-    def test_pytdx_all_hosts_down_fast_break_other_provider_still_runs(self):
+    def test_tencent_m1_rejects_duplicate_bad_or_nonfinite_rows(self):
+        day = date(2026, 11, 13)
+        valid = ["202611130931", "10", "10.1", "10.2", "9.9", "100"]
+        def payload(rows):
+            return {"data": {"sh600000": {"m1": rows}}}
+        self.assertEqual(len(X._tencent_parse_minute_payload(
+            payload([valid]), "sh600000", day)), 1)
+        for rows in ([valid, valid],
+                     [["202611130931", "10", "10.1", "10.2", "nan", "100"]],
+                     [["202611130931", "10", "10.1", "10.2", "9.9", True]],
+                     [["202611130931", "12", "10.1", "10.2", "9.9", "100"]],
+                     [["bad_date", "10", "10.1", "10.2", "9.9", "100"]]):
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                X._tencent_parse_minute_payload(
+                    payload(rows), "sh600000", day)
+
+    def test_tencent_outage_fast_skip_eltdx_untouched(self):
         stocks = ["SH600%03d" % i for i in range(8)]
         primary = {symbol: [{"ts": 1000 + i * 60000,
                              "open": 10., "high": 10., "low": 10.,
                              "close": 10., "volume": 1., "amount": 10.}
                             for i in range(100)] for symbol in stocks}
-        counters = {"down": 0, "ok": 0}
+        counts = {"down": 0, "ok": 0}
         def down(symbol, day, options):
-            counters["down"] += 1
-            raise X.MinuteSourceUnavailable("PYTDX_NO_USABLE_HQ_HOST")
+            counts["down"] += 1
+            raise X.MinuteSourceUnavailable("TENCENT_M1_ALL_HTTP_GATEWAYS_UNAVAILABLE")
         def up(symbol, day, options):
-            counters["ok"] += 1
+            counts["ok"] += 1
             return list(primary[symbol])
         cfg = {"sample_stocks": 8,
-               "pytdx": {"enabled": True},
-               "eltdx": {"enabled": True}}
-        with patch.dict(X.ADAPTERS, {"pytdx": down, "eltdx": up}):
+               "tencent": {"enabled": True}, "eltdx": {"enabled": True}}
+        with patch.dict(X.ADAPTERS, {"tencent": down, "eltdx": up}):
             result = X.sample_check(date(2026, 11, 13), primary, cfg,
                                     progress=lambda _: None)
-        self.assertEqual(counters, {"down": 1, "ok": 8})
-        self.assertEqual(result["results"]["pytdx"]["status"], "UNAVAILABLE")
-        self.assertEqual(result["results"]["pytdx"]["attempted"], 1)
-        self.assertEqual(result["results"]["pytdx"]["skipped_after_outage"], 7)
+        self.assertEqual(counts, {"down": 1, "ok": 8})
+        self.assertEqual(result["results"]["tencent"]["status"], "UNAVAILABLE")
+        self.assertEqual(result["results"]["tencent"]["attempted"], 1)
+        self.assertEqual(result["results"]["tencent"]["skipped_after_outage"], 7)
         self.assertEqual(result["results"]["eltdx"]["status"], "AGREE")
         self.assertEqual(result["results"]["eltdx"]["agreed_stocks"], 8)
+        self.assertEqual(result["results"]["tencent"]["evidence_family"],
+                         "TENCENT_FINANCE")
 
     def test_readonly_recheck_sources_from_previously_staged_daily_file(self):
         with tempfile.TemporaryDirectory() as temp:

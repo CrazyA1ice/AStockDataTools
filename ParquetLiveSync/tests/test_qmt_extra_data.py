@@ -68,10 +68,12 @@ class FakeXt:
         self.download_calls.append(("financial", tuple(codes), tuple(names)))
 
     def get_financial_data(self, codes, names, **kwargs):
-        return {codes[0]: {
+        available = {
             "Balance": FakeFrame([{"m_timetag": 20260930, "assets": 12.5}]),
             "Income": FakeFrame([{"m_timetag": 20260930, "income": 5.}]),
-        }}
+        }
+        return {codes[0]: {table: available[table] for table in names
+                           if table in available}}
 
     def get_divid_factors(self, code):
         return FakeFrame([{"interest": .1, "allotNum": 0.}])
@@ -201,6 +203,99 @@ class QmtExtraTests(unittest.TestCase):
             reply = E._fetch_etf_catalog(MissingEtfAPI(), Path(tmp) / "extras",
                                          date(2026,11,15), Path(tmp) / "private")
             self.assertEqual(reply["status"], "API_NOT_EXPOSED")
+
+    def test_single_financial_table_calls_have_progress_and_nine_reports(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            xt = FakeXt()
+            progress = []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = E.run(root, xt=xt, apply=True, section="financial",
+                               today=date(2026, 11, 15), since=date(2026,1,1),
+                               stock_limit=1, asset_limit=1,
+                               workspace=Path(tmp) / "private",
+                               progress=progress.append)
+            self.assertEqual(result["sections"]["financial"]["symbols_processed"], 1)
+            self.assertNotIn("index", result["sections"])
+            self.assertNotIn("etf_catalog", result["sections"])
+            self.assertNotIn(("sectors",), xt.download_calls)
+            requested = [call[2] for call in xt.download_calls
+                         if call[0] == "financial"]
+            self.assertEqual(requested, [(name,) for name in E.FIN_TABLES])
+            self.assertTrue(all(len(names) == 1 for names in requested))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_START=")]),
+                len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=")]),
+                len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_COMPLETE=")]),
+                len(E.FIN_TABLES))
+
+    def test_failing_second_financial_table_does_not_advance_cursor(self):
+        import contextlib
+        class HangTableXt(FakeXt):
+            def download_financial_data(self, codes, names):
+                if names == ["Income"]:
+                    raise RuntimeError("simulated QMT financial table timeout")
+                return super().download_financial_data(codes, names)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            progress = []
+            private = Path(tmp) / "private"
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                with self.assertRaisesRegex(RuntimeError, "table timeout"):
+                    E.run(root, xt=HangTableXt(), apply=True,
+                          section="financial", today=date(2026,11,15),
+                          since=date(2026,1,1), stock_limit=1,
+                          asset_limit=1, workspace=private,
+                          progress=progress.append)
+            self.assertTrue(list((root / "AllCycleAStockData" /
+                                  "qmt_extra" / "financial" /
+                                  "Balance").rglob("*.parquet")))
+            self.assertFalse((private / "progress.json").exists())
+            self.assertTrue(any("Income" in line for line in progress
+                                if "FINANCIAL_TABLE_START" in line))
+
+    def test_sectors_section_runs_without_financial_and_etf_download(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            xt = FakeXt()
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = E.run(root, xt=xt, apply=True,
+                               section="sectors", today=date(2026,11,15),
+                               workspace=Path(tmp) / "private",
+                               progress=lambda _: None)
+            self.assertTrue(result["sections"]["sectors"]["memberships"] > 0)
+            self.assertNotIn("financial", result["sections"])
+            self.assertNotIn("etf_catalog", result["sections"])
+            self.assertEqual(xt.download_calls, [("sectors",)])
+
+    def test_only_index_section_does_not_download_financial_or_etf_info(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            xt = FakeXt()
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = E.run(root, xt=xt, apply=True, section="index",
+                               today=date(2026,11,15),
+                               since=date(2026,1,1),
+                               stock_limit=1, asset_limit=1,
+                               workspace=Path(tmp) / "private",
+                               progress=lambda _: None)
+            self.assertEqual(result["sections"]["index"]["symbols_processed"], 1)
+            self.assertNotIn("financial", result["sections"])
+            self.assertNotIn("etf_catalog", result["sections"])
+            self.assertFalse(any(call[0] == "financial" for call in xt.download_calls))
+            self.assertTrue(list((root / "AllCycleAStockData" / "qmt_extra" /
+                                  "index" / "day").rglob("*.parquet")))
 
     def test_readonly_preview_makes_no_file_and_no_network_download(self):
         with tempfile.TemporaryDirectory() as tmp:

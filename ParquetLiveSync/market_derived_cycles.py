@@ -217,6 +217,7 @@ def _infer_one(period, original, anchor_1m, sealed):
     n=BARS[period]
     base={}
     valid_symbols=[]
+    skipped={}
     for sym, one in sorted(anchor_1m.items()):
         try:
             code=sym[2:]+"."+sym[:2]
@@ -224,10 +225,12 @@ def _infer_one(period, original, anchor_1m, sealed):
             base[sym]=_anchor_complete_buckets(
                 one,period,one_minute_offset_ms=gate["offset_ms"])
             valid_symbols.append(sym)
-        except (ValueError,KeyError):
-            continue
+        except (ValueError,KeyError) as exc:
+            skipped[sym]=type(exc).__name__+": "+str(exc)[:250]
     if len(valid_symbols)<2:
-        raise ValueError("Only one purchased 1minute anchor matched 240-grid")
+        raise ValueError("Too few real purchased 1minute anchors prove "+period+
+                         " complete windows: valid="+str(valid_symbols)+
+                         " excluded="+json.dumps(skipped,sort_keys=True))
     scores=[]
     for minutes in range(-n,n+1):
         shift=minutes*60000
@@ -299,6 +302,19 @@ def paid_rules(root, *, progress=print, workspace=S.STATE_DIR):
         return stored["periods"]
     sealed=_sealed_calibration(root)
     one,original_source=_purchased_anchors(root,"1min")
+    all_days=grouped_source(pa.Table.from_pylist(
+        list(one.values()),schema=S.SCHEMA))
+    inventory={sym:{"rows":len(rows),
+                    "first_cn":datetime.fromtimestamp(
+                        min(x["ts"] for x in rows)/1000,L.UTC8).strftime("%H:%M:%S"),
+                    "last_cn":datetime.fromtimestamp(
+                        max(x["ts"] for x in rows)/1000,L.UTC8).strftime("%H:%M:%S")}
+               for (sym,day),rows in sorted(all_days.items())
+               if day==REFERENCE}
+    progress("MARKET_PURCHASED_1MIN_ANCHOR_INVENTORY="+json.dumps(
+        {"day":REFERENCE.isoformat(),"symbols":inventory,
+         "real_rows_only":True,"missing_minutes_never_filled":True},
+        sort_keys=True))
     old_minutes=_collect_anchor_minutes(one,sealed)
     if len(old_minutes)<2:
         raise ValueError("Purchased 2026-09-30 1minute anchors unavailable for "

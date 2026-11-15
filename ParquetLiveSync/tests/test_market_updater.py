@@ -77,6 +77,27 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(candidate["volume"][0].as_py(), 200.0)
         self.assertEqual(L.market_ts_day(candidate["ts"][0].as_py()), day)
 
+    def test_purchased_vendor_minute_clock_offset_is_respected(self):
+        from datetime import date as D
+        day = D(2026, 11, 13)
+        native = stock_day()
+        offset = 60000
+        cfg = {"providers": {"SH_OTHER": {
+            "category": "SH_OTHER", "offset_ms": offset,
+            "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
+        official = {"open": 10., "high": 10.2, "low": 9.8,
+                    "close": 10., "volume": 48000., "amount": 48000.}
+        output = U.normal_qmt_day(native, "600000.SH", day, official, cfg)
+        self.assertEqual(output.num_rows, 240)
+        native_first = U.P.stamp_ms(native[1]["datetime_cn"])
+        self.assertEqual(output["ts"][0].as_py(), native_first + offset)
+        original = canonical([{
+            "ts": U.P.stamp_ms(r["datetime_cn"]) + offset,
+            **{k: r[k] for k in U.FIELDS}} for r in native])
+        converted, removed = S.adapt_241_private(original, offset, "2026-11")
+        self.assertEqual(converted.num_rows, 240)
+        self.assertEqual(removed, 1)
+
     def test_nonzero_0930_and_official_price_mismatch_fail(self):
         raw = stock_day()
         gate = {"providers": {"SH_OTHER": {

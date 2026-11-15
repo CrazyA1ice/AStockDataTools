@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import math
 import statistics
+import time
 
 CN = timezone(timedelta(hours=8))
 FIELDS = ("open", "high", "low", "close")
@@ -42,6 +43,9 @@ TENCENT_KLINE_HOSTS = (
     "https://proxy.finance.qq.com/ifzqgtimg",
     "https://ifzq.gtimg.cn",
 )
+_TENCENT_HOST_DOWN_UNTIL = {}
+_TENCENT_LAST_GOOD = None
+_TENCENT_COOLDOWN_SECONDS = 120
 
 
 def _tencent_parse_minute_payload(payload, symbol, day):
@@ -102,10 +106,19 @@ def tencent_1m(symbol, day, settings=None):
         raise ValueError("Tencent minute timeout outside safe bounds")
     prefix = market.lower() + code
     params = {"param": f"{prefix},m1,,320"}
-    errors = []
+    global _TENCENT_LAST_GOOD
     for host in hosts:
         if host not in TENCENT_KLINE_HOSTS:
             raise ValueError("Untrusted Tencent Kline host: " + str(host))
+    # Try the last successful gateway first. Avoid repeated requests to
+    # an endpoint which was recently timing out or returning broken JSON.
+    candidates = [h for h in hosts if
+                  _TENCENT_HOST_DOWN_UNTIL.get(h, 0) <= time.monotonic()]
+    if _TENCENT_LAST_GOOD in candidates:
+        candidates.remove(_TENCENT_LAST_GOOD)
+        candidates.insert(0, _TENCENT_LAST_GOOD)
+    errors = []
+    for host in candidates:
         try:
             response = requests.get(
                 host + "/appstock/app/kline/mkline", params=params,
@@ -116,16 +129,20 @@ def tencent_1m(symbol, day, settings=None):
             if isinstance(payload, dict) and payload.get("msg") == "param error":
                 raise ValueError("TENCENT_M1_BAD_PARAMETER")
             result = _tencent_parse_minute_payload(payload, prefix, day)
+            _TENCENT_LAST_GOOD = host
             # Empty matched day is normal for a requested day outside the
             # most recent 320-minute window; not a price discrepancy.
             return result
         except (requests.exceptions.RequestException, ValueError,
                 TypeError, KeyError) as exc:
             errors.append(type(exc).__name__ + ":" + str(exc)[:85])
+            _TENCENT_HOST_DOWN_UNTIL[host] = (
+                time.monotonic() + _TENCENT_COOLDOWN_SECONDS)
             continue
     raise MinuteSourceUnavailable(
-        "TENCENT_M1_ALL_HTTP_GATEWAYS_UNAVAILABLE tried=" +
-        str(len(hosts)) + " examples=" + ";".join(errors[:3]))
+        "TENCENT_M1_ALL_HTTP_GATEWAYS_UNAVAILABLE attempted=" +
+        str(len(candidates)) + " configured=" + str(len(hosts)) +
+        " examples=" + ";".join(errors[:3]))
 
 
 

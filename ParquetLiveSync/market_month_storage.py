@@ -165,7 +165,8 @@ def legacy_october_batches(root, *, baseline_loader=None):
     """
     from live_sync import baseline, BASE_MODULE, checked_path
     doc = (baseline_loader or baseline)()
-    assert doc["asof_inclusive"] == "2026-10-13"
+    if doc.get("asof_inclusive") != "2026-10-13":
+        raise ValueError("Legacy 1minute baseline cutoff changed; do not merge unknown source")
     lo = int(datetime(2026, 10, 1, tzinfo=L.UTC8).timestamp() * 1000)
     hi = int(datetime(2026, 10, 14, tzinfo=L.UTC8).timestamp() * 1000)
     refs = doc["period_physical_files"]["1min"]
@@ -315,6 +316,12 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
                     raise ValueError("Noncanonical incoming minute Arrow schema")
                 if not chunk.num_rows:
                     continue
+                # Local unique-key check is bounded to each incoming chunk.
+                # Cross-source ownership is proven by disjoint stock-day
+                # provenance and new-vs-old trading-date separation.
+                if len(L.checked_records(chunk, target_year=int(month[:4]),
+                                         target_month=int(month[5:]))) != chunk.num_rows:
+                    raise ValueError("Incoming minute chunk has duplicate keys")
                 for day in _daily_group_rows(chunk):
                     if day not in expected_days:
                         raise ValueError("Incoming market rows outside expected date inventory")

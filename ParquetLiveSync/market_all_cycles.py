@@ -112,6 +112,11 @@ def run(root, *, mode="auto", apply=True, requested_day=None,
     L.storage_root(root)
     parts={}
     errors={}
+    calendar_cache={}
+    def calendar():
+        if "value" not in calendar_cache:
+            calendar_cache["value"]=verified_qmt_trading_calendar(requested_day)
+        return calendar_cache["value"]
     def phase(name,callback):
         try:
             parts[name]=callback()
@@ -128,8 +133,22 @@ def run(root, *, mode="auto", apply=True, requested_day=None,
     phase("CLOSED_WEEK_MONTH",lambda:R.run(
         root,apply=apply,log=logger,
         audits=week_month_rules(root,logger=logger),
-        trade_dates=verified_qmt_trading_calendar(requested_day),
+        trade_dates=calendar(),
         asof=requested_day))
+    if apply and mode in ("auto","daily") and "QMT_1MIN_AND_TDX_DAY" in parts:
+        try:
+            accepted=S.state_for(root)["periods"]["1min"]
+            current=max(date.fromisoformat(d) for info in accepted.values()
+                        for d in info["days"])
+            cutoff=requested_day or U.last_eligible_day()
+            expected=max(d for d in calendar() if d<=cutoff)
+            if current<expected:
+                errors["LATEST_REQUIRED_TRADING_DAY"]=(
+                    "Official DAY/QMT minute source has not yet committed "+
+                    expected.isoformat()+"; accepted only through "+current.isoformat())
+                logger("MARKET_EIGHT_SOURCE_LAG="+errors["LATEST_REQUIRED_TRADING_DAY"])
+        except (ValueError,KeyError,TypeError) as exc:
+            errors["LATEST_REQUIRED_TRADING_DAY"]=type(exc).__name__+": "+str(exc)[:250]
     status=("PREVIEW" if not apply and not errors
             else "ALL_EIGHT_PERIOD_PHASES_COMPLETE" if not errors
             else "INCOMPLETE_RETRY_SAFELY")

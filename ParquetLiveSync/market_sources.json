@@ -1,0 +1,42 @@
+{
+  "format": "one_command_qmt_market_update_v1",
+  "primary": "qmt",
+  "calibration": "reuse_sha_pinned_2026_09_purchased_1minute",
+  "official_day_source": "TDX_accepted_daily_overlay",
+  "target": "D:/stock/AllCycleAStockData",
+  "max_failure_fraction": 0.02,
+  "minute_cross_checks": {
+    "sample_stocks": 8,
+    "eltdx": {
+      "enabled": true,
+      "purpose": "independent_TDX_7709_minute_Kline_OHLCVA_crosscheck",
+      "package": "eltdx",
+      "timeout": 4
+    },
+    "tencent": {
+      "enabled": true,
+      "purpose": "independent_tencent_1min_ohlc_time_crosscheck_only_no_amount",
+      "source_repository": "simonlin1212/a-stock-data",
+      "upstream": "Tencent Finance appstock/app/kline/mkline",
+      "period": "m1",
+      "bar_limit": 320,
+      "connect_timeout_seconds": 3,
+      "read_timeout_seconds": 8,
+      "hosts": [
+        "https://web.ifzq.gtimg.cn",
+        "https://proxy.finance.qq.com/ifzqgtimg",
+        "https://ifzq.gtimg.cn"
+      ]
+    },
+    "akshare": {
+      "enabled": false,
+      "purpose": "optional_recent_five_trading_days_1min_eastmoney_check",
+      "package": "akshare",
+      "short_history_only": true
+    }
+  },
+  "minutes_primary_policy": "QMT_only_unless_provider_ohlcva_and_units_independently_certified",
+  "existing_key_policy": "keep_existing_never_blind_overwrite",
+  "native_qmt_0930_placeholder_policy": "zero_zero_discard;positive_positive_fold_into_0931;unpaired_reject",
+  "scheduled_default": "after_20_00_Asia_Shanghai"
+}

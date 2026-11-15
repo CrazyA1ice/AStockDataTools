@@ -198,6 +198,17 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(counters, {"ZERO_PLACEHOLDER": 1,
                                     "REAL_AUCTION_FOLDED_TO_0931": 1})
 
+    def test_auction_fold_does_not_hide_unpaired_regular_minute(self):
+        raw = stock_day("2026-10-14")
+        raw[0].update({"volume": 4., "amount": 400.})
+        raw[1]["amount"] = 0.
+        batch = canonical([{
+            "ts": U.P.stamp_ms(bar["datetime_cn"]),
+            **{key: bar[key] for key in U.FIELDS}
+        } for bar in raw])
+        with self.assertRaisesRegex(ValueError, "native_label=09:31"):
+            S.adapt_241_private(batch, 0, "2026-10")
+
     def test_canonical_month_append_idempotence_and_old_vendor_symbol(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = fixture(tmp)

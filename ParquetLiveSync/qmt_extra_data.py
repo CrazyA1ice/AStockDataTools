@@ -176,7 +176,7 @@ def _state(extra, workspace):
     path = _state_path(workspace)
     if not path.exists():
         return {"format": FORMAT, "root": str(extra.resolve()),
-                "cursor": {}, "last_asof": {}}
+                "cursor": {}, "last_asof": {}, "last_asset_fetch": {}}
     _path_check(path)
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("format") != FORMAT or data.get("root") != str(extra.resolve()):
@@ -489,9 +489,18 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                 elif key == "adjustments":
                     item = _fetch_adjustments(xt, extra, code, today, workspace)
                 else:
+                    # Once the full historic ticker range is downloaded,
+                    # use an overlapping rolling window, rather than asking
+                    # the broker for 2011-onward minute history every cycle.
+                    previous = state.setdefault("last_asset_fetch", {}).setdefault(
+                        key, {}).get(code)
+                    start = (max(since, date.fromisoformat(previous)
+                                 - timedelta(days=15))
+                             if previous else since)
                     _fetch_instrument(xt, extra, key, code, today, workspace)
                     item = _fetch_quotes(
-                        xt, extra, key, code, today, since, workspace=workspace)
+                        xt, extra, key, code, today, start, workspace=workspace)
+                    state["last_asset_fetch"][key][code] = today.isoformat()
                 _advance(state, key, code, workspace)
                 done.append({"symbol": code, "result": item})
                 progress("MARKET_QMT_EXTRA_COMMITTED=" + canonical_json(

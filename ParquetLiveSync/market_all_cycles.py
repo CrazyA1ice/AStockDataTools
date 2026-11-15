@@ -73,8 +73,10 @@ def verified_qmt_trading_calendar(asof=None):
     if raw is None or isinstance(raw,(str,bytes,dict)):
         raise ValueError("QMT exchange trading calendar is unavailable")
     raw=list(raw)
-    if not raw or len(raw)>15000:
-        raise ValueError("QMT exchange trading calendar missing/oversized")
+    if not raw:
+        raise ValueError("QMT exchange trading calendar is unavailable (empty result)")
+    if len(raw)>15000:
+        raise ValueError("QMT exchange trading calendar exceeds safe size limit")
     accepted=set()
     for item in raw:
         if isinstance(item,str):

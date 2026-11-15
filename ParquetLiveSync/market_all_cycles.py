@@ -10,6 +10,7 @@ No duplicate scheduler, no second QMT ingestion, no vendor H5 mutation.
 from __future__ import annotations
 from datetime import date,datetime,timedelta
 import json
+import numbers
 from pathlib import Path
 
 import local_layout as L
@@ -69,15 +70,20 @@ def verified_qmt_trading_calendar(asof=None):
     raw=xtdata.get_trading_dates(
         "SH",start_time=since.strftime("%Y%m%d"),
         end_time=asof.strftime("%Y%m%d"),count=-1)
-    if not isinstance(raw,(list,tuple)) or not raw:
+    if raw is None or isinstance(raw,(str,bytes,dict)):
         raise ValueError("QMT exchange trading calendar is unavailable")
+    raw=list(raw)
+    if not raw or len(raw)>15000:
+        raise ValueError("QMT exchange trading calendar missing/oversized")
     accepted=set()
     for item in raw:
         if isinstance(item,str):
             if len(item)!=8 or not item.isdigit():
                 raise ValueError("Unexpected QMT trading date string")
             parsed=date(int(item[:4]),int(item[4:6]),int(item[6:]))
-        elif type(item) in (int,float):
+        elif isinstance(item,numbers.Real) and not isinstance(item,bool):
+            if not float(item).is_integer():
+                raise ValueError("Fractional QMT trading date timestamp")
             number=int(item)
             if 20000101<=number<=20991231:
                 txt=str(number)

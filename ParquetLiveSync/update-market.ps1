@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Missing proje
 $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
 Write-Host "MARKET_UPDATE_ONE_COMMAND mode=$Mode dry_run=$DryRun"
 $ledger = "ParquetLiveSync\work\market_update\commits.json"
-if ($Mode -eq "bootstrap" -or -not (Test-Path -LiteralPath $ledger -PathType Leaf)) {
+if ($Mode -in @("bootstrap", "sources") -or -not (Test-Path -LiteralPath $ledger -PathType Leaf)) {
     & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_market_updater.py" -q
     if ($LASTEXITCODE -ne 0) { throw "Market updater synthetic safety tests failed" }
 } else {

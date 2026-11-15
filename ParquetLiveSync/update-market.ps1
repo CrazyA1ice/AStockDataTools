@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("auto","bootstrap","daily")]
+    [ValidateSet("auto","bootstrap","daily","sources")]
     [string]$Mode = "auto",
     [string]$Root = "D:\stock",
     [string]$Day = "",

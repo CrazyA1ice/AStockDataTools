@@ -337,6 +337,64 @@ def stage_day(root, day, reference, calib, sources_config, *,
             scratch.unlink()
 
 
+def recheck_sources(day, config=CONFIG_PATH, *, workspace=S.STATE_DIR,
+                    progress=print):
+    """Rerun external-minute samples on SHA-verified saved QMT candidate.
+
+    Only the small set of 1minute sample stocks is loaded for OHLCVA
+    comparison. NO QMT downloads, official DAY fetches or production writes.
+    In particular, this will NOT reprocess 5,215 original stock-days.
+    """
+    import random
+    cfg = config_file(config)
+    folder = Path(workspace) / "daily"
+    source = folder / (day.isoformat() + ".parquet")
+    receipt = folder / (day.isoformat() + ".json")
+    doc = S._json(receipt)
+    if (doc.get("format") != FORMAT or doc.get("date") != day.isoformat()
+            or not isinstance(doc.get("sha256"), str)
+            or source.is_symlink() or not source.is_file()
+            or L.hash_file(source) != doc["sha256"]):
+        raise ValueError("Accepted daily QMT sample source SHA changed")
+    file = pq.ParquetFile(source)
+    try:
+        if (file.schema_arrow != P.PRIVATE_SCHEMA
+                or file.metadata.num_rows != doc.get("rows")
+                or doc.get("rows") != 240 * doc.get("stock_days_accepted", -1)):
+            raise ValueError("Daily QMT sample source footer/receipt changed")
+    finally:
+        file.close()
+    symbols_col = pq.read_table(source, columns=["symbol"])["symbol"]
+    symbols = sorted(set(symbols_col.to_pylist()))
+    if len(symbols) != doc["stock_days_accepted"]:
+        raise ValueError("Daily minute source symbol cardinality inconsistent")
+    cfgchecks = cfg["minute_cross_checks"]
+    sample_n = int(cfgchecks.get("sample_stocks", 8))
+    if not 1 <= sample_n <= 100:
+        raise ValueError("Invalid minute provider sample count")
+    sample = sorted(random.Random(day.isoformat()).sample(
+        symbols, min(sample_n, len(symbols))))
+    selected = pq.read_table(source, filters=[("symbol", "in", sample)],
+                             columns=list(P.PRIVATE_SCHEMA.names))
+    if selected.schema != P.PRIVATE_SCHEMA:
+        raise ValueError("Daily QMT minute sample schema changed")
+    by_symbol = {}
+    for r in selected.to_pylist():
+        by_symbol.setdefault(r["symbol"], []).append(r)
+    if set(by_symbol) != set(sample) or any(
+            len(rows) != 240 or len({r["ts"] for r in rows}) != 240
+            for rows in by_symbol.values()):
+        raise ValueError("Daily QMT sample has missing/duplicate minutes")
+    result = X.sample_check(day, by_symbol, cfgchecks, progress=progress)
+    report = {"date": day.isoformat(), "mode": "SOURCES_ONLY_READ_ONLY",
+              "qmt_sha256": doc["sha256"], "sampled_symbols": sample,
+              "sampled_sources": result, "production_market_modified": False,
+              "qmt_refetched": False, "official_day_refetched": False}
+    progress("MARKET_SOURCE_RECHECK_RESULT=" + json.dumps(
+        report, ensure_ascii=False, sort_keys=True))
+    return report
+
+
 def last_eligible_day():
     """At/after 20:00 Shanghai time; otherwise previous calendar day."""
     now = datetime.now(L.UTC8)
@@ -433,15 +491,21 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("D:/stock"))
-    parser.add_argument("--mode", choices=("auto", "bootstrap", "daily"), default="auto")
+    parser.add_argument("--mode", choices=("auto", "bootstrap", "daily", "sources"), default="auto")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--day", type=date.fromisoformat)
     parser.add_argument("--max-days", type=int, default=30)
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     args = parser.parse_args(argv)
-    results = update(args.root, mode=args.mode, apply=not args.dry_run,
-                     requested_date=args.day, config=args.config,
-                     max_days=args.max_days)
+    if args.mode == "sources":
+        if args.day is None:
+            parser.error("--mode sources requires --day YYYY-MM-DD")
+        recheck_sources(args.day, config=args.config)
+        results = [{"status": "SOURCE_RECHECK_ONLY", "date": str(args.day)}]
+    else:
+        results = update(args.root, mode=args.mode, apply=not args.dry_run,
+                         requested_date=args.day, config=args.config,
+                         max_days=args.max_days)
     print("MARKET_UPDATE_COMPLETE=" + json.dumps(
         {"mode": args.mode, "dry_run": args.dry_run,
          "steps": len(results)}, ensure_ascii=False, sort_keys=True))

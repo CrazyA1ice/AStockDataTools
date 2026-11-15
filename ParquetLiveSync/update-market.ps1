@@ -23,6 +23,8 @@ if ($Mode -in @("bootstrap", "sources", "cycles") -or -not (Test-Path -LiteralPa
     if ($LASTEXITCODE -ne 0) { throw "Market eight-cycle derivation safety tests failed" }
     & $python -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_rollup_week_month.py" -q
     if ($LASTEXITCODE -ne 0) { throw "Market week/month source safety tests failed" }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\tests\test_install_schedule_mock.ps1"
+    if ($LASTEXITCODE -ne 0) { throw "Windows all-cycle Task Scheduler mock tests failed" }
 } else {
     Write-Host "MARKET_DAILY_SKIP_REPEATED_OFFLINE_TESTS"
 }

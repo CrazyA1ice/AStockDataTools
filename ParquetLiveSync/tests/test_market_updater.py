@@ -163,6 +163,42 @@ class MarketUpdaterTests(unittest.TestCase):
                                 days=["2026-11-16"], workspace=work,
                                 progress=lambda _: None)
 
+    def test_sources_config_declares_independent_and_correlated_providers(self):
+        config = U.config_file()
+        self.assertEqual(config["primary"], "qmt")
+        checks = config["minute_cross_checks"]
+        self.assertTrue(checks["pytdx"]["enabled"])
+        self.assertTrue(checks["eltdx"]["enabled"])
+        self.assertFalse(checks["akshare"]["enabled"])
+        self.assertIn("pytdx", X.TDX_FAMILY)
+        self.assertIn("eltdx", X.TDX_FAMILY)
+
+    def test_bootstrap_short_circuits_historical_5403_receipts_daily(self):
+        fake = {"periods": {"1min": {
+            m: {"sources": ["BOOTSTRAP:approved:" + m]}
+            for m in U.B.MONTHS}},
+            "qmt_calibration_sha256": "a" * 64,
+            "original_day_bootstrap_attempted": True}
+        with (patch.object(U.S, "recover_intent", return_value=fake),
+              patch.object(U.B, "resolve",
+                           side_effect=AssertionError("never reread old receipts"))):
+            result = U.bootstrap("D:/stock", apply=True, progress=lambda _: None)
+            self.assertEqual(result[0]["status"], "ALREADY_BOOTSTRAPPED")
+
+    def test_new_target_rejects_untracked_existing_original(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = fixture(temp)
+            target = base / "1min" / "2026-11.parquet"
+            target.write_bytes(b"unknown-market-data")
+            table = canonical([{"ts": U.P.stamp_ms(
+                datetime(2026, 11, 13, 9, 31, tzinfo=L.UTC8).isoformat()),
+                **{k: 10.0 for k in U.FIELDS}}])
+            with self.assertRaisesRegex(ValueError, "no updater ledger"):
+                S.install_month(temp, "2026-11", iter([table]),
+                                source_id="T1", days=["2026-11-13"],
+                                workspace=Path(temp) / "work", progress=lambda _: None)
+            self.assertEqual(target.read_bytes(), b"unknown-market-data")
+
     def test_dry_run_requires_no_qmt_or_market_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture(tmp)

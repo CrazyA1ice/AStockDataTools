@@ -758,7 +758,7 @@ class QmtExtraTests(unittest.TestCase):
                     progress=lambda _: None,
                     expected_minimums={"Income": 3, "Top10FlowHolder": 2})
             with patch.object(E.LIVE, "exclusive_writer",
-                              return_value=contextlib.nullcontext()), \\
+                              return_value=contextlib.nullcontext()), \
                  patch.object(E, "_read_financial_isolated",
                               side_effect=fake_cached):
                 preview = run_once(False)
@@ -814,7 +814,7 @@ class QmtExtraTests(unittest.TestCase):
                              "v": 2.}]
                 return [{"_index": "0", "holder": "X"}]
             with patch.object(E.LIVE, "exclusive_writer",
-                              return_value=contextlib.nullcontext()), \\
+                              return_value=contextlib.nullcontext()), \
                  patch.object(E, "_read_financial_isolated",
                               side_effect=changed):
                 with self.assertRaisesRegex(ValueError, "removed or revised"):
@@ -902,9 +902,9 @@ class QmtExtraTests(unittest.TestCase):
                                              "Top10FlowHolder": 1},
                       "progress": lambda _: None}
             with patch.object(E.LIVE, "exclusive_writer",
-                              return_value=contextlib.nullcontext()), \\
+                              return_value=contextlib.nullcontext()), \
                  patch.object(E, "_read_financial_isolated",
-                              side_effect=cached), \\
+                              side_effect=cached), \
                  patch.object(E, "_pin_financial_snapshot",
                               side_effect=fail_on_new_pin):
                 with self.assertRaisesRegex(OSError, "interrupted"):
@@ -912,7 +912,7 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(E._verified_financial_snapshot(
                 extra, "000008.SZ", "Income", asof), 1)
             with patch.object(E.LIVE, "exclusive_writer",
-                              return_value=contextlib.nullcontext()), \\
+                              return_value=contextlib.nullcontext()), \
                  patch.object(E, "_read_financial_isolated",
                               side_effect=cached):
                 R.reconcile(root, **params)

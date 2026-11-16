@@ -165,3 +165,11 @@ Windows QMT 第一次扩大到 `-ExtraSection financial -ExtraStockLimit 5`：`0
 新增财务单表分阶段日志 `FINANCIAL_TABLE_READ_START/READ_DONE`、`DECODE_START/DECODE_DONE`、`SNAPSHOT_START` 和 `SAVE_START/SAVE_DONE`，保留旧 `START/FETCHED/COMPLETE`。新增相应回归断言；未修改数据有效性、证券游标、重叠写入、QMT 调度或原购八周期目录。这是诊断增强，**不是 QMT API 超时修复**。
 
 如果旧 Python 任务确已长时间不再前进，先在原窗口按 `Ctrl+C`，仍无法退出时只定位并终止命令行含 `qmt_extra_data.py` 的专用 Python 进程；勿结束 QMT 客户端、勿终止无关 Python。确认不再运行后更新分支，先用单只 `-ExtraSection financial -ExtraStockLimit 1` 续跑 `000006.SZ`。不要修改进度 JSON、删除快照或直接同时启动下一个批次；停止前已提交的财务表会留在隔离目录。注意与原计划 21:30 更新避免重叠。
+
+## 2026-11-16 中断后单张财务表复用（第一阶段）
+
+Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=000001.SZ`, `index=000001.SH`, `etf=158000.SZ`，专用 `qmt_extra_data.py` 进程 0。`000006.SZ` 已多次遭遇 `download_financial_data` 同步阻塞，第一次到 PershareIndex 读取附近，第二次到 CashFlow 下载附近；不应将其认为是 Parquet 数据丢失或已完成股票。
+
+本阶段加入 `_verified_financial_snapshot`：为当天、该股票、该财务表查找先前成功落盘的单个内容指纹 Parquet 快照，严格校验 schema、每行 `asof/symbol/item/index` 与快照文件名的内容哈希；**只有全部匹配才输出 `MARKET_QMT_EXTRA_FINANCIAL_TABLE_REUSED` 并跳过重复 QMT 下载**。找不到则仍正常下载；损坏、冲突快照拒绝且不推进股票游标；不同日期快照不能抑制当天刷新。空表没有快照，仍如实查询；绝不能合成缺失财务记录。恢复后，整只股票九表均完成才推进 `financial` 游标。
+
+这只是**同日已完成表复用**，不是对 QMT 同步 `download_financial_data` 的强制超时或自动失败队列；其余未缓存的表仍可能卡住。夜间 21:30 已有购买版自动行情任务，在其结束前不要启动新增试点。下阶段需要将单只股票 QMT 调用交由独立子进程运行，设置可验证的超时与失败分类，再实现受控队列跳过与重试，避免影响原有八周期/H5。

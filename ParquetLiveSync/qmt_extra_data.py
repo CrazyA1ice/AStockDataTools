@@ -867,7 +867,8 @@ def _fetch_etf_catalog(xt, extra, today, workspace):
 
 def run(root, *, xt, apply=False, today=None, since=SINCE,
         stock_limit=40, asset_limit=5, section="all",
-        workspace=WORK, progress=print, financial_timeout_seconds=None):
+        workspace=WORK, progress=print, financial_timeout_seconds=None,
+        financial_continue_on_error=False, financial_retry_pending=False):
     """One bounded, repeatable batch. A complete historical import takes batches."""
     today = today or datetime.now(L.UTC8).date()
     if not isinstance(today, date) or not isinstance(since, date) or today < since:
@@ -877,6 +878,10 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
     if section not in ("all", "sectors", "financial",
                        "adjustments", "index", "etf"):
         raise ValueError("Unsupported QMT extras section " + str(section))
+    if (financial_continue_on_error or financial_retry_pending) and section != "financial":
+        raise ValueError("Financial retry options require --section financial")
+    if financial_retry_pending and not financial_continue_on_error:
+        raise ValueError("Pending retry requires explicit financial continue-on-error")
     selected_sections = (("financial", "adjustments", "index", "etf")
                          if section == "all" else (section,))
     extra = _storage(root)
@@ -888,11 +893,20 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
             "section": section,
             "counts": {key: len(values) for key, values in universe.items()
                        if key in selected_sections},
-            "next": {key: _batch(values, state["cursor"].get(key, ""),
-                                stock_limit if key in ("financial", "adjustments")
-                                else asset_limit)
+            "next": {key: (_financial_selection(
+                            values, state, stock_limit,
+                            tolerate=financial_continue_on_error,
+                            retry_pending=financial_retry_pending)
+                          if key == "financial" else
+                          _batch(values, state["cursor"].get(key, ""),
+                                 stock_limit if key == "adjustments"
+                                 else asset_limit))
                      for key, values in universe.items()
                      if key in selected_sections},
+            "financial_pending_count": (len(_pending_financial(state))
+                                        if "financial" in selected_sections
+                                        else 0),
+            "financial_retry_mode": financial_retry_pending,
             "sectors_will_be_downloaded": section in ("all", "sectors"),
             "data_files_modified": False,
             "windows_schedule_modified": False,
@@ -934,15 +948,45 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
             if key not in selected_sections:
                 continue
             limit = stock_limit if key in ("financial", "adjustments") else asset_limit
-            selected = _batch(universe[key], state["cursor"].get(key, ""), limit)
+            selected = (_financial_selection(
+                universe[key], state, limit,
+                tolerate=financial_continue_on_error,
+                retry_pending=financial_retry_pending)
+                if key == "financial" else
+                _batch(universe[key], state["cursor"].get(key, ""), limit))
             done = []
+            deferred = []
             for code in selected:
                 progress("MARKET_QMT_EXTRA_SYMBOL_START=" +
                          canonical_json({"section": key, "symbol": code}))
                 if key == "financial":
-                    item = _fetch_financial(
-                        xt, extra, code, today, workspace, progress=progress,
-                        financial_timeout_seconds=financial_timeout_seconds)
+                    try:
+                        item = _fetch_financial(
+                            xt, extra, code, today, workspace, progress=progress,
+                            financial_timeout_seconds=financial_timeout_seconds)
+                    except FinancialDeferredError as exc:
+                        if not financial_continue_on_error:
+                            raise
+                        pending = _financial_defer(
+                            state, workspace, code, today.isoformat(), exc,
+                            retry_pending=financial_retry_pending)
+                        deferred.append({"symbol": code, "table": exc.table,
+                                         "attempts": pending["attempts"]})
+                        progress("MARKET_QMT_EXTRA_FINANCIAL_DEFERRED=" +
+                                 canonical_json({"symbol": code, **pending}))
+                        continue
+                    _financial_coverage_receipt(
+                        workspace, code, today.isoformat(), item)
+                    if financial_continue_on_error:
+                        # Retrying an earlier pending security MUST NOT rewind
+                        # the high-water cursor for unvisited securities.
+                        _pending_financial(state).pop(code, None)
+                        if financial_retry_pending:
+                            _save_state(state, workspace)
+                        else:
+                            _advance(state, key, code, workspace)
+                    else:
+                        _advance(state, key, code, workspace)
                 elif key == "adjustments":
                     item = _fetch_adjustments(xt, extra, code, today, since,
                                               workspace, progress=progress)
@@ -961,7 +1005,8 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                         xt, extra, key, code, today, start,
                         workspace=workspace, progress=progress)}
                     state["last_asset_fetch"][key][code] = today.isoformat()
-                _advance(state, key, code, workspace)
+                if key != "financial":
+                    _advance(state, key, code, workspace)
                 done.append({"symbol": code, "result": item})
                 progress("MARKET_QMT_EXTRA_COMMITTED=" + canonical_json(
                     {"section": key, "symbol": code, "result": item}))
@@ -971,9 +1016,20 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                 "next_batch_required": bool(
                     [x for x in universe[key] if x > state["cursor"].get(key, "")])
             }
+            if key == "financial":
+                results[key].update({
+                    "symbols_deferred": len(deferred),
+                    "pending_retry_count": len(_pending_financial(state)),
+                    "pending_retry_symbols": sorted(_pending_financial(state)),
+                    "retry_mode": financial_retry_pending,
+                    "scan_exhausted": not results[key]["next_batch_required"]
+                    if financial_continue_on_error else False})
         state["last_asof"] = today.isoformat()
         _save_state(state, workspace)
-    report = {"status": "BATCH_COMMITTED_MORE_BATCHES_MAY_REMAIN",
+    report = {"status": ("BATCH_HAS_PENDING_FINANCIAL_RETRIES"
+                         if "financial" in results and
+                         results["financial"]["pending_retry_count"] > 0
+                         else "BATCH_COMMITTED_MORE_BATCHES_MAY_REMAIN"),
               "dataset": str(extra), "asof": today.isoformat(),
               "sections": results, "stock_eight_periods_unchanged": True,
               "h5_unchanged": True}
@@ -996,6 +1052,10 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--financial-timeout-seconds", type=int, default=180,
                         help="QMT per-financial-table wall timeout, 30..3600 seconds")
+    parser.add_argument("--financial-continue-on-error", action="store_true",
+                        help="Opt-in fail-closed queued scan; does not mark failed stocks done")
+    parser.add_argument("--financial-retry-pending", action="store_true",
+                        help="Explicit retry of queued failed financial stocks")
     args = parser.parse_args(argv)
     if not 30 <= args.financial_timeout_seconds <= 3600:
         parser.error("--financial-timeout-seconds must be 30..3600")
@@ -1003,7 +1063,9 @@ def main(argv=None):
     run(args.root, xt=xtdata, apply=args.apply, today=args.day, since=args.start,
         stock_limit=args.stock_limit, asset_limit=args.asset_limit,
         section=args.section,
-        financial_timeout_seconds=args.financial_timeout_seconds)
+        financial_timeout_seconds=args.financial_timeout_seconds,
+        financial_continue_on_error=args.financial_continue_on_error,
+        financial_retry_pending=args.financial_retry_pending)
 
 
 if __name__ == "__main__":

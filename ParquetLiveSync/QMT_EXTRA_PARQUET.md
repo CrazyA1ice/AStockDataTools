@@ -141,3 +141,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 ```
 
 这些命令真实写入 `qmt_extra`，只有首批完成并检查记录后才考虑全市场批量或定时加入。
+
+## 2026-11-16 ETF 首批 15min 校验失败：只诊断，不放宽
+
+真机 QMT 首批证券 `158000.SZ`：1min 成功提交 12,773 条、5min 成功提交 2,544 条；在 **2026 年 15min** 的 `_normalize_quote` 阶段出现 `QMT index/ETF Kline OHLCVA invalid`，中断时未输出该 ETF 的 `MARKET_QMT_EXTRA_COMMITTED`。原因仍未确定，可能是某一条源 K 线异常；**不要把所有 15min 数据都视为无效，也不能把 1min/5min 作为完整 ETF 的成功标记**。原来的 8 个购买版股票周期未被触及。
+
+为查明根因，异常信息现在带 `period`、`row_index`、`timestamp_ms`、`local_day`、实际 `open/high/low/close/volume/amount` 值及违反的条件（如 `nonpositive_low`、`high_below_open_or_close`、`non_finite`）。校验仍拒绝异常行，绝不自动填充、裁剪或丢弃，ETF 证券游标只在全周期全部成功后推进。
+
+推荐先使用 **本地只读 QMT 缓存查询** 单独审计 `158000.SZ` 的 2026 年 `15m` 记录（调用 `xtdata.get_market_data_ex` 和 `_normalize_quote`，但不调用 `download_history_data`、`run(apply=True)`、`_atomic_parquet`），拿到精确坏行，再决定是否是 QMT 历史原始缺陷、收盘外无效记录或数值舍入。该步骤不修改 `qmt_extra` 的行情文件或进度游标。切勿直接用 `-ExtraStart 2026-01-01` 代替旧 `2011-01-01` 的全历史试验，避免未补完历史就推进完成游标。

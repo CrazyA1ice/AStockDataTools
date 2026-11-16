@@ -183,3 +183,15 @@ Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=00
 日志中的 `MARKET_QMT_EXTRA_FINANCIAL_WORKER_START`/`WORKER_DOWNLOAD_START`/`TABLE_FETCHED`/`TABLE_READ_START`/`READ_DONE`/`DECODE_DONE`/`WORKER_EXPORT_DONE`/`WORKER_DONE` 区分父子进程，`WORKER_TIMEOUT` 表示实际超时。该墙钟限制覆盖 **子进程启动、QMT 下载/读取及导出**；不涵盖外部 `discover`、非财务接口、父进程 Parquet 写入或退出后其余批次，因此不能声称整个市场采集已经具备全局超时/自动无人值守能力。
 
 离线新增模拟 worker 正常返回、超时持久失败、七表缓存复用和真正剩余两表调用等测试（总共 34 项），**需 Windows 端真实运行验证后再进行单只试点**。第一次可先只用 `-Mode extras -ExtraSection financial -DryRun` 检查下一只证券，再 `-ExtraStockLimit 1 -ExtraStart "2011-01-01" -ExtraFinancialTimeoutSeconds 180` 小试。原 `000006.SZ` 在 `2026-11-16` 已有七张当日快照；跨日期不自动复用，防止将过时财报标记为当天最新数据。**跨日增量/来源版本校验尚待后续开发**，禁止靠手动修改 `progress.json` 或更改 `-Day` 冒充历史源真实时点。原有 21:30 定时任务继续单独运行，保持 extras 未启用。
+
+## 2026-11-16 第三阶段：财务失败清单、高水位扫描与只读覆盖审计
+
+真机 `000008.SZ` + `000009.SZ` 2 只连续采集完成（34/34 测试、批次 121.9 秒、最终 `financial.cursor=000009.SZ`）。`000008.SZ/Income` 返回 **12 条**，`000008.SZ/Top10FlowHolder` 返回 **0 条**；这只代表 QMT 观测结果，不代表历史数据完整。为了支持长批量且不丢失失败证券，本阶段实现**显式启用**的容错扫描、独立待重试集合及追加式覆盖凭证（本阶段 39 项离线测试待本机运行）。
+
+**默认行为不变、遇到故障停止。** 只有显式使用 `-Mode extras -ExtraSection financial -ExtraFinancialContinueOnError` 时才启用容错：仅将**独立 QMT 财务 worker** 的超时、非零退出、结果内容异常记为可重试故障，原地保留已有有效快照；损坏的既有 Parquet、磁盘/权限/本地数据写入问题继续中止，禁止静默跳过。失败股票的 `table/reason/attempts/asof` 和扫描高水位 `cursor.financial` **同一笔进度文件原子保存**，输出 `MARKET_QMT_EXTRA_FINANCIAL_DEFERRED`。因此此模式下 `cursor.financial` 明确仅指**证券扫描高水位**，而不是此之前的股票全部完整成功。待补股票列在 `progress.json.financial_pending`，`BATCH_HAS_PENDING_FINANCIAL_RETRIES`、`pending_retry_count` 也会明确显示不完整。原 `financial-failures.jsonl` 仍是每次 QMT worker 失败的追加日志。
+
+容错扫描**到尾不自动回绕**，避免重复下载已扫描证券。待补单独使用 `-ExtraFinancialContinueOnError -ExtraFinancialRetryPending`，只选待补证券、重新核验同日已有快照；成功后清除对应待补记录而**不回退高水位 cursor**。若待补证券已不在本次 QMT 股票列表中，将拒绝暗中删除，需另行审计证券名录。未显式启用这些开关时，原有股票批次、ETF/指数/除权因子以及 21:30 任务逻辑均保持原样；**无需且不应修改现有定时任务**。
+
+本阶段将每只完成股票的九张表行数与状态记录到私有 `ParquetLiveSync/work/qmt_extra/financial-coverage.jsonl`，`0` 条记为 QMT 无返回，`1..19` 条标记 `low_record_tables`（启发式风险提示，并非统一财报最低条数）。审核既有证券可调用**不连接 QMT** 的 `ParquetLiveSync/qmt_extra_financial_audit.py --root D:/stock --symbol 000008.SZ --asof 2026-11-16`；此脚本校验当天 Parquet 指纹、逐表行数，提供源字段 `m_timetag` 的**原始最小/最大文本值**、空快照与稀疏标记；`source_report_dates_validated=false`，不得把原始字段直接认定为校准后的最早/最晚报告期。先前已提交的 000008/000009 等证券不需要重抓，也能用该只读脚本审计现有快照。新 `financial-coverage.jsonl` 只覆盖本次版本后成功执行的证券，旧数据需用只读审计查验，不能假装旧日志已回填。
+
+建议先执行 Windows 39 项离线测试及只读审计，再做单批 `-ExtraStockLimit 2 -ExtraFinancialContinueOnError -ExtraFinancialTimeoutSeconds 180` 试点。新增开关不会自动安装任务、不会改购买版八周期 Parquet/H5，也不提供所有 QMT 调用的全局超时、跨日历史版本校验或全市场无人值守长期任务。不要靠改 `progress.json` 或 `-Day` 绕过历史覆盖问题。原有 21:30 定时任务照旧，实测仍需避开任务时间。

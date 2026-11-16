@@ -945,6 +945,138 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(audit["tables"]["Income"]["raw_m_timetag_max"],
                              "20260930")
 
+    def test_bulk_scan_preview_has_no_qmt_writes(self):
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            workspace = Path(tmp) / "private"
+            logs = []
+            result = BULK.scan(
+                root, xt=FakeXt(), apply=False, max_symbols=2,
+                workspace=workspace, progress=logs.append)
+            self.assertEqual(result["status"],
+                             "BOUNDED_FINANCIAL_READONLY_PREVIEW")
+            self.assertEqual(result["next"], ["600000.SH"])
+            self.assertEqual(result["symbols_processed"], 0)
+            self.assertFalse(workspace.exists())
+            self.assertFalse(E._storage(root).exists())
+            self.assertIn("QMT_FINANCIAL_BULK_SUMMARY=", logs[0])
+
+    def test_bulk_scan_two_then_one_then_no_wrap(self):
+        import contextlib
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            workspace = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = [
+                "600000.SH", "600001.SH", "600002.SH"]
+            now = datetime(2026, 11, 16, 23, 30, tzinfo=L.UTC8)
+            worker_calls = []
+            def fake_worker(code, table, workspace, **kwargs):
+                worker_calls.append((code, table))
+                return [{"_index": "20260930", "m_timetag": 20260930}]
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=fake_worker):
+                first = BULK.scan(
+                    root, xt=xt, apply=True, max_symbols=2,
+                    workspace=workspace, clock=lambda: now,
+                    timeout_seconds=30, progress=lambda _: None)
+                second = BULK.scan(
+                    root, xt=xt, apply=True, max_symbols=2,
+                    workspace=workspace, clock=lambda: now,
+                    timeout_seconds=30, progress=lambda _: None)
+                third = BULK.scan(
+                    root, xt=xt, apply=True, max_symbols=2,
+                    workspace=workspace, clock=lambda: now,
+                    timeout_seconds=30, progress=lambda _: None)
+            self.assertEqual(first["status"], "PAUSED_SYMBOL_LIMIT")
+            self.assertEqual(first["symbols_processed"], 2)
+            self.assertEqual(first["last_cursor"], "600001.SH")
+            self.assertEqual(second["status"],
+                             "SCAN_EXHAUSTED_COVERAGE_UNVERIFIED")
+            self.assertEqual(second["symbols_processed"], 1)
+            self.assertEqual(second["last_cursor"], "600002.SH")
+            self.assertEqual(third["symbols_processed"], 0)
+            self.assertEqual(third["last_cursor"], "600002.SH")
+            self.assertEqual(len(worker_calls), 3 * len(E.FIN_TABLES))
+            self.assertEqual(E._state(E._storage(root), workspace)
+                             ["cursor"]["financial"], "600002.SH")
+
+    def test_bulk_scan_defers_failed_stock_but_keeps_progress(self):
+        import contextlib
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            workspace = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = ["600000.SH", "600001.SH"]
+            now = datetime(2026, 11, 16, 23, 30, tzinfo=L.UTC8)
+            def fake_worker(code, table, workspace, **kwargs):
+                if code == "600000.SH" and table == "Balance":
+                    raise TimeoutError("Synthetic upstream timeout")
+                return [{"_index": "20260930", "m_timetag": 20260930}]
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=fake_worker):
+                result = BULK.scan(
+                    root, xt=xt, apply=True, max_symbols=3,
+                    timeout_seconds=30, workspace=workspace,
+                    clock=lambda: now, progress=lambda _: None)
+            self.assertEqual(result["status"],
+                             "SCAN_EXHAUSTED_PENDING_RETRIES")
+            self.assertEqual(result["symbols_processed"], 1)
+            self.assertEqual(result["symbols_deferred"], 1)
+            self.assertEqual(result["pending_retry_count"], 1)
+            saved = E._state(E._storage(root), workspace)
+            self.assertEqual(saved["cursor"]["financial"], "600001.SH")
+            self.assertEqual(sorted(saved["financial_pending"]),
+                             ["600000.SH"])
+
+    def test_bulk_scan_protects_scheduled_market_window(self):
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            workspace = Path(tmp) / "private"
+            xt = FakeXt()
+            with patch.object(E, "run",
+                              side_effect=AssertionError("QMT must not run")):
+                blocked = BULK.scan(
+                    root, xt=xt, apply=True, timeout_seconds=180,
+                    workspace=workspace, max_symbols=3,
+                    clock=lambda: datetime(2026, 11, 16, 21, 45,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+                near = BULK.scan(
+                    root, xt=xt, apply=True, timeout_seconds=180,
+                    workspace=workspace, max_symbols=3,
+                    clock=lambda: datetime(2026, 11, 16, 20, 50,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(blocked["status"],
+                             "PAUSED_PROTECTED_2130_WINDOW")
+            self.assertEqual(near["status"],
+                             "PAUSED_INSUFFICIENT_PRE_2130_WORST_CASE_WINDOW")
+            self.assertFalse(workspace.exists())
+
+    def test_bulk_scan_stops_on_time_budget_before_batch(self):
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            start = datetime(2026, 11, 16, 23, 30, tzinfo=L.UTC8)
+            ticks = iter([start, start + timedelta(minutes=2)])
+            with patch.object(E, "run",
+                              side_effect=AssertionError("QMT must not run")):
+                result = BULK.scan(
+                    root, xt=FakeXt(), apply=True, max_symbols=3,
+                    max_minutes=1, workspace=Path(tmp) / "private",
+                    clock=lambda: next(ticks), progress=lambda _: None)
+            self.assertEqual(result["status"], "PAUSED_TIME_BUDGET")
+            self.assertEqual(result["symbols_processed"], 0)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

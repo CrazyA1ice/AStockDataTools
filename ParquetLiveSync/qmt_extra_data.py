@@ -1022,7 +1022,7 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                 results[key].update({
                     "symbols_deferred": len(deferred),
                     "pending_retry_count": len(_pending_financial(state)),
-                    "pending_retry_symbols": sorted(_pending_financial(state)),
+                    "pending_retry_symbols": sorted(_pending_financial(state))[:20],
                     "retry_mode": financial_retry_pending,
                     "scan_exhausted": not results[key]["next_batch_required"]
                     if financial_continue_on_error else False})

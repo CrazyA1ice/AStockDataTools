@@ -717,6 +717,148 @@ class QmtExtraTests(unittest.TestCase):
                 root, "000008.SZ", "2026-11-17", workspace=private)
                 ["snapshot_tables"], 0)
 
+    def test_financial_cached_repair_preview_and_version_commit_keep_old(self):
+        import contextlib
+        import qmt_extra_financial_reconcile as R
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            asof = datetime.now(L.UTC8).date().isoformat()
+            state = E._state(extra, private)
+            state["cursor"]["financial"] = "000009.SZ"
+            E._save_state(state, private)
+            progress_before = L.hash_file(private / "progress.json")
+            old = [
+                {"_index": "0", "m_timetag": 19921231, "v": 1.},
+                {"_index": "1", "m_timetag": 19931231, "v": 2.}]
+            first = E.snapshot_table(asof, "000008.SZ", "Income", old)
+            E._snapshot_write(extra, "financial/Income/000008.SZ", asof,
+                              first, private)
+            prior = E._financial_snapshot_file(extra, "000008.SZ",
+                                               "Income", asof)
+            prior_hash = L.hash_file(prior)
+            fresh = {
+                "Income": [*old, {"_index": "2", "m_timetag": 19941231,
+                                  "v": 3.}],
+                "Top10FlowHolder": [
+                    {"_index": "0", "holder": "A"},
+                    {"_index": "1", "holder": "B"}]}
+            calls = []
+            def fake_cached(code, name, workspace, **kwargs):
+                self.assertEqual(code, "000008.SZ")
+                self.assertTrue(kwargs["cached_only"])
+                self.assertFalse(kwargs["record_failure"])
+                calls.append(name)
+                return fresh[name]
+            def run_once(apply):
+                return R.reconcile(
+                    root, asof=asof, baseline_asof=asof,
+                    apply=apply, timeout_seconds=30, workspace=private,
+                    progress=lambda _: None,
+                    expected_minimums={"Income": 3, "Top10FlowHolder": 2})
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \\
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=fake_cached):
+                preview = run_once(False)
+                self.assertEqual(preview["tables"]["Income"]
+                                 ["extra_exact_records"], 1)
+                self.assertEqual(preview["tables"]["Top10FlowHolder"]
+                                 ["extra_exact_records"], 2)
+                self.assertEqual(E._verified_financial_snapshot(
+                    extra, "000008.SZ", "Income", asof), 2)
+                self.assertFalse(E._financial_active_path(
+                    extra, "000008.SZ", "Income", asof).exists())
+                result = run_once(True)
+                self.assertEqual(result["status"],
+                                 "QMT_FINANCIAL_REPAIR_VERSIONED_COMMITTED")
+                self.assertEqual(E._verified_financial_snapshot(
+                    extra, "000008.SZ", "Income", asof), 3)
+                self.assertEqual(E._verified_financial_snapshot(
+                    extra, "000008.SZ", "Top10FlowHolder", asof), 2)
+                self.assertEqual(L.hash_file(prior), prior_hash)
+                self.assertEqual(len(list(prior.parent.glob(
+                    asof + "-*.parquet"))), 2)
+                self.assertTrue(E._financial_active_path(
+                    extra, "000008.SZ", "Income", asof).exists())
+                run_once(True)
+                self.assertEqual(len(list(prior.parent.glob(
+                    asof + "-*.parquet"))), 2)
+            self.assertEqual(calls, ["Income", "Top10FlowHolder"] * 3)
+            self.assertEqual(progress_before, L.hash_file(
+                private / "progress.json"))
+            self.assertTrue((private / "financial-repair.jsonl").exists())
+
+    def test_financial_repair_rejects_changed_old_rows_before_any_write(self):
+        import contextlib
+        import qmt_extra_financial_reconcile as R
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            asof = datetime.now(L.UTC8).date().isoformat()
+            state = E._state(extra, private)
+            state["cursor"]["financial"] = "000009.SZ"
+            E._save_state(state, private)
+            tab = E.snapshot_table(asof, "000008.SZ", "Income",
+                                   [{"_index": "0", "m_timetag": 19921231,
+                                     "v": 1.}])
+            E._snapshot_write(extra, "financial/Income/000008.SZ", asof,
+                              tab, private)
+            def changed(code, name, workspace, **kwargs):
+                if name == "Income":
+                    return [{"_index": "0", "m_timetag": 19921231,
+                             "v": 99.},
+                            {"_index": "1", "m_timetag": 19931231,
+                             "v": 2.}]
+                return [{"_index": "0", "holder": "X"}]
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \\
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=changed):
+                with self.assertRaisesRegex(ValueError, "removed or revised"):
+                    R.reconcile(
+                        root, asof=asof, baseline_asof=asof, apply=True,
+                        workspace=private,
+                        expected_minimums={"Income": 2,
+                                           "Top10FlowHolder": 1},
+                        progress=lambda _: None)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "000008.SZ", "Income", asof), 1)
+            self.assertFalse(E._financial_active_path(
+                extra, "000008.SZ", "Income", asof).exists())
+            self.assertFalse((private / "financial-repair.jsonl").exists())
+
+    def test_financial_active_manifest_rejects_bogus_and_keeps_strict_legacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extra = Path(tmp) / "qmt_extra"
+            private = Path(tmp) / "private"
+            asof = "2026-11-16"
+            a = E.snapshot_table(
+                asof, "000008.SZ", "Income", [{"v": 1}])
+            b = E.snapshot_table(
+                asof, "000008.SZ", "Income", [{"v": 2}])
+            p = E._snapshot_path(
+                extra, "financial/Income/000008.SZ", asof, a)
+            E._snapshot_write(extra, "financial/Income/000008.SZ", asof,
+                              a, private)
+            E._snapshot_write(extra, "financial/Income/000008.SZ", asof,
+                              b, private)
+            with self.assertRaisesRegex(ValueError, "Ambiguous"):
+                E._verified_financial_snapshot(
+                    extra, "000008.SZ", "Income", asof)
+            E._pin_financial_snapshot(extra, "000008.SZ", "Income", asof, p)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "000008.SZ", "Income", asof), 1)
+            pin = E._financial_active_path(extra, "000008.SZ", "Income", asof)
+            doc = json.loads(pin.read_text(encoding="utf-8"))
+            doc["filename"] = asof + "-0000000000000000.parquet"
+            pin.write_text(E.canonical_json(doc), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing QMT financial active"):
+                E._verified_financial_snapshot(
+                    extra, "000008.SZ", "Income", asof)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

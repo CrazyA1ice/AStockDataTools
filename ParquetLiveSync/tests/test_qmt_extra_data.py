@@ -373,6 +373,82 @@ class QmtExtraTests(unittest.TestCase):
             self.assertTrue(any("Income" in line for line in progress
                                 if "FINANCIAL_TABLE_START" in line))
 
+    def test_financial_recovery_reuses_verified_tables_without_recontacting_qmt(self):
+        import contextlib
+        class FullFinancialXt(FakeXt):
+            def get_financial_data(self, codes, names, **kwargs):
+                return {codes[0]: {names[0]: FakeFrame(
+                    [{"m_timetag": 20260930, "source": names[0]}])}}
+        class InterruptedXt(FullFinancialXt):
+            def download_financial_data(self, codes, names):
+                if names == ["CashFlow"]:
+                    raise RuntimeError("synthetic API blocks at CashFlow")
+                return super().download_financial_data(codes, names)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            work = Path(tmp) / "private"
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                with self.assertRaisesRegex(RuntimeError, "CashFlow"):
+                    E.run(root, xt=InterruptedXt(), apply=True,
+                          section="financial", today=date(2026, 11, 15),
+                          stock_limit=1, workspace=work,
+                          progress=lambda _: None)
+            self.assertFalse((work / "progress.json").exists())
+            extra = root / "AllCycleAStockData" / "qmt_extra"
+            for name in ("Balance", "Income"):
+                self.assertEqual(E._verified_financial_snapshot(
+                    extra, "600000.SH", name, "2026-11-15"), 1)
+            class RecoveryXt(FullFinancialXt):
+                def download_financial_data(self, codes, names):
+                    if names in (["Balance"], ["Income"]):
+                        raise AssertionError("Already saved table re-downloaded")
+                    return super().download_financial_data(codes, names)
+            xt = RecoveryXt()
+            events = []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = E.run(root, xt=xt, apply=True,
+                               section="financial", today=date(2026, 11, 15),
+                               stock_limit=1, workspace=work,
+                               progress=events.append)
+            self.assertEqual(result["sections"]["financial"]["cursor"],
+                             "600000.SH")
+            self.assertEqual([call[2] for call in xt.download_calls
+                              if call[0] == "financial"],
+                             [(name,) for name in E.FIN_TABLES[2:]])
+            reused = [json.loads(line.split("=", 1)[1])
+                      for line in events if line.startswith(
+                          "MARKET_QMT_EXTRA_FINANCIAL_TABLE_REUSED=")]
+            self.assertEqual({row["table"] for row in reused},
+                             {"Balance", "Income"})
+            self.assertTrue(all(row["status"] == "REUSED_VERIFIED"
+                                for row in reused))
+            self.assertIsNone(E._verified_financial_snapshot(
+                extra, "600000.SH", "Balance", "2026-11-16"),
+                "A prior-day snapshot must never suppress a new day's refresh")
+
+    def test_financial_recovery_rejects_corrupted_or_mismatched_snapshots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            extra = Path(tmp) / "qmt_extra"
+            for name in ("Balance", "Income"):
+                tab = E.snapshot_table("2026-11-15", "600000.SH", name,
+                                       [{"m_timetag": 20260930, "v": 2.0}])
+                E._snapshot_write(extra,
+                    "financial/" + name + "/600000.SH",
+                    "2026-11-15", tab, Path(tmp) / "private")
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600000.SH", "Balance", "2026-11-15"), 1)
+            folder = extra / "financial" / "Balance" / "600000.SH" / "snapshots"
+            original = next(folder.glob("*.parquet"))
+            altered = original.with_name("2026-11-15-0000000000000000.parquet")
+            original.rename(altered)
+            with self.assertRaisesRegex(ValueError, "fingerprint mismatch"):
+                E._verified_financial_snapshot(
+                    extra, "600000.SH", "Balance", "2026-11-15")
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600000.SH", "Income", "2026-11-15"), 1)
+
     def test_sectors_section_runs_without_financial_and_etf_download(self):
         import contextlib
         with tempfile.TemporaryDirectory() as tmp:

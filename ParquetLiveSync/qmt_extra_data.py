@@ -466,9 +466,14 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print):
         xt.download_financial_data([code], [name])
         progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
                  canonical_json({"symbol": code, "table": name}))
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_START=" +
+                 canonical_json({"symbol": code, "table": name,
+                                 "api": "get_financial_data"}))
         data = xt.get_financial_data([code], [name],
                                      start_time="", end_time="",
                                      report_type="report_time")
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_DONE=" +
+                 canonical_json({"symbol": code, "table": name}))
         if not isinstance(data, dict) or not isinstance(data.get(code), dict):
             raise ValueError("QMT financial response missing requested symbol " + code
                              + " table=" + name)
@@ -477,14 +482,28 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print):
             raise ValueError("QMT financial response unexpected table for " +
                              code + " requested=" + name +
                              " keys=" + canonical_json(sorted(received)))
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_START=" +
+                 canonical_json({"symbol": code, "table": name}))
         values = dataframe_records(received.get(name))
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=" +
+                 canonical_json({"symbol": code, "table": name,
+                                 "rows": len(values)}))
         if not values:
             summary[name] = {"rows": 0, "status": "NO_SOURCE_RECORDS"}
         else:
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SNAPSHOT_START=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "rows": len(values)}))
             table = snapshot_table(today.isoformat(), code, name, values)
             path = _snapshot_path(extra, "financial/" + name + "/" + code,
                                   today.isoformat(), table)
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_START=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "rows": len(values)}))
             result = _atomic_parquet(path, table, workspace=workspace)
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_DONE=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "status": result["status"]}))
             summary[name] = {"rows": len(values), "status": result["status"]}
         progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_COMPLETE=" +
                  canonical_json({"symbol": code, "table": name, **summary[name]}))

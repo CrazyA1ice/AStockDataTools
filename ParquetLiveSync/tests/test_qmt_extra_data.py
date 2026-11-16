@@ -679,6 +679,44 @@ class QmtExtraTests(unittest.TestCase):
                              "UNVERIFIED_HISTORICAL_COMPLETENESS")
             self.assertEqual(receipt["tables"]["Income"]["rows"], 12)
 
+    def test_offline_financial_snapshot_audit_inspects_raw_markers_readonly(self):
+        import qmt_extra_financial_audit as AUDIT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            tab = E.snapshot_table(
+                "2026-11-16", "000008.SZ", "Income", [
+                    {"m_timetag": 20231231, "v": 1.},
+                    {"m_timetag": 20240930, "v": 2.}])
+            E._snapshot_write(
+                extra, "financial/Income/000008.SZ",
+                "2026-11-16", tab, private)
+            file = next((extra / "financial" / "Income" / "000008.SZ" /
+                         "snapshots").glob("*.parquet"))
+            fingerprint = L.hash_file(file)
+            result = AUDIT.audit(
+                root, "000008.SZ", "2026-11-16", workspace=private)
+            self.assertEqual(result["status"],
+                             "READONLY_FINANCIAL_COVERAGE_UNVERIFIED")
+            self.assertEqual(result["snapshot_tables"], 1)
+            self.assertEqual(result["tables"]["Income"]["rows"], 2)
+            self.assertEqual(result["tables"]["Income"]["status"],
+                             "SPARSE_RECORDS_NEED_REVIEW")
+            self.assertEqual(result["tables"]["Income"]["raw_m_timetag_min"],
+                             "20231231")
+            self.assertEqual(result["tables"]["Income"]["raw_m_timetag_max"],
+                             "20240930")
+            self.assertEqual(result["tables"]["Top10FlowHolder"]["status"],
+                             "NO_SNAPSHOT")
+            self.assertFalse(result["source_report_dates_validated"])
+            self.assertFalse(result["progress_modified"])
+            self.assertEqual(fingerprint, L.hash_file(file))
+            self.assertFalse((private / "progress.json").exists())
+            self.assertEqual(AUDIT.audit(
+                root, "000008.SZ", "2026-11-17", workspace=private)
+                ["snapshot_tables"], 0)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

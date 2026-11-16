@@ -547,6 +547,157 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(E._verified_financial_snapshot(
                 extra, "600000.SH", "PershareIndex", "2026-11-16"), 1)
 
+    def test_tolerant_financial_queue_highwater_and_explicit_retries(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = ["600000.SH", "600001.SH"]
+            calls = []
+            fail_once = {"pending": True}
+            def simulate_worker(code, name, workspace, **kwargs):
+                calls.append((code, name))
+                if code == "600000.SH" and name == "CashFlow" and fail_once["pending"]:
+                    raise TimeoutError("synthetic QMT timeout")
+                return [{"_index": "20260930", "m_timetag": 20260930, "v": 1.}]
+            log = []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=simulate_worker):
+                first = E.run(
+                    root, xt=xt, apply=True, section="financial",
+                    today=date(2026, 11, 16), stock_limit=2,
+                    workspace=private, financial_timeout_seconds=30,
+                    financial_continue_on_error=True, progress=log.append)
+                state = E._state(E._storage(root), private)
+                self.assertEqual(state["cursor"]["financial"], "600001.SH")
+                self.assertEqual(sorted(state["financial_pending"]),
+                                 ["600000.SH"])
+                self.assertEqual(state["financial_pending"]["600000.SH"]["table"],
+                                 "CashFlow")
+                self.assertEqual(state["financial_pending"]["600000.SH"]["attempts"], 1)
+                self.assertEqual(first["status"],
+                                 "BATCH_HAS_PENDING_FINANCIAL_RETRIES")
+                self.assertEqual(first["sections"]["financial"]["symbols_processed"], 1)
+                self.assertEqual(first["sections"]["financial"]["symbols_deferred"], 1)
+                self.assertTrue(first["sections"]["financial"]["scan_exhausted"])
+                self.assertTrue(any("FINANCIAL_DEFERRED=" in text for text in log))
+                preview = E.run(
+                    root, xt=xt, apply=False, section="financial",
+                    today=date(2026, 11, 16), stock_limit=2,
+                    workspace=private, financial_continue_on_error=True,
+                    progress=lambda _: None)
+                self.assertEqual(preview["next"]["financial"], [],
+                                 "Tolerant high-water scan cannot silently wrap")
+                self.assertEqual(preview["financial_pending_count"], 1)
+                self.assertEqual(E.run(
+                    root, xt=xt, apply=False, section="financial",
+                    today=date(2026, 11, 16), stock_limit=2,
+                    workspace=private, financial_continue_on_error=True,
+                    financial_retry_pending=True, progress=lambda _: None
+                    )["next"]["financial"], ["600000.SH"])
+                fail_once["pending"] = False
+                calls.clear()
+                second = E.run(
+                    root, xt=xt, apply=True, section="financial",
+                    today=date(2026, 11, 16), stock_limit=2,
+                    workspace=private, financial_timeout_seconds=30,
+                    financial_continue_on_error=True,
+                    financial_retry_pending=True, progress=lambda _: None)
+                self.assertEqual(sorted(calls),
+                                 sorted(("600000.SH", name)
+                                        for name in E.FIN_TABLES[2:]))
+                self.assertEqual(second["sections"]["financial"]["cursor"],
+                                 "600001.SH",
+                                 "Retry completion must not rewind scan cursor")
+                self.assertEqual(second["sections"]["financial"]["pending_retry_count"],
+                                 0)
+                self.assertEqual(second["sections"]["financial"]["symbols_processed"],
+                                 1)
+                self.assertEqual(E._state(E._storage(root), private)
+                                 ["financial_pending"], {})
+            receipts = [json.loads(row) for row in
+                        (private / "financial-coverage.jsonl").read_text(
+                            encoding="utf-8").splitlines()]
+            self.assertEqual([item["symbol"] for item in receipts],
+                             ["600001.SH", "600000.SH"])
+            self.assertTrue(all(item["coverage_status"] ==
+                                "UNVERIFIED_HISTORICAL_COMPLETENESS"
+                                for item in receipts))
+
+    def test_tolerant_queue_is_not_implicit_and_does_not_hide_corruption(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=TimeoutError("source stalled")):
+                with self.assertRaises(E.FinancialDeferredError):
+                    E.run(root, xt=xt, apply=True, section="financial",
+                          today=date(2026, 11, 16), stock_limit=1,
+                          workspace=private, financial_timeout_seconds=30)
+            self.assertFalse((private / "progress.json").exists(),
+                             "Default failure must never advance the cursor")
+            with self.assertRaisesRegex(ValueError, "require --section financial"):
+                E.run(root, xt=xt, apply=False, section="all",
+                      financial_continue_on_error=True)
+            with self.assertRaisesRegex(ValueError, "requires explicit"):
+                E.run(root, xt=xt, apply=False, section="financial",
+                      financial_retry_pending=True)
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_verified_financial_snapshot",
+                              side_effect=ValueError("corrupted parquet")):
+                with self.assertRaisesRegex(ValueError, "corrupted parquet"):
+                    E.run(root, xt=xt, apply=True, section="financial",
+                          today=date(2026, 11, 16), stock_limit=1,
+                          workspace=private, financial_timeout_seconds=30,
+                          financial_continue_on_error=True)
+            self.assertFalse((private / "progress.json").exists(),
+                             "Local corrupt data may not be queued as a broker failure")
+
+    def test_financial_coverage_receipt_flags_sparse_and_empty_tables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "private"
+            summary = {name: {"rows": 50, "status": "CREATED"}
+                       for name in E.FIN_TABLES}
+            summary["Income"] = {"rows": 12, "status": "CREATED"}
+            summary["Top10FlowHolder"] = {
+                "rows": 0, "status": "NO_SOURCE_RECORDS"}
+            E._financial_coverage_receipt(
+                work, "000008.SZ", "2026-11-16", summary)
+            receipt = json.loads((work / "financial-coverage.jsonl")
+                                 .read_text(encoding="utf-8").strip())
+            self.assertEqual(receipt["low_record_tables"], ["Income"])
+            self.assertEqual(receipt["empty_source_tables"], ["Top10FlowHolder"])
+            self.assertEqual(receipt["coverage_status"],
+                             "UNVERIFIED_HISTORICAL_COMPLETENESS")
+            self.assertEqual(receipt["tables"]["Income"]["rows"], 12)
+
+    def test_malformed_financial_pending_queue_fails_closed(self):
+        good = {"cursor": {"financial": "600001.SH"},
+                "financial_pending": {"600000.SH": {
+                    "table": "CashFlow", "attempts": 1}}}
+        self.assertEqual(E._financial_selection(
+            ["600001.SH", "600000.SH"], good, 1,
+            tolerate=True, retry_pending=True), ["600000.SH"])
+        bad = {"cursor": {"financial": "600001.SH"},
+               "financial_pending": {"600000.SH": {
+                   "table": "BadTable", "attempts": 1}}}
+        with self.assertRaisesRegex(ValueError, "Invalid pending"):
+            E._financial_selection(
+                ["600001.SH", "600000.SH"], bad, 1,
+                tolerate=True, retry_pending=True)
+        with self.assertRaisesRegex(ValueError, "missing from universe"):
+            E._financial_selection(
+                ["600001.SH"], good, 1, tolerate=True,
+                retry_pending=True)
+
     def test_sectors_section_runs_without_financial_and_etf_download(self):
         import contextlib
         with tempfile.TemporaryDirectory() as tmp:

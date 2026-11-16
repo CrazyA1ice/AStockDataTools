@@ -139,7 +139,7 @@ def _plan_symbol(extra, code, asof, source):
             raise ValueError("SOURCE_HISTORY_CONFLICT " + code +
                              " table=" + table + " removed_or_revised=" +
                              str(sum(missing.values())))
-        if old is not None and old_date > asof:
+        if old_date is not None and old_date > asof:
             raise ValueError("QMT source observation older than saved snapshot")
         action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
                   "UNCHANGED" if saved == current else "CREATE_VERSION")

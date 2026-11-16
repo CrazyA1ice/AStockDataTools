@@ -29,8 +29,9 @@ def audit(root, symbol, asof, *, workspace=E.WORK):
                              "raw_m_timetag_min": None,
                              "raw_m_timetag_max": None}
             continue
-        folder = extra / "financial" / name / symbol / "snapshots"
-        path = next(folder.glob(asof + "-*.parquet"))
+        path = E._financial_snapshot_file(extra, symbol, name, asof)
+        if path is None:
+            raise ValueError("Missing verified financial snapshot selection")
         table = E._read_closed_parquet(path)
         raw = []
         for record in table.column("payload_json").to_pylist():

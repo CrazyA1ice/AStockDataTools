@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -330,12 +331,20 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(len([line for line in progress
                 if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=")]),
                 len(E.FIN_TABLES))
-            self.assertEqual(len([line for line in progress
-                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_START=")]),
-                len([name for name in E.FIN_TABLES if name != "PerShare"]))
-            self.assertEqual(len([line for line in progress
-                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_DONE=")]),
-                len([name for name in E.FIN_TABLES if name != "PerShare"]))
+            decoded = [json.loads(line.split("=", 1)[1])
+                       for line in progress if line.startswith(
+                           "MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=")]
+            expected_saved = {row["table"] for row in decoded
+                              if row["rows"] > 0}
+            # FakeXt only provides Balance and Income; absent tables should
+            # be read and completed, but must not create empty Parquet files.
+            self.assertEqual(expected_saved, {"Balance", "Income"})
+            for phase in ("SAVE_START", "SAVE_DONE"):
+                emitted = [json.loads(line.split("=", 1)[1])["table"]
+                           for line in progress if line.startswith(
+                               "MARKET_QMT_EXTRA_FINANCIAL_TABLE_" + phase + "=")]
+                self.assertEqual(set(emitted), expected_saved)
+                self.assertEqual(len(emitted), len(expected_saved))
 
 
     def test_failing_second_financial_table_does_not_advance_cursor(self):

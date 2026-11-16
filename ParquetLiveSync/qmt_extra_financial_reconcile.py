@@ -107,6 +107,9 @@ def reconcile(root, *, asof=None, baseline_asof=BASELINE_ASOF,
             progress("QMT_FINANCIAL_REPAIR_SUMMARY=" + E.canonical_json(report))
             return report
 
+        if asof != datetime.now(E.L.UTC8).date().isoformat():
+            raise ValueError("Market date changed during cached financial preview; "
+                             "rerun with the new observation day")
         # Both tables have already passed the same-source superset audit.
         # Snapshot commits are one table at a time; each table independently
         # keeps an immutable previous version and an atomic active pointer.

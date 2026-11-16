@@ -321,6 +321,22 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(len([line for line in progress
                 if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_COMPLETE=")]),
                 len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_START=")]),
+                len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_DONE=")]),
+                len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=")]),
+                len(E.FIN_TABLES))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_START=")]),
+                len([name for name in E.FIN_TABLES if name != "PerShare"]))
+            self.assertEqual(len([line for line in progress
+                if line.startswith("MARKET_QMT_EXTRA_FINANCIAL_TABLE_SAVE_DONE=")]),
+                len([name for name in E.FIN_TABLES if name != "PerShare"]))
+
 
     def test_failing_second_financial_table_does_not_advance_cursor(self):
         import contextlib

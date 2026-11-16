@@ -173,3 +173,13 @@ Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=00
 本阶段加入 `_verified_financial_snapshot`：为当天、该股票、该财务表查找先前成功落盘的单个内容指纹 Parquet 快照，严格校验 schema、每行 `asof/symbol/item/index` 与快照文件名的内容哈希；**只有全部匹配才输出 `MARKET_QMT_EXTRA_FINANCIAL_TABLE_REUSED` 并跳过重复 QMT 下载**。找不到则仍正常下载；损坏、冲突快照拒绝且不推进股票游标；不同日期快照不能抑制当天刷新。空表没有快照，仍如实查询；绝不能合成缺失财务记录。恢复后，整只股票九表均完成才推进 `financial` 游标。
 
 这只是**同日已完成表复用**，不是对 QMT 同步 `download_financial_data` 的强制超时或自动失败队列；其余未缓存的表仍可能卡住。夜间 21:30 已有购买版自动行情任务，在其结束前不要启动新增试点。下阶段需要将单只股票 QMT 调用交由独立子进程运行，设置可验证的超时与失败分类，再实现受控队列跳过与重试，避免影响原有八周期/H5。
+
+## 2026-11-16 财务表进程隔离与超时控制（第二阶段）
+
+为应对真机 `000006.SZ` 先后在 `PershareIndex` 和 `CashFlow` 附近的 QMT 同步接口长期停滞，新增 `qmt_extra_financial_worker.py`。**只有 extras 模式下的财务表真实调用使用子进程**，原八周期更新、H5、已有 21:30 定时入口和其他四类 QMT 数据不改。父进程保留 `LIVE.exclusive_writer` 写入锁、进度游标与 Parquet 文件写入权；子进程仅连接 QMT、逐表调用 `download_financial_data`/`get_financial_data`，将完整原始字段及索引保存到私有一次性 JSON。父进程校验结果结构/证券/表名/大小，并原样生成和提交内容指纹快照。
+
+默认每个未完成的财务表 **180 秒**限时，可以在原 PowerShell 入口添加 `-ExtraFinancialTimeoutSeconds 180`（合法范围 30..3600）。子进程超时由父进程终止并回收；非零退出或结果文件异常也失败关闭。**超时/失败不推进股票游标**，记录到 `ParquetLiveSync/work/qmt_extra/financial-failures.jsonl`，带 `symbol/table/asof/reason/status=PENDING_RETRY`；失败队列现为可审计待重试账本，不会悄悄越过失败的股票。前面已经正确保存的同日财务表经指纹验证后复用，故真机 `000006.SZ` 的 7 张已保存表无需再次 QMT 下载。
+
+日志中的 `MARKET_QMT_EXTRA_FINANCIAL_WORKER_START`/`WORKER_DOWNLOAD_START`/`TABLE_FETCHED`/`TABLE_READ_START`/`READ_DONE`/`DECODE_DONE`/`WORKER_EXPORT_DONE`/`WORKER_DONE` 区分父子进程，`WORKER_TIMEOUT` 表示实际超时。该墙钟限制覆盖 **子进程启动、QMT 下载/读取及导出**；不涵盖外部 `discover`、非财务接口、父进程 Parquet 写入或退出后其余批次，因此不能声称整个市场采集已经具备全局超时/自动无人值守能力。
+
+离线新增模拟 worker 正常返回、超时持久失败、七表缓存复用和真正剩余两表调用等测试（总共 34 项），**需 Windows 端真实运行验证后再进行单只试点**。第一次可先只用 `-Mode extras -ExtraSection financial -DryRun` 检查下一只证券，再 `-ExtraStockLimit 1 -ExtraStart "2011-01-01" -ExtraFinancialTimeoutSeconds 180` 小试。原 `000006.SZ` 在 `2026-11-16` 已有七张当日快照；跨日期不自动复用，防止将过时财报标记为当天最新数据。**跨日增量/来源版本校验尚待后续开发**，禁止靠手动修改 `progress.json` 或更改 `-Day` 冒充历史源真实时点。原有 21:30 定时任务继续单独运行，保持 extras 未启用。

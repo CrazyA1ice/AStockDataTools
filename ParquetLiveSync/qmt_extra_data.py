@@ -581,7 +581,8 @@ def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
         return values
 
 
-def _fetch_financial(xt, extra, code, today, workspace, progress=print):
+def _fetch_financial(xt, extra, code, today, workspace, progress=print,
+                     financial_timeout_seconds=None):
     """Download one QMT financial table at a time, emitting exact stop point.
 
     QMT's empty table_list expands to every report internally with no
@@ -604,31 +605,38 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print):
         progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_START=" +
                  canonical_json({"symbol": code, "table": name,
                                  "api": "download_financial_data"}))
-        xt.download_financial_data([code], [name])
-        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
-                 canonical_json({"symbol": code, "table": name}))
-        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_START=" +
-                 canonical_json({"symbol": code, "table": name,
-                                 "api": "get_financial_data"}))
-        data = xt.get_financial_data([code], [name],
-                                     start_time="", end_time="",
-                                     report_type="report_time")
-        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_DONE=" +
-                 canonical_json({"symbol": code, "table": name}))
-        if not isinstance(data, dict) or not isinstance(data.get(code), dict):
-            raise ValueError("QMT financial response missing requested symbol " + code
-                             + " table=" + name)
-        received = data[code]
-        if set(received) - {name}:
-            raise ValueError("QMT financial response unexpected table for " +
-                             code + " requested=" + name +
-                             " keys=" + canonical_json(sorted(received)))
-        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_START=" +
-                 canonical_json({"symbol": code, "table": name}))
-        values = dataframe_records(received.get(name))
-        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=" +
-                 canonical_json({"symbol": code, "table": name,
-                                 "rows": len(values)}))
+        if financial_timeout_seconds is not None:
+            values = _read_financial_isolated(
+                code, name, workspace,
+                timeout_seconds=financial_timeout_seconds,
+                asof=today.isoformat(), progress=progress)
+        else:
+            # In-process fake XT for unit tests; live CLI uses the watchdog.
+            xt.download_financial_data([code], [name])
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
+                     canonical_json({"symbol": code, "table": name}))
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_START=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "api": "get_financial_data"}))
+            data = xt.get_financial_data([code], [name],
+                                         start_time="", end_time="",
+                                         report_type="report_time")
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_DONE=" +
+                     canonical_json({"symbol": code, "table": name}))
+            if not isinstance(data, dict) or not isinstance(data.get(code), dict):
+                raise ValueError("QMT financial response missing requested symbol " + code
+                                 + " table=" + name)
+            received = data[code]
+            if set(received) - {name}:
+                raise ValueError("QMT financial response unexpected table for " +
+                                 code + " requested=" + name +
+                                 " keys=" + canonical_json(sorted(received)))
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_START=" +
+                     canonical_json({"symbol": code, "table": name}))
+            values = dataframe_records(received.get(name))
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_DECODE_DONE=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "rows": len(values)}))
         if not values:
             summary[name] = {"rows": 0, "status": "NO_SOURCE_RECORDS"}
         else:
@@ -771,7 +779,7 @@ def _fetch_etf_catalog(xt, extra, today, workspace):
 
 def run(root, *, xt, apply=False, today=None, since=SINCE,
         stock_limit=40, asset_limit=5, section="all",
-        workspace=WORK, progress=print):
+        workspace=WORK, progress=print, financial_timeout_seconds=None):
     """One bounded, repeatable batch. A complete historical import takes batches."""
     today = today or datetime.now(L.UTC8).date()
     if not isinstance(today, date) or not isinstance(since, date) or today < since:
@@ -844,8 +852,9 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
                 progress("MARKET_QMT_EXTRA_SYMBOL_START=" +
                          canonical_json({"section": key, "symbol": code}))
                 if key == "financial":
-                    item = _fetch_financial(xt, extra, code, today, workspace,
-                                            progress=progress)
+                    item = _fetch_financial(
+                        xt, extra, code, today, workspace, progress=progress,
+                        financial_timeout_seconds=financial_timeout_seconds)
                 elif key == "adjustments":
                     item = _fetch_adjustments(xt, extra, code, today, since,
                                               workspace, progress=progress)

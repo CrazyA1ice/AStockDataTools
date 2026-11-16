@@ -1135,6 +1135,119 @@ class QmtExtraTests(unittest.TestCase):
                              "PAUSED_INSUFFICIENT_PRE_2130_WORST_CASE_WINDOW")
             self.assertEqual(result["symbols_processed"], 0)
 
+    def test_unattended_financial_finishes_once_without_wrapping(self):
+        import qmt_extra_financial_unattended as U
+        now = datetime(2026, 11, 17, 0, 30, tzinfo=L.UTC8)
+        calls = []
+        def fake_scan(*args, **kwargs):
+            calls.append(kwargs["apply"])
+            return {"status": "SCAN_EXHAUSTED_PENDING_RETRIES",
+                    "symbols_processed": 4, "symbols_deferred": 1,
+                    "last_cursor": "920000.BJ", "pending_retry_count": 1}
+        result = U.run_foreground(
+            Path("D:/stock"), xt=FakeXt(), scan_fn=fake_scan,
+            clock=lambda: now, sleep=lambda _: self.fail("Unexpected sleep"),
+            progress=lambda _: None)
+        self.assertEqual(calls, [True])
+        self.assertTrue(result["scan_exhausted"])
+        self.assertEqual(result["status"], "SCAN_EXHAUSTED_PENDING_RETRIES")
+        self.assertEqual(result["processed_total"], 4)
+        self.assertEqual(result["pending_retry_count"], 1)
+
+    def test_unattended_financial_resumes_only_after_protected_window(self):
+        import qmt_extra_financial_unattended as U
+        instant = [datetime(2026, 11, 16, 21, 10, tzinfo=L.UTC8)]
+        calls = []
+        waits = []
+        def fake_scan(*args, **kwargs):
+            calls.append(instant[0])
+            return {"status": ("PAUSED_PROTECTED_2130_WINDOW"
+                               if len(calls) == 1 else
+                               "SCAN_EXHAUSTED_COVERAGE_UNVERIFIED"),
+                    "symbols_processed": 0 if len(calls) == 1 else 5,
+                    "symbols_deferred": 0,
+                    "last_cursor": "000026.SZ", "pending_retry_count": 0}
+        def fake_sleep(seconds):
+            waits.append(seconds)
+            instant[0] += timedelta(seconds=seconds)
+        result = U.run_foreground(
+            Path("D:/stock"), xt=FakeXt(), scan_fn=fake_scan,
+            clock=lambda: instant[0], sleep=fake_sleep,
+            progress=lambda _: None)
+        self.assertEqual(result["sessions"], 2)
+        self.assertEqual(result["processed_total"], 5)
+        self.assertEqual(len(waits), 1)
+        self.assertEqual(instant[0],
+                         datetime(2026, 11, 16, 23, 5, tzinfo=L.UTC8))
+        self.assertEqual(calls[-1], instant[0])
+
+    def test_unattended_financial_time_budget_with_progress_resumes(self):
+        import qmt_extra_financial_unattended as U
+        now = datetime(2026, 11, 17, 1, 0, tzinfo=L.UTC8)
+        calls = []
+        def fake_scan(*args, **kwargs):
+            calls.append(1)
+            return {"status": ("PAUSED_TIME_BUDGET" if len(calls) == 1
+                               else "SCAN_EXHAUSTED_COVERAGE_UNVERIFIED"),
+                    "symbols_processed": 3 if len(calls) == 1 else 2,
+                    "symbols_deferred": 0, "last_cursor": "000030.SZ",
+                    "pending_retry_count": 0}
+        result = U.run_foreground(
+            Path("D:/stock"), xt=FakeXt(), scan_fn=fake_scan,
+            clock=lambda: now, sleep=lambda _: self.fail("Should not sleep"),
+            progress=lambda _: None)
+        self.assertEqual(result["sessions"], 2)
+        self.assertEqual(result["processed_total"], 5)
+
+    def test_unattended_financial_zero_progress_budget_fails_closed(self):
+        import qmt_extra_financial_unattended as U
+        now = datetime(2026, 11, 17, 1, 0, tzinfo=L.UTC8)
+        with self.assertRaisesRegex(RuntimeError, "made no progress"):
+            U.run_foreground(
+                Path("D:/stock"), xt=FakeXt(),
+                scan_fn=lambda *a, **kw: {
+                    "status": "PAUSED_TIME_BUDGET",
+                    "symbols_processed": 0,
+                    "symbols_deferred": 0, "last_cursor": "000026.SZ",
+                    "pending_retry_count": 0},
+                clock=lambda: now, sleep=lambda _: None,
+                progress=lambda _: None)
+
+    def test_unattended_financial_unexpected_error_is_not_retried(self):
+        import qmt_extra_financial_unattended as U
+        now = datetime(2026, 11, 17, 1, 0, tzinfo=L.UTC8)
+        calls = []
+        def fail(*args, **kwargs):
+            calls.append(1)
+            raise OSError("Corrupt Parquet (simulated)")
+        with self.assertRaisesRegex(OSError, "Corrupt Parquet"):
+            U.run_foreground(
+                Path("D:/stock"), xt=FakeXt(), scan_fn=fail,
+                clock=lambda: now, sleep=lambda _: None,
+                progress=lambda _: None)
+        self.assertEqual(len(calls), 1)
+
+    def test_unattended_financial_days_horizon_fails_safe(self):
+        import qmt_extra_financial_unattended as U
+        start = datetime(2026, 11, 17, 1, 0, tzinfo=L.UTC8)
+        ticks = iter([start, start + timedelta(days=2)])
+        result = U.run_foreground(
+            Path("D:/stock"), xt=FakeXt(), max_days=1,
+            scan_fn=lambda *args, **kwargs: self.fail("Must not scan"),
+            clock=lambda: next(ticks), sleep=lambda _: None,
+            progress=lambda _: None)
+        self.assertEqual(result["status"], "STOPPED_MAX_DAYS")
+        self.assertEqual(result["sessions"], 0)
+
+    def test_unattended_financial_keep_awake_opt_in_guard(self):
+        import qmt_extra_financial_unattended as U
+        with U.keep_awake(False):
+            pass
+        with patch.object(U.sys, "platform", "linux"):
+            with self.assertRaisesRegex(RuntimeError, "requires Windows"):
+                with U.keep_awake(True):
+                    pass
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

@@ -17,6 +17,9 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import sys
+import tempfile
 from typing import Any
 
 import pyarrow as pa
@@ -487,6 +490,95 @@ def _verified_financial_snapshot(extra, code, name, asof):
         raise ValueError("QMT financial snapshot fingerprint mismatch: " +
                          str(path))
     return table.num_rows
+
+
+def _record_financial_failure(workspace, code, name, asof, reason, detail):
+    """Append-only pending retry record; never marks a security complete."""
+    workspace = Path(workspace)
+    _path_check(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    path = workspace / "financial-failures.jsonl"
+    _path_check(path)
+    entry = {
+        "at": datetime.now(L.UTC8).isoformat(), "asof": asof,
+        "symbol": code, "table": name, "status": "PENDING_RETRY",
+        "reason": reason, "detail": str(detail)[:500]}
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(canonical_json(entry) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
+                             asof, progress=print):
+    """Run QMT financial calls in a killable worker; no worker Parquet writes."""
+    code = valid_code(code)
+    if name not in FIN_TABLES or not isinstance(timeout_seconds, int):
+        raise ValueError("Invalid QMT financial worker arguments")
+    if not 30 <= timeout_seconds <= 3600:
+        raise ValueError("QMT financial timeout must be 30..3600 seconds")
+    workspace = Path(workspace)
+    _path_check(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="financial-worker-",
+                                     dir=str(workspace)) as dirname:
+        output = Path(dirname) / "records.json"
+        command = [
+            sys.executable, "-u", "-B",
+            str(Path(__file__).resolve().with_name(
+                "qmt_extra_financial_worker.py")),
+            "--symbol", code, "--table", name, "--output", str(output)]
+        progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_START=" +
+                 canonical_json({"symbol": code, "table": name,
+                                 "timeout_seconds": timeout_seconds}))
+        try:
+            completed = subprocess.run(command, timeout=timeout_seconds,
+                                       check=False)
+        except subprocess.TimeoutExpired as exc:
+            _record_financial_failure(
+                workspace, code, name, asof, "TIMEOUT",
+                "QMT financial worker exceeded " +
+                str(timeout_seconds) + " seconds")
+            progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_TIMEOUT=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     "timeout_seconds": timeout_seconds}))
+            raise TimeoutError(
+                "QMT financial worker timeout: " + code +
+                " table=" + name + " seconds=" +
+                str(timeout_seconds)) from exc
+        if completed.returncode != 0:
+            _record_financial_failure(
+                workspace, code, name, asof, "WORKER_NONZERO_EXIT",
+                "exit code=" + str(completed.returncode))
+            raise RuntimeError(
+                "QMT financial worker failed: " + code +
+                " table=" + name + " exit=" + str(completed.returncode))
+        try:
+            _path_check(output)
+            if not output.is_file() or output.is_symlink():
+                raise ValueError("QMT worker produced no result file")
+            if output.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError("QMT financial worker result too large")
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            if (not isinstance(payload, dict)
+                    or payload.get("format") != "qmt_financial_worker_v1"
+                    or payload.get("symbol") != code
+                    or payload.get("table") != name
+                    or not isinstance(payload.get("records"), list)
+                    or len(payload["records"]) > 100000
+                    or any(not isinstance(row, dict) or
+                           not isinstance(row.get("_index"), str)
+                           for row in payload["records"])):
+                raise ValueError("Invalid QMT financial worker payload")
+            values = payload["records"]
+        except (ValueError, OSError, UnicodeError, TypeError) as exc:
+            _record_financial_failure(
+                workspace, code, name, asof, "INVALID_WORKER_RESULT", exc)
+            raise
+        progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_DONE=" +
+                 canonical_json({"symbol": code, "table": name,
+                                 "rows": len(values)}))
+        return values
 
 
 def _fetch_financial(xt, extra, code, today, workspace, progress=print):

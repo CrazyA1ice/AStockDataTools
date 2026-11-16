@@ -157,3 +157,11 @@ Windows 真机只读 QMT 缓存查询 `158000.SZ` 2026 年 `15m`（848 条）复
 现在 **仅在 OHLC 边界校验比较**中容许最多 4 ULP 浮点舍入差异；不改变源值、文件结构、时间戳、成交量/额校验和非有限值处理。超过 4 ULP 的逆序值以及真实非法数据仍报错；新增真实值保留、low 方向微误差和更大差异拒绝三个回归测试。
 
 这只是确认错误根因并修正误判，**仍需本机拉取分支运行全套离线测试并重试 `-Mode extras -ExtraSection etf -ExtraAssetLimit 1 -ExtraStart 2011-01-01` 才能确认全八周期真实下载完成**。之前 1min/5min 已提交的记录留在专用 `qmt_extra/etf`，失败未推进 ETF 游标。不要改为近期起点以免历史覆盖被错误标记完成；现有购买版股票八周期/H5/21:30 任务不变。
+
+## 2026-11-16 财务批次停滞：000006.SZ / PershareIndex
+
+Windows QMT 第一次扩大到 `-ExtraSection financial -ExtraStockLimit 5`：`000002.SZ` 九张表全部 `MARKET_QMT_EXTRA_COMMITTED`；`000006.SZ` 到 `PershareIndex` 的 `MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED` 后久未继续。根据执行顺序，`download_financial_data` 已返回，后续可能卡在 `get_financial_data`、`dataframe_records`、快照序列化或 Parquet 写入。该位置尚不能证明具体原因。剩余财务证券和除权阶段尚未处理。
+
+新增财务单表分阶段日志 `FINANCIAL_TABLE_READ_START/READ_DONE`、`DECODE_START/DECODE_DONE`、`SNAPSHOT_START` 和 `SAVE_START/SAVE_DONE`，保留旧 `START/FETCHED/COMPLETE`。新增相应回归断言；未修改数据有效性、证券游标、重叠写入、QMT 调度或原购八周期目录。这是诊断增强，**不是 QMT API 超时修复**。
+
+如果旧 Python 任务确已长时间不再前进，先在原窗口按 `Ctrl+C`，仍无法退出时只定位并终止命令行含 `qmt_extra_data.py` 的专用 Python 进程；勿结束 QMT 客户端、勿终止无关 Python。确认不再运行后更新分支，先用单只 `-ExtraSection financial -ExtraStockLimit 1` 续跑 `000006.SZ`。不要修改进度 JSON、删除快照或直接同时启动下一个批次；停止前已提交的财务表会留在隔离目录。注意与原计划 21:30 更新避免重叠。

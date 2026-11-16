@@ -1465,6 +1465,9 @@ class QmtExtraTests(unittest.TestCase):
             root = fixture_root(tmp)
             extra = E._storage(root)
             private = Path(tmp) / "private"
+            seeded = I._state(extra, private)
+            seeded["import_cursor"] = "600000.SH"
+            I._save_state(private, seeded)
             calls = []
             def worker(group, mode, day, lookback, workspace, timeout,
                        **kwargs):
@@ -1494,6 +1497,17 @@ class QmtExtraTests(unittest.TestCase):
                              "2026-11-18")
             self.assertEqual(I._state(extra, private)["daily_cursor"],
                              "600000.SH")
+
+    def test_cache_import_daily_requires_initial_scan_completion(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            with self.assertRaisesRegex(ValueError,
+                                        "Initial QMT financial cache import"):
+                I.run(root, xt=FakeXt(), mode="daily", apply=True,
+                      workspace=private, progress=lambda _: None)
+            self.assertFalse(I._state_file(private).exists())
 
     def test_cache_import_worker_failure_preserves_state(self):
         import contextlib

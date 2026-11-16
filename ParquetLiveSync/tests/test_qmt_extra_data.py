@@ -1111,7 +1111,7 @@ class QmtExtraTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid prepared"):
                 E.run(root, financial_universe=[
                     "600000.SH", "600000.SH"], **base)
-            with self.assertRaisesRegex(ValueError, "Invalid prepared"):
+            with self.assertRaisesRegex(ValueError, "Unsupported QMT security code"):
                 E.run(root, financial_universe=["NOT_A_STOCK"], **base)
             with self.assertRaisesRegex(ValueError, "opt-in financial-only"):
                 E.run(root, financial_universe=["600000.SH"],

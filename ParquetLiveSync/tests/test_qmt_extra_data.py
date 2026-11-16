@@ -859,6 +859,92 @@ class QmtExtraTests(unittest.TestCase):
                 E._verified_financial_snapshot(
                     extra, "000008.SZ", "Income", asof)
 
+    def test_financial_cached_only_worker_never_triggers_qmt_download(self):
+        import qmt_extra_financial_worker as W
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeXt()
+            output = Path(tmp) / "cache.json"
+            W.collect(fake, "600000.SH", "Balance", output,
+                      cached_only=True, progress=lambda _: None)
+            doc = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(doc["table"], "Balance")
+            self.assertEqual(len(doc["records"]), 1)
+            self.assertFalse(fake.download_calls)
+
+    def test_repair_crash_before_switch_still_selects_original_version(self):
+        import contextlib
+        import qmt_extra_financial_reconcile as R
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            asof = datetime.now(L.UTC8).date().isoformat()
+            state = E._state(extra, private)
+            state["cursor"]["financial"] = "000009.SZ"
+            E._save_state(state, private)
+            old = [{"_index": "0", "v": 1}]
+            E._snapshot_write(extra, "financial/Income/000008.SZ", asof,
+                              E.snapshot_table(
+                                  asof, "000008.SZ", "Income", old), private)
+            original_pin = E._pin_financial_snapshot
+            pins = []
+            def fail_on_new_pin(*args, **kwargs):
+                pins.append(args[-1].name)
+                if len(pins) == 2:
+                    raise OSError("Simulated interrupted active pin switch")
+                return original_pin(*args, **kwargs)
+            def cached(code, name, workspace, **kwargs):
+                return ([*old, {"_index": "1", "v": 2}]
+                        if name == "Income" else [{"_index": "0", "holder": 1}])
+            params = {"asof": asof, "baseline_asof": asof,
+                      "apply": True, "workspace": private,
+                      "expected_minimums": {"Income": 2,
+                                             "Top10FlowHolder": 1},
+                      "progress": lambda _: None}
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \\
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=cached), \\
+                 patch.object(E, "_pin_financial_snapshot",
+                              side_effect=fail_on_new_pin):
+                with self.assertRaisesRegex(OSError, "interrupted"):
+                    R.reconcile(root, **params)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "000008.SZ", "Income", asof), 1)
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \\
+                 patch.object(E, "_read_financial_isolated",
+                              side_effect=cached):
+                R.reconcile(root, **params)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "000008.SZ", "Income", asof), 2)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "000008.SZ", "Top10FlowHolder", asof), 1)
+
+    def test_offline_audit_follows_active_financial_snapshot_pointer(self):
+        import qmt_extra_financial_audit as AUDIT
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            asof = "2026-11-16"
+            old = E.snapshot_table(
+                asof, "000008.SZ", "Income", [{"m_timetag": 19921231}])
+            new = E.snapshot_table(
+                asof, "000008.SZ", "Income", [
+                    {"m_timetag": 19921231}, {"m_timetag": 20260930}])
+            for tab in (old, new):
+                E._snapshot_write(extra, "financial/Income/000008.SZ",
+                                  asof, tab, private)
+            selected = E._snapshot_path(
+                extra, "financial/Income/000008.SZ", asof, new)
+            E._pin_financial_snapshot(extra, "000008.SZ", "Income",
+                                      asof, selected)
+            audit = AUDIT.audit(root, "000008.SZ", asof, workspace=private)
+            self.assertEqual(audit["tables"]["Income"]["rows"], 2)
+            self.assertEqual(audit["tables"]["Income"]["raw_m_timetag_max"],
+                             "20260930")
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

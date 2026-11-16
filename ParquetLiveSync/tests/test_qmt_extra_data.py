@@ -1298,6 +1298,34 @@ class QmtExtraTests(unittest.TestCase):
             self.assertNotIn("PerShare", xt.calls[0][2])
             self.assertEqual(len(xt.calls[1][2]), 9)
 
+    def test_cache_import_explicit_finance_dat_universe_adds_historical_bj(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            finance = Path(tmp) / "Finance"
+            for market, code in (("SZ", "000001"),
+                                 ("SH", "600000"), ("BJ", "920001")):
+                folder = finance / market / "86400"
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / (code + "_7001.DAT")).write_bytes(b"opaque")
+                (folder / "ignore.txt").write_bytes(b"not-finance")
+            codes, meta = I._stock_universe(FakeXt(), finance)
+            self.assertEqual(codes, [
+                "000001.SZ", "600000.SH", "920001.BJ"])
+            self.assertEqual(meta["finance_file_symbols"], 3)
+            self.assertEqual(meta["finance_only_symbols"], 2)
+            self.assertEqual(meta["source_scope"],
+                             "QMT_SECTOR_PLUS_EXPLICIT_FINANCE_DAT_NAMES")
+
+    def test_cache_import_missing_explicit_finance_dir_fails(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "Missing or redirected"):
+                I._stock_universe(FakeXt(), Path(tmp) / "no-finance")
+            empty = Path(tmp) / "Finance"
+            empty.mkdir()
+            with self.assertRaisesRegex(ValueError, "No stock-level"):
+                I._stock_universe(FakeXt(), empty)
+
     def test_cache_import_preview_never_creates_progress_or_parquet(self):
         import qmt_extra_financial_cache_import as I
         with tempfile.TemporaryDirectory() as tmp:

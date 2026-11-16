@@ -906,11 +906,16 @@ def main(argv=None):
                                               "adjustments", "index", "etf"),
                         default="all")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--financial-timeout-seconds", type=int, default=180,
+                        help="QMT per-financial-table wall timeout, 30..3600 seconds")
     args = parser.parse_args(argv)
+    if not 30 <= args.financial_timeout_seconds <= 3600:
+        parser.error("--financial-timeout-seconds must be 30..3600")
     from xtquant import xtdata
     run(args.root, xt=xtdata, apply=args.apply, today=args.day, since=args.start,
         stock_limit=args.stock_limit, asset_limit=args.asset_limit,
-        section=args.section)
+        section=args.section,
+        financial_timeout_seconds=args.financial_timeout_seconds)
 
 
 if __name__ == "__main__":

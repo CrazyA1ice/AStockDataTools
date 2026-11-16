@@ -211,3 +211,19 @@ Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=00
 本机先运行 45 项离线单测（原 39 项已经通过），然后只读预览：
     python -u -B ParquetLiveSync/qmt_extra_financial_reconcile.py --root D:/stock --baseline-asof 2026-11-16 --timeout-seconds 180
 核对 QMT_FINANCIAL_REPAIR_SUMMARY 中两张表的 extra_exact_records、cached_rows、lost_or_changed_records，确认符合预期后才可另行显式 --apply。远离 21:30 自动任务，保持八周期和 H5 原样。若预览已跨日，新的财务版本作为新日期的单独快照保存；全证券的自动历史覆盖核验及统一最新版本读取接口仍需后续开发，尚不可启用无人值守大规模运行。
+
+## 2026-11-16 第五阶段：全市场财务数据快速续批（前台、有界、原子断点）
+
+000008.SZ 正式版本化修复已经由 Windows 真机验收：Income 有效快照 149 条，旧 12 条快照仍保留；Top10FlowHolder 有效快照 924 条，两张表累计补齐 1,061 条，财务扫描游标维持 000009.SZ，SUCCESS 未跟踪文件保持不动。现优先推进沪深A股金融财务 **9 张表** 的全市场首轮扫描，并将历史覆盖核查另列后续质量补齐主线，严禁将游标与绝对完整性混同。
+
+新增 qmt_extra_financial_bulk.py：默认只读预览，必须显式 --apply 才能开始采集；默认最多 30 只、360 分钟、每张财务表 180 秒 worker 墙钟超时。采用**单只股票提交**，每只完成才进入下一只。使用已有 financial_continue_on_error 高水位 + financial_pending 失败账本，失败源接口可进入待补队列并继续扫描，本地损坏或磁盘错误立即失败退出，不吞掉异常；扫描到股票池末尾后绝不自动循环回头。用户可以重复执行入口，自动读取 progress.json 的真实游标，失败清单另行安排重试，旧 000008.SZ 有效版本保持不变。
+
+提速点：每次控制器运行从 QMT 的“沪深A股”板块**仅查询一次**证券池（返回数量和 SHA256 摘要），随后按此源定义证券池复用；不再为了每只财务股票重复查询 ETF/指数板块及基金品种分类。每次重新运行会重新获取证券池；若上市证券集合动态变化，扫描高水位之前的新增或变动需另行审计，不能视为全部覆盖完成。
+
+为保护已有 21:30 八周期定时更新，**每日市场本地时间 21:00-23:00 不启动新的股票**，并在 21:00 之前根据 9 张表 × 单表超时 + 120 秒安全余量判断是否适合开始下一只。所有 QMT 财务下载串行进行，原 LIVE.exclusive_writer 文件锁维持独占，避免同时改动购买版八周期/H5。运行时长上限按股票边界检查而不是强杀正在执行的股票；除了单表 worker，QMT discover/父进程写盘仍不是绝对时限保证。Ctrl+C 可以中断，恢复时继续同日已验证快照。控制器**不会静默安装任务或创建后台进程**，需在本机前台运行；停止后可以重复执行续传。
+
+先在 Windows 本机运行 53 项离线测试（前 45 项已验证，新增 8 项在本机待验收），然后以最大 10 只、最长 60 分钟进行首次有界实盘：
+    python -u -B ParquetLiveSync/qmt_extra_financial_bulk.py --root D:/stock --max-symbols 10 --max-minutes 60 --financial-timeout-seconds 180 --apply
+若本批成功且没有本地数据文件错误，可提升至最多 200 只、每次最长 360 分钟重复运行，仍会被 21:30 守护窗口安全停下。两种限额均在股票边界生效。日志 QMT_FINANCIAL_BULK_CHECKPOINT 列出当前 cursor、成功与失败数，QMT_FINANCIAL_BULK_SUMMARY 给出 PAUSED_SYMBOL_LIMIT / PAUSED_TIME_BUDGET / PAUSED_PROTECTED_2130_WINDOW / SCAN_EXHAUSTED_PENDING_RETRIES / SCAN_EXHAUSTED_COVERAGE_UNVERIFIED 等状态。pending_retry_count 非零时后续仍需使用此前显式 ExtraFinancialRetryPending 独立补齐，而非将这些失败视为完成。
+
+**重要局限**：此阶段目标是尽快实现全市场财务**首轮扫描**；由于 000008.SZ 已证明 QMT 缓存在某次初读后可能出现额外历史记录，即便全部股票九表采集成功，也不能承诺历史完全。现有 financial-coverage.jsonl 仍记录每只股票的低行数和空表，后续应使用缓存对照分层抽样、质量待补队列和安全版本化补齐流程。无需重复下载购买版 K 线，不修改旧 21:30 日程。

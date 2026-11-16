@@ -271,13 +271,18 @@ def discover(xt):
             "index": indices, "etf": sorted(etfs)}
 
 
-def _normalize_quote(symbol, frame, *, until, since=None):
+def _normalize_quote(symbol, frame, *, until, since=None, period=None):
+    """Fail closed on invalid QMT bars, identifying the exact source row.
+
+    Diagnostics only: a broker's zero, inconsistent, or non-finite OHLCVA
+    must not be silently changed, filled, skipped, or committed.
+    """
     if frame is None:
         return []
     records = dataframe_records(frame)
     out = []
     seen = set()
-    for raw in records:
+    for row_index, raw in enumerate(records):
         tick = raw.get("time")
         if isinstance(tick, bool) or tick is None:
             raise ValueError("QMT Kline lacks numeric Unix-millisecond time")
@@ -292,13 +297,33 @@ def _normalize_quote(symbol, frame, *, until, since=None):
         if stamp in seen:
             raise ValueError("QMT duplicate Kline timestamp " + symbol)
         seen.add(stamp)
-        numbers = {key: float(raw[key]) for key in L.COLS[2:]}
-        if (any(not math.isfinite(v) for v in numbers.values())
-                or numbers["volume"] < 0 or numbers["amount"] < 0
-                or numbers["low"] <= 0
-                or numbers["low"] > min(numbers["open"], numbers["close"])
-                or numbers["high"] < max(numbers["open"], numbers["close"])):
-            raise ValueError("QMT index/ETF Kline OHLCVA invalid: " + symbol)
+        info = {"period": period, "row_index": row_index,
+                "timestamp_ms": stamp, "local_day": trading.isoformat()}
+        try:
+            numbers = {key: float(raw[key]) for key in L.COLS[2:]}
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            info["reason"] = "missing_or_nonnumeric_ohlcva"
+            info["values"] = {key: raw.get(key) for key in L.COLS[2:]}
+            raise ValueError("QMT index/ETF Kline OHLCVA invalid: " +
+                             symbol + " " + canonical_json(info)) from exc
+        violations = []
+        if any(not math.isfinite(v) for v in numbers.values()):
+            violations.append("non_finite")
+        if numbers["volume"] < 0:
+            violations.append("negative_volume")
+        if numbers["amount"] < 0:
+            violations.append("negative_amount")
+        if numbers["low"] <= 0:
+            violations.append("nonpositive_low")
+        if numbers["low"] > min(numbers["open"], numbers["close"]):
+            violations.append("low_above_open_or_close")
+        if numbers["high"] < max(numbers["open"], numbers["close"]):
+            violations.append("high_below_open_or_close")
+        if violations:
+            info["violations"] = violations
+            info["values"] = numbers
+            raise ValueError("QMT index/ETF Kline OHLCVA invalid: " +
+                             symbol + " " + canonical_json(info))
         out.append({"ts": stamp, "symbol": L.normal_symbol(symbol), **numbers})
     return sorted(out, key=lambda record: record["ts"])
 
@@ -392,7 +417,7 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *,
                 begin = end + timedelta(days=1)
                 continue
             rows = _normalize_quote(
-                code, reply[code], since=begin, until=end)
+                code, reply[code], since=begin, until=end, period=cycle)
             observed += len(rows)
             changed = _upsert_quote(
                 extra, kind, cycle, code, rows, today=today,

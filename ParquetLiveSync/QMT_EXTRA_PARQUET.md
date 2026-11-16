@@ -195,3 +195,19 @@ Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=00
 本阶段将每只完成股票的九张表行数与状态记录到私有 `ParquetLiveSync/work/qmt_extra/financial-coverage.jsonl`，`0` 条记为 QMT 无返回，`1..19` 条标记 `low_record_tables`（启发式风险提示，并非统一财报最低条数）。审核既有证券可调用**不连接 QMT** 的 `ParquetLiveSync/qmt_extra_financial_audit.py --root D:/stock --symbol 000008.SZ --asof 2026-11-16`；此脚本校验当天 Parquet 指纹、逐表行数，提供源字段 `m_timetag` 的**原始最小/最大文本值**、空快照与稀疏标记；`source_report_dates_validated=false`，不得把原始字段直接认定为校准后的最早/最晚报告期。先前已提交的 000008/000009 等证券不需要重抓，也能用该只读脚本审计现有快照。新 `financial-coverage.jsonl` 只覆盖本次版本后成功执行的证券，旧数据需用只读审计查验，不能假装旧日志已回填。
 
 建议先执行 Windows 39 项离线测试及只读审计，再做单批 `-ExtraStockLimit 2 -ExtraFinancialContinueOnError -ExtraFinancialTimeoutSeconds 180` 试点。新增开关不会自动安装任务、不会改购买版八周期 Parquet/H5，也不提供所有 QMT 调用的全局超时、跨日历史版本校验或全市场无人值守长期任务。不要靠改 `progress.json` 或 `-Day` 绕过历史覆盖问题。原有 21:30 定时任务照旧，实测仍需避开任务时间。
+
+## 2026-11-16 第四阶段：000008.SZ 财务缓存增量补齐（保留版本）
+
+真实 QMT 缓存只读核对：000008.SZ/Income Parquet 12 条、缓存 149 条，旧 12 条在缓存中内容不变，另有 137 条；000008.SZ/Top10FlowHolder 原无 Parquet 快照、当前 QMT 缓存 924 条。其他七表行数相同，但这不足以证明其内容相同。两个确认的数量缺口合计 1,061 条，不代表所有来源历史已完整。不能未经验证将根因断定为 xtquant 异步下载。
+
+新增 qmt_extra_financial_reconcile.py，只针对 000008.SZ 的 Income 和 Top10FlowHolder，默认 PREVIEW。通过既有带 180 秒超时的 QMT worker 读取现有本地缓存（新增 --cached-only 入口只调用 get_financial_data，不调用 download_financial_data）。持有原 LIVE.exclusive_writer 锁以排除与已有 21:30 更新任务交叠。预览期间仅产生并清理一次性私有 worker JSON，不改正式 Parquet、progress.json、H5、定时任务或购买版八周期目录。
+
+显式 --apply 才在 qmt_extra/financial 写入新版本。以 2026-11-16 为历史观测基准，实际新快照日期默认市场本地当天，且 --apply 强制不得伪造旧观测日期。如果已经跨日，旧的 2026-11-16 快照保留原样，新版本标注真实当天观测日。
+
+写入必须同时满足：Income 当前缓存至少 149 条、Top10FlowHolder 至少 924 条，并且旧快照每条原始字段记录（仅忽略 pandas 定位用的 _index）严格包含在新缓存中，按记录多重集合比较。若历史记录消失或被改写、QMT 返回数量下降、快照损坏或运行失败，则拒绝提交。此校验只证明非回退，不自动宣布来源历史完整。
+
+同一观测日可保存多个不可变快照，active/<asof>.json 指明当前选中版本。提交新版本前，先为旧有效版本保存原子选择指针，创建新 Parquet 后校验并原子切换指针；中途崩溃旧版本仍可读取。原 _verified_financial_snapshot、原补充财务采集和新增离线审计均按有效指针选取，旧文件仍保留。修复记录追加到私有 financial-repair.jsonl；不修改财务扫描 cursor 或 pending 队列，也不宣称另外七表已校验完整。
+
+本机先运行 45 项离线单测（原 39 项已经通过），然后只读预览：
+    python -u -B ParquetLiveSync/qmt_extra_financial_reconcile.py --root D:/stock --baseline-asof 2026-11-16 --timeout-seconds 180
+核对 QMT_FINANCIAL_REPAIR_SUMMARY 中两张表的 extra_exact_records、cached_rows、lost_or_changed_records，确认符合预期后才可另行显式 --apply。远离 21:30 自动任务，保持八周期和 H5 原样。若预览已跨日，新的财务版本作为新日期的单独快照保存；全证券的自动历史覆盖核验及统一最新版本读取接口仍需后续开发，尚不可启用无人值守大规模运行。

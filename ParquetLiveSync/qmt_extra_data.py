@@ -694,7 +694,9 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print,
                     code, name, workspace,
                     timeout_seconds=financial_timeout_seconds,
                     asof=today.isoformat(), progress=progress)
-            except (TimeoutError, RuntimeError, ValueError, OSError) as exc:
+            except (TimeoutError, RuntimeError, ValueError) as exc:
+                # Operating-system/disk errors must fail closed rather than
+                # treating an unavailable local dataset as a broker failure.
                 # Do not classify corrupted EXISTING Parquet or parent
                 # serialization failures as provider retryable errors.
                 raise FinancialDeferredError(code, name, exc) from exc

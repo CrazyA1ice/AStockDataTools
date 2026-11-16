@@ -454,42 +454,103 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *,
     return rows_added
 
 
-def _verified_financial_snapshot(extra, code, name, asof):
-    """Return the row count only for an intact same-day financial snapshot.
+def _financial_active_path(extra, code, name, asof):
+    return extra / "financial" / name / code / "active" / (asof + ".json")
 
-    Recover fully committed table snapshots across interrupted symbol runs.
-    The stock cursor remains unchanged until all nine tables complete.
+
+def _financial_snapshot_file(extra, code, name, asof):
+    """Select only an unambiguous legacy snapshot or a pinned version.
+
+    A pin permits historical immutable versions with the same observation
+    date; no guessing from newest filename, mtime, or row count.
     """
+    code = valid_code(code)
+    if name not in FIN_TABLES:
+        raise ValueError("Unsupported QMT financial table " + str(name))
     folder = extra / "financial" / name / code / "snapshots"
+    pin_path = _financial_active_path(extra, code, name, asof)
     _path_check(folder)
-    if not folder.exists():
-        return None
-    candidates = sorted(folder.glob(asof + "-*.parquet"))
-    if not candidates:
-        return None
-    if len(candidates) != 1:
-        raise ValueError("Ambiguous QMT financial snapshots: " +
-                         code + " table=" + name + " asof=" + asof)
-    path = candidates[0]
+    _path_check(pin_path)
+    candidates = sorted(folder.glob(asof + "-*.parquet")) if folder.exists() else []
+    if not pin_path.exists():
+        if len(candidates) > 1:
+            raise ValueError("Ambiguous QMT financial snapshots: " +
+                             code + " table=" + name + " asof=" + asof)
+        return candidates[0] if candidates else None
+    if not pin_path.is_file() or pin_path.is_symlink():
+        raise ValueError("Linked/invalid QMT financial active pin")
+    pin = json.loads(pin_path.read_text(encoding="utf-8"))
+    if (not isinstance(pin, dict)
+            or pin.get("format") != "qmt_financial_active_v1"
+            or pin.get("symbol") != code or pin.get("table") != name
+            or pin.get("asof") != asof
+            or not isinstance(pin.get("filename"), str)
+            or not re.fullmatch(re.escape(asof) + r"-[0-9a-f]{16}\.parquet",
+                                pin["filename"])
+            or not isinstance(pin.get("sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", pin["sha256"])):
+        raise ValueError("Invalid QMT financial active pin: " + str(pin_path))
+    selected = folder / pin["filename"]
+    _path_check(selected)
+    if selected not in candidates or not selected.is_file():
+        raise ValueError("Missing QMT financial active snapshot: " + str(selected))
+    if L.hash_file(selected) != pin["sha256"]:
+        raise ValueError("QMT financial active snapshot SHA mismatch: " +
+                         str(selected))
+    return selected
+
+
+def _verify_financial_snapshot_file(extra, code, name, asof, path):
+    """Verify row identity, Arrow schema and immutable filename fingerprint."""
     _path_check(path)
     if not path.is_file() or path.is_symlink():
         raise ValueError("Invalid QMT financial snapshot path: " + str(path))
     table = _read_closed_parquet(path)
     if table.schema != RAW_SCHEMA or table.num_rows <= 0:
-        raise ValueError("QMT financial snapshot schema/rows invalid: " +
-                         str(path))
+        raise ValueError("QMT financial snapshot schema/rows invalid: " + str(path))
     for index, row in enumerate(table.to_pylist()):
         if (row["asof"] != asof or row["symbol"] != code
                 or row["item"] != name or row["index"] != index
                 or not isinstance(row["payload_json"], str)):
-            raise ValueError("QMT financial snapshot identity invalid: " +
-                             str(path))
+            raise ValueError("QMT financial snapshot identity invalid: " + str(path))
     expected = _snapshot_path(
         extra, "financial/" + name + "/" + code, asof, table)
     if expected != path:
-        raise ValueError("QMT financial snapshot fingerprint mismatch: " +
-                         str(path))
-    return table.num_rows
+        raise ValueError("QMT financial snapshot fingerprint mismatch: " + str(path))
+    return table
+
+
+def _verified_financial_snapshot(extra, code, name, asof):
+    """Verified immutable selected snapshot rows, NOT proof of source coverage."""
+    path = _financial_snapshot_file(extra, code, name, asof)
+    if path is None:
+        return None
+    return _verify_financial_snapshot_file(extra, code, name, asof, path).num_rows
+
+
+def _pin_financial_snapshot(extra, code, name, asof, path):
+    """Atomically select a verified version while retaining all old files."""
+    _verify_financial_snapshot_file(extra, code, name, asof, path)
+    pin_path = _financial_active_path(extra, code, name, asof)
+    _path_check(pin_path)
+    S._save(pin_path, {
+        "format": "qmt_financial_active_v1", "symbol": code,
+        "table": name, "asof": asof, "filename": path.name,
+        "sha256": L.hash_file(path)})
+    if _financial_snapshot_file(extra, code, name, asof) != path:
+        raise ValueError("QMT financial pin readback mismatch")
+
+
+def _financial_snapshot_rows(extra, code, name, asof):
+    """Read active verified JSON payloads for conservative superset comparison."""
+    path = _financial_snapshot_file(extra, code, name, asof)
+    if path is None:
+        return None
+    table = _verify_financial_snapshot_file(extra, code, name, asof, path)
+    data = [json.loads(x) for x in table.column("payload_json").to_pylist()]
+    if any(not isinstance(x, dict) for x in data):
+        raise ValueError("Invalid financial snapshot JSON payload")
+    return data
 
 
 class FinancialDeferredError(Exception):

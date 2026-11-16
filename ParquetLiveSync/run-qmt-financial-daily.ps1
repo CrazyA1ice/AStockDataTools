@@ -1,5 +1,6 @@
 param(
     [string]$Root = "D:\stock",
+    [string]$FinanceDir = "D:\software\JHQMT\datadir\Finance",
     [ValidateRange(1,20)][int]$BatchSize = 5,
     [ValidateRange(1,1095)][int]$LookbackDays = 120,
     [ValidateRange(30,3600)][int]$WorkerTimeoutSeconds = 180
@@ -18,7 +19,9 @@ try {
     $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
     Write-Host "QMT_FINANCIAL_DAILY_START=$((Get-Date).ToString('o'))"
     Write-Host "QMT_FINANCIAL_DAILY_LOG=$log"
-    & $python -u -B (Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py") --root $Root --mode daily --batch-size $BatchSize --max-symbols 6000 --max-minutes 1440 --worker-timeout-seconds $WorkerTimeoutSeconds --lookback-days $LookbackDays --apply
+    if(-not(Test-Path -LiteralPath $FinanceDir -PathType Container)){ throw "Required QMT Finance cache directory missing" }
+    $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols","10000","--max-minutes","1440","--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays,"--apply")
+    & $python @cli
     if($LASTEXITCODE -ne 0){ throw "QMT financial daily incremental job failed" }
     Write-Host "QMT_FINANCIAL_DAILY_FINISHED=$((Get-Date).ToString('o'))"
 }

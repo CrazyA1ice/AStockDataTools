@@ -271,6 +271,17 @@ def discover(xt):
             "index": indices, "etf": sorted(etfs)}
 
 
+def _within_ohlc_roundoff(actual, boundary):
+    """Allow at most four binary64 ULPs of OHLC boundary roundoff.
+
+    Only used after an OHLC ordering comparison fails; never rewrites
+    provider values and never makes NaN/Infinity or substantive gaps valid.
+    """
+    return (math.isfinite(actual) and math.isfinite(boundary)
+            and abs(actual - boundary) <=
+            4 * max(math.ulp(actual), math.ulp(boundary)))
+
+
 def _normalize_quote(symbol, frame, *, until, since=None, period=None):
     """Fail closed on invalid QMT bars, identifying the exact source row.
 
@@ -315,9 +326,13 @@ def _normalize_quote(symbol, frame, *, until, since=None, period=None):
             violations.append("negative_amount")
         if numbers["low"] <= 0:
             violations.append("nonpositive_low")
-        if numbers["low"] > min(numbers["open"], numbers["close"]):
+        low_bound = min(numbers["open"], numbers["close"])
+        high_bound = max(numbers["open"], numbers["close"])
+        if (numbers["low"] > low_bound
+                and not _within_ohlc_roundoff(numbers["low"], low_bound)):
             violations.append("low_above_open_or_close")
-        if numbers["high"] < max(numbers["open"], numbers["close"]):
+        if (numbers["high"] < high_bound
+                and not _within_ohlc_roundoff(numbers["high"], high_bound)):
             violations.append("high_below_open_or_close")
         if violations:
             info["violations"] = violations

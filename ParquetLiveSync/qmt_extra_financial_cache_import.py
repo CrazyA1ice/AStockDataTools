@@ -103,7 +103,7 @@ def _prior_rows(extra, code, table):
         return None, None
     dates = set()
     for path in folder.glob("*.parquet"):
-        if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}-[0-9a-f]{16}\\.parquet",
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.parquet",
                             path.name):
             raise ValueError("Unexpected QMT financial snapshot name: " +
                              str(path))

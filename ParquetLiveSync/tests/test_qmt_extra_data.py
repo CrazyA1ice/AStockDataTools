@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 import json
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -448,6 +449,103 @@ class QmtExtraTests(unittest.TestCase):
                     extra, "600000.SH", "Balance", "2026-11-15")
             self.assertEqual(E._verified_financial_snapshot(
                 extra, "600000.SH", "Income", "2026-11-15"), 1)
+
+    def test_isolated_financial_worker_exports_original_fake_xt_records(self):
+        import qmt_extra_financial_worker as W
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "records.json"
+            trace = []
+            W.collect(FakeXt(), "600000.SH", "Balance", output,
+                      progress=trace.append)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["format"], "qmt_financial_worker_v1")
+            self.assertEqual(payload["symbol"], "600000.SH")
+            self.assertEqual(payload["table"], "Balance")
+            self.assertEqual(payload["records"][0]["assets"], 12.5)
+            self.assertTrue(any("WORKER_EXPORT_DONE" in t for t in trace))
+            self.assertFalse(output.with_suffix(".part").exists())
+
+    def test_isolated_financial_parent_validates_worker_payload(self):
+        def fake_run(command, *, timeout, check):
+            self.assertEqual(timeout, 35)
+            self.assertFalse(check)
+            self.assertEqual(command[0], E.sys.executable)
+            out = Path(command[command.index("--output") + 1])
+            result = {"format": "qmt_financial_worker_v1",
+                      "symbol": "600000.SH", "table": "Balance",
+                      "records": [{"_index": "20260930", "m_timetag": 20260930,
+                                   "assets": 12.5}]}
+            out.write_text(E.canonical_json(result), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "private"
+            with patch.object(E.subprocess, "run", side_effect=fake_run):
+                rows = E._read_financial_isolated(
+                    "600000.SH", "Balance", workspace, timeout_seconds=35,
+                    asof="2026-11-16", progress=lambda _: None)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["_index"], "20260930")
+            self.assertFalse((workspace / "financial-failures.jsonl").exists())
+            self.assertFalse(list(workspace.glob("financial-worker-*")))
+
+    def test_isolated_financial_timeout_records_pending_without_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "private"
+            with patch.object(E.subprocess, "run", side_effect=
+                              subprocess.TimeoutExpired(cmd="worker", timeout=30)):
+                with self.assertRaisesRegex(TimeoutError, "timeout"):
+                    E._read_financial_isolated(
+                        "600000.SH", "CashFlow", workspace,
+                        timeout_seconds=30, asof="2026-11-16",
+                        progress=lambda _: None)
+            queue = [json.loads(line) for line in (
+                workspace / "financial-failures.jsonl").read_text(
+                    encoding="utf-8").splitlines()]
+            self.assertEqual(len(queue), 1)
+            self.assertEqual(queue[0]["symbol"], "600000.SH")
+            self.assertEqual(queue[0]["table"], "CashFlow")
+            self.assertEqual(queue[0]["reason"], "TIMEOUT")
+            self.assertEqual(queue[0]["status"], "PENDING_RETRY")
+            self.assertFalse((workspace / "progress.json").exists())
+            self.assertFalse(list(workspace.glob("financial-worker-*")))
+
+    def test_isolated_financial_recovery_only_invokes_remaining_tables(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = root / "AllCycleAStockData" / "qmt_extra"
+            private = Path(tmp) / "private"
+            for name in E.FIN_TABLES[:7]:
+                tab = E.snapshot_table("2026-11-16", "600000.SH", name,
+                                       [{"m_timetag": 20260930, "value": 2.}])
+                E._snapshot_write(extra, "financial/" + name + "/600000.SH",
+                                  "2026-11-16", tab, private)
+            calls = []
+            def fake_run(command, *, timeout, check):
+                table = command[command.index("--table") + 1]
+                calls.append(table)
+                self.assertIn(table, E.FIN_TABLES[7:])
+                out = Path(command[command.index("--output") + 1])
+                records = ([{"_index": "20260930", "m_timetag": 20260930,
+                             "value": 3.}] if table == "PershareIndex" else [])
+                payload = {"format": "qmt_financial_worker_v1",
+                           "symbol": "600000.SH", "table": table,
+                           "records": records}
+                out.write_text(E.canonical_json(payload), encoding="utf-8")
+                return subprocess.CompletedProcess(command, 0)
+            logs = []
+            with patch.object(E.subprocess, "run", side_effect=fake_run):
+                result = E._fetch_financial(
+                    FakeXt(), extra, "600000.SH", date(2026, 11, 16),
+                    private, progress=logs.append,
+                    financial_timeout_seconds=30)
+            self.assertEqual(calls, ["PershareIndex", "PerShare"])
+            self.assertEqual(result["Balance"]["status"], "REUSED_VERIFIED")
+            self.assertEqual(result["CashFlow"]["status"], "REUSED_VERIFIED")
+            self.assertEqual(result["PershareIndex"]["status"], "CREATED")
+            self.assertEqual(result["PerShare"]["status"], "NO_SOURCE_RECORDS")
+            self.assertEqual(sum("FINANCIAL_TABLE_REUSED=" in x for x in logs), 7)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600000.SH", "PershareIndex", "2026-11-16"), 1)
 
     def test_sectors_section_runs_without_financial_and_etf_download(self):
         import contextlib

@@ -141,6 +141,54 @@ class QmtExtraTests(unittest.TestCase):
             E._normalize_quote("510050.SH", FakeFrame([data]),
                                until=date(2026, 11, 15))
 
+    def test_real_etf_15min_binary64_roundoff_preserves_source_ohlcva(self):
+        # Real Windows QMT 158000.SZ 2026-09-30, row 399: high one ULP
+        # lower than close due solely to source float serialization.
+        source = {"time": 1790751600000, "open": 1.031,
+                  "high": 1.0319999999999998, "low": 1.031,
+                  "close": 1.032, "volume": 10667., "amount": 1100778.}
+        result = E._normalize_quote(
+            "158000.SZ", FakeFrame([source]), period="15min",
+            since=date(2026, 9, 30), until=date(2026, 9, 30))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["high"], source["high"])
+        self.assertEqual(result[0]["close"], source["close"])
+        self.assertEqual(result[0]["volume"], source["volume"])
+        self.assertEqual(result[0]["amount"], source["amount"])
+        self.assertLess(result[0]["high"], result[0]["close"])
+
+    def test_ohlc_low_boundary_single_ulp_roundoff_is_accepted(self):
+        import math
+        stamp = int(datetime(2026, 9, 30, 15,
+                             tzinfo=L.UTC8).timestamp() * 1000)
+        open_price = 1.031
+        source = {"time": stamp, "open": open_price, "high": 1.032,
+                  "low": math.nextafter(open_price, math.inf),
+                  "close": 1.032, "volume": 1., "amount": 1.}
+        normalized = E._normalize_quote(
+            "158000.SZ", FakeFrame([source]), period="15min",
+            since=date(2026, 9, 30), until=date(2026, 9, 30))
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["low"], source["low"])
+
+    def test_ohlc_boundary_five_or_more_ulps_is_still_rejected(self):
+        import math
+        stamp = int(datetime(2026, 9, 30, 15,
+                             tzinfo=L.UTC8).timestamp() * 1000)
+        close_price = 1.032
+        too_low_high = close_price
+        for _ in range(6):
+            too_low_high = math.nextafter(too_low_high, -math.inf)
+        source = {"time": stamp, "open": 1.031,
+                  "high": too_low_high, "low": 1.031,
+                  "close": close_price, "volume": 10667.,
+                  "amount": 1100778.}
+        with self.assertRaisesRegex(ValueError, "OHLCVA invalid") as ctx:
+            E._normalize_quote(
+                "158000.SZ", FakeFrame([source]), period="15min",
+                since=date(2026, 9, 30), until=date(2026, 9, 30))
+        self.assertIn('"high_below_open_or_close"', str(ctx.exception))
+
     def test_etf_invalid_15min_ohlcva_exposes_exact_source_row(self):
         stamp = int(datetime(2026, 11, 16, 10, 15, tzinfo=L.UTC8).timestamp()*1000)
         good = {"time": stamp, "open": 1.1, "high": 1.2, "low": 1.0,

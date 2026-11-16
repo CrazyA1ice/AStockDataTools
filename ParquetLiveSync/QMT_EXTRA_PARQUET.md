@@ -260,4 +260,4 @@ Windows 首先运行本分支新增的 **60 项**离线测试（之前 53 项已
 
 每日增量手动入口：
     python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --mode daily --max-symbols 6000 --batch-size 5 --worker-timeout-seconds 300 --max-minutes 1440 --lookback-days 120 --apply
-新增 run-qmt-financial-daily.ps1 入口会保存独立 transcript 日志。register-qmt-financial-daily.ps1 默认仅预览，显式使用 -Install 才创建名为 AStockDataTools-QMT-Financial-Daily 的独立 23:15 每日 Task Scheduler 任务，绝不覆盖已有 21:30 任务；只在用户登录的交互会话运行，需要 QMT 保持在线。此新任务不可在初始导入成功验收前安装。日期窗口下载无法保证追溯更早历史修订，所以继续保留周期性的全量缓存只读覆盖核对和 pending 人工审查。
+新增 run-qmt-financial-daily.ps1 入口会保存独立 transcript 日志。register-qmt-financial-daily.ps1 默认仅预览，显式使用 -Install 才创建名为 AStockDataTools-QMT-Financial-Daily 的独立本机时间 00:30 每日 Task Scheduler 任务（中国时间 UTC+8 或日本时间 UTC+9 环境下，均在中国市场 21:00-23:05 保护窗口之后），绝不覆盖已有 21:30 任务；只在用户登录的交互会话运行，需要 QMT 保持在线。此新任务不可在初始导入成功验收前安装。日期窗口下载无法保证追溯更早历史修订，所以继续保留周期性的全量缓存只读覆盖核对和 pending 人工审查。

@@ -279,9 +279,10 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         clock = lambda: datetime.now(E.L.UTC8)
     if worker is None:
         worker = _worker_batch
-    now = clock().astimezone(E.L.UTC8)
-    if now.tzinfo is None:
+    raw_now = clock()
+    if raw_now.tzinfo is None or raw_now.utcoffset() is None:
         raise ValueError("Financial importer needs aware clock")
+    now = raw_now.astimezone(E.L.UTC8)
     asof = now.date().isoformat()
     deadline = now + timedelta(minutes=max_minutes)
     extra = E._storage(Path(root))
@@ -293,6 +294,9 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
     catalog = E._tickers(xt, ("沪深A股",), required=True)
     universe_hash = hashlib.sha256(
         E.canonical_json(catalog).encode("utf-8")).hexdigest()
+    if mode == "daily" and state["import_cursor"] < catalog[-1]:
+        raise ValueError("Initial QMT financial cache import has not reached "
+                         "the end of current stock universe; finish --mode cache first")
     if retry_pending:
         missing = set(state["pending"]) - set(catalog)
         if missing:

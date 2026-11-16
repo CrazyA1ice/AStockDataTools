@@ -251,6 +251,49 @@ def _pending_mark(state, code, reason, asof, detail):
         "attempts": entry.get("attempts", 0) + 1}
 
 
+def _stock_universe(xt, finance_dir=None):
+    """Current QMT A-share sector plus explicitly supplied local Finance names.
+
+    Never parse proprietary DAT contents. Local filename discovery captures
+    already cached delisted symbols and BJ suffixes when those folders exist.
+    """
+    current = E._tickers(xt, ("沪深A股",), required=True)
+    if finance_dir is None:
+        return current, {"sector_symbols": len(current),
+                         "finance_file_symbols": None,
+                         "finance_only_symbols": None,
+                         "source_scope": "CURRENT_HUSHEN_A_SECTOR_ONLY"}
+    finance_dir = Path(finance_dir)
+    E._path_check(finance_dir)
+    if not finance_dir.is_dir() or finance_dir.is_symlink():
+        raise ValueError("Missing or redirected explicit QMT Finance directory")
+    from_files = set()
+    for exchange in ("SZ", "SH", "BJ"):
+        folder = finance_dir / exchange / "86400"
+        E._path_check(folder)
+        if not folder.exists():
+            continue
+        if not folder.is_dir() or folder.is_symlink():
+            raise ValueError("Linked or invalid QMT Finance exchange folder")
+        for path in folder.iterdir():
+            match = re.fullmatch(r"([0-9]{6})_7[0-9]{3}\\.DAT",
+                                 path.name, re.IGNORECASE)
+            if match:
+                E._path_check(path)
+                if not path.is_file() or path.is_symlink():
+                    raise ValueError("Invalid QMT Finance cache entry")
+                from_files.add(E.valid_code(match.group(1) + "." + exchange))
+    if not from_files:
+        raise ValueError("No stock-level QMT Finance DAT files found in " +
+                         str(finance_dir))
+    joined = sorted(set(current) | from_files)
+    return joined, {"sector_symbols": len(current),
+                    "finance_file_symbols": len(from_files),
+                    "finance_only_symbols": len(from_files - set(current)),
+                    "source_scope": "QMT_SECTOR_PLUS_EXPLICIT_FINANCE_DAT_NAMES",
+                    "finance_directory": str(finance_dir)}
+
+
 def _is_blackout(now, worker_timeout):
     local = now.timetz().replace(tzinfo=None)
     if BLACKOUT_START <= local < BLACKOUT_END:
@@ -266,7 +309,7 @@ def _is_blackout(now, worker_timeout):
 def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         batch_size=5, max_minutes=1440, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
-        clock=None, progress=print, worker=None):
+        finance_dir=None, clock=None, progress=print, worker=None):
     if mode not in ("cache", "daily"):
         raise ValueError("Invalid financial import mode")
     if (not 1 <= batch_size <= MAX_GROUP or
@@ -291,7 +334,7 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         state["daily_cursor"] = ""
         state["daily_date"] = asof
     cursor_key = "import_cursor" if mode == "cache" else "daily_cursor"
-    catalog = E._tickers(xt, ("沪深A股",), required=True)
+    catalog, catalog_metadata = _stock_universe(xt, finance_dir)
     universe_hash = hashlib.sha256(
         E.canonical_json(catalog).encode("utf-8")).hexdigest()
     if mode == "daily" and state["import_cursor"] < catalog[-1]:
@@ -309,6 +352,8 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "status": "PREVIEW", "mode": mode, "apply": apply,
         "asof": asof, "universe_symbols": len(catalog),
         "universe_sha256": universe_hash,
+        "universe_metadata": catalog_metadata,
+        "source_completeness_verified": False,
         "start_cursor": state[cursor_key],
         "end_cursor": state[cursor_key],
         "selected": len(selected), "selected_first": selected[0] if selected else None,
@@ -413,6 +458,8 @@ def main(argv=None):
     parser.add_argument("--max-minutes", type=int, default=1440)
     parser.add_argument("--worker-timeout-seconds", type=int, default=180)
     parser.add_argument("--lookback-days", type=int, default=120)
+    parser.add_argument("--finance-dir", type=Path,
+                        help="Explicit local QMT Finance directory; include historical DAT filenames in stock universe without parsing their contents")
     parser.add_argument("--retry-pending", action="store_true")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
@@ -422,7 +469,8 @@ def main(argv=None):
         max_minutes=args.max_minutes,
         worker_timeout_seconds=args.worker_timeout_seconds,
         lookback_days=args.lookback_days,
-        retry_pending=args.retry_pending)
+        retry_pending=args.retry_pending,
+        finance_dir=args.finance_dir)
 
 
 if __name__ == "__main__":

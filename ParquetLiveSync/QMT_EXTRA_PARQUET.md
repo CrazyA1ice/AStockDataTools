@@ -227,3 +227,17 @@ Windows 真机 21:19 只读进度确认：`financial=000002.SZ`, `adjustments=00
 若本批成功且没有本地数据文件错误，可提升至最多 200 只、每次最长 360 分钟重复运行，仍会被 21:30 守护窗口安全停下。两种限额均在股票边界生效。日志 QMT_FINANCIAL_BULK_CHECKPOINT 列出当前 cursor、成功与失败数，QMT_FINANCIAL_BULK_SUMMARY 给出 PAUSED_SYMBOL_LIMIT / PAUSED_TIME_BUDGET / PAUSED_PROTECTED_2130_WINDOW / SCAN_EXHAUSTED_PENDING_RETRIES / SCAN_EXHAUSTED_COVERAGE_UNVERIFIED 等状态。pending_retry_count 非零时后续仍需使用此前显式 ExtraFinancialRetryPending 独立补齐，而非将这些失败视为完成。
 
 **重要局限**：此阶段目标是尽快实现全市场财务**首轮扫描**；由于 000008.SZ 已证明 QMT 缓存在某次初读后可能出现额外历史记录，即便全部股票九表采集成功，也不能承诺历史完全。现有 financial-coverage.jsonl 仍记录每只股票的低行数和空表，后续应使用缓存对照分层抽样、质量待补队列和安全版本化补齐流程。无需重复下载购买版 K 线，不修改旧 21:30 日程。
+
+## 2026-11-17 第六阶段：全市场挂机自动续跑（显式 --apply / --keep-awake）
+
+首批 53/53 Windows 离线测试通过，真实 10/10 只股票连续采集成功，QMT 源证券池 5,224 只，上一批财务扫描游标为 `000026.SZ`，无失败待补；前批采集时 `PerShare` 全部空表，属于来源覆盖质量疑点，未假装为完整数据。已验证 000008.SZ 修复快照保留，购买版八周期、H5 和既有 21:30 任务不变。
+
+新增 `qmt_extra_financial_unattended.py`，可在操作者的**前台 PowerShell** 会话中连跑到源证券池尾部或最多 45 天。内部调用已验证的 `qmt_extra_financial_bulk.scan`，每次最多 6,000 只股票或 1,440 分钟；每只股票使用原有 9 张表独立 180 秒子进程看门狗、原子进度断点、故障待补队列及全局独占写入锁。单次遇到 21:00–23:00 保护窗口或 21:00 前安全余量不足时，不会盲目继续；挂起至中国市场时间 23:05 自动唤醒并续扫。首次扫描至股票池末尾后**停止**，不从第一只重新下载，不进行无限 pending 重试。非白名单停止状态、本地文件损坏、QMT 初始化故障、进度回退等直接退出，等待人工复核。运行时长预算与保护窗口仍在**股票边界**检查，不能保证每只股票父进程绝对墙钟时限。
+
+可显式指定 `--keep-awake`，程序仅在自身运行期间临时调用 Windows SetThreadExecutionState 防止**系统自动睡眠**，结束或异常退出时归还原有状态；不会修改 Windows 电源计划、不能防止主动休眠、系统重启、QMT 断线、断电或强制策略。Windows 显示器可熄屏，必须保持电脑通电、QMT 在线登录、PowerShell 前台会话不关闭、磁盘空间足够。脚本不创建计划任务或后台服务，`--apply` 仍为强制写入许可，`--keep-awake` 为单独明确授权。建议保存完整输出日志，故障时根据最后一个持久化游标续跑，不能删除 progress.json 或已有快照。
+
+Windows 首先运行本分支新增的 **60 项**离线测试（之前 53 项已通过，新增 7 项需本地验收），再使用以下独立入口（**一行 PowerShell**，按需改写运行日志位置）：
+    $env:PYTHONPATH=(Join-Path (Get-Location) "ParquetLiveSync"); & ".\.venv\Scripts\python.exe" -u -B "ParquetLiveSync\qmt_extra_financial_unattended.py" --root "D:\stock" --max-days 45 --max-symbols-per-session 6000 --max-minutes-per-session 1440 --financial-timeout-seconds 180 --keep-awake --apply
+运行中输出 `QMT_FINANCIAL_UNATTENDED_SESSION`、`QMT_FINANCIAL_UNATTENDED_WAIT`、`QMT_FINANCIAL_UNATTENDED_FINAL`。最终 `SCAN_EXHAUSTED_COVERAGE_UNVERIFIED` 表示首轮已达到 QMT 当前股票列表末尾（不代表每条历史记录完整）；若为 `SCAN_EXHAUSTED_PENDING_RETRIES` 表示仍有失败股票需要专门补抓；`STOPPED_MAX_DAYS` 表示达到设定挂机天数需复核再重启。**整市场约五千只股票，按首次 10 只约一小时的观察量级，通常无法在一晚下载完**；本入口跨天自动续跑且不绕过 21:30 定时任务。
+
+请勿和此前的 qmt_extra_financial_bulk.py 单独启动命令同时执行。脚本会在首次启动时用进度文件决定下一只股票，不再硬编码 `000026.SZ`。下载到尾后不会自动执行历史覆盖修复；空表和稀疏表仍进入单独审计任务。若下载进程结束仍存在 `financial_pending`，应运行先前已支持的显式待补重试模式并单独核验。

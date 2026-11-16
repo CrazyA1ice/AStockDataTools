@@ -246,18 +246,20 @@ Windows 首先运行本分支新增的 **60 项**离线测试（之前 53 项已
 
 用户截图显示 D:\software\JHQMT\datadir\Finance\SZ\86400 下按股票代码和报表编号保存的 .DAT 文件，与 XTData 日志返回的 datadir 对应；但文件存在本身不证明 5,224 只股票每张财务表都完整。无需自行逆向 .DAT。迅投官方支持 xtdata.get_financial_data(stock_list, table_list, start_time, end_time, report_type) 读取现有本地缓存，以及同步 xtdata.download_financial_data2(stock_list, table_list, start_time, end_time) 按 m_anntime 公告日期窗口补充财务数据。首次导入模式只调用 get_financial_data，不调用任何下载 API；每日模式才按设定窗口调用 download_financial_data2，再读取缓存里的完整表做并集验证和版本更新。
 
+如显式指定 --finance-dir D:/software/JHQMT/datadir/Finance，还会只读枚举 SH、SZ、BJ 三个 86400 子目录中财务文件的合法股票代码（不读取或反解 .DAT 文件内容），与 QMT 当前沪深A股名单合并。这样能够补充本机已有缓存中的历史/退市代码及北交所文件；没有对应缓存时必须通过 pending 披露，不能假装已经完整导入。不指定目录则只扫描当前沪深A股板块，不能称为所有历史股票。
+
 新增 ParquetLiveSync/qmt_extra_financial_cache_worker.py：默认每批 5 只股票、一次多股票九表读取，最大 20 只，单批超时由父进程看门狗强制中止，全部中间结果只放临时私有 JSON 并回收。第九张 PerShare 在已有样例中是空表；每日向 QMT 下载时仅提交文档可支持的其他八表，读取仍包含九表，绝不凭空制造数据。原始字段加 _index 原样保存到 qmt_extra/financial，旧版 Parquet 主八周期和 H5 不变。
 
 新增 qmt_extra_financial_cache_import.py：--mode cache 实现历史 QMT 本地缓存直接入库；--mode daily 仅下载最近 120 天（可调）公告窗口，再从缓存读取全表进行内容核对。以独立的 work/qmt_extra/financial-cache-progress.json 维护 import_cursor、daily_date、daily_cursor 和独立 pending 队列，不碰原有 financial.cursor。每日模式必须等第一次缓存导入的独立扫描游标达到最新 QMT 股票池末尾才开放，防止把未完成的初始导入误当成完成。来源暂缺的股票记 NO_CACHE，旧记录消失/修订则记 SOURCE_HISTORY_CONFLICT 并保留旧版，不自动覆写；原始记录逐条比对仅忽略 Pandas _index。比较范围包含同一财务表所有历史已选中有效快照的记录并集；新数据必须严格包含旧内容，不满足则待审。相同数据不重复写快照，同一天数据增长先将旧版设为 active 指针再创建新的不可变 Parquet 并原子切换。空源表只记审计，不能证明历史完整。每只股票提交后独立游标原子持久化，磁盘、数据损坏或 QMT 批调用报错均直接失败停止；持有已有 LIVE.exclusive_writer 独占锁，按中国市场时间 21:00 至 23:05 避免启动新批次。
 
-先在 Windows 本地跑 71 项离线测试（以前 60 项已通过；新增 11 项尚未实机验收）。停止原 qmt_extra_financial_unattended.py 等全量下载后，QMT 保持启动登录；先选股预览：
-    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --mode cache --max-symbols 2
+先在 Windows 本地跑 73 项离线测试（以前 60 项已通过；新增 13 项尚未实机验收）。停止原 qmt_extra_financial_unattended.py 等全量下载后，QMT 保持启动登录；先选股预览：
+    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --finance-dir D:/software/JHQMT/datadir/Finance --mode cache --max-symbols 2
 再试导前两只：
-    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --mode cache --max-symbols 2 --batch-size 2 --worker-timeout-seconds 300 --apply
+    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --finance-dir D:/software/JHQMT/datadir/Finance --mode cache --max-symbols 2 --batch-size 2 --worker-timeout-seconds 300 --apply
 成功后继续剩余整个当前股票池：
-    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --mode cache --max-symbols 6000 --batch-size 5 --max-minutes 1440 --worker-timeout-seconds 300 --apply
+    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --finance-dir D:/software/JHQMT/datadir/Finance --mode cache --max-symbols 10000 --batch-size 5 --max-minutes 1440 --worker-timeout-seconds 300 --apply
 重复执行仅处理最新 import_cursor 以后的证券；PAUSED_* 说明时间边界停下，可续跑；SOURCE_UNIVERSE_EXHAUSTED 是当前 QMT 股票池第一轮已扫至尾部，须检查 pending_total，不能替代来源历史完整性验证。
 
 每日增量手动入口：
-    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --mode daily --max-symbols 6000 --batch-size 5 --worker-timeout-seconds 300 --max-minutes 1440 --lookback-days 120 --apply
+    python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --finance-dir D:/software/JHQMT/datadir/Finance --mode daily --max-symbols 10000 --batch-size 5 --worker-timeout-seconds 300 --max-minutes 1440 --lookback-days 120 --apply
 新增 run-qmt-financial-daily.ps1 入口会保存独立 transcript 日志。register-qmt-financial-daily.ps1 默认仅预览，显式使用 -Install 才创建名为 AStockDataTools-QMT-Financial-Daily 的独立本机时间 00:30 每日 Task Scheduler 任务（中国时间 UTC+8 或日本时间 UTC+9 环境下，均在中国市场 21:00-23:05 保护窗口之后），绝不覆盖已有 21:30 任务；只在用户登录的交互会话运行，需要 QMT 保持在线。此新任务不可在初始导入成功验收前安装。日期窗口下载无法保证追溯更早历史修订，所以继续保留周期性的全量缓存只读覆盖核对和 pending 人工审查。

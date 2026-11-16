@@ -654,7 +654,8 @@ def _record_financial_failure(workspace, code, name, asof, reason, detail):
 
 
 def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
-                             asof, progress=print):
+                             asof, progress=print, cached_only=False,
+                             record_failure=True):
     """Run QMT financial calls in a killable worker; no worker Parquet writes."""
     code = valid_code(code)
     if name not in FIN_TABLES or not isinstance(timeout_seconds, int):
@@ -672,6 +673,8 @@ def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
             str(Path(__file__).resolve().with_name(
                 "qmt_extra_financial_worker.py")),
             "--symbol", code, "--table", name, "--output", str(output)]
+        if cached_only:
+            command.append("--cached-only")
         progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_START=" +
                  canonical_json({"symbol": code, "table": name,
                                  "timeout_seconds": timeout_seconds}))
@@ -679,10 +682,11 @@ def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
             completed = subprocess.run(command, timeout=timeout_seconds,
                                        check=False)
         except subprocess.TimeoutExpired as exc:
-            _record_financial_failure(
-                workspace, code, name, asof, "TIMEOUT",
-                "QMT financial worker exceeded " +
-                str(timeout_seconds) + " seconds")
+            if record_failure:
+                _record_financial_failure(
+                    workspace, code, name, asof, "TIMEOUT",
+                    "QMT financial worker exceeded " +
+                    str(timeout_seconds) + " seconds")
             progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_TIMEOUT=" +
                      canonical_json({"symbol": code, "table": name,
                                      "timeout_seconds": timeout_seconds}))
@@ -691,9 +695,10 @@ def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
                 " table=" + name + " seconds=" +
                 str(timeout_seconds)) from exc
         if completed.returncode != 0:
-            _record_financial_failure(
-                workspace, code, name, asof, "WORKER_NONZERO_EXIT",
-                "exit code=" + str(completed.returncode))
+            if record_failure:
+                _record_financial_failure(
+                    workspace, code, name, asof, "WORKER_NONZERO_EXIT",
+                    "exit code=" + str(completed.returncode))
             raise RuntimeError(
                 "QMT financial worker failed: " + code +
                 " table=" + name + " exit=" + str(completed.returncode))
@@ -716,8 +721,9 @@ def _read_financial_isolated(code, name, workspace, *, timeout_seconds,
                 raise ValueError("Invalid QMT financial worker payload")
             values = payload["records"]
         except (ValueError, OSError, UnicodeError, TypeError) as exc:
-            _record_financial_failure(
-                workspace, code, name, asof, "INVALID_WORKER_RESULT", exc)
+            if record_failure:
+                _record_financial_failure(
+                    workspace, code, name, asof, "INVALID_WORKER_RESULT", exc)
             raise
         progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_DONE=" +
                  canonical_json({"symbol": code, "table": name,

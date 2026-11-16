@@ -92,10 +92,31 @@ def _latest_snapshot_day(extra, code, table):
 
 
 def _prior_rows(extra, code, table):
-    asof = _latest_snapshot_day(extra, code, table)
-    if asof is None:
+    """Compare with UNION of all selected historical versions, not only latest.
+
+    Existing old observations can contain unique records missing from a
+    newer but incomplete snapshot; no previous record may silently vanish.
+    """
+    folder = extra / "financial" / table / code / "snapshots"
+    E._path_check(folder)
+    if not folder.exists():
         return None, None
-    return asof, E._financial_snapshot_rows(extra, code, table, asof)
+    dates = set()
+    for path in folder.glob("*.parquet"):
+        if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}-[0-9a-f]{16}\\.parquet",
+                            path.name):
+            raise ValueError("Unexpected QMT financial snapshot name: " +
+                             str(path))
+        dates.add(path.name[:10])
+    if not dates:
+        return None, None
+    combined = Counter()
+    for day in sorted(dates):
+        old = E._financial_snapshot_rows(extra, code, table, day)
+        if old is None:
+            raise ValueError("Missing previous QMT financial source observation")
+        combined |= _rows(old)
+    return max(dates), combined
 
 
 def _plan_symbol(extra, code, asof, source):
@@ -110,9 +131,9 @@ def _plan_symbol(extra, code, asof, source):
                     not isinstance(row.get("_index"), str) for row in fresh) or
                 len(fresh) > 100000):
             raise ValueError("Invalid QMT cache response " + code + " " + table)
-        old_date, old = _prior_rows(extra, code, table)
+        old_date, saved = _prior_rows(extra, code, table)
         current = _rows(fresh)
-        saved = _rows(old or [])
+        saved = saved or Counter()
         missing = saved - current
         if missing:
             raise ValueError("SOURCE_HISTORY_CONFLICT " + code +
@@ -120,9 +141,9 @@ def _plan_symbol(extra, code, asof, source):
                              str(sum(missing.values())))
         if old is not None and old_date > asof:
             raise ValueError("QMT source observation older than saved snapshot")
-        action = ("NO_SOURCE_RECORDS" if not fresh and old is None else
+        action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
                   "UNCHANGED" if saved == current else "CREATE_VERSION")
-        result[table] = {"rows": len(fresh), "previous_rows": len(old or []),
+        result[table] = {"rows": len(fresh), "previous_rows": sum(saved.values()),
                          "action": action, "previous_asof": old_date,
                          "extra_records": sum((current - saved).values())}
         if action == "CREATE_VERSION":
@@ -303,8 +324,6 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         progress("QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=" +
                  E.canonical_json(report))
         return report
-    if not isinstance(now.tzinfo, type(E.L.UTC8)) and now.utcoffset() is None:
-        raise ValueError("Invalid QMT market local clock")
     for offset in range(0, len(selected), batch_size):
         now = clock().astimezone(E.L.UTC8)
         if now.date().isoformat() != asof:

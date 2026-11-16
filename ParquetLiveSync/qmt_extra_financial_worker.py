@@ -13,7 +13,7 @@ from pathlib import Path
 import qmt_extra_data as E
 
 
-def collect(xt, code, table, output, *, progress=print):
+def collect(xt, code, table, output, *, progress=print, cached_only=False):
     code = E.valid_code(code)
     if table not in E.FIN_TABLES:
         raise ValueError("Unsupported financial table: " + str(table))
@@ -21,11 +21,15 @@ def collect(xt, code, table, output, *, progress=print):
     E._path_check(output)
     if output.exists():
         raise ValueError("QMT financial worker output already exists")
-    progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_DOWNLOAD_START=" +
-             E.canonical_json({"symbol": code, "table": table}))
-    xt.download_financial_data([code], [table])
-    progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
-             E.canonical_json({"symbol": code, "table": table}))
+    if not cached_only:
+        progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_DOWNLOAD_START=" +
+                 E.canonical_json({"symbol": code, "table": table}))
+        xt.download_financial_data([code], [table])
+        progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_FETCHED=" +
+                 E.canonical_json({"symbol": code, "table": table}))
+    else:
+        progress("MARKET_QMT_EXTRA_FINANCIAL_WORKER_CACHE_ONLY=" +
+                 E.canonical_json({"symbol": code, "table": table}))
     progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_READ_START=" +
              E.canonical_json({"symbol": code, "table": table,
                                "api": "get_financial_data"}))
@@ -68,9 +72,12 @@ def main():
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--table", required=True, choices=E.FIN_TABLES)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--cached-only", action="store_true",
+                        help="Read existing QMT cache without calling the downloader")
     args = parser.parse_args()
     from xtquant import xtdata
-    collect(xtdata, args.symbol, args.table, args.output)
+    collect(xtdata, args.symbol, args.table, args.output,
+            cached_only=args.cached_only)
 
 
 if __name__ == "__main__":

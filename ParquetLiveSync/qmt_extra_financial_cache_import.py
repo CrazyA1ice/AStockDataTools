@@ -276,7 +276,7 @@ def _stock_universe(xt, finance_dir=None):
         if not folder.is_dir() or folder.is_symlink():
             raise ValueError("Linked or invalid QMT Finance exchange folder")
         for path in folder.iterdir():
-            match = re.fullmatch(r"([0-9]{6})_7[0-9]{3}\\.DAT",
+            match = re.fullmatch(r"([0-9]{6})_7[0-9]{3}\.DAT",
                                  path.name, re.IGNORECASE)
             if match:
                 E._path_check(path)

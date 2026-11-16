@@ -451,6 +451,44 @@ def _fetch_quotes(xt, extra, kind, code, today, since, *,
     return rows_added
 
 
+def _verified_financial_snapshot(extra, code, name, asof):
+    """Return the row count only for an intact same-day financial snapshot.
+
+    Recover fully committed table snapshots across interrupted symbol runs.
+    The stock cursor remains unchanged until all nine tables complete.
+    """
+    folder = extra / "financial" / name / code / "snapshots"
+    _path_check(folder)
+    if not folder.exists():
+        return None
+    candidates = sorted(folder.glob(asof + "-*.parquet"))
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        raise ValueError("Ambiguous QMT financial snapshots: " +
+                         code + " table=" + name + " asof=" + asof)
+    path = candidates[0]
+    _path_check(path)
+    if not path.is_file() or path.is_symlink():
+        raise ValueError("Invalid QMT financial snapshot path: " + str(path))
+    table = _read_closed_parquet(path)
+    if table.schema != RAW_SCHEMA or table.num_rows <= 0:
+        raise ValueError("QMT financial snapshot schema/rows invalid: " +
+                         str(path))
+    for index, row in enumerate(table.to_pylist()):
+        if (row["asof"] != asof or row["symbol"] != code
+                or row["item"] != name or row["index"] != index
+                or not isinstance(row["payload_json"], str)):
+            raise ValueError("QMT financial snapshot identity invalid: " +
+                             str(path))
+    expected = _snapshot_path(
+        extra, "financial/" + name + "/" + code, asof, table)
+    if expected != path:
+        raise ValueError("QMT financial snapshot fingerprint mismatch: " +
+                         str(path))
+    return table.num_rows
+
+
 def _fetch_financial(xt, extra, code, today, workspace, progress=print):
     """Download one QMT financial table at a time, emitting exact stop point.
 
@@ -460,6 +498,17 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print):
     """
     summary = {}
     for name in FIN_TABLES:
+        cached_rows = _verified_financial_snapshot(
+            extra, code, name, today.isoformat())
+        if cached_rows is not None:
+            summary[name] = {"rows": cached_rows, "status": "REUSED_VERIFIED"}
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_REUSED=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     **summary[name]}))
+            progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_COMPLETE=" +
+                     canonical_json({"symbol": code, "table": name,
+                                     **summary[name]}))
+            continue
         progress("MARKET_QMT_EXTRA_FINANCIAL_TABLE_START=" +
                  canonical_json({"symbol": code, "table": name,
                                  "api": "download_financial_data"}))

@@ -1077,6 +1077,64 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(result["status"], "PAUSED_TIME_BUDGET")
             self.assertEqual(result["symbols_processed"], 0)
 
+    def test_prepared_financial_universe_does_not_need_etf_discovery(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["ETF"] = []
+            xt.sectors["沪深基金"] = []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()), \
+                 patch.object(E, "_read_financial_isolated",
+                              return_value=[{"_index": "0", "value": 1.}]):
+                result = E.run(
+                    root, xt=xt, apply=True, section="financial",
+                    financial_universe=["600000.SH"],
+                    financial_continue_on_error=True,
+                    financial_timeout_seconds=30,
+                    stock_limit=1, workspace=private,
+                    today=date(2026, 11, 16), progress=lambda _: None)
+            self.assertEqual(result["sections"]["financial"]["symbols_processed"], 1)
+            self.assertEqual(result["sections"]["financial"]["universe_symbols"], 1)
+            self.assertEqual(E._state(E._storage(root), private)
+                             ["cursor"]["financial"], "600000.SH")
+
+    def test_prepared_financial_universe_rejects_duplicates_and_other_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            xt = FakeXt()
+            base = {"xt": xt, "apply": False,
+                    "financial_continue_on_error": True,
+                    "section": "financial", "progress": lambda _: None}
+            with self.assertRaisesRegex(ValueError, "Invalid prepared"):
+                E.run(root, financial_universe=[
+                    "600000.SH", "600000.SH"], **base)
+            with self.assertRaisesRegex(ValueError, "Invalid prepared"):
+                E.run(root, financial_universe=["NOT_A_STOCK"], **base)
+            with self.assertRaisesRegex(ValueError, "opt-in financial-only"):
+                E.run(root, financial_universe=["600000.SH"],
+                      xt=xt, section="all", apply=False)
+
+    def test_bulk_scan_rechecks_blackout_after_stock_catalog_discovery(self):
+        import qmt_extra_financial_bulk as BULK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            starts = iter([
+                datetime(2026, 11, 16, 20, 0, tzinfo=L.UTC8),
+                datetime(2026, 11, 16, 20, 0, tzinfo=L.UTC8),
+                datetime(2026, 11, 16, 20, 55, tzinfo=L.UTC8)])
+            with patch.object(E, "run",
+                              side_effect=AssertionError("Too near blackout")):
+                result = BULK.scan(
+                    root, xt=FakeXt(), apply=True, max_symbols=2,
+                    timeout_seconds=180, workspace=Path(tmp) / "private",
+                    clock=lambda: next(starts), progress=lambda _: None)
+            self.assertEqual(result["status"],
+                             "PAUSED_INSUFFICIENT_PRE_2130_WORST_CASE_WINDOW")
+            self.assertEqual(result["symbols_processed"], 0)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

@@ -937,7 +937,8 @@ def _fetch_etf_catalog(xt, extra, today, workspace):
 def run(root, *, xt, apply=False, today=None, since=SINCE,
         stock_limit=40, asset_limit=5, section="all",
         workspace=WORK, progress=print, financial_timeout_seconds=None,
-        financial_continue_on_error=False, financial_retry_pending=False):
+        financial_continue_on_error=False, financial_retry_pending=False,
+        financial_universe=None):
     """One bounded, repeatable batch. A complete historical import takes batches."""
     today = today or datetime.now(L.UTC8).date()
     if not isinstance(today, date) or not isinstance(since, date) or today < since:
@@ -951,11 +952,22 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
         raise ValueError("Financial retry options require --section financial")
     if financial_retry_pending and not financial_continue_on_error:
         raise ValueError("Pending retry requires explicit financial continue-on-error")
+    if financial_universe is not None:
+        if section != "financial" or not financial_continue_on_error:
+            raise ValueError("A prepared financial universe requires opt-in financial-only scan")
+        if (not isinstance(financial_universe, (list, tuple))
+                or not financial_universe
+                or any(not isinstance(code, str)
+                       or valid_code(code) != code for code in financial_universe)
+                or list(financial_universe) != sorted(set(financial_universe))):
+            raise ValueError("Invalid prepared QMT financial universe")
     selected_sections = (("financial", "adjustments", "index", "etf")
                          if section == "all" else (section,))
     extra = _storage(root)
     if not apply:
-        universe = discover(xt) if section != "sectors" else {}
+        universe = ({"financial": financial_universe}
+                    if financial_universe is not None else
+                    discover(xt) if section != "sectors" else {})
         state = _state(extra, workspace)
         report = {
             "status": "READONLY_PREVIEW", "dataset": str(extra),
@@ -990,7 +1002,9 @@ def run(root, *, xt, apply=False, today=None, since=SINCE,
             progress("MARKET_QMT_EXTRA_STAGE_START=download_sector_data")
             xt.download_sector_data()
             progress("MARKET_QMT_EXTRA_STAGE_DONE=download_sector_data")
-        universe = discover(xt) if section != "sectors" else {}
+        universe = ({"financial": financial_universe}
+                    if financial_universe is not None else
+                    discover(xt) if section != "sectors" else {})
         state = _state(extra, workspace)
         if section in ("all", "sectors"):
             progress("MARKET_QMT_EXTRA_STAGE_START=sector_snapshot")

@@ -141,6 +141,45 @@ class QmtExtraTests(unittest.TestCase):
             E._normalize_quote("510050.SH", FakeFrame([data]),
                                until=date(2026, 11, 15))
 
+    def test_etf_invalid_15min_ohlcva_exposes_exact_source_row(self):
+        stamp = int(datetime(2026, 11, 16, 10, 15, tzinfo=L.UTC8).timestamp()*1000)
+        good = {"time": stamp, "open": 1.1, "high": 1.2, "low": 1.0,
+                "close": 1.15, "volume": 12., "amount": 1200.}
+        invalid = dict(good, time=stamp+900000, high=1.05)
+        with self.assertRaisesRegex(ValueError, "OHLCVA invalid") as ctx:
+            E._normalize_quote("158000.SZ", FakeFrame([good, invalid]),
+                               until=date(2026, 11, 16), period="15min")
+        msg = str(ctx.exception)
+        self.assertIn('"period":"15min"', msg)
+        self.assertIn('"row_index":1', msg)
+        self.assertIn('"timestamp_ms":' + str(stamp+900000), msg)
+        self.assertIn('"high_below_open_or_close"', msg)
+        self.assertIn('"high":1.05', msg)
+        self.assertIn('"local_day":"2026-11-16"', msg)
+
+    def test_nonpositive_or_nonfinite_qmt_bar_diagnostic_is_not_suppressed(self):
+        stamp = int(datetime(2026, 11, 16, 10, tzinfo=L.UTC8).timestamp()*1000)
+        raw = {"time": stamp, "open": 1.1, "high": 1.2,
+               "low": 0., "close": 1.15, "volume": float("nan"), "amount": 1200.}
+        with self.assertRaisesRegex(ValueError, "OHLCVA invalid") as ctx:
+            E._normalize_quote("158000.SZ", FakeFrame([raw]),
+                               until=date(2026, 11, 16), period="15min")
+        msg = str(ctx.exception)
+        self.assertIn('"nonpositive_low"', msg)
+        self.assertIn('"non_finite"', msg)
+        self.assertIn('"volume":null', msg)
+
+    def test_non_numeric_qmt_quote_bar_identifies_missing_field(self):
+        stamp = int(datetime(2026, 11, 16, 10, tzinfo=L.UTC8).timestamp()*1000)
+        row = {"time": stamp, "open": 1.1, "high": 1.2,
+               "low": 1., "close": 1.15, "volume": 1.}
+        with self.assertRaisesRegex(ValueError, "OHLCVA invalid") as ctx:
+            E._normalize_quote("158000.SZ", FakeFrame([row]),
+                               until=date(2026, 11, 16), period="15min")
+        self.assertIn('"reason":"missing_or_nonnumeric_ohlcva"',
+                      str(ctx.exception))
+        self.assertIn('"amount":null', str(ctx.exception))
+
     def test_qmt_300000_etf_redemption_unsupported_does_not_block_core(self):
         """Observed QMT broker error is capability limitation, not corruption."""
         import contextlib

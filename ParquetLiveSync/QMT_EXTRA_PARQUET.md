@@ -149,3 +149,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\update-m
 为查明根因，异常信息现在带 `period`、`row_index`、`timestamp_ms`、`local_day`、实际 `open/high/low/close/volume/amount` 值及违反的条件（如 `nonpositive_low`、`high_below_open_or_close`、`non_finite`）。校验仍拒绝异常行，绝不自动填充、裁剪或丢弃，ETF 证券游标只在全周期全部成功后推进。
 
 推荐先使用 **本地只读 QMT 缓存查询** 单独审计 `158000.SZ` 的 2026 年 `15m` 记录（调用 `xtdata.get_market_data_ex` 和 `_normalize_quote`，但不调用 `download_history_data`、`run(apply=True)`、`_atomic_parquet`），拿到精确坏行，再决定是否是 QMT 历史原始缺陷、收盘外无效记录或数值舍入。该步骤不修改 `qmt_extra` 的行情文件或进度游标。切勿直接用 `-ExtraStart 2026-01-01` 代替旧 `2011-01-01` 的全历史试验，避免未补完历史就推进完成游标。
+
+## 2026-11-16 ETF 158000.SZ 的浮点误差根因与窄修复
+
+Windows 真机只读 QMT 缓存查询 `158000.SZ` 2026 年 `15m`（848 条）复现首个异常：`row_index=399`, `timestamp_ms=1790751600000`, 日期 `2026-09-30`，`open=1.031`, `high=1.0319999999999998`, `low=1.031`, `close=1.032`, `volume=10667`, `amount=1100778`。原严格不等式误报 `high_below_open_or_close`，实际 `high/close` 相差一个二进制浮点数 ULP（约 `2.22e-16`）。
+
+现在 **仅在 OHLC 边界校验比较**中容许最多 4 ULP 浮点舍入差异；不改变源值、文件结构、时间戳、成交量/额校验和非有限值处理。超过 4 ULP 的逆序值以及真实非法数据仍报错；新增真实值保留、low 方向微误差和更大差异拒绝三个回归测试。
+
+这只是确认错误根因并修正误判，**仍需本机拉取分支运行全套离线测试并重试 `-Mode extras -ExtraSection etf -ExtraAssetLimit 1 -ExtraStart 2011-01-01` 才能确认全八周期真实下载完成**。之前 1min/5min 已提交的记录留在专用 `qmt_extra/etf`，失败未推进 ETF 游标。不要改为近期起点以免历史覆盖被错误标记完成；现有购买版股票八周期/H5/21:30 任务不变。

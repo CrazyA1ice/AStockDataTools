@@ -15,6 +15,8 @@ param(
     [string]$ExtraStart = "2011-01-01",
     [ValidateRange(30,3600)]
     [int]$ExtraFinancialTimeoutSeconds = 180,
+    [switch]$ExtraFinancialContinueOnError,
+    [switch]$ExtraFinancialRetryPending,
     [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
@@ -29,6 +31,8 @@ if ($Mode -eq "extras") {
     if ($LASTEXITCODE -ne 0) { throw "QMT supplementary data safety tests failed" }
     $extra = @("-u","-B","ParquetLiveSync\qmt_extra_data.py","--root",$Root,"--start",$ExtraStart,"--stock-limit",[string]$ExtraStockLimit,"--asset-limit",[string]$ExtraAssetLimit,"--section",$ExtraSection,"--financial-timeout-seconds",[string]$ExtraFinancialTimeoutSeconds)
     if ($Day) { $extra += @("--day",$Day) }
+    if ($ExtraFinancialContinueOnError) { $extra += "--financial-continue-on-error" }
+    if ($ExtraFinancialRetryPending) { $extra += "--financial-retry-pending" }
     if (-not $DryRun) { $extra += "--apply" }
     & $python @extra
     if ($LASTEXITCODE -ne 0) { throw "QMT supplementary data updater failed; eight purchased market periods unchanged" }

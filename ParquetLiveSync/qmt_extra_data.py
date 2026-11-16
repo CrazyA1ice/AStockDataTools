@@ -492,6 +492,89 @@ def _verified_financial_snapshot(extra, code, name, asof):
     return table.num_rows
 
 
+class FinancialDeferredError(Exception):
+    """Only a failed isolated QMT worker is eligible for queued retry."""
+
+    def __init__(self, code, table, cause):
+        self.code = code
+        self.table = table
+        self.cause = str(cause)[:500]
+        super().__init__(code + " table=" + table + ": " + self.cause)
+
+
+def _pending_financial(state):
+    pending = state.setdefault("financial_pending", {})
+    if not isinstance(pending, dict):
+        raise ValueError("QMT financial pending queue is malformed")
+    for code, entry in pending.items():
+        if (valid_code(code) != code or not isinstance(entry, dict)
+                or entry.get("table") not in FIN_TABLES
+                or not isinstance(entry.get("attempts"), int)
+                or entry["attempts"] < 1):
+            raise ValueError("Invalid pending QMT financial security: " + str(code))
+    return pending
+
+
+def _financial_selection(universe, state, limit, *, tolerate=False,
+                         retry_pending=False):
+    """High-water scan never wraps in opt-in tolerant mode.
+
+    Pending retries are separately addressed. No failed security can silently
+    become a successful security because the lexical scan passed its code.
+    """
+    if not tolerate:
+        return _batch(universe, state["cursor"].get("financial", ""), limit)
+    pending = _pending_financial(state)
+    if retry_pending:
+        missing = sorted(set(pending) - set(universe))
+        if missing:
+            raise ValueError("Pending QMT securities missing from universe: " +
+                             canonical_json(missing[:20]))
+        selected = sorted(pending)
+    else:
+        previous = state["cursor"].get("financial", "")
+        selected = [code for code in sorted(set(universe))
+                    if code > previous]
+    return selected[:limit] if limit else selected
+
+
+def _financial_defer(state, workspace, code, asof, failure, *, retry_pending):
+    pending = _pending_financial(state)
+    prior = pending.get(code, {})
+    pending[code] = {
+        "status": "PENDING_RETRY", "table": failure.table,
+        "reason": failure.cause, "asof": asof,
+        "attempts": prior.get("attempts", 0) + 1,
+        "updated_at": datetime.now(L.UTC8).isoformat()}
+    # The pending receipt and high-water cursor are written ATOMICALLY in
+    # the same progress.json transaction. On crash they advance together.
+    if not retry_pending:
+        state["cursor"]["financial"] = code
+    _save_state(state, workspace)
+    return pending[code]
+
+
+def _financial_coverage_receipt(workspace, code, asof, report):
+    """Audit-only report of observed QMT row counts; not completeness proof."""
+    workspace = Path(workspace)
+    _path_check(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    path = workspace / "financial-coverage.jsonl"
+    _path_check(path)
+    entry = {
+        "asof": asof, "symbol": code,
+        "tables": report,
+        "low_record_tables": [name for name in FIN_TABLES
+                              if 0 < report[name]["rows"] < 20],
+        "empty_source_tables": [name for name in FIN_TABLES
+                                if report[name]["rows"] == 0],
+        "coverage_status": "UNVERIFIED_HISTORICAL_COMPLETENESS"}
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(canonical_json(entry) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def _record_financial_failure(workspace, code, name, asof, reason, detail):
     """Append-only pending retry record; never marks a security complete."""
     workspace = Path(workspace)
@@ -606,10 +689,15 @@ def _fetch_financial(xt, extra, code, today, workspace, progress=print,
                  canonical_json({"symbol": code, "table": name,
                                  "api": "download_financial_data"}))
         if financial_timeout_seconds is not None:
-            values = _read_financial_isolated(
-                code, name, workspace,
-                timeout_seconds=financial_timeout_seconds,
-                asof=today.isoformat(), progress=progress)
+            try:
+                values = _read_financial_isolated(
+                    code, name, workspace,
+                    timeout_seconds=financial_timeout_seconds,
+                    asof=today.isoformat(), progress=progress)
+            except (TimeoutError, RuntimeError, ValueError, OSError) as exc:
+                # Do not classify corrupted EXISTING Parquet or parent
+                # serialization failures as provider retryable errors.
+                raise FinancialDeferredError(code, name, exc) from exc
         else:
             # In-process fake XT for unit tests; live CLI uses the watchdog.
             xt.download_financial_data([code], [name])

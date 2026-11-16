@@ -8,6 +8,7 @@ Explicit --apply required. Purchased eight-cycle/H5 and the 21:30 task untouched
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -69,17 +70,23 @@ def scan(root, *, xt, apply=False, max_symbols=30, max_minutes=360,
         "purchased_8_cycle_modified": False,
         "h5_modified": False, "windows_schedule_modified": False}
     if not apply:
+        catalog = E._tickers(xt, ("沪深A股",), required=True)
+        result["universe_symbols"] = len(catalog)
+        result["universe_sha256"] = hashlib.sha256(
+            E.canonical_json(catalog).encode("utf-8")).hexdigest()
         preview = E.run(
             root, xt=xt, apply=False, section="financial",
             stock_limit=max_symbols, workspace=workspace,
             financial_timeout_seconds=timeout_seconds,
-            financial_continue_on_error=True, progress=lambda _: None)
+            financial_continue_on_error=True,
+            financial_universe=catalog, progress=lambda _: None)
         result["next"] = preview["next"]["financial"]
         result["status"] = "BOUNDED_FINANCIAL_READONLY_PREVIEW"
         progress("QMT_FINANCIAL_BULK_SUMMARY=" + E.canonical_json(result))
         return result
 
     deadline = started + timedelta(minutes=max_minutes)
+    catalog = None
     for _ in range(max_symbols):
         now = _local_now(clock)
         if now >= deadline:
@@ -89,6 +96,23 @@ def scan(root, *, xt, apply=False, max_symbols=30, max_minutes=360,
         if guard:
             result["status"] = "PAUSED_" + guard
             break
+        if catalog is None:
+            # A single source-defined A-share universe snapshot is used for
+            # the entire bounded session; rediscover on the next invocation.
+            catalog = E._tickers(xt, ("沪深A股",), required=True)
+            result["universe_symbols"] = len(catalog)
+            result["universe_sha256"] = hashlib.sha256(
+                E.canonical_json(catalog).encode("utf-8")).hexdigest()
+            progress("QMT_FINANCIAL_BULK_UNIVERSE=" + E.canonical_json({
+                "symbols": len(catalog), "sha256": result["universe_sha256"]}))
+            now = _local_now(clock)
+            if now >= deadline:
+                result["status"] = "PAUSED_TIME_BUDGET"
+                break
+            guard = _blackout_reason(now, timeout_seconds)
+            if guard:
+                result["status"] = "PAUSED_" + guard
+                break
         before = E._state(extra, workspace).get("cursor", {}).get("financial", "")
         # One stock per call gives the tightest safe checkpoint and avoids
         # an unbounded 5,224-stock call crossing the existing 21:30 task.
@@ -97,7 +121,8 @@ def scan(root, *, xt, apply=False, max_symbols=30, max_minutes=360,
             stock_limit=1, since=E.SINCE,
             today=now.date(), workspace=workspace,
             financial_timeout_seconds=timeout_seconds,
-            financial_continue_on_error=True, progress=progress)
+            financial_continue_on_error=True,
+            financial_universe=catalog, progress=progress)
         section = report["sections"]["financial"]
         cursor = section["cursor"]
         completed = section["symbols_processed"]

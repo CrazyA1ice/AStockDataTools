@@ -1,7 +1,7 @@
 """Offline QMT extra-data tests; never contact live QMT or Windows scheduler."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import json
 import subprocess

@@ -1248,6 +1248,290 @@ class QmtExtraTests(unittest.TestCase):
                 with U.keep_awake(True):
                     pass
 
+    def test_cache_worker_reads_two_stocks_nine_tables_without_download(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.calls = []
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.calls.append(("read", tuple(codes), tuple(tables)))
+                return {code: {"Income": FakeFrame([
+                    {"m_timetag": 20260930, "income": 1}])} for code in codes}
+            def download_financial_data2(self, *args, **kwargs):
+                self.calls.append(("download",))
+        with tempfile.TemporaryDirectory() as tmp:
+            xt = XT()
+            path = Path(tmp) / "private.json"
+            W.collect(xt, ["600000.SH", "600001.SH"], path,
+                      progress=lambda _: None)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(set(payload["records"]),
+                             {"600000.SH", "600001.SH"})
+            self.assertEqual(payload["records"]["600000.SH"]["Income"][0]
+                             ["m_timetag"], 20260930)
+            self.assertEqual(len(payload["records"]["600000.SH"]), 9)
+            self.assertEqual(payload["records"]["600000.SH"]["PerShare"], [])
+            self.assertEqual(len(xt.calls), 1)
+            self.assertEqual(xt.calls[0][0], "read")
+
+    def test_cache_worker_daily_only_downloads_announce_window(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.calls = []
+            def download_financial_data2(self, codes, tables,
+                                         start_time, end_time):
+                self.calls.append(("daily", codes, tables,
+                                   start_time, end_time))
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.calls.append(("read", codes, tables))
+                return {codes[0]: {"Balance": FakeFrame(
+                    [{"m_timetag": 20260930}])}}
+        with tempfile.TemporaryDirectory() as tmp:
+            xt = XT()
+            W.collect(xt, ["600000.SH"], Path(tmp) / "out.json",
+                      mode="daily", start="20260717", end="20261117",
+                      progress=lambda _: None)
+            self.assertEqual(len(xt.calls), 2)
+            self.assertEqual(xt.calls[0][0], "daily")
+            self.assertEqual(xt.calls[0][3:], ("20260717", "20261117"))
+            self.assertNotIn("PerShare", xt.calls[0][2])
+            self.assertEqual(len(xt.calls[1][2]), 9)
+
+    def test_cache_import_preview_never_creates_progress_or_parquet(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            result = I.run(root, xt=FakeXt(), mode="cache",
+                           apply=False, workspace=private,
+                           max_symbols=2, progress=lambda _: None)
+            self.assertEqual(result["status"], "PREVIEW")
+            self.assertEqual(result["selected"], 1)
+            self.assertFalse(private.exists())
+            self.assertFalse(E._storage(root).exists())
+
+    def test_cache_import_commit_skips_identical_and_keeps_original(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            asof = "2026-11-17"
+            old = [{"_index": "0", "m_timetag": 19921231, "v": 1}]
+            old_tab = E.snapshot_table(asof, "600000.SH", "Income", old)
+            E._snapshot_write(extra, "financial/Income/600000.SH",
+                              asof, old_tab, private)
+            original = E._financial_snapshot_file(
+                extra, "600000.SH", "Income", asof)
+            old_sha = E.L.hash_file(original)
+            calls = []
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                calls.append((group, mode))
+                values = {table: [] for table in E.FIN_TABLES}
+                values["Income"] = [
+                    *old, {"_index": "1", "m_timetag": 20260930, "v": 2}]
+                values["Balance"] = [{"_index": "0", "asset": 99}]
+                return {code: values for code in group}, []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = I.run(
+                    root, xt=FakeXt(), mode="cache", apply=True,
+                    batch_size=1, workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 1, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+                again = I.run(
+                    root, xt=FakeXt(), mode="cache", apply=True,
+                    batch_size=1, workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 1, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(result["status"], "SOURCE_UNIVERSE_EXHAUSTED")
+            self.assertEqual(result["processed"], 1)
+            self.assertEqual(result["new_snapshots"], 2)
+            self.assertEqual(result["empty_tables"], 7)
+            self.assertEqual(again["processed"], 0)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600000.SH", "Income", asof), 2)
+            self.assertEqual(E.L.hash_file(original), old_sha)
+            self.assertEqual(len(list(original.parent.glob(
+                asof + "-*.parquet"))), 2)
+            self.assertEqual(I._state(extra, private)["import_cursor"],
+                             "600000.SH")
+
+    def test_cache_import_conflict_queues_stock_and_continues(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = ["600000.SH", "600001.SH"]
+            E._snapshot_write(
+                extra, "financial/Income/600000.SH", "2026-11-16",
+                E.snapshot_table("2026-11-16", "600000.SH", "Income",
+                                 [{"_index": "0", "v": 1}]), private)
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                values = {table: [] for table in E.FIN_TABLES}
+                values["Income"] = [{"_index": "0", "v": 99}]
+                return {code: values for code in group}, []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = I.run(root, xt=xt, mode="cache", apply=True,
+                               batch_size=2, workspace=private, worker=worker,
+                               clock=lambda: datetime(2026, 11, 17, 1, 0,
+                                                      tzinfo=L.UTC8),
+                               progress=lambda _: None)
+            self.assertEqual(result["pending_added"], 1)
+            self.assertEqual(result["processed"], 1)
+            self.assertEqual(result["end_cursor"], "600001.SH")
+            self.assertEqual(I._state(extra, private)["pending"]
+                             ["600000.SH"]["reason"],
+                             "SOURCE_HISTORY_CONFLICT")
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600000.SH", "Income", "2026-11-16"), 1)
+            self.assertIsNone(E._verified_financial_snapshot(
+                extra, "600000.SH", "Income", "2026-11-17"))
+            self.assertEqual(E._verified_financial_snapshot(
+                extra, "600001.SH", "Income", "2026-11-17"), 1)
+
+    def test_cache_import_union_of_all_old_effective_days(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            for day, value in (("2026-11-15", 101),
+                               ("2026-11-16", 202)):
+                E._snapshot_write(
+                    extra, "financial/Income/600000.SH", day,
+                    E.snapshot_table(
+                        day, "600000.SH", "Income",
+                        [{"_index": "0", "v": value}]), private)
+            data = {table: [] for table in E.FIN_TABLES}
+            data["Income"] = [{"_index": "0", "v": 202}]
+            with self.assertRaisesRegex(ValueError,
+                                        "SOURCE_HISTORY_CONFLICT"):
+                I._plan_symbol(extra, "600000.SH", "2026-11-17", data)
+
+    def test_cache_import_missing_cache_pending_and_retry(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            found = [False]
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                if not found[0]:
+                    return {}, group
+                data = {table: [] for table in E.FIN_TABLES}
+                data["Balance"] = [{"_index": "0", "asset": 12}]
+                return {code: data for code in group}, []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                first = I.run(
+                    root, xt=FakeXt(), mode="cache", apply=True,
+                    batch_size=1, workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 1, 0,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+                found[0] = True
+                second = I.run(
+                    root, xt=FakeXt(), mode="cache", apply=True,
+                    batch_size=1, retry_pending=True,
+                    workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 1, 0,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(first["pending_added"], 1)
+            self.assertEqual(first["processed"], 0)
+            self.assertEqual(second["processed"], 1)
+            self.assertEqual(I._state(extra, private)["pending"], {})
+            self.assertEqual(I._state(extra, private)["import_cursor"],
+                             "600000.SH")
+
+    def test_cache_import_daily_new_day_incremental_window(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            calls = []
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                calls.append((mode, day, lookback))
+                rows = {table: [] for table in E.FIN_TABLES}
+                rows["Balance"] = [{"_index": "0", "v": 1}]
+                return {code: rows for code in group}, []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                first = I.run(
+                    root, xt=FakeXt(), mode="daily", apply=True,
+                    workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 23, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+                second = I.run(
+                    root, xt=FakeXt(), mode="daily", apply=True,
+                    workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 18, 23, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(first["new_snapshots"], 1)
+            self.assertEqual(second["new_snapshots"], 0)
+            self.assertEqual(calls, [("daily", "2026-11-17", 120),
+                                     ("daily", "2026-11-18", 120)])
+            self.assertEqual(I._state(extra, private)["daily_date"],
+                             "2026-11-18")
+            self.assertEqual(I._state(extra, private)["daily_cursor"],
+                             "600000.SH")
+
+    def test_cache_import_worker_failure_preserves_state(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            def fail(*args, **kwargs):
+                raise TimeoutError("Simulated QMT timeout")
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                with self.assertRaisesRegex(TimeoutError, "Simulated"):
+                    I.run(
+                        root, xt=FakeXt(), apply=True, mode="cache",
+                        workspace=private, worker=fail,
+                        clock=lambda: datetime(2026, 11, 17, 1, 0,
+                                               tzinfo=L.UTC8),
+                        progress=lambda _: None)
+            self.assertFalse(I._state_file(private).exists())
+            self.assertIsNone(E._verified_financial_snapshot(
+                extra, "600000.SH", "Balance", "2026-11-17"))
+
+    def test_cache_import_scheduled_window_pause_does_not_touch_state(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            private = Path(tmp) / "private"
+            result = I.run(
+                root, xt=FakeXt(), mode="cache", apply=True,
+                workspace=private,
+                clock=lambda: datetime(2026, 11, 17, 21, 30,
+                                       tzinfo=L.UTC8),
+                worker=lambda *a, **k: self.fail("Worker must not run"),
+                progress=lambda _: None)
+            self.assertEqual(result["status"], "PAUSED_SCHEDULE_PROTECTION")
+            self.assertFalse(I._state_file(private).exists())
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

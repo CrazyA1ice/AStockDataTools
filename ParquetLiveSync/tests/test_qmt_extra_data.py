@@ -1675,6 +1675,30 @@ class QmtExtraTests(unittest.TestCase):
                 "2026-11-17", 120, Path("D:/not-used"), 30,
                 progress=lambda _: None)
 
+    def test_capital_readonly_diagnosis_identifies_field_value_drift(self):
+        import qmt_extra_financial_conflict_diagnose as D
+        old = [{"_index": "0", "m_timetag": 20240930,
+                "capital": 100.0, "source": "old"}]
+        fresh = [{"_index": "1", "m_timetag": 20240930,
+                  "capital": 110.0, "source": "old"}]
+        result = D.compare(old, fresh)
+        self.assertEqual(result["old_missing_from_new"], 1)
+        self.assertEqual(result["new_not_in_old"], 1)
+        fields = result["report_key_differences"]["changed_field_frequency_top"]
+        self.assertIn(["capital", 1], [list(x) for x in fields])
+        self.assertEqual(result["report_key_differences"]["matched_changed"], 1)
+
+    def test_capital_readonly_diagnosis_ignores_pandas_row_index(self):
+        import qmt_extra_financial_conflict_diagnose as D
+        old = [{"_index": "old", "m_timetag": 20240930,
+                "capital": 100.0}]
+        fresh = [{"_index": "different", "m_timetag": 20240930,
+                  "capital": 100.0}]
+        result = D.compare(old, fresh)
+        self.assertEqual(result["old_missing_from_new"], 0)
+        self.assertEqual(result["new_not_in_old"], 0)
+        self.assertEqual(result["report_key_differences"]["matched_identical"], 1)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

@@ -1574,6 +1574,107 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(result["status"], "PAUSED_SCHEDULE_PROTECTION")
             self.assertFalse(I._state_file(private).exists())
 
+    def test_cache_utf8_group_split_defers_only_bad_stock(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            workspace = Path(tmp) / "private"
+            xt = FakeXt()
+            symbols = ["600000.SH", "600001.SH", "600002.SH",
+                       "600003.SH", "600004.SH"]
+            xt.sectors["沪深A股"] = symbols
+            calls = []
+            bad = "600002.SH"
+            repaired = [False]
+            def fake_worker(group, mode, day, lookback, work, timeout, **kw):
+                calls.append(tuple(group))
+                if bad in group and not repaired[0]:
+                    raise I.QMTCacheDecodeError("Simulated provider UTF-8 error")
+                def recs(code):
+                    out = {name: [] for name in E.FIN_TABLES}
+                    out["Income"] = [{"_index": "0", "m_timetag": 20260930,
+                                      "net": 1}]
+                    return out
+                return {code: recs(code) for code in group}, []
+            fixed_now = datetime(2026, 11, 17, 1, 0, tzinfo=L.UTC8)
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = I.run(
+                    root, xt=xt, mode="cache", apply=True,
+                    batch_size=5, workspace=workspace,
+                    worker=fake_worker, clock=lambda: fixed_now,
+                    progress=lambda _: None)
+                repaired[0] = True
+                retry = I.run(
+                    root, xt=xt, mode="cache", apply=True,
+                    batch_size=5, retry_pending=True, workspace=workspace,
+                    worker=fake_worker, clock=lambda: fixed_now,
+                    progress=lambda _: None)
+            self.assertEqual(result["processed"], 4)
+            self.assertEqual(result["pending_added"], 1)
+            self.assertEqual(result["end_cursor"], symbols[-1])
+            self.assertEqual(result["pending_total"], 1)
+            self.assertEqual(I._state(extra, workspace)["pending"], {})
+            self.assertEqual(retry["processed"], 1)
+            self.assertEqual(retry["pending_total"], 0)
+            self.assertEqual(len([x for x in calls if bad in x]), 4)
+            for code in symbols:
+                self.assertEqual(E._verified_financial_snapshot(
+                    extra, code, "Income", "2026-11-17"), 1)
+
+    def test_cache_utf8_three_consecutive_source_failures_halt(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            symbols = ["600000.SH", "600001.SH", "600002.SH",
+                       "600003.SH", "600004.SH"]
+            xt.sectors["沪深A股"] = symbols
+            def fail(*args, **kwargs):
+                raise I.QMTCacheDecodeError("Provider UTF8 failed")
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                with self.assertRaisesRegex(
+                        RuntimeError, "Three consecutive"):
+                    I.run(root, xt=xt, mode="cache", apply=True,
+                          batch_size=5, workspace=private, worker=fail,
+                          clock=lambda: datetime(2026, 11, 17, 1, 0,
+                                                 tzinfo=L.UTC8),
+                          progress=lambda _: None)
+            saved = I._state(extra, private)
+            self.assertEqual(saved["import_cursor"], "600002.SH")
+            self.assertEqual(len(saved["pending"]), 3)
+            self.assertEqual(set(entry["reason"] for entry
+                                 in saved["pending"].values()),
+                             {"CACHE_DECODE_ERROR"})
+
+    def test_cache_utf8_worker_exit_retries_once_then_classifies(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            from subprocess import CompletedProcess
+            with patch.object(I.subprocess, "run",
+                              return_value=CompletedProcess([], 85)) as run:
+                with self.assertRaises(I.QMTCacheDecodeError):
+                    I._worker_batch(
+                        ["600000.SH"], "cache", "2026-11-17", 120,
+                        Path(tmp), 30, progress=lambda _: None)
+            self.assertEqual(run.call_count, 2)
+
+    def test_cache_utf8_does_not_hide_unrelated_worker_error(self):
+        import qmt_extra_financial_cache_import as I
+        with self.assertRaisesRegex(RuntimeError, "Unrelated QMT error"):
+            I._recover_utf8_group(
+                lambda *a, **k: (_ for _ in ()).throw(
+                    RuntimeError("Unrelated QMT error")),
+                ["600000.SH", "600001.SH"], "cache",
+                "2026-11-17", 120, Path("D:/not-used"), 30,
+                progress=lambda _: None)
+
     def test_malformed_financial_pending_queue_fails_closed(self):
         good = {"cursor": {"financial": "600001.SH"},
                 "financial_pending": {"600000.SH": {

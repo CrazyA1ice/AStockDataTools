@@ -17,7 +17,8 @@ if($Action -eq 'Status'){
         # CIM ExecutionTimeLimit is commonly an ISO-8601 duration string,
         # not a .NET TimeSpan. Inspect task XML instead of comparing types.
         $taskXml=[xml](Export-ScheduledTask -TaskName $task)
-        $xmlLimit=[string]$taskXml.Task.Settings.ExecutionTimeLimit
+        $xmlNode=$taskXml.SelectSingleNode("/*[local-name()='Task']/*[local-name()='Settings']/*[local-name()='ExecutionTimeLimit']")
+        $xmlLimit=if($null -ne $xmlNode){[string]$xmlNode.InnerText}else{'MISSING'}
         Write-Host ('MARKET_TASK_XML_EXECUTION_TIME_LIMIT='+$xmlLimit)
         Write-Host ('MARKET_TASK_XML_RUNTIME_UNLIMITED='+($xmlLimit -eq 'PT0S'))
         Get-ScheduledTaskInfo -TaskName $task |

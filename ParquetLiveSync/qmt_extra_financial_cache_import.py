@@ -578,7 +578,8 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
     else:
         report["status"] = (
             "SOURCE_UNIVERSE_EXHAUSTED"
-            if mode == "daily" and state["daily_sweep_reached_end"]
+            if mode == "daily" and not retry_pending
+            and state["daily_sweep_reached_end"]
             else "PAUSED_SYMBOL_LIMIT" if len(selected) == max_symbols
             else "SOURCE_UNIVERSE_EXHAUSTED")
     progress("QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=" + E.canonical_json(report))

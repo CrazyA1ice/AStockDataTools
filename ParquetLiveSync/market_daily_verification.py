@@ -82,8 +82,24 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
             result["data_validation"] = "FAIL"
             result["detail"] = "八周期存在未完成阶段或来源未就绪"
         elif ran:
-            result["data_validation"] = "PASS"
-            result["detail"] = "八周期阶段校验通过；不等于全市场逐股跨源一致"
+            newly_staged = []
+            for line in log_text.splitlines():
+                if line.startswith("MARKET_DAILY_STAGED="):
+                    try:
+                        doc = json.loads(line[len("MARKET_DAILY_STAGED="):])
+                        if isinstance(doc, dict):
+                            newly_staged.append(doc)
+                    except ValueError:
+                        continue
+            if any(int(x.get("quarantine", 0)) > 0 for x in newly_staged):
+                result["data_validation"] = "PARTIAL"
+                result["detail"] = "八周期阶段完成，但部分股票被隔离"
+            elif newly_staged:
+                result["data_validation"] = "PASS"
+                result["detail"] = "本轮新增行情完成八周期及日线校验"
+            else:
+                result["data_validation"] = "UNVERIFIED"
+                result["detail"] = "八周期阶段完成，本次无新增行情校验回执"
         samples = []
         for line in log_text.splitlines():
             m = SOURCE_SAMPLE.match(line)
@@ -96,8 +112,8 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
         elif (expected and samples
               and expected <= {name for name, _, _, _ in samples}
               and all(status == "AGREE" and total > 0 and agreed == total
-                      for _, status, agreed, total in samples
-                      if _ in expected)):
+                      for name, status, agreed, total in samples
+                      if name in expected)):
             result["cross_validation"] = "PASS"
         else:
             result["cross_validation"] = "UNVERIFIED"
@@ -134,7 +150,8 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
                             + ("未验证" if incomplete else "通过"))
 
     elif stage == "SECTORS":
-        sector = receipt.get("sections", {}).get("sectors", {})
+        sections = receipt.get("sections")
+        sector = sections.get("sectors", {}) if isinstance(sections, dict) else {}
         if (ran and isinstance(sector, dict)
                 and sector.get("status") in ("CREATED", "UPDATED", "UNCHANGED")
                 and isinstance(sector.get("memberships"), int)
@@ -147,10 +164,11 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
             result["detail"] = "板块本次提交无充分有效快照回执"
 
     elif stage == "ADJUSTMENTS_ROTATING":
-        adj = receipt.get("sections", {}).get("adjustments", {})
+        sections = receipt.get("sections")
+        adj = sections.get("adjustments", {}) if isinstance(sections, dict) else {}
         processed = adj.get("symbols_processed") if isinstance(adj, dict) else None
         more = adj.get("next_batch_required") if isinstance(adj, dict) else None
-        if ran and isinstance(processed, int) and processed >= 0 and isinstance(more, bool):
+        if ran and isinstance(processed, int) and processed > 0 and isinstance(more, bool):
             result["data_validation"] = "PARTIAL" if more else "PASS"
             result["detail"] = (f"QMT除权本批处理{processed}只；"
                                 + ("后续仍有批次" if more else "本轮遍历已到末尾"))

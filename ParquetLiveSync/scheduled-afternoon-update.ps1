@@ -32,6 +32,24 @@ if(-not $Apply){
 if($chinaNow.TimeOfDay -lt [TimeSpan]::Parse("16:30")){
     throw "Before 16:30 China market time: afternoon update refused"
 }
+# The primary checkout owns live_sync.WORK and every private progress ledger.
+# A detached git worktree has its own ParquetLiveSync/work directory; running
+# -Apply there against the SAME D:\stock would fork the source cursors and could
+# replay an existing physical month. Fail before any market or extra writes.
+$gitMetadata = Join-Path $repo ".git"
+if(-not(Test-Path -LiteralPath $gitMetadata -PathType Container)){
+    throw "READONLY_PREVIEW_WORKTREE: -Apply requires the primary repository checkout with canonical private ledgers"
+}
+$requiredState = @(
+    (Join-Path $module "work\market_update\commits.json"),
+    (Join-Path $module "work\qmt_extra\progress.json"),
+    (Join-Path $module "work\qmt_extra\financial-cache-progress.json")
+)
+foreach($statePath in $requiredState){
+    if(-not(Test-Path -LiteralPath $statePath -PathType Leaf)){
+        throw "Missing canonical private progress ledger; refusing initial or divergent -Apply: $statePath"
+    }
+}
 if(-not(Test-Path -LiteralPath $update -PathType Leaf)){throw "Missing market entry"}
 if(-not(Test-Path -LiteralPath $finance -PathType Leaf)){throw "Missing financial entry"}
 if(-not(Test-Path -LiteralPath (Join-Path $repo ".venv\Scripts\python.exe") -PathType Leaf)){throw "Missing project Python"}

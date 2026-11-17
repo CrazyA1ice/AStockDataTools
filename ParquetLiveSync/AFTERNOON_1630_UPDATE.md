@@ -29,6 +29,18 @@
 
 通知脚本 `notify-market-update.ps1` 支持 `-DryRun`，可单独测试三类结果而不真正弹窗。代码出现语法错误、Windows 强制终止进程或电脑断电时，任何进程内通知都无法保证触发；这类异常需要任务历史/外部监控才能发现。
 
+## 当日更新通知：明确区分执行、数据校验、跨源证据
+
+用户通知与 `work/last-afternoon-unified.json` 的 `validation` 对象分别记录：
+
+- **执行状态**：K线、财务、板块、除权四个子任务是否退出成功
+- **数据校验**：只根据当次 `MARKET_DAILY_STAGED`、`MARKET_EIGHT_PERIOD_SUMMARY`、`QMT_FINANCIAL_CACHE_IMPORT_SUMMARY` 和 `MARKET_QMT_EXTRA_SUMMARY` 回执判断；有股票隔离、财务 pending 或尚未遍历的证券必须标注“部分通过”，没有最新回执必须标注“未验证”
+- **交叉验证**：K线仅在当次所有配置的独立分钟样本源均报告 AGREE 时显示“抽样通过”；有价格差异显示“失败”，来源不可用或无新样本显示“未验证”；财务、板块、除权尚无认证的第二数据源，不能显示“跨源通过”
+
+四阶段日志分别保存在 `work/afternoon-日期-阶段.log`，由新增的 **只读** `market_daily_verification.py` 解析，完整证据写入 `work/verification-日期.json`，且不读取前一天的成功记录。即使验证脚本损坏，主脚本仍会发送“执行情况已知、校验与跨源未验证”的保守通知。本机 Windows 通知仍是尽力发送，断电、注销或进程被系统强制终止不保证提醒。
+
+既有 Windows 任务使用 `ExecutionTimeLimit=PT0S` 表示没有整轮执行上限。**在 `Get-ScheduledTask` 返回字符串形式的持续时间时，不要使用 `-ne [TimeSpan]::Zero` 判断；应该查询任务 XML 中的 `Settings/ExecutionTimeLimit`。** 下载器的单次请求故障超时仍保留，不属于任务运行总时长限制。
+
 ## 数据安全、覆盖率和已知隔离
 
 - 项目已有八周期行情多源证据；财务、板块、除权现仍以 QMT 入库，**尚不具备完整第二来源核验**

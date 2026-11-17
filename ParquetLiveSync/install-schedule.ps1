@@ -11,9 +11,8 @@ $task='AStockDataTools-ParquetLiveSync'
 $module=Split-Path -Parent $PSCommandPath
 $repo=Split-Path -Parent $module
 $scheduled=Join-Path $module 'scheduled-update.ps1'
-$retryAt=''
 if($AfternoonUnified -and $Action -eq 'Install'){
-    if($At -ne '21:30'){throw 'AfternoonUnified computes China 16:30 and 20:45 in PC local time; omit -At'}
+    if($At -ne '21:30'){throw 'AfternoonUnified computes China 16:30 in PC local time; omit -At'}
     if(Test-Path -LiteralPath (Join-Path $module 'work\qmt_extra\schedule-enabled.json') -PathType Leaf){throw 'Legacy extras opt-in exists; refuse duplicate supplementary update'}
     $oldFinance=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
     if($null -ne $oldFinance){throw 'Independent 00:30 finance task exists; resolve schedule conflict before opt-in'}
@@ -22,9 +21,7 @@ if($AfternoonUnified -and $Action -eq 'Install'){
     $nowChina=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)
     $dateChina=$nowChina.Date
     $marketFirstUtc=[TimeZoneInfo]::ConvertTimeToUtc($dateChina.AddHours(16).AddMinutes(30),$shanghai)
-    $marketRetryUtc=[TimeZoneInfo]::ConvertTimeToUtc($dateChina.AddHours(20).AddMinutes(45),$shanghai)
     $At=[TimeZoneInfo]::ConvertTimeFromUtc($marketFirstUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
-    $retryAt=[TimeZoneInfo]::ConvertTimeFromUtc($marketRetryUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
 }
 $updater=Join-Path $module 'update-market.ps1'
 if($Action -eq 'Status'){
@@ -74,15 +71,13 @@ $arguments=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"'
 if($AfternoonUnified){$arguments+=' -Apply'}
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $At
-$triggers=@($trigger)
-if($AfternoonUnified){$triggers+=New-ScheduledTaskTrigger -Daily -At $retryAt}
-$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 8)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 $description='Single QMT+eltdx+Tencent source validation, TDX DAY, calibrated 5/15/30/60m, closed WEEK/MONTH. Interactive QMT session required. Never runs old DAY-only path.'
-if($AfternoonUnified){$description='16:30 China market four-section guarded update plus 20:45 market-only retry; financial/adjustments partial until source coverage audited'}
-Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $triggers -Settings $settings -Principal $principal -Description $description -Force | Out-Null
+if($AfternoonUnified){$description='One daily trigger at 16:30 China time: eight-period market, QMT financial, sector snapshots and bounded adjustments; source coverage separately audited'}
+Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
 Write-Host ('MARKET_SCHEDULE_INSTALLED task='+$task+' local_time='+$At+' user='+$identity)
-if($AfternoonUnified){Write-Host ('MARKET_1630_INSTALLED china_start=16:30 china_retry=20:45 pc_local_start='+$At+' pc_local_retry='+$retryAt)}
+if($AfternoonUnified){Write-Host ('MARKET_1630_INSTALLED china_start=16:30 pc_local_start='+$At+' triggers=1 sections=4')}
 Write-Host 'MARKET_SCHEDULE_QMT_REQUIREMENT=Windows must be logged in, QMT connected, machine awake; missed runs resume on next opportunity'
 Write-Host 'MARKET_SCHEDULE_MODE=UNIFIED_ALL_EIGHT_PERIODS one task only; status: install-schedule.ps1 -Action Status'

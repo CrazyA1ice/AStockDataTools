@@ -54,9 +54,17 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertIn("READONLY_PREVIEW_WORKTREE", runner)
         self.assertIn("financial-cache-progress.json", runner)
         self.assertIn("market_update\\commits.json", runner)
-        self.assertIn("[switch]$AfternoonUnified", installer)
+        self.assertNotIn("[switch]$AfternoonUnified", installer)
         self.assertIn("'scheduled-afternoon-update.ps1'", installer)
         self.assertIn("AStockDataTools-QMT-Financial-Daily", installer)
+        self.assertIn("([TimeSpan]::Zero)", installer)
+        self.assertNotIn("New-TimeSpan -Hours", installer)
+        self.assertIn("'notify-market-update.ps1'", installer)
+        self.assertIn("notify-market-update.ps1", runner)
+        self.assertIn("MARKET_1630_USER_NOTIFICATION_ATTEMPTED", runner)
+        self.assertIn("}finally{", runner)
+        self.assertNotIn("FinanceMaxMinutes", runner)
+        self.assertNotIn("Before 16:30 China market time", runner)
         # The one scheduled entry executes all four independent stages.
         sequence = ['-Label "EIGHT_PERIODS"', '-Label "FINANCIAL_DAILY"',
                     '-Label "SECTORS"', '-Label "ADJUSTMENTS_ROTATING"']
@@ -69,6 +77,19 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertIn("New-ScheduledTaskTrigger -Daily -At $At", installer)
         self.assertNotIn('$triggers+=', installer)
         self.assertIn("last-afternoon-unified.json", runner)
+    
+    def test_financial_daily_has_no_default_wall_clock_cap(self):
+        importer = (HERE / "qmt_extra_financial_cache_import.py").read_text(
+            encoding="utf-8")
+        wrapper = (HERE / "run-qmt-financial-daily.ps1").read_text(
+            encoding="utf-8")
+        self.assertIn("max_minutes=0", importer)
+        self.assertIn("if max_minutes else None", importer)
+        self.assertNotIn("PAUSED_SCHEDULE_PROTECTION", importer)
+        self.assertIn("[int]$MaxMinutes = 0", wrapper)
+        self.assertIn("'FINANCIAL_DAILY'", (HERE / "scheduled-afternoon-update.ps1").read_text(
+            encoding="utf-8"))
+
 
 
 if __name__ == "__main__":

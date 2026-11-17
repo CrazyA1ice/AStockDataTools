@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, datetime, timedelta, timezone
+from importlib.util import find_spec
 import json
 from pathlib import Path
 import re
@@ -313,8 +314,15 @@ def _source_config(module, state_root):
     configured = {name: {"enabled": bool(value.get("enabled")),
                          "configured": True}
                   for name, value in chk.items() if isinstance(value, dict)}
+    deps = {}
+    for name in ("eltdx", "akshare", "baostock", "pytdx", "requests"):
+        try:
+            deps[name] = "INSTALLED_ONLY_NO_LIVE_PROBE" if find_spec(name) is not None else "NOT_INSTALLED"
+        except (ImportError, ValueError):
+            deps[name] = "UNKNOWN"
     return {"source_config": str(src), "minute_cross_checks": configured,
-            "verified_now": False, "reason": "configuration is not a live cross-check; check a same-run source receipt",
+            "python_provider_packages": deps,
+            "verified_now": False, "reason": "package presence/configuration is not a live cross-check; check a same-run source receipt",
             "extra_independent_sources": {"financial": "NOT_CONFIGURED",
                                           "sectors": "NOT_CONFIGURED",
                                           "adjustments": "NOT_CONFIGURED"}}
@@ -398,6 +406,7 @@ def main(argv=None):
         "finance_daily_sweep_finished": report["private_progress"]["financial_daily_sweep_finished"],
         "last_unified_run": report["private_progress"]["last_unified_run"],
         "cross_sources": report["cross_source_configuration"]["minute_cross_checks"],
+        "independent_package_readiness": report["cross_source_configuration"]["python_provider_packages"],
     }
     print("LOCAL_MARKET_PARQUET_BRIEF=" +
           json.dumps(brief, ensure_ascii=False, sort_keys=True, separators=(",", ":")))

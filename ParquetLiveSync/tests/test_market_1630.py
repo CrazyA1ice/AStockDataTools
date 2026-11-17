@@ -83,6 +83,13 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertNotIn("-Action $action ", installer)
         self.assertNotIn('$triggers+=', installer)
         self.assertIn("last-afternoon-unified.json", runner)
+        self.assertIn("market_daily_verification.py", runner)
+        self.assertIn("Out-File -LiteralPath $stageLog -Encoding UTF8", runner)
+        self.assertIn("$stageRecords[$Label]", runner)
+        self.assertIn("MARKET_1630_DATA_VALIDATION", runner)
+        self.assertIn("MARKET_1630_CROSS_VALIDATION", runner)
+        self.assertIn("MARKET_TASK_XML_RUNTIME_UNLIMITED", installer)
+        self.assertIn("$xmlLimit -eq 'PT0S'", installer)
     
     def test_financial_daily_has_no_default_wall_clock_cap(self):
         importer = (HERE / "qmt_extra_financial_cache_import.py").read_text(

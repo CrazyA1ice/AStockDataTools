@@ -51,7 +51,7 @@ $chinaToday=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
 $firstUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(16).AddMinutes(30),$china)
 $firstLocal=[TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
 if($reg.Triggers[0].At -ne $firstLocal){throw 'Single China 16:30 trigger time invalid'}
-if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive'){throw 'Overlapping/noninteractive QMT task'}
+if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive' -or $reg.Settings.ExecutionTimeLimit.TotalHours -ne 8){throw 'Overlapping/noninteractive QMT task or incorrect unified runtime'}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}
 Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_SINGLE'
 Remove-Variable -Name AfternoonMock -Scope Global -ErrorAction SilentlyContinue

@@ -14,6 +14,12 @@ if($Action -eq 'Status'){
         $entry | Select-Object TaskName,State,TaskPath | Format-List
         $entry.Triggers | Select-Object StartBoundary,Enabled | Format-List
         $entry.Settings | Select-Object ExecutionTimeLimit,MultipleInstances | Format-List
+        # CIM ExecutionTimeLimit is commonly an ISO-8601 duration string,
+        # not a .NET TimeSpan. Inspect task XML instead of comparing types.
+        $taskXml=[xml](Export-ScheduledTask -TaskName $task)
+        $xmlLimit=[string]$taskXml.Task.Settings.ExecutionTimeLimit
+        Write-Host ('MARKET_TASK_XML_EXECUTION_TIME_LIMIT='+$xmlLimit)
+        Write-Host ('MARKET_TASK_XML_RUNTIME_UNLIMITED='+($xmlLimit -eq 'PT0S'))
         Get-ScheduledTaskInfo -TaskName $task |
             Select-Object LastRunTime,LastTaskResult,NextRunTime | Format-List
     }
@@ -44,7 +50,7 @@ if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project P
 if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
     throw 'Missing original physical market dataset'
 }
-foreach($relative in @('scheduled-afternoon-update.ps1','notify-market-update.ps1','update-market.ps1')){
+foreach($relative in @('scheduled-afternoon-update.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
     if(-not(Test-Path -LiteralPath (Join-Path $module $relative) -PathType Leaf)){
         throw 'Required unified market script missing: '+$relative
     }

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import date, datetime, timedelta, time
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -27,8 +27,6 @@ FORMAT = "qmt_financial_cache_import_v1"
 MAX_GROUP = 20
 MAX_PAYLOAD = 256 * 1024 * 1024
 STATE_FILE = "financial-cache-progress.json"
-BLACKOUT_START = time(21, 0)
-BLACKOUT_END = time(23, 5)
 
 
 class QMTCacheDecodeError(RuntimeError):
@@ -389,27 +387,15 @@ def _prepare_daily_sweep(state, asof, catalog, *, retry_pending=False):
     state["daily_date"] = asof
 
 
-def _is_blackout(now, worker_timeout):
-    local = now.timetz().replace(tzinfo=None)
-    if BLACKOUT_START <= local < BLACKOUT_END:
-        return True
-    if local < BLACKOUT_START:
-        guard = datetime.combine(now.date(), BLACKOUT_START,
-                                 tzinfo=E.L.UTC8)
-        if (guard - now).total_seconds() < worker_timeout + 240:
-            return True
-    return False
-
-
 def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
-        batch_size=5, max_minutes=1440, worker_timeout_seconds=180,
+        batch_size=5, max_minutes=0, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
         finance_dir=None, clock=None, progress=print, worker=None):
     if mode not in ("cache", "daily"):
         raise ValueError("Invalid financial import mode")
     if (not 1 <= batch_size <= MAX_GROUP or
             not 1 <= max_symbols <= 10000 or
-            not 1 <= max_minutes <= 1440 or
+            not 0 <= max_minutes <= 1440 or
             not 30 <= worker_timeout_seconds <= 3600 or
             not 1 <= lookback_days <= 1095):
         raise ValueError("Invalid QMT cache importer bounds")
@@ -422,7 +408,8 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         raise ValueError("Financial importer needs aware clock")
     now = raw_now.astimezone(E.L.UTC8)
     asof = now.date().isoformat()
-    deadline = now + timedelta(minutes=max_minutes)
+    deadline = (now + timedelta(minutes=max_minutes)
+                if max_minutes else None)
     extra = E._storage(Path(root))
     state = _state(extra, workspace)
     cursor_key = "import_cursor" if mode == "cache" else "daily_cursor"
@@ -456,6 +443,7 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "universe_sha256": universe_hash,
         "universe_metadata": catalog_metadata,
         "source_completeness_verified": False,
+        "time_budget_minutes": max_minutes,
         "start_cursor": state[cursor_key],
         "end_cursor": state[cursor_key],
         "selected": len(selected), "selected_first": selected[0] if selected else None,
@@ -491,11 +479,8 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         if now.date().isoformat() != asof:
             report["status"] = "PAUSED_DATE_ROLLOVER"
             break
-        if now >= deadline:
+        if deadline is not None and now >= deadline:
             report["status"] = "PAUSED_TIME_BUDGET"
-            break
-        if _is_blackout(now, worker_timeout_seconds):
-            report["status"] = "PAUSED_SCHEDULE_PROTECTION"
             break
         group = selected[offset:offset + batch_size]
         # Exclusive writer held across QMT cache access and official commits.
@@ -592,7 +577,8 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("cache", "daily"), default="cache")
     parser.add_argument("--max-symbols", type=int, default=6000)
     parser.add_argument("--batch-size", type=int, default=5)
-    parser.add_argument("--max-minutes", type=int, default=1440)
+    parser.add_argument("--max-minutes", type=int, default=0,
+                        help="0 disables total job time limit; per-worker safety timeout stays")
     parser.add_argument("--worker-timeout-seconds", type=int, default=180)
     parser.add_argument("--lookback-days", type=int, default=120)
     parser.add_argument("--finance-dir", type=Path,

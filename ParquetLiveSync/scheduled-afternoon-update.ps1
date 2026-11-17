@@ -1,4 +1,4 @@
-# One 16:30 China-time trigger -> market, finance, sectors, adjustments.
+﻿# One 16:30 China-time trigger -> market, finance, sectors, adjustments.
 # No runtime deadline. Every finished run attempts user notification.
 param(
     [switch]$Apply,
@@ -94,9 +94,13 @@ try {
     [void]$failures.Add('RUNNER: '+$_.Exception.Message)
     Write-Host ('MARKET_1630_RUNNER_FAILED='+$_.Exception.Message)
 }finally{
-    $outcome=if($failures.Count -eq 0 -and $completed.Count -eq $stageNames.Count){
-        'SUCCESS'
-    }elseif($completed.Count -gt 0){'PARTIAL'}else{'FAILED'}
+    if($failures.Count -eq 0 -and $completed.Count -eq $stageNames.Count){
+        $outcome='SUCCESS'
+    }elseif($completed.Count -gt 0){
+        $outcome='PARTIAL'
+    }else{
+        $outcome='FAILED'
+    }
     $result=[ordered]@{
         format='qmt_daily_single_trigger_v2'
         status=$outcome

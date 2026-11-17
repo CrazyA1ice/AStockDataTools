@@ -81,4 +81,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\install
 - 5/15/30/60m 来源仍是 QMT 的 1m 派生结果，**不是四个独立新行情上游**。另外核对的 eltdx、腾讯都是分钟抽样，不会覆盖正式值。
 - 只生成已有 240 格点的完整股票交易日；原有隔离异常不会被“合成”成完整日。对既有周期物理文件的同键值保留旧值，显著价格冲突停止；不删除用户原始文件。
 - 当前年月文件为 YYYY-MM.parquet；完整过去年度归档不由每日任务私自执行。
-- 本二期开发代码还未在用户 Windows 上验证全六个新周期的实际落盘；**必须先运行一次 `-Mode cycles -DryRun` 并核对真实输出，再正式补齐、安装任务**。
+- **2026-11-15 Windows 实测已完成**：54/54 项 Python 测试通过，四分钟周期 2026-10/11 共 8 笔实际 Parquet 月提交成功；周线 2026-11 新增 5,574 条，10/11 周月线已验原有同键。随后再次运行 `-Mode cycles` 六个周期新增 0（幂等复查通过），计划任务 `AStockDataTools-ParquetLiveSync` 已安装且状态 `Ready`。**新计划任务首次自动运行的 SUCCESS 记录仍需 Windows 日志证明**，不能把模拟安装日志当成真实执行。
+- **QMT 新增财务/复权因子/板块/指数/ETF：** [QMT_EXTRA_PARQUET.md](QMT_EXTRA_PARQUET.md)。继续沿用同一入口 `update-market.ps1 -Mode extras`，但真实 QMT 数据未验收前默认不接入现有 21:30 任务。

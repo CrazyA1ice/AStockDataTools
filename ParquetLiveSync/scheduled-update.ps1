@@ -42,7 +42,36 @@ try{
     & $engine -NoProfile -ExecutionPolicy Bypass -File $runner -Mode auto
     if($LASTEXITCODE -ne 0){throw ('Unified eight-cycle market updater failed with exit '+$LASTEXITCODE)}
     Write-Host 'MARKET_SCHEDULE_ALL_EIGHT_CYCLE_SUCCESS'
-    Save-RunStatus -State 'SUCCESS' -Details 'One-command full eight-period updater finished; see private log'
+    # Opt-in extra QMT data in the SAME existing task, only after on-host
+    # read-only/physical validation. Absent config keeps old eight-period job.
+    $optPath=Join-Path $module 'work\qmt_extra\schedule-enabled.json'
+    $extraRan=$false
+    if(Test-Path -LiteralPath $optPath -PathType Leaf){
+        $opt=Get-Content -LiteralPath $optPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        [int]$stocks=0
+        [int]$assets=0
+        if($opt.format -ne 'qmt_extra_schedule_v1' -or
+           -not [int]::TryParse([string]$opt.stock_limit,[ref]$stocks) -or
+           -not [int]::TryParse([string]$opt.asset_limit,[ref]$assets) -or
+           $stocks -lt 1 -or $stocks -gt 1000 -or
+           $assets -lt 1 -or $assets -gt 100){
+            throw 'Invalid QMT extras opt-in batch size; no supplementary downloads run'
+        }
+        $start=[string]$opt.start
+        try{
+            [void][datetime]::ParseExact($start,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)
+        }catch{
+            throw 'Invalid QMT extras opt-in start date'
+        }
+        & $engine -NoProfile -ExecutionPolicy Bypass -File $runner -Mode extras -ExtraStart $start -ExtraStockLimit $stocks -ExtraAssetLimit $assets
+        if($LASTEXITCODE -ne 0){
+            throw ('QMT extras batch failed with exit '+$LASTEXITCODE)
+        }
+        $extraRan=$true
+        Write-Host 'MARKET_SCHEDULE_QMT_EXTRA_BATCH_SUCCESS'
+    }
+    $details=if($extraRan){'Eight-period updater and QMT extras batch finished'}else{'Eight-period updater finished; QMT extras disabled'}
+    Save-RunStatus -State 'SUCCESS' -Details $details
 }catch{
     $reason=$_.Exception.Message
     Write-Host ('MARKET_SCHEDULE_RUN_FAILED='+$reason)

@@ -153,6 +153,14 @@ try {
         $verification=Get-Content -LiteralPath $verificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $result.validation=$verification
         $stepText=[string]$verification.notification_text
+        # Stage exit 0 does NOT imply verification passed. Report PARTIAL
+        # whenever current evidence identifies real quality issues.
+        if($outcome -eq 'SUCCESS' -and
+           ($verification.data_validation -in @('FAIL','PARTIAL') -or
+            $verification.cross_validation -eq 'FAIL')){
+            $outcome='PARTIAL'
+            $result.status=$outcome
+        }
         Write-Host ('MARKET_1630_DATA_VALIDATION='+$verification.data_validation)
         Write-Host ('MARKET_1630_CROSS_VALIDATION='+$verification.cross_validation)
     }catch{

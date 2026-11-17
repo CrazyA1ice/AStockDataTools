@@ -35,20 +35,31 @@ $status=Join-Path $work 'last-afternoon-unified.json'
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList
+$stageRecords=[ordered]@{}
 $transcribing=$false
 $stageNames=@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')
 function Invoke-MarketStage {
     param([string]$Label,[string]$Script,[string[]]$Arguments)
+    $stageLog=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'-'+$Label+'.log')
+    $code=-1
     Write-Host ('MARKET_1630_STEP_START='+$Label)
     try {
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments
-        if($LASTEXITCODE -ne 0){throw ('Exit code '+$LASTEXITCODE)}
+        # Capture *current invocation* evidence, not stale status files.
+        # Out-File UTF8 is compatible with Windows PowerShell 5.1 and
+        # independent of the large, append-only transcript.
+        & $engine -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments 2>&1 |
+            ForEach-Object { $line=[string]$_; Write-Host $line; $line } |
+            Out-File -LiteralPath $stageLog -Encoding UTF8
+        $code=$LASTEXITCODE
+        if($code -ne 0){throw ('Exit code '+$code)}
         [void]$completed.Add($Label)
         Write-Host ('MARKET_1630_STEP_DONE='+$Label)
     }catch{
         $msg=$Label+': '+$_.Exception.Message
         [void]$failures.Add($msg)
         Write-Host ('MARKET_1630_STEP_FAILED='+$msg)
+    }finally{
+        $stageRecords[$Label]=@{exit_code=[int]$code;log_path=$stageLog}
     }
 }
 try {
@@ -102,39 +113,72 @@ try {
         $outcome='FAILED'
     }
     $result=[ordered]@{
-        format='qmt_daily_single_trigger_v2'
+        format='qmt_daily_single_trigger_v3'
         status=$outcome
-        outcome_meaning='Step execution only; source completeness remains unverified'
+        outcome_meaning='Execution status only; see same-run validation evidence'
         mode='UNIFIED_SINGLE_RUN'
         started_local=$started
         finished_local=(Get-Date).ToString('o')
         china_start=$chinaNow.ToString('o')
         steps_expected=$stageNames
         steps_completed=@($completed.ToArray())
+        stage_records=$stageRecords
         errors=@($failures.ToArray())
+        validation=$null
         financial_complete_universe=$false
         adjustments_complete_universe=$false
         other_extra_multisource_verified=$false
         log_path=$log
     }
+    # Verification is derived exclusively from current invocation stage logs.
+    # Failure to parse NEVER creates a false PASS and never suppresses notice.
+    $stepText='执行'+$completed.Count+'/'+$stageNames.Count+'；数据校验未验证；跨源验证未验证'
     try {
         New-Item -ItemType Directory -Path $work -Force | Out-Null
+        $python=Join-Path $repo '.venv\Scripts\python.exe'
+        $verifier=Join-Path $module 'market_daily_verification.py'
+        $inputPath=Join-Path $work ('verification-input-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'.json')
+        $verificationPath=Join-Path $work ('verification-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'.json')
+        if(-not(Test-Path -LiteralPath $python -PathType Leaf) -or
+           -not(Test-Path -LiteralPath $verifier -PathType Leaf)){
+            throw 'Verification parser unavailable'
+        }
+        $result | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $inputPath -Encoding UTF8
+        $localConfig=Join-Path $work 'market_update\sources.local.json'
+        $config=if(Test-Path -LiteralPath $localConfig -PathType Leaf){
+            $localConfig
+        }else{Join-Path $module 'market_sources.json'}
+        & $python -B $verifier --run-json $inputPath --out-json $verificationPath --sources-config $config
+        if($LASTEXITCODE -ne 0){throw ('Verification parser exit '+$LASTEXITCODE)}
+        $verification=Get-Content -LiteralPath $verificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $result.validation=$verification
+        $stepText=[string]$verification.notification_text
+        Write-Host ('MARKET_1630_DATA_VALIDATION='+$verification.data_validation)
+        Write-Host ('MARKET_1630_CROSS_VALIDATION='+$verification.cross_validation)
+    }catch{
+        [void]$failures.Add('VERIFICATION: '+$_.Exception.Message)
+        $outcome=if($completed.Count -gt 0){'PARTIAL'}else{'FAILED'}
+        $result.status=$outcome
+        $stepText+='；验证报告生成失败：'+$_.Exception.Message
+        Write-Host ('MARKET_1630_VERIFICATION_FAILED='+$_.Exception.Message)
+    }
+    try {
+        $result.errors=@($failures.ToArray())
+        $result.finished_local=(Get-Date).ToString('o')
         $part=$status+'.part'
-        $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $part -Encoding UTF8
+        $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $part -Encoding UTF8
         Move-Item -LiteralPath $part -Destination $status -Force
-        Write-Host ('MARKET_1630_SUMMARY='+($result | ConvertTo-Json -Compress -Depth 6))
+        Write-Host ('MARKET_1630_SUMMARY='+($result | ConvertTo-Json -Compress -Depth 12))
     }catch{
         [void]$failures.Add('STATUS_SAVE: '+$_.Exception.Message)
         $outcome=if($completed.Count -gt 0){'PARTIAL'}else{'FAILED'}
+        $stepText+='；运行报告保存失败'
         Write-Host ('MARKET_1630_STATUS_WRITE_FAILED='+$_.Exception.Message)
     }
     if($transcribing){
         try {Stop-Transcript | Out-Null}
         catch {Write-Host ('MARKET_1630_TRANSCRIPT_STOP_FAILED='+$_.Exception.Message)}
     }
-    $stepText='K线/财务/板块/除权 已完成 '+$completed.Count+'/'+$stageNames.Count+' 项'
-    if($failures.Count){$stepText+='；失败：'+($failures -join '; ')}
-    else{$stepText+='；注意：全市场覆盖与全部跨源一致性仍待核实'}
     try {
         if(-not(Test-Path -LiteralPath $notifier -PathType Leaf)){
             throw 'Notification script missing'

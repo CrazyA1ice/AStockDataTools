@@ -63,14 +63,14 @@ try {
     Set-Location -LiteralPath $repo
     Write-Host "MARKET_1630_CHINA_NOW=$($chinaNow.ToString('o'))"
     Write-Host "MARKET_1630_MODE=$mode"
-    Invoke-AfternoonStep "EIGHT_PERIODS" $update @("-Mode","auto","-Root",$Root)
+    Invoke-AfternoonStep -Label "EIGHT_PERIODS" -Script $update -Arguments @("-Mode","auto","-Root",$Root)
     if($mode -eq "AFTERNOON_ALL"){
         # Independent QMT snapshots. No unsupported cross-source claims.
-        Invoke-AfternoonStep "SECTORS" $update @("-Mode","extras","-Root",$Root,"-ExtraSection","sectors","-ExtraStockLimit","1","-ExtraAssetLimit","0")
+        Invoke-AfternoonStep -Label "SECTORS" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","sectors","-ExtraStockLimit","1","-ExtraAssetLimit","0")
         $start = $chinaNow.Date.AddDays(-30).ToString("yyyy-MM-dd")
         # Existing adjustments cursor rotates; do not label this all-market completion.
-        Invoke-AfternoonStep "ADJUSTMENTS_ROTATING" $update @("-Mode","extras","-Root",$Root,"-ExtraSection","adjustments","-ExtraStockLimit",[string]$AdjustmentStockLimit,"-ExtraAssetLimit","0","-ExtraStart",$start)
-        Invoke-AfternoonStep "FINANCIAL_DAILY" $finance @("-Root",$Root,"-FinanceDir",$FinanceDir,"-MaxMinutes",[string]$FinanceMaxMinutes,"-LookbackDays",[string]$FinanceLookbackDays)
+        Invoke-AfternoonStep -Label "ADJUSTMENTS_ROTATING" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","adjustments","-ExtraStockLimit",[string]$AdjustmentStockLimit,"-ExtraAssetLimit","0","-ExtraStart",$start)
+        Invoke-AfternoonStep -Label "FINANCIAL_DAILY" -Script $finance -Arguments @("-Root",$Root,"-FinanceDir",$FinanceDir,"-MaxMinutes",[string]$FinanceMaxMinutes,"-LookbackDays",[string]$FinanceLookbackDays)
     }
 } finally {
     $state = if($failures.Count){"INCOMPLETE_RETRY_REQUIRED"}else{"EXECUTED_COVERAGE_UNVERIFIED"}

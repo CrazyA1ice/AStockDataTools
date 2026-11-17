@@ -1526,6 +1526,94 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(I._state(extra, private)["daily_cursor"],
                              "600000.SH")
 
+    def test_cache_daily_partial_sweep_resumes_across_days_and_rotates_on_end(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = [
+                "600000.SH", "600001.SH", "600002.SH"]
+            state = I._state(extra, private)
+            state["import_cursor"] = "600002.SH"
+            state["pending"] = {"000001.SZ": {
+                "reason": "SOURCE_HISTORY_CONFLICT", "asof": "2026-11-16",
+                "attempts": 1, "detail": "previous Capital history mismatch"}}
+            I._save_state(private, state)
+            calls = []
+
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                calls.append((day, tuple(group)))
+                rows = {table: [] for table in E.FIN_TABLES}
+                rows["Balance"] = [{"_index": "0", "v": 1}]
+                return {code: rows for code in group}, []
+
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                results = []
+                for day in (17, 18, 19, 20):
+                    results.append(I.run(
+                        root, xt=xt, mode="daily", apply=True,
+                        max_symbols=1, batch_size=1,
+                        workspace=private, worker=worker,
+                        clock=lambda day=day: datetime(
+                            2026, 11, day, 16, 35, tzinfo=L.UTC8),
+                        progress=lambda _: None))
+            self.assertEqual(calls, [
+                ("2026-11-17", ("600000.SH",)),
+                ("2026-11-18", ("600001.SH",)),
+                ("2026-11-19", ("600002.SH",)),
+                ("2026-11-20", ("600000.SH",))])
+            self.assertEqual(
+                [r["daily_sweep_start"] for r in results],
+                ["2026-11-17", "2026-11-17",
+                 "2026-11-17", "2026-11-20"])
+            self.assertEqual(
+                [r["daily_remaining_unvisited"] for r in results],
+                [2, 1, 0, 2])
+            self.assertFalse(results[0]["daily_sweep_reached_end"])
+            self.assertTrue(results[2]["daily_sweep_reached_end"])
+            self.assertEqual(results[2]["status"],
+                             "SOURCE_UNIVERSE_EXHAUSTED")
+            self.assertFalse(results[3]["daily_sweep_reached_end"])
+            self.assertEqual(I._state(extra, private)["daily_cursor"],
+                             "600000.SH")
+            self.assertEqual(set(I._state(extra, private)["pending"]),
+                             {"000001.SZ"})
+
+    def test_cache_daily_legacy_partial_resume_preview_no_write(self):
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = [
+                "600000.SH", "600001.SH", "600002.SH"]
+            state = I._state(extra, private)
+            state["import_cursor"] = "600002.SH"
+            state["daily_date"] = "2026-11-16"
+            state["daily_cursor"] = "600000.SH"
+            for name in ("daily_sweep_start", "daily_sweep_reached_end",
+                         "daily_sweep_finished"):
+                state.pop(name)
+            I._save_state(private, state)
+            saved = I._state_file(private).read_bytes()
+            result = I.run(
+                root, xt=xt, mode="daily", apply=False,
+                workspace=private, max_symbols=1,
+                clock=lambda: datetime(2026, 11, 17, 16, 35,
+                                       tzinfo=L.UTC8),
+                progress=lambda _: None)
+            self.assertEqual(result["selected_first"], "600001.SH")
+            self.assertEqual(result["daily_sweep_start"], "2026-11-16")
+            self.assertEqual(result["daily_remaining_unvisited"], 2)
+            self.assertFalse(result["daily_sweep_reached_end"])
+            self.assertEqual(I._state_file(private).read_bytes(), saved)
+
     def test_cache_import_daily_requires_initial_scan_completion(self):
         import qmt_extra_financial_cache_import as I
         with tempfile.TemporaryDirectory() as tmp:

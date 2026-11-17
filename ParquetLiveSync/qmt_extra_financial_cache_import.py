@@ -30,6 +30,10 @@ BLACKOUT_START = time(21, 0)
 BLACKOUT_END = time(23, 5)
 
 
+class QMTCacheDecodeError(RuntimeError):
+    """Verified provider UnicodeDecodeError only, not a generic source outage."""
+
+
 def _state_file(workspace):
     path = Path(workspace) / STATE_FILE
     E._path_check(path)
@@ -56,7 +60,8 @@ def _state(extra, workspace):
         if (E.valid_code(code) != code or
                 not isinstance(entry, dict) or
                 entry.get("reason") not in
-                ("NO_CACHE", "SOURCE_HISTORY_CONFLICT") or
+                ("NO_CACHE", "SOURCE_HISTORY_CONFLICT",
+                 "CACHE_DECODE_ERROR") or
                 not isinstance(entry.get("attempts"), int) or
                 entry["attempts"] < 1):
             raise ValueError("Financial cache pending entry malformed")
@@ -195,15 +200,32 @@ def _worker_batch(symbols, mode, asof, lookback_days, workspace, timeout_seconds
                "--mode", mode]
         if mode == "daily":
             cmd += ["--start", start, "--end", end.strftime("%Y%m%d")]
-        try:
-            run = subprocess.run(cmd, timeout=timeout_seconds, check=False)
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError("QMT cache financial batch worker timed out: " +
-                               E.canonical_json(symbols)) from exc
-        if run.returncode != 0:
-            raise RuntimeError("QMT cache batch worker nonzero exit=" +
-                               str(run.returncode) + " stocks=" +
-                               E.canonical_json(symbols))
+        # Retry exactly once ONLY on dedicated UTF-8 decode failure.
+        # A transient truncated provider response can recover on the retry.
+        for attempt in (1, 2):
+            try:
+                completed = subprocess.run(
+                    cmd, timeout=timeout_seconds, check=False)
+            except subprocess.TimeoutExpired as exc:
+                raise TimeoutError(
+                    "QMT cache financial batch worker timed out: " +
+                    E.canonical_json(symbols)) from exc
+            if completed.returncode == 85:
+                if path.exists():
+                    raise ValueError("UTF-8 failed worker left unexpected output")
+                progress("QMT_CACHE_BATCH_UTF8_RETRY=" + E.canonical_json({
+                    "symbols": symbols, "attempt": attempt}))
+                if attempt == 2:
+                    raise QMTCacheDecodeError(
+                        "QMT reported repeated UTF-8 decode failures: " +
+                        E.canonical_json(symbols))
+                continue
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "QMT cache batch worker nonzero exit=" +
+                    str(completed.returncode) + " stocks=" +
+                    E.canonical_json(symbols))
+            break
         E._path_check(path)
         if (not path.is_file() or path.is_symlink() or
                 path.stat().st_size > MAX_PAYLOAD):
@@ -241,6 +263,44 @@ def _worker_batch(symbols, mode, asof, lookback_days, workspace, timeout_seconds
             "symbols": symbols, "present": len(present), "missing": missing,
             "mode": mode}))
         return present, missing
+
+
+def _recover_utf8_group(worker, group, mode, asof, lookback_days,
+                        workspace, timeout_seconds, progress):
+    """Split ONLY known UTF-8 source decode failures; preserve stock ordering.
+
+    All non-decode errors propagate. A permanently failing single stock is
+    returned as a typed pending item, never as a successful/empty source.
+    """
+    try:
+        records, missing = worker(
+            group, mode, asof, lookback_days, workspace, timeout_seconds,
+            progress=progress)
+        if (not isinstance(records, dict) or
+                not isinstance(missing, list) or
+                set(records) | set(missing) != set(group) or
+                set(records) & set(missing)):
+            raise ValueError("QMT worker returned malformed stock batch")
+        return [(code, records.get(code),
+                 "NO_CACHE" if code in missing else None)
+                for code in group]
+    except QMTCacheDecodeError as exc:
+        if len(group) == 1:
+            code = group[0]
+            progress("QMT_CACHE_STOCK_UTF8_DEFERRED=" + E.canonical_json({
+                "symbol": code, "reason": str(exc)[:180]}))
+            return [(code, None, "CACHE_DECODE_ERROR")]
+        mid = len(group) // 2
+        progress("QMT_CACHE_BATCH_UTF8_SPLIT=" + E.canonical_json({
+            "symbols": group,
+            "left": group[:mid], "right": group[mid:]}))
+        return (
+            _recover_utf8_group(
+                worker, group[:mid], mode, asof, lookback_days,
+                workspace, timeout_seconds, progress) +
+            _recover_utf8_group(
+                worker, group[mid:], mode, asof, lookback_days,
+                workspace, timeout_seconds, progress))
 
 
 def _pending_mark(state, code, reason, asof, detail):
@@ -373,6 +433,7 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         progress("QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=" +
                  E.canonical_json(report))
         return report
+    consecutive_utf8_errors = 0
     for offset in range(0, len(selected), batch_size):
         now = clock().astimezone(E.L.UTC8)
         if now.date().isoformat() != asof:
@@ -387,35 +448,42 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         group = selected[offset:offset + batch_size]
         # Exclusive writer held across QMT cache access and official commits.
         with E.LIVE.exclusive_writer():
-            records, missing = worker(
-                group, mode, asof, lookback_days, workspace,
-                worker_timeout_seconds, progress=progress)
+            recovered = _recover_utf8_group(
+                worker, group, mode, asof, lookback_days, workspace,
+                worker_timeout_seconds, progress)
             if clock().astimezone(E.L.UTC8).date().isoformat() != asof:
                 report["status"] = "PAUSED_DATE_ROLLOVER"
                 break
-            for code in group:
-                if code in missing:
-                    _pending_mark(state, code, "NO_CACHE", asof,
-                                  "QMT get_financial_data yielded no tables/rows")
+            for code, source, reason in recovered:
+                if reason is not None:
+                    _pending_mark(
+                        state, code, reason, asof,
+                        "QMT provider UTF-8 decode failed twice even for one "
+                        "stock" if reason == "CACHE_DECODE_ERROR" else
+                        "QMT get_financial_data yielded no tables/rows")
                     report["pending_added"] += 1
+                    if reason == "CACHE_DECODE_ERROR":
+                        consecutive_utf8_errors += 1
+                    else:
+                        consecutive_utf8_errors = 0
                     progress("QMT_FINANCIAL_CACHE_PENDING=" +
                              E.canonical_json({"symbol": code,
-                                               "reason": "NO_CACHE"}))
+                                               "reason": reason}))
                 else:
+                    consecutive_utf8_errors = 0
                     try:
-                        # Detect source revisions BEFORE modifying any nine-table
-                        # snapshot for this symbol.
+                        # Compare source against ALL prior active versions.
                         table_report = _commit_symbol(
-                            extra, workspace, code, asof, records[code])
+                            extra, workspace, code, asof, source)
                     except ValueError as exc:
                         if not str(exc).startswith("SOURCE_HISTORY_CONFLICT"):
                             raise
-                        _pending_mark(state, code, "SOURCE_HISTORY_CONFLICT",
-                                      asof, exc)
+                        _pending_mark(
+                            state, code, "SOURCE_HISTORY_CONFLICT", asof, exc)
                         report["pending_added"] += 1
                         progress("QMT_FINANCIAL_CACHE_PENDING=" +
-                                 E.canonical_json({"symbol": code,
-                                                   "reason": str(exc)[:180]}))
+                                 E.canonical_json({
+                                     "symbol": code, "reason": str(exc)[:180]}))
                     else:
                         state["pending"].pop(code, None)
                         report["processed"] += 1
@@ -441,6 +509,13 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                                            "cursor": state[cursor_key],
                                            "pending": report["pending_total"],
                                            "processed": report["processed"]}))
+                if consecutive_utf8_errors >= 3:
+                    # Three isolated single-stock UTF-8 failures in a row
+                    # indicate a likely global broken provider, not three
+                    # safely skippable independent cache records.
+                    raise RuntimeError(
+                        "Three consecutive QMT single-stock UTF-8 errors; "
+                        "stopping to avoid mass false source deferrals")
     else:
         report["status"] = ("PAUSED_SYMBOL_LIMIT" if
                             len(selected) == max_symbols else

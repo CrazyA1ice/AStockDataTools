@@ -1,4 +1,4 @@
-# Best-effort user-visible Windows completion notice (PowerShell 5.1).
+﻿# Best-effort user-visible Windows completion notice (PowerShell 5.1).
 # -DryRun is pure and never displays desktop UI. No external dependency.
 param(
     [ValidateSet('SUCCESS','PARTIAL','FAILED')][string]$Status='FAILED',

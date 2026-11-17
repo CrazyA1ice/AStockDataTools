@@ -63,6 +63,7 @@ if(-not (Test-Path -LiteralPath $scheduled -PathType Leaf) -or
 }
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arguments=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $scheduled)
+if($AfternoonUnified){$arguments+=' -Apply'}
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $At
 $triggers=@($trigger)

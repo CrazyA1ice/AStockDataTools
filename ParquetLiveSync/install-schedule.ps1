@@ -38,7 +38,15 @@ if($Action -eq 'Status'){
     }
     $last=Join-Path $module 'work\last-scheduled-run.json'
     if(Test-Path -LiteralPath $last -PathType Leaf){
+        Write-Host 'MARKET_LEGACY_LAST_STATUS'
         Get-Content -LiteralPath $last -Raw -Encoding UTF8
+    }
+    foreach($name in @('last-afternoon-afternoon_all.json','last-afternoon-retry_market_only.json')){
+        $recent=Join-Path $module ('work\\'+$name)
+        if(Test-Path -LiteralPath $recent -PathType Leaf){
+            Write-Host ('MARKET_1630_LAST_STATUS='+$name)
+            Get-Content -LiteralPath $recent -Raw -Encoding UTF8
+        }
     }
     exit 0
 }

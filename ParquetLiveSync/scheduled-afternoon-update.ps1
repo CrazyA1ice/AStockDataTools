@@ -44,13 +44,22 @@ function Invoke-MarketStage {
     $code=-1
     Write-Host ('MARKET_1630_STEP_START='+$Label)
     try {
-        # Capture *current invocation* evidence, not stale status files.
-        # Out-File UTF8 is compatible with Windows PowerShell 5.1 and
-        # independent of the large, append-only transcript.
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments 2>&1 |
-            ForEach-Object { $line=[string]$_; Write-Host $line; $line } |
-            Out-File -LiteralPath $stageLog -Encoding UTF8
-        $code=$LASTEXITCODE
+        # Preserve full single-line JSON receipts from *this run*. Out-File
+        # can word-wrap JSON using host width in Windows PowerShell 5.1.
+        # A direct UTF-8 writer keeps the evidence lossless and streamed.
+        $writer=[System.IO.StreamWriter]::new(
+            $stageLog,$false,[System.Text.UTF8Encoding]::new($true))
+        try {
+            & $engine -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments 2>&1 |
+                ForEach-Object {
+                    $line=[string]$_
+                    Write-Host $line
+                    $writer.WriteLine($line)
+                }
+            $code=$LASTEXITCODE
+        }finally{
+            $writer.Dispose()
+        }
         if($code -ne 0){throw ('Exit code '+$code)}
         [void]$completed.Add($Label)
         Write-Host ('MARKET_1630_STEP_DONE='+$Label)

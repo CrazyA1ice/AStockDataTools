@@ -1,4 +1,4 @@
-# Pure no-UI test: every outcome creates a human-readable message.
+﻿# Pure no-UI test: every outcome creates a human-readable message.
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $notifier=Join-Path (Split-Path -Parent $PSScriptRoot) 'notify-market-update.ps1'

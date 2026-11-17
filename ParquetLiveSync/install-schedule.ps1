@@ -56,14 +56,14 @@ $utc=[TimeZoneInfo]::ConvertTimeToUtc($todayChina.AddHours(16).AddMinutes(30),$s
 $at=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arguments=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
-$action=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
+$taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $at
 # Zero means no Task Scheduler runtime cap; IgnoreNew prevents overlap.
 $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 $description='One daily 16:30 China-time market-finance-sectors-adjustments update, with completion/failure desktop notification and durable receipt'
-Register-ScheduledTask -TaskName $task -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
+Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
 Write-Host ('MARKET_1630_INSTALLED task='+$task+' china_start=16:30 pc_local_start='+$at+' triggers=1 runtime_limit=NONE user='+$identity)
 Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_1630_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP'
 Write-Host 'MARKET_QMT_REQUIREMENT=Logged-in Windows user and connected QMT; machine awake for execution'

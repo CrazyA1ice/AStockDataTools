@@ -48,11 +48,9 @@ if($reg.Action.Argument -notmatch ' -Apply
 if($reg.Triggers.Count -ne 2){throw 'Expected one early trigger and one late retry'}
 $china=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $chinaToday=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
-$at=@()
-foreach($hourMinute in @(@(16,30),@(20,45))){
-    $utc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours($hourMinute[0]).AddMinutes($hourMinute[1]),$china)
-    $at+=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
-}
+$firstUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(16).AddMinutes(30),$china)
+$retryUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(20).AddMinutes(45),$china)
+$at=@([TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).ToString('HH:mm'),[TimeZoneInfo]::ConvertTimeFromUtc($retryUtc,[TimeZoneInfo]::Local).ToString('HH:mm'))
 if($reg.Triggers[0].At -ne $at[0] -or $reg.Triggers[1].At -ne $at[1]){throw 'China-market trigger times invalid'}
 if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive'){throw 'Overlapping/noninteractive QMT task'}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}

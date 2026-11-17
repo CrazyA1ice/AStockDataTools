@@ -66,15 +66,15 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertNotIn("FinanceMaxMinutes", runner)
         self.assertNotIn("Before 16:30 China market time", runner)
         # The one scheduled entry executes all four independent stages.
-        sequence = ['-Label "EIGHT_PERIODS"', '-Label "FINANCIAL_DAILY"',
-                    '-Label "SECTORS"', '-Label "ADJUSTMENTS_ROTATING"']
+        sequence = ["-Label 'EIGHT_PERIODS'", "-Label 'FINANCIAL_DAILY'",
+                    "-Label 'SECTORS'", "-Label 'ADJUSTMENTS_ROTATING'"]
         positions = [runner.index(token) for token in sequence]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("UNIFIED_SINGLE_RUN", runner)
         self.assertNotIn("RETRY_MARKET_ONLY", runner)
         self.assertNotIn('20:45', runner)
         self.assertNotIn("marketRetryUtc", installer)
-        self.assertIn("New-ScheduledTaskTrigger -Daily -At $At", installer)
+        self.assertIn("New-ScheduledTaskTrigger -Daily -At $at", installer)
         self.assertNotIn('$triggers+=', installer)
         self.assertIn("last-afternoon-unified.json", runner)
     

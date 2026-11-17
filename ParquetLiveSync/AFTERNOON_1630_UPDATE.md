@@ -12,6 +12,20 @@
 - 保持现有 `LIVE.exclusive_writer` 独占保护；八周期、财务、补充数据都在同一个定时任务里串行运行。**不得同时运行旧 00:30 财务任务、旧前台批量下载或额外启用 `schedule-enabled.json`。** 安装预检会阻止已发现的财务重复任务/旧 extras 配置。
 - Windows 必须保持用户已登录、QMT 在线、未休眠；任务起始触发时刻按 Windows 本地时区从中国市场时间转换。中国时区机器是本机 16:30/20:45；日本时区机器则是 17:30/21:45。跨夏令时的计算机应当在时区变更后重新核对计划任务触发时间。
 
+## 财务跨日续扫（候选实现，尚未 Windows 真机验收）
+
+财务股票池包括 5,656 只历史/当前证券，固定 `-MaxMinutes 150` 不代表每日扫完全市场。旧 `daily_date` 变化会清空 `daily_cursor`，容易每天重复从 000001.SZ 开始。新实现的行为：
+
+- 同一轮尚未到达股票池末尾时，跨日期保留 `daily_cursor`；`daily_sweep_start` 记录开始日期；`daily_remaining_unvisited` 记录这轮还未遍历的证券数
+- 扫到末尾时标记 `daily_sweep_reached_end=true`，并登记 `daily_sweep_finished`；**只有下一天启动新的轮次**，才回到股票池前部
+- `daily_sweep_reached_end` 仅表示遍历过全股票池，**不是财务数据完全通过校验**；`pending_total` 和 `source_completeness_verified=false` 保留独立证据
+- 老版 `financial-cache-progress.json` 不需要重建；新增字段为可选，已有 `import_cursor`、`pending` 均原样保留；只读预览不保存任何进度
+- 本轮仅修正轮转公平性，**并未实现每天 5,656 只均更新**。要满足严格的“每日全市场财务最新”，仍须数据源事件驱动增量识别、每日变更证券候选集合、历史修订补核及跨源证据
+
+针对 QMT 只读预览曾出现约 42 分钟空档，在财务股票池解析前后增加 `QMT_FINANCIAL_UNIVERSE_QUERY_START/DONE` 耗时记录，不增加额外网络下载或 QMT 调用次数。
+
+新增离线回归包括：跨 4 天续扫/完成/重开、旧状态兼容与预览不写入、跨日 QMT 失败不推进游标。**必须先在独立 worktree 运行 `test_qmt_extra_data.py` 完整测试**，再考虑部署，且先保持原 21:30 调度不变。
+
 ## Windows 预检（**先不要安装**）
 
 在仓库根目录运行以下一行命令。检查新代码时，不修改正式 Parquet 或计划任务：

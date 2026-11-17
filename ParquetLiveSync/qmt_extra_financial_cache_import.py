@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from time import monotonic
 
 import qmt_extra_data as E
 
@@ -425,7 +426,13 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
     extra = E._storage(Path(root))
     state = _state(extra, workspace)
     cursor_key = "import_cursor" if mode == "cache" else "daily_cursor"
+    universe_start = monotonic()
+    progress("QMT_FINANCIAL_UNIVERSE_QUERY_START=" + E.canonical_json({
+        "mode": mode, "finance_dir_enabled": finance_dir is not None}))
     catalog, catalog_metadata = _stock_universe(xt, finance_dir)
+    progress("QMT_FINANCIAL_UNIVERSE_QUERY_DONE=" + E.canonical_json({
+        "stocks": len(catalog),
+        "elapsed_seconds": round(monotonic() - universe_start, 3)}))
     universe_hash = hashlib.sha256(
         E.canonical_json(catalog).encode("utf-8")).hexdigest()
     if mode == "daily" and state["import_cursor"] < catalog[-1]:

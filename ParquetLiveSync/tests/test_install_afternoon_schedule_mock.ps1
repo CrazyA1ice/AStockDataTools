@@ -45,15 +45,13 @@ $reg=$global:AfternoonMock[0]
 if($reg.Name -ne 'AStockDataTools-ParquetLiveSync'){throw 'Afternoon scheduler created an unexpected task'}
 if($reg.Action.Argument -notmatch 'scheduled-afternoon-update.ps1'){throw 'Incorrect afternoon entry'}
 if($reg.Action.Argument -notmatch ' -Apply$'){throw 'Installed afternoon task must explicitly authorize apply'}
-if($reg.Triggers.Count -ne 2){throw 'Expected one early trigger and one late retry'}
+if($reg.Triggers.Count -ne 1){throw 'Expected exactly one 16:30 China-market trigger'}
 $china=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $chinaToday=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
 $firstUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(16).AddMinutes(30),$china)
-$retryUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(20).AddMinutes(45),$china)
 $firstLocal=[TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
-$retryLocal=[TimeZoneInfo]::ConvertTimeFromUtc($retryUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
-if($reg.Triggers[0].At -ne $firstLocal -or $reg.Triggers[1].At -ne $retryLocal){throw 'China-market trigger times invalid'}
+if($reg.Triggers[0].At -ne $firstLocal){throw 'Single China 16:30 trigger time invalid'}
 if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive'){throw 'Overlapping/noninteractive QMT task'}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}
-Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_2045'
+Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_SINGLE'
 Remove-Variable -Name AfternoonMock -Scope Global -ErrorAction SilentlyContinue

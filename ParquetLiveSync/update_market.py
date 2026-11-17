@@ -413,10 +413,21 @@ def recheck_sources(day, config=CONFIG_PATH, *, workspace=S.STATE_DIR,
     return report
 
 
-def last_eligible_day():
-    """At/after 20:00 Shanghai time; otherwise previous calendar day."""
-    now = datetime.now(L.UTC8)
-    cutoff = now.date() if now.hour >= 20 else now.date() - timedelta(days=1)
+def last_eligible_day(now=None):
+    """Earliest candidate is 16:30 Shanghai; source checks still fail closed.
+
+    This is an eligibility threshold, not a statement that the TDX official
+    day package, QMT minutes or external cross-checks are already ready.
+    The eight-period orchestrator separately rejects an uncommitted latest
+    required trading day instead of reporting stale data as success.
+    """
+    now = datetime.now(L.UTC8) if now is None else now
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("Market eligibility requires timezone-aware datetime")
+    market_now = now.astimezone(L.UTC8)
+    cutoff = (market_now.date() if
+              (market_now.hour, market_now.minute) >= (16, 30)
+              else market_now.date() - timedelta(days=1))
     while cutoff.weekday() >= 5:
         cutoff -= timedelta(days=1)
     return cutoff

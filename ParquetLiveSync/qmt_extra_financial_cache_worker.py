@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import qmt_extra_data as E
@@ -109,8 +110,17 @@ def main(argv=None):
     parser.add_argument("--end", default="")
     args = parser.parse_args(argv)
     from xtquant import xtdata
-    collect(xtdata, args.symbols.split(","), args.output, mode=args.mode,
-            start=args.start, end=args.end)
+    try:
+        collect(xtdata, args.symbols.split(","), args.output, mode=args.mode,
+                start=args.start, end=args.end)
+    except UnicodeDecodeError as exc:
+        # A dedicated return code lets the parent isolate a corrupt/truncated
+        # QMT textual payload without suppressing unrelated worker errors.
+        print("QMT_CACHE_WORKER_UTF8_DECODE_ERROR=" + E.canonical_json({
+            "symbols": args.symbols.split(","),
+            "encoding": exc.encoding, "start": exc.start,
+            "reason": exc.reason}), file=sys.stderr, flush=True)
+        raise SystemExit(85) from None
 
 
 if __name__ == "__main__":

@@ -263,3 +263,11 @@ Windows 首先运行本分支新增的 **60 项**离线测试（之前 53 项已
 每日增量手动入口：
     python -u -B ParquetLiveSync/qmt_extra_financial_cache_import.py --root D:/stock --finance-dir D:/software/JHQMT/datadir/Finance --mode daily --max-symbols 10000 --batch-size 5 --worker-timeout-seconds 300 --max-minutes 1440 --lookback-days 120 --apply
 新增 run-qmt-financial-daily.ps1 入口会保存独立 transcript 日志。register-qmt-financial-daily.ps1 默认仅预览，显式使用 -Install 才创建名为 AStockDataTools-QMT-Financial-Daily 的独立本机时间 00:30 每日 Task Scheduler 任务（中国时间 UTC+8 或日本时间 UTC+9 环境下，均在中国市场 21:00-23:05 保护窗口之后），绝不覆盖已有 21:30 任务；只在用户登录的交互会话运行，需要 QMT 保持在线。此新任务不可在初始导入成功验收前安装。日期窗口下载无法保证追溯更早历史修订，所以继续保留周期性的全量缓存只读覆盖核对和 pending 人工审查。
+
+## 2026-11-17 第八阶段：QMT UTF-8 解码截断导致五股缓存读取失败时安全恢复
+
+首次 QMT 本地财务缓存的真机长时导入已达到至少 4,845 只成功股票，pending=16。上次最后明确的完整游标 688253.SH，此后 688255.SH 提交日志被截断，下一批 688256.SH..688260.SH 在 QMT xtdata.get_financial_data 内发生 UnicodeDecodeError: utf-8 unexpected end of data，旧版 importer 因 worker exit=1 中止；并非 Parquet 读取损坏。该情况可能由 QMT 批量结果解码截断或单只股票特殊源字段导致，不能直接推断 DAT 损坏。正式 qmt_extra/financial 快照和独立 import_cursor 均逐只安全保留，严禁删除、清零或从首股重新扫描。
+
+新增 worker 对特定 UnicodeDecodeError 捕获及专用 exit 85。Importer 接到专用 85 时仅额外重试一次该批（不会重试磁盘/通用运行异常）；仍失败才将当前批次递归拆为更小组，逐只定位，能正常读取的股票照常版本化落盘。确实在单只缓存上重复出现 UTF-8 解码失败的证券进入独立 pending，reason=CACHE_DECODE_ERROR，不与 NO_CACHE 混淆，游标仍继续；若连续三个不同单股都存在 UTF-8 错误则保守终止，避免 QMT 全局损坏/断线被误判为大量异常股票。pending 证券可通过原 importer 的 --retry-pending 显式重试，历史内容不被覆盖。其他 worker 非零状态、单批超时、Parquet 校验错误依旧立即停止，不做宽泛的吞错或无限重试。
+
+本阶段在原 73 项测试基础上增加 4 项（预期 77 项）：批错误拆分/单股待补/后续恢复；连续三个解码错误熔断；exit 85 仅重试一次；其他错误绝不被吞。新增代码仍需 Windows + QMT 实际验收。测试通过后从已有 import_cursor 进行最多 30 股的短批续扫（--batch-size 5，--max-symbols 30），查看 QMT_CACHE_BATCH_UTF8_SPLIT 与 QMT_FINANCIAL_CACHE_PENDING 的结果，确认 pending 合理后才继续 max-symbols 10000 的剩余本地缓存导入。除显式 --apply 的缓存快照外，购买版八周期/H5、21:30 任务不变；新补丁没有重新调用任何全历史下载 API。

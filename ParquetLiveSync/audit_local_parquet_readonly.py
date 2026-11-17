@@ -148,7 +148,15 @@ def _market(base, now):
             name = f"{year}.parquet"
             if name not in paths:
                 info["missing_prior_years"].append(name)
-        for month in range(1, now.month + 1):
+        last_closed_week_end = now.date() - timedelta(days=now.weekday() + 3)
+        required_month = (
+            now.month - 1 if cycle == "month"
+            else last_closed_week_end.month
+            if cycle == "week" and last_closed_week_end.year == now.year
+            else 0 if cycle == "week"
+            else now.month
+        )
+        for month in range(1, required_month + 1):
             name = f"{now.year}-{month:02}.parquet"
             if name not in paths:
                 info["missing_current_months"].append(name)
@@ -359,6 +367,40 @@ def main(argv=None):
         now = datetime(args.asof.year, args.asof.month, args.asof.day,
                        23, 59, tzinfo=UTC8)
     report = audit(args.stock_root, args.state_root, now)
+    brief = {
+        "china_now": report["china_now"],
+        "expected_equity_day": report["market"]["expected_latest_equity_weekday_candidate"],
+        "periods": {
+            name: {
+                "files": p["shards"], "latest_file": p["latest_shard"],
+                "latest_day": p["latest_bar_date"], "status": p["date_check"],
+                "missing_year_files": len(p["missing_prior_years"]),
+                "missing_month_files": len(p["missing_current_months"]),
+                "invalid_count": len(p["invalid_files"]),
+            } for name, p in report["market"]["periods"].items()
+        },
+        "financial": {
+            name: {
+                "symbols": entry["securities_with_snapshots"],
+                "latest_observed": entry["latest_observation_asof"]
+            } for name, entry in report["qmt_extra"]["financial_nine_tables"].items()
+        },
+        "sector": {
+            "snapshots": report["qmt_extra"]["sectors"]["count"],
+            "latest_observed": report["qmt_extra"]["sectors"]["latest_asof"]
+        },
+        "adjustments": {
+            "symbols": report["qmt_extra"]["adjustments"]["securities_with_snapshots"],
+            "latest_observed": report["qmt_extra"]["adjustments"]["latest_observation_asof"],
+            "observed_today": report["qmt_extra"]["adjustments"]["observed_today_securities"]
+        },
+        "finance_pending": report["private_progress"]["financial_pending_count"],
+        "finance_daily_sweep_finished": report["private_progress"]["financial_daily_sweep_finished"],
+        "last_unified_run": report["private_progress"]["last_unified_run"],
+        "cross_sources": report["cross_source_configuration"]["minute_cross_checks"],
+    }
+    print("LOCAL_MARKET_PARQUET_BRIEF=" +
+          json.dumps(brief, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
     print("LOCAL_MARKET_PARQUET_AUDIT=" +
           json.dumps(report, ensure_ascii=False, sort_keys=True,
                      separators=(",", ":")))

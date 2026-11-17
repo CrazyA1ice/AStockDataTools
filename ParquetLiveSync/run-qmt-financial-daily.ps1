@@ -21,7 +21,8 @@ try {
     $env:PYTHONPATH = $PSScriptRoot + [IO.Path]::PathSeparator + $env:PYTHONPATH
     Write-Host "QMT_FINANCIAL_DAILY_START=$((Get-Date).ToString('o'))"
     Write-Host "QMT_FINANCIAL_DAILY_LOG=$log"
-    Write-Host "QMT_FINANCIAL_DAILY_TIME_BUDGET=$(if($MaxMinutes -eq 0){\'UNLIMITED\'}else{$MaxMinutes})"
+    $budget=if($MaxMinutes -eq 0){'UNLIMITED'}else{[string]$MaxMinutes}
+    Write-Host ('QMT_FINANCIAL_DAILY_TIME_BUDGET='+$budget)
     if(-not(Test-Path -LiteralPath $FinanceDir -PathType Container)){ throw "Required QMT Finance cache directory missing" }
     $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols",[string]$MaxSymbols,"--max-minutes",[string]$MaxMinutes,"--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays,"--apply")
     & $python @cli

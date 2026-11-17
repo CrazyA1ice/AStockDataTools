@@ -39,7 +39,7 @@ function Register-ScheduledTask {
     })
     return [pscustomobject]@{MockOnly=$true}
 }
-& $installer -Action Install -AfternoonUnified
+& $installer -Action Install
 if($global:AfternoonMock.Count -ne 1){throw 'Afternoon installer must register exactly one existing task'}
 $reg=$global:AfternoonMock[0]
 if($reg.Name -ne 'AStockDataTools-ParquetLiveSync'){throw 'Afternoon scheduler created an unexpected task'}
@@ -51,7 +51,7 @@ $chinaToday=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
 $firstUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(16).AddMinutes(30),$china)
 $firstLocal=[TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
 if($reg.Triggers[0].At -ne $firstLocal){throw 'Single China 16:30 trigger time invalid'}
-if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive' -or $reg.Settings.ExecutionTimeLimit.TotalHours -ne 8){throw 'Overlapping/noninteractive QMT task or incorrect unified runtime'}
+if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive' -or $reg.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero){throw 'Overlapping/noninteractive QMT task or task runtime cap remains'}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}
-Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_SINGLE'
+Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_SINGLE_UNLIMITED'
 Remove-Variable -Name AfternoonMock -Scope Global -ErrorAction SilentlyContinue

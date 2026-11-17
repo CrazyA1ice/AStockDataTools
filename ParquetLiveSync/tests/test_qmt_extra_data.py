@@ -1614,6 +1614,56 @@ class QmtExtraTests(unittest.TestCase):
             self.assertFalse(result["daily_sweep_reached_end"])
             self.assertEqual(I._state_file(private).read_bytes(), saved)
 
+    def test_cache_daily_cross_date_failure_never_advances_checkpoint(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            xt = FakeXt()
+            xt.sectors["沪深A股"] = ["600000.SH", "600001.SH"]
+            state = I._state(extra, private)
+            state["import_cursor"] = "600001.SH"
+            I._save_state(private, state)
+            data = {table: [] for table in E.FIN_TABLES}
+            data["Balance"] = [{"_index": "0", "v": 3}]
+            def success(group, *args, **kwargs):
+                return {code: data for code in group}, []
+            def fail(*args, **kwargs):
+                raise TimeoutError("Simulated next-day QMT timeout")
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                first = I.run(
+                    root, xt=xt, mode="daily", apply=True,
+                    max_symbols=1, batch_size=1, workspace=private,
+                    worker=success,
+                    clock=lambda: datetime(2026, 11, 17, 16, 35,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+                before = I._state_file(private).read_bytes()
+                with self.assertRaisesRegex(TimeoutError, "Simulated"):
+                    I.run(
+                        root, xt=xt, mode="daily", apply=True,
+                        max_symbols=1, batch_size=1, workspace=private,
+                        worker=fail,
+                        clock=lambda: datetime(2026, 11, 18, 16, 35,
+                                               tzinfo=L.UTC8),
+                        progress=lambda _: None)
+                self.assertEqual(I._state_file(private).read_bytes(), before)
+                second = I.run(
+                    root, xt=xt, mode="daily", apply=True,
+                    max_symbols=1, batch_size=1, workspace=private,
+                    worker=success,
+                    clock=lambda: datetime(2026, 11, 19, 16, 35,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(first["end_cursor"], "600000.SH")
+            self.assertEqual(second["end_cursor"], "600001.SH")
+            self.assertEqual(second["daily_sweep_start"], "2026-11-17")
+            self.assertEqual(second["daily_remaining_unvisited"], 0)
+            self.assertTrue(second["daily_sweep_reached_end"])
+
     def test_cache_import_daily_requires_initial_scan_completion(self):
         import qmt_extra_financial_cache_import as I
         with tempfile.TemporaryDirectory() as tmp:

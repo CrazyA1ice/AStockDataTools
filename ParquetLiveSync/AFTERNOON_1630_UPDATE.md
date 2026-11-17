@@ -27,9 +27,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\install
 Get-ScheduledTask -TaskName "AStockDataTools-QMT-Financial-Daily" -ErrorAction SilentlyContinue
 ```
 
+## 独立 worktree 严禁直接实盘写入
+
+`AStockDataTools-1630-Preview` 是**只有代码**的 detached worktree，`ParquetLiveSync/work` 下不会自动共享原项目的 `market_update/commits.json`、`qmt_extra/progress.json` 或 `financial-cache-progress.json`。直接用此工作树的 `-Apply` 更新 `D:\stock`，可能使用全新游标对已有物理数据重新执行导入，因此新增运行时拒绝保护：必须是带有目录型 `.git` 的主 checkout 且上述原生进度文件真实存在。禁止手动创建空进度、软链猜测或复制老版本覆盖当前进度以绕过保护。
+
+新代码测试阶段只在预览 worktree 运行离线单测、模拟任务安装和无 `-Apply` 的预览。需要真机 `-Apply` 时，应先在原正式仓库中经审核合并候选改动（或将相同 SHA 以保护方式部署到既有主 checkout），**且**核对进度文件、QMT 在线和旧 21:30 任务窗口，不与任何批量财务下载进程并行。若其中一项不满足则暂不执行。当前开发分支尚未通过真机短批验收，请不要安装新任务。
+
 ## 真机受控试运行（不修改任务，但执行小批增量）
 
-预检通过后，在 16:30 以后、财务保护时间窗口之前，且无其他采集程序运行时，可以显式运行：
+**仅在代码已安全部署到原主 checkout、状态文件确认齐全后**，于交易日北京时间 16:30–18:00 之间，无其他采集程序运行时，可以显式运行：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\scheduled-afternoon-update.ps1" -AdjustmentStockLimit 5 -FinanceMaxMinutes 10 -Apply

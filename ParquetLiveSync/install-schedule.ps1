@@ -38,7 +38,7 @@ if($Action -eq 'Status'){
         Write-Host 'MARKET_LEGACY_LAST_STATUS'
         Get-Content -LiteralPath $last -Raw -Encoding UTF8
     }
-    foreach($name in @('last-afternoon-afternoon_all.json','last-afternoon-retry_market_only.json')){
+    foreach($name in @('last-afternoon-unified.json','last-afternoon-afternoon_all.json','last-afternoon-retry_market_only.json')){
         $recent=Join-Path $module ('work\\'+$name)
         if(Test-Path -LiteralPath $recent -PathType Leaf){
             Write-Host ('MARKET_1630_LAST_STATUS='+$name)
@@ -80,4 +80,4 @@ Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger
 Write-Host ('MARKET_SCHEDULE_INSTALLED task='+$task+' local_time='+$At+' user='+$identity)
 if($AfternoonUnified){Write-Host ('MARKET_1630_INSTALLED china_start=16:30 pc_local_start='+$At+' triggers=1 sections=4')}
 Write-Host 'MARKET_SCHEDULE_QMT_REQUIREMENT=Windows must be logged in, QMT connected, machine awake; missed runs resume on next opportunity'
-Write-Host 'MARKET_SCHEDULE_MODE=UNIFIED_ALL_EIGHT_PERIODS one task only; status: install-schedule.ps1 -Action Status'
+if($AfternoonUnified){Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_1630_TRIGGER_FOUR_SECTIONS; status: install-schedule.ps1 -Action Status'}else{Write-Host 'MARKET_SCHEDULE_MODE=UNIFIED_ALL_EIGHT_PERIODS; status: install-schedule.ps1 -Action Status'}

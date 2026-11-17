@@ -1697,20 +1697,58 @@ class QmtExtraTests(unittest.TestCase):
             self.assertIsNone(E._verified_financial_snapshot(
                 extra, "600000.SH", "Balance", "2026-11-17"))
 
-    def test_cache_import_scheduled_window_pause_does_not_touch_state(self):
+    def test_cache_import_no_2130_blackout_and_no_time_budget(self):
+        import contextlib
         import qmt_extra_financial_cache_import as I
         with tempfile.TemporaryDirectory() as tmp:
             root = fixture_root(tmp)
             private = Path(tmp) / "private"
-            result = I.run(
-                root, xt=FakeXt(), mode="cache", apply=True,
-                workspace=private,
-                clock=lambda: datetime(2026, 11, 17, 21, 30,
-                                       tzinfo=L.UTC8),
-                worker=lambda *a, **k: self.fail("Worker must not run"),
-                progress=lambda _: None)
-            self.assertEqual(result["status"], "PAUSED_SCHEDULE_PROTECTION")
-            self.assertFalse(I._state_file(private).exists())
+            rows = {table: [] for table in E.FIN_TABLES}
+            rows["Balance"] = [{"_index": "0", "v": 4}]
+            calls = []
+            def worker(group, mode, day, lookback, workspace, timeout,
+                       **kwargs):
+                calls.append((group, mode, day))
+                return {code: rows for code in group}, []
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = I.run(
+                    root, xt=FakeXt(), mode="cache", apply=True,
+                    max_minutes=0, workspace=private, worker=worker,
+                    clock=lambda: datetime(2026, 11, 17, 21, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(result["processed"], 1)
+            self.assertEqual(result["time_budget_minutes"], 0)
+            self.assertEqual(result["status"], "SOURCE_UNIVERSE_EXHAUSTED")
+            self.assertEqual(len(calls), 1)
+
+    def test_financial_daily_2130_is_not_a_scheduled_blackout(self):
+        import contextlib
+        import qmt_extra_financial_cache_import as I
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fixture_root(tmp)
+            extra = E._storage(root)
+            private = Path(tmp) / "private"
+            state = I._state(extra, private)
+            state["import_cursor"] = "600000.SH"
+            I._save_state(private, state)
+            rows = {table: [] for table in E.FIN_TABLES}
+            rows["Balance"] = [{"_index": "0", "v": 4}]
+            with patch.object(E.LIVE, "exclusive_writer",
+                              return_value=contextlib.nullcontext()):
+                result = I.run(
+                    root, xt=FakeXt(), mode="daily", apply=True,
+                    max_minutes=0, workspace=private,
+                    worker=lambda group, *args, **kwargs:
+                        ({code: rows for code in group}, []),
+                    clock=lambda: datetime(2026, 11, 17, 21, 30,
+                                           tzinfo=L.UTC8),
+                    progress=lambda _: None)
+            self.assertEqual(result["processed"], 1)
+            self.assertEqual(result["daily_remaining_unvisited"], 0)
+            self.assertTrue(result["daily_sweep_reached_end"])
+            self.assertEqual(result["time_budget_minutes"], 0)
 
     def test_cache_utf8_group_split_defers_only_bad_stock(self):
         import contextlib

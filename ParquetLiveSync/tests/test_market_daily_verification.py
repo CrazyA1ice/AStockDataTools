@@ -16,6 +16,8 @@ def receipt(marker, obj):
 def market_log(status="ALL_EIGHT_PERIOD_PHASES_COMPLETE", sources=True):
     result = receipt("MARKET_EIGHT_PERIOD_SUMMARY=", {
         "status": status, "applied": True, "phases_blocked": {}})
+    result += receipt("MARKET_DAILY_STAGED=", {
+        "date": "2026-11-17", "accepted": 5000, "quarantine": 0})
     if sources:
         result += "MARKET_SOURCE_SAMPLE=eltdx status=AGREE agreed=8/8 attempted=8\n"
         result += "MARKET_SOURCE_SAMPLE=tencent status=AGREE agreed=8/8 attempted=8\n"
@@ -63,10 +65,28 @@ class DailyVerificationTests(unittest.TestCase):
         self.assertEqual(result["data_validation"], "PASS")
         self.assertEqual(result["cross_validation"], "UNVERIFIED")
 
+    def test_zero_exit_with_no_new_day_does_not_fake_validation(self):
+        log = receipt("MARKET_EIGHT_PERIOD_SUMMARY=", {
+            "status": "ALL_EIGHT_PERIOD_PHASES_COMPLETE",
+            "applied": True, "phases_blocked": {}})
+        result = V.assess(
+            "EIGHT_PERIODS", 0, log, expected_sources={"eltdx", "tencent"})
+        self.assertEqual(result["data_validation"], "UNVERIFIED")
+        self.assertEqual(result["cross_validation"], "UNVERIFIED")
+
+    def test_quarantined_stocks_are_partial_not_clean_pass(self):
+        log = market_log() + receipt("MARKET_DAILY_STAGED=", {
+            "date": "2026-11-17", "accepted": 4980, "quarantine": 20})
+        result = V.assess(
+            "EIGHT_PERIODS", 0, log, expected_sources={"eltdx", "tencent"})
+        self.assertEqual(result["data_validation"], "PARTIAL")
+
     def test_missing_one_required_source_does_not_pass_cross(self):
         log = receipt("MARKET_EIGHT_PERIOD_SUMMARY=", {
             "status": "ALL_EIGHT_PERIOD_PHASES_COMPLETE",
             "applied": True, "phases_blocked": {}})
+        log += receipt("MARKET_DAILY_STAGED=", {
+            "date": "2026-11-17", "accepted": 5000, "quarantine": 0})
         log += "MARKET_SOURCE_SAMPLE=eltdx status=AGREE agreed=8/8 attempted=8\n"
         result = V.assess(
             "EIGHT_PERIODS", 0, log, expected_sources={"eltdx", "tencent"})

@@ -1,6 +1,6 @@
-# 16:30 China-market-time early update; 20:45 source-readiness retry.
-# This runner is inert unless explicitly invoked with -Apply by the opt-in
-# AfternoonUnified Task Scheduler installer. Existing 21:30 task unchanged.
+# One 16:30 China-market-time daily trigger; one sequential four-section run.
+# Inert without explicit -Apply. The scheduler is managed separately.
+# Source freshness checks are per section, not additional clock triggers.
 param(
     [switch]$Apply,
     [string]$Root = "D:\stock",
@@ -18,12 +18,11 @@ $finance = Join-Path $module "run-qmt-financial-daily.ps1"
 $work = Join-Path $module "work"
 $china = [TimeZoneInfo]::FindSystemTimeZoneById("China Standard Time")
 $chinaNow = [TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow, $china)
-$mode = if($chinaNow.TimeOfDay -ge [TimeSpan]::Parse("20:00")){"RETRY_MARKET_ONLY"}else{"AFTERNOON_ALL"}
 if(-not $Apply){
     Write-Host "MARKET_1630_PREVIEW_ONLY=TRUE"
     Write-Host "MARKET_1630_CHINA_NOW=$($chinaNow.ToString('o'))"
-    Write-Host "MARKET_1630_MODE=$mode"
-    Write-Host "MARKET_1630_SECTIONS=EIGHT_PERIODS,SECTORS,ADJUSTMENTS_BOUNDED,FINANCIAL_BOUNDED"
+    Write-Host "MARKET_1630_MODE=UNIFIED_SINGLE_RUN"
+    Write-Host "MARKET_1630_SECTIONS=EIGHT_PERIODS,FINANCIAL_BOUNDED,SECTORS,ADJUSTMENTS_BOUNDED"
     Write-Host "MARKET_1630_ADJUSTMENTS_PER_RUN_LIMIT=$AdjustmentStockLimit"
     Write-Host "MARKET_1630_FINANCIAL_MAX_MINUTES=$FinanceMaxMinutes"
     Write-Host "MARKET_1630_MULTISOURCE=EIGHT_PERIODS_ONLY;OTHER_TYPES_UNVERIFIED"
@@ -57,7 +56,7 @@ if(-not(Test-Path -LiteralPath (Join-Path $Root "AllCycleAStockData\1min") -Path
 if(Test-Path -LiteralPath (Join-Path $module "work\qmt_extra\schedule-enabled.json") -PathType Leaf){throw "Legacy extras schedule opt-in exists: refuse overlapping supplementary schedule"}
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 $log = Join-Path $work ("afternoon-" + $chinaNow.ToString("yyyyMMdd-HHmmss") + ".log")
-$status = Join-Path $work ("last-afternoon-" + $mode.ToLowerInvariant() + ".json")
+$status = Join-Path $work "last-afternoon-unified.json"
 $failures = New-Object System.Collections.ArrayList
 $completed = New-Object System.Collections.ArrayList
 $engine = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -80,22 +79,21 @@ Start-Transcript -Path $log -ErrorAction Stop | Out-Null
 try {
     Set-Location -LiteralPath $repo
     Write-Host "MARKET_1630_CHINA_NOW=$($chinaNow.ToString('o'))"
-    Write-Host "MARKET_1630_MODE=$mode"
+    Write-Host "MARKET_1630_MODE=UNIFIED_SINGLE_RUN"
+    # Four independent audited stages in one run. Failure in one stage
+    # is reported but does not suppress later, independent datasets.
     Invoke-AfternoonStep -Label "EIGHT_PERIODS" -Script $update -Arguments @("-Mode","auto","-Root",$Root)
-    if($mode -eq "AFTERNOON_ALL"){
-        # Independent QMT snapshots. No unsupported cross-source claims.
-        Invoke-AfternoonStep -Label "SECTORS" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","sectors","-ExtraStockLimit","1","-ExtraAssetLimit","0")
-        $start = $chinaNow.Date.AddDays(-30).ToString("yyyy-MM-dd")
-        # Existing adjustments cursor rotates; do not label this all-market completion.
-        Invoke-AfternoonStep -Label "ADJUSTMENTS_ROTATING" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","adjustments","-ExtraStockLimit",[string]$AdjustmentStockLimit,"-ExtraAssetLimit","0","-ExtraStart",$start)
-        Invoke-AfternoonStep -Label "FINANCIAL_DAILY" -Script $finance -Arguments @("-Root",$Root,"-FinanceDir",$FinanceDir,"-MaxMinutes",[string]$FinanceMaxMinutes,"-LookbackDays",[string]$FinanceLookbackDays)
-    }
+    Invoke-AfternoonStep -Label "FINANCIAL_DAILY" -Script $finance -Arguments @("-Root",$Root,"-FinanceDir",$FinanceDir,"-MaxMinutes",[string]$FinanceMaxMinutes,"-LookbackDays",[string]$FinanceLookbackDays)
+    Invoke-AfternoonStep -Label "SECTORS" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","sectors","-ExtraStockLimit","1","-ExtraAssetLimit","0")
+    $start = $chinaNow.Date.AddDays(-30).ToString("yyyy-MM-dd")
+    # Existing adjustment cursor rotates; not a full-universe claim.
+    Invoke-AfternoonStep -Label "ADJUSTMENTS_ROTATING" -Script $update -Arguments @("-Mode","extras","-Root",$Root,"-ExtraSection","adjustments","-ExtraStockLimit",[string]$AdjustmentStockLimit,"-ExtraAssetLimit","0","-ExtraStart",$start)
 } finally {
     $state = if($failures.Count){"INCOMPLETE_RETRY_REQUIRED"}else{"EXECUTED_COVERAGE_UNVERIFIED"}
     $result = [ordered]@{
         format = "qmt_afternoon_market_v1"
         status = $state
-        mode = $mode
+        mode = "UNIFIED_SINGLE_RUN"
         started_local = $started
         finished_local = (Get-Date).ToString("o")
         china_start = $chinaNow.ToString("o")

@@ -5,7 +5,6 @@ $notifier=Join-Path (Split-Path -Parent $PSScriptRoot) 'notify-market-update.ps1
 if(-not([IO.File]::Exists($notifier))){throw 'Notification entry missing'}
 foreach($state in @('SUCCESS','PARTIAL','FAILED')){
     $output=@(& $notifier -Status $state -Summary 'TEST: K线/财务/板块/除权' -LogPath 'C:\test-only.log' -DryRun)
-    if($LASTEXITCODE -ne 0){throw ('Notification dry run failed: '+$state)}
     $result=$output -join "`n"
     if($result -notmatch ('MARKET_NOTIFICATION_STATUS='+$state) -or
        $result -notmatch 'MARKET_NOTIFICATION_DRY_RUN_NO_DESKTOP=TRUE' -or

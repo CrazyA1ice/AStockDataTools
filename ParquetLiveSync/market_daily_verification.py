@@ -214,11 +214,19 @@ def report(run, *, expected_sources=()):
     # Keep notification concise, but fully explicit even when steps all exit 0.
     message = (f"执行{LABELS[execution]}({completed}/4)；"
                f"数据校验{LABELS[quality]}；跨源验证{LABELS[cross]}。")
+    details = []
     for stage in STAGES:
         item = sections[stage]
         message += (f" {NAMES[stage]}：数据{LABELS[item['data_validation']]}，"
                     f"跨源{LABELS[item['cross_validation']]}；")
-    # Details and pending counts belong in the durable full receipt.
+        if item["data_validation"] != "PASS" or item["cross_validation"] == "FAIL":
+            details.append(f"{NAMES[stage]}：{item['detail']}")
+    if details:
+        message += " 说明：" + "；".join(details)
+    errors = run.get("errors")
+    if isinstance(errors, list) and errors:
+        message += "；本次错误：" + str(errors[0])[:110]
+    message += "；财务/板块/除权未实现独立跨源核验。"
     return {"format": "qmt_daily_verification_v1",
             "execution": execution, "data_validation": quality,
             "cross_validation": cross, "sections": sections,

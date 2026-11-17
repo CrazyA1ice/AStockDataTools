@@ -1,48 +1,55 @@
-# 每天 16:30 单任务四类数据增量更新
+# 每天北京时间 16:30：一任务、一脚本、四类增量更新、结束通知
 
-本文件描述候选调度简化方案。**更新 Git 代码不会自动改变 Windows 已安装的计划任务**；在真机验收和用户明确启用前，旧 21:30 任务继续运行。每日时刻均指中国市场时间（UTC+8）。
+这是**待 Windows 真机验收的代码候选**。拉取/合入代码不会自动改变已安装的 Windows 计划任务；旧 21:30 任务必须在完成测试后**以同名任务覆盖**，不可增加并行任务。
 
-## 一个触发器、一个脚本、四个步骤
+## 单一流程
 
-Windows 仅保留原任务名 `AStockDataTools-ParquetLiveSync`，将它的每日触发时间设置为**中国市场时间 16:30**（本机为中国时间则 16:30，日本时间则 17:30）。同一个 `scheduled-afternoon-update.ps1 -Apply` 进程依次执行：
+任务名：`AStockDataTools-ParquetLiveSync`。每日触发器**唯一**：中国市场时间 16:30，安装时转换为本机时间（中国电脑 16:30；日本电脑 17:30）。
 
-1. **八周期 K 线**：QMT 分钟主源、TDX 官方日线、已有 eltdx/Tencent 样本交叉核验，再以已有事务规则增量更新 1/5/15/30/60 分钟、日、周、月
-2. **财务**：QMT 最近 120 天公告窗口与九表缓存历史一致性检查、增量入库；单次最多 150 分钟，跨日轮转接续
-3. **板块**：QMT 板块数据更新并保存每日成员快照
-4. **除权**：QMT 除权因子增量；现有默认每次 80 只股票轮转，保留进度游标
+单一入口：`ParquetLiveSync/scheduled-afternoon-update.ps1 -Apply`，顺序执行：
 
-**没有额外 20:45 触发器，不再按运行时间自动切换成“只执行行情”模式。** 任务只触发一次，四个步骤在一个脚本里完成。任何步骤失败都记录错误，不阻断其他独立步骤；运行结论不会把部分证券的扫描成功误报为全市场完整。
+1. **八周期 K 线**：QMT 分钟、TDX DAY 与已有抽样交叉源核对；源不合格不覆盖旧验证数据
+2. **财务**：QMT 最近 120 天公告窗口增量下载、九表完整历史缓存校验；`--max-minutes 0` 表示**没有整轮总分钟限制**；跨日轮转游标继续，不清空待审项
+3. **板块**：更新 QMT 板块数据并保存当日成员快照
+4. **除权**：增量轮转，默认 80 只股票/次，保留游标，不冒充每天全市场已更新
 
-16:30 是**尝试采集的起点，不是多源数据就绪保证**。如官方 DAY 当天尚未发布、QMT 分钟不全或数据源冲突，行情模块保留已验证的旧数据并报告失败；不会为了按时完成而绕过核验。内部模块自己的财务 21:00–23:05 保护窗口是避免与既有 QMT 操作冲突的源安全约束，**不是另一个计划任务触发时间**。若用户希望当日等待所有来源齐备而非记录欠缺，须另行设计**同一进程内有界等待**并做真机验收，不能直接宣布已实现。
+**没有旧 21:30 任务模式，也没有 20:45/00:30 补偿触发器。** `New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)` 取消 Windows 计划任务运行时长上限。现有下载源的单次请求/单批工作进程超时**仍保留**，用于处理无响应的接口；这是单请求故障保护，而不是定时结束整轮更新。财务 21:00–23:05 采集禁入窗口已从统一财务导入器移除，不再限制晚间延续执行。
 
-财务的 5,656 只和除权的 5,224 只当前不保证每天全部更新。每日游标、剩余未遍历股票和 pending 都保留；`source_completeness_verified=false` 仍需独立证据。已有 16 只 Capital 历史冲突以及 688259.SH 解码异常仍隔离，禁止覆盖旧版。当前真正具备多源核验的是**八周期行情**；财务、板块、除权暂时只有 QMT 入库主源，其他来源校验必须单独补齐，不得宣称“四类全部多源已核实”。
+跨越午夜时，财务仍以 `PAUSED_DATE_ROLLOVER` 安全结束当次按日期编排的批次，避免把第二天的数据错误标为前一天；第二天继续轮转，不是另一个 Windows 定时器。若一个任务直到次日 16:30 还在运行，调度器以 `IgnoreNew` 避免开启重叠实例。Windows 登录、QMT 在线、电脑不休眠仍然是运行条件。
 
-## 安全预检
+## 更新完自动提醒
 
-先在 detached Preview worktree 跑以下离线回归及模拟任务安装，**绝不在 Preview worktree 执行 `-Apply`**：
+无论四项全部正常退出、部分失败还是都无法开始，脚本都会尝试发送本地 Windows 消息：
+
+- `SUCCESS` — 四阶段成功退出（**不代表全部数据全市场完整或交叉核验全部通过**）
+- `PARTIAL` — 有阶段成功，有阶段失败
+- `FAILED` — 没有阶段成功或预检失败
+
+先尝试 Windows 通知，若系统拒绝则回退为 Windows 弹窗（20 秒后自动关闭）；Windows 未登录或系统通知被禁用时无法保证弹出，所以每次仍在 `ParquetLiveSync/work/last-afternoon-unified.json` 留下可审计结果和 `work/afternoon-*.log` 日志。状态写入失败也会尝试通知。**当前仅支持本机通知，未接入 QQ/微信远程推送**；远程通知需要单独配置现有机器人的有效消息发送接口，不能臆造 URL 或密钥。
+
+通知脚本 `notify-market-update.ps1` 支持 `-DryRun`，可单独测试三类结果而不真正弹窗。代码出现语法错误、Windows 强制终止进程或电脑断电时，任何进程内通知都无法保证触发；这类异常需要任务历史/外部监控才能发现。
+
+## 数据安全、覆盖率和已知隔离
+
+- 项目已有八周期行情多源证据；财务、板块、除权现仍以 QMT 入库，**尚不具备完整第二来源核验**
+- 财务历史源冲突 16 只 Capital 与 688259.SH 解码异常保留在 `pending`；不覆盖旧快照
+- 财务股票池 5,656 只、除权股票池 5,224 只，限制批次意味着每日并非全市场完全更新。用户得到的是**准确的执行结果和未验证覆盖标志**，不能把四阶段进程返回 0 视为数据全面完整
+- 真实写入只能在主 Git checkout 的原有私有状态目录中进行；任何独立 Preview worktree 禁止 `-Apply`，不得创建空进度文件绕过
+
+## 安装前测试
+
+先仅在 Preview worktree 执行 Python 离线测试、两个 Windows 调度模拟、通知三状态 `-DryRun` 和无 `-Apply` 的统一预览。确认旧任务依然保持现状。测试通过且备份原游标后，真机短批量验收须检查四步日志与失败消息是否正确生成，不能在日志未核对前直接宣布生产已经切换。
+
+实际任务安装只有一个命令：
 
 ```powershell
-$ErrorActionPreference="Stop"; $env:PYTHONPATH=(Join-Path (Get-Location) "ParquetLiveSync"); & ".\.venv\Scripts\python.exe" -B -m unittest discover -s "ParquetLiveSync\tests" -p "test_market_1630.py" -v; if($LASTEXITCODE -ne 0){throw "Tests failed"}; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\tests\test_install_afternoon_schedule_mock.ps1"; if($LASTEXITCODE -ne 0){throw "Mock failed"}; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\scheduled-afternoon-update.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\install-schedule.ps1" -Action Install
 ```
 
-模拟安装应出现 `PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_1630_SINGLE`，预览应出现 `MARKET_1630_MODE=UNIFIED_SINGLE_RUN`。
+**这会以同名任务覆盖原 21:30 配置，真正启用每天 16:30 的单一运行入口。仅在真机测试合格后执行。**
 
-## 安全切换
-
-合并前确认原主 checkout 下有以下真正的私有进度文件：
-
-- `ParquetLiveSync/work/market_update/commits.json`
-- `ParquetLiveSync/work/qmt_extra/progress.json`
-- `ParquetLiveSync/work/qmt_extra/financial-cache-progress.json`
-
-**不得新建空游标、不得从 detached worktree 实盘写入**。确保 QMT 在线、Windows 用户登录、电脑不休眠；必须与其他批量行情/财务任务错开。正式安装前须完成实盘小批测试，并确认独立 `AStockDataTools-QMT-Financial-Daily` 任务不存在以及 `work/qmt_extra/schedule-enabled.json` 未启用。
-
-仅在明确批准正式替换原任务后执行：
+状态查看：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\install-schedule.ps1" -Action Install -AfternoonUnified
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "ParquetLiveSync\install-schedule.ps1" -Action Status
 ```
-
-此命令**覆盖原有同名任务的触发器**，只留每天 16:30 一个触发器，不安装第二个任务。安装器的默认旧选项仍是 21:30，切勿漏掉 `-AfternoonUnified`。
-
-运行日志在 `ParquetLiveSync/work/afternoon-*.log`；最新汇总在 `ParquetLiveSync/work/last-afternoon-unified.json`。其他历史 `last-scheduled-run.json` 和旧版回执保留只读审计。

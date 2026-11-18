@@ -131,12 +131,15 @@ def _prior_rows(extra, code, table):
     return max(dates), combined
 
 
-def _plan_symbol(extra, code, asof, source, *, capital_approved_symbol=None):
-    """Nine-table all-history planning; scoped semantic exception defaults OFF.
+def _plan_symbol(extra, code, asof, source, *,
+                 capital_approved_symbol=None, capital_policy=None):
+    """Nine-table all-history planning; BOTH experimental gates default OFF.
 
-    The optional symbol gate is NOT exposed by run() or scheduled updates.
-    No blanket field removal, no pending mutation and no source alteration.
+    Neither the symbol rehearsal gate nor a policy object is accepted by
+    run()/CLI/scheduled tasks. This is NOT policy activation/authorization.
     """
+    if capital_approved_symbol is not None and capital_policy is not None:
+        raise ValueError("Two Capital pilot routes cannot be combined")
     if capital_approved_symbol is not None and (
             E.valid_code(capital_approved_symbol) != code):
         raise ValueError("Capital exception must name exactly the planned stock")
@@ -156,8 +159,25 @@ def _plan_symbol(extra, code, asof, source, *, capital_approved_symbol=None):
         saved = saved or Counter()
         missing = saved - current
         exception_proof = None
+        if table == "Capital" and capital_policy is not None:
+            # The only future persistent route; the production runner
+            # passes no policy today. Verify original AND current immutable
+            # snapshots before every optional comparison, never trust JSON
+            # fields alone as user authorization.
+            from qmt_capital_scoped_policy_reader import validate_policy
+            verified = validate_policy(
+                extra, code, asof, capital_policy, saved, fresh)
+            exception_proof = {
+                "m_quarter_differences":
+                    verified["approved_historical_quarter_differences"],
+                "verified_persistent_policy": True,
+                "allowed_report_dates": verified["allowed_report_dates"]}
         if missing:
-            if table == "Capital" and capital_approved_symbol == code:
+            if table == "Capital" and capital_policy is not None:
+                # validate_policy already checked every original raw row,
+                # date and business field; the other eight still use strict.
+                pass
+            elif table == "Capital" and capital_approved_symbol == code:
                 # All historical SELECTED original raw variants are retained
                 # in 'saved'. We only accept when identical report keys and
                 # EVERY economic field match under this one-field projection.
@@ -190,18 +210,21 @@ def _plan_symbol(extra, code, asof, source, *, capital_approved_symbol=None):
                 "symbol": code, "historical_variants": sum(saved.values()),
                 "m_quarter_differences": exception_proof["m_quarter_differences"],
                 "business_fields_verified": True,
-                "other_tables_not_waived": True}
+                "other_tables_not_waived": True,
+                "persistent_policy_checked": bool(
+                    exception_proof.get("verified_persistent_policy"))}
         if action == "CREATE_VERSION":
             staged[table] = fresh
     return result, staged
 
 
 def _commit_symbol(extra, workspace, code, asof, source, *,
-                   capital_approved_symbol=None):
+                   capital_approved_symbol=None, capital_policy=None):
     """Validate ALL nine tables before writes; optional pilot scope OFF."""
     report, staged = _plan_symbol(
         extra, code, asof, source,
-        capital_approved_symbol=capital_approved_symbol)
+        capital_approved_symbol=capital_approved_symbol,
+        capital_policy=capital_policy)
     for table, records in staged.items():
         group = "financial/" + table + "/" + code
         # Same-day old version always pinned before a second immutable file.

@@ -387,6 +387,30 @@ def _prepare_daily_sweep(state, asof, catalog, *, retry_pending=False):
     state["daily_date"] = asof
 
 
+def _guard_mass_history_conflicts(state, catalog_size):
+    """Fail closed on *systemic* prior-history revisions; never mutate state.
+
+    Thousands of QMT Capital changes are not a normal daily incremental
+    event. An unattended job must not add thousands more pending entries
+    or claim successful refresh until the provider semantics are diagnosed.
+    """
+    pending = state.get("pending", {})
+    if not isinstance(pending, dict):
+        raise ValueError("Malformed financial pending queue")
+    affected = sum(
+        isinstance(item, dict)
+        and item.get("reason") == "SOURCE_HISTORY_CONFLICT"
+        for item in pending.values()
+    )
+    if (catalog_size > 0 and affected >= 500
+            and affected * 4 >= catalog_size):
+        raise RuntimeError(
+            "MASS_FINANCIAL_SOURCE_HISTORY_CONFLICT_GUARD "
+            + str(affected) + "/" + str(catalog_size)
+            + " securities quarantined; require read-only Capital "
+              "source revision diagnosis before unattended daily scan")
+
+
 def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         batch_size=5, max_minutes=0, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
@@ -425,6 +449,10 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
     if mode == "daily" and state["import_cursor"] < catalog[-1]:
         raise ValueError("Initial QMT financial cache import has not reached "
                          "the end of current stock universe; finish --mode cache first")
+    if mode == "daily" and apply and not retry_pending:
+        # Stop BEFORE any cursor advancement or provider download when an
+        # existing massive history conflict suggests a changed QMT source.
+        _guard_mass_history_conflicts(state, len(catalog))
     if mode == "daily":
         _prepare_daily_sweep(state, asof, catalog,
                              retry_pending=retry_pending)

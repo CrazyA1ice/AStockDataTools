@@ -1,4 +1,4 @@
-# One Windows task, one daily 16:30 China-time trigger. No other time modes.
+# One Windows task, one daily 20:05 China-time trigger. No other time modes.
 param([ValidateSet('Install','Status','Remove')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -59,7 +59,7 @@ foreach($relative in @('scheduled-afternoon-update.ps1','notify-market-update.ps
 # Convert once to PC-local clock time. There is exactly ONE trigger.
 $shanghai=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $todayChina=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)).Date
-$utc=[TimeZoneInfo]::ConvertTimeToUtc($todayChina.AddHours(16).AddMinutes(30),$shanghai)
+$utc=[TimeZoneInfo]::ConvertTimeToUtc($todayChina.AddHours(20).AddMinutes(5),$shanghai)
 $at=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arguments=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
@@ -69,8 +69,8 @@ $trigger=New-ScheduledTaskTrigger -Daily -At $at
 $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
-$description='One daily 16:30 China-time market-finance-sectors-adjustments update, with completion/failure desktop notification and durable receipt'
+$description='One daily 20:05 China-time market-finance-sectors-adjustments update, with completion/failure desktop notification and durable receipt'
 Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
-Write-Host ('MARKET_1630_INSTALLED task='+$task+' china_start=16:30 pc_local_start='+$at+' triggers=1 runtime_limit=NONE user='+$identity)
-Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_1630_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP'
+Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit=NONE user='+$identity)
+Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP'
 Write-Host 'MARKET_QMT_REQUIREMENT=Logged-in Windows user and connected QMT; machine awake for execution'

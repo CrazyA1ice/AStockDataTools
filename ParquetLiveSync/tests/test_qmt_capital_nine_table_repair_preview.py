@@ -51,6 +51,51 @@ class NineTableRepairPreviewTests(unittest.TestCase):
         self.assertTrue(result["requires_separate_authorization"])
         self.assertFalse(result["pending_modified"])
 
+    def test_preflight_freezes_all_nine_table_history_and_source_hashes(self):
+        with patch.object(I, "_prior_rows", side_effect=_prior):
+            one = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                _tables())
+            again = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                  _tables())
+        self.assertEqual(one["read_only_preflight_digest"],
+                         again["read_only_preflight_digest"])
+        self.assertEqual(len(one["read_only_preflight_digest"]), 64)
+        self.assertEqual(len(one["evidence"]), 9)
+        self.assertTrue(all(
+            len(row["historical_selected_union_sha256"]) == 64
+            and len(row["current_raw_source_sha256"]) == 64
+            for row in one["evidence"].values()))
+        self.assertTrue(one["proposed_capital_immutable_filename"].startswith(
+            "2026-11-18-"))
+        self.assertFalse(one["preflight_digest_is_apply_authorization"])
+
+    def test_preflight_digest_changes_when_mquarter_changes_again(self):
+        one_src = _tables()
+        changed_src = _tables()
+        changed_src["Capital"][0]["m_quarter"] = 1234567.
+        with patch.object(I, "_prior_rows", side_effect=_prior):
+            one = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                one_src)
+            changed = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                    changed_src)
+        self.assertEqual(changed["status"],
+                         "ELIGIBLE_FOR_MANUAL_PILOT_PREVIEW")
+        self.assertNotEqual(one["read_only_preflight_digest"],
+                            changed["read_only_preflight_digest"])
+        self.assertNotEqual(one["proposed_capital_immutable_filename"],
+                            changed["proposed_capital_immutable_filename"])
+
+    def test_review_required_never_issues_provisional_commit_digest(self):
+        fresh = _tables()
+        fresh["Balance"][0]["assets"] = 999.
+        with patch.object(I, "_prior_rows", side_effect=_prior):
+            result = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                   fresh)
+        self.assertEqual(result["status"], "REVIEW_REQUIRED")
+        self.assertIsNone(result["read_only_preflight_digest"])
+        self.assertIsNone(result["proposed_capital_immutable_filename"])
+        self.assertFalse(result["preflight_digest_is_apply_authorization"])
+
     def test_balance_business_revision_cannot_be_skipped(self):
         fresh = _tables()
         fresh["Balance"][0]["assets"] = 999.

@@ -71,6 +71,36 @@ class CapitalFamilyCensusTests(unittest.TestCase):
         result = C.classify_capital(old, fresh)
         self.assertEqual(result["classification"], "NO_CHANGE")
 
+    def test_cached_only_sample_uses_existing_cache_and_no_download(self):
+        from unittest.mock import patch
+        from contextlib import nullcontext
+        import qmt_extra_financial_cache_import as I
+        import qmt_extra_data as E
+        state = {"pending": {"688227.SH": pending("688227.SH")}}
+        old = [{"_index": "0", "m_timetag": 20260930, "m_quarter": 0.,
+                "total_capital": 100.}]
+        updated = [dict(old[0], m_quarter=6750319.)]
+        called = []
+        def fake_recover(worker, codes, mode, asof, lookback, workspace,
+                         timeout, progress):
+            called.append((codes, mode))
+            return [("688227.SH", {"Capital": updated}, None)]
+        with tempfile.TemporaryDirectory() as temp:
+            with (
+                patch.object(I, "_recover_utf8_group", side_effect=fake_recover),
+                patch.object(I, "_latest_snapshot_day", return_value="2026-11-17"),
+                patch.object(E, "_storage", return_value=Path(temp)),
+                patch.object(E, "_financial_snapshot_rows", return_value=old),
+                patch.object(E.LIVE, "exclusive_writer", return_value=nullcontext())
+            ):
+                result = C.sample_cached_only(
+                    Path(temp), state, count=1, timeout=180)
+        self.assertEqual(called[0][1], "cache")
+        self.assertEqual(result["samples"]["688227.SH"]["classification"],
+                         "M_QUARTER_ONLY_CANDIDATE")
+        self.assertFalse(result["download_called"])
+        self.assertFalse(result["canonical_parquet_modified"])
+
     def test_default_census_reads_existing_json_without_modifying_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "financial-cache-progress.json"

@@ -175,8 +175,13 @@ def _plan_symbol(extra, code, asof, source, *, capital_approved_symbol=None):
                                  str(sum(missing.values())))
         if old_date is not None and old_date > asof:
             raise ValueError("QMT source observation older than saved snapshot")
+        # When the current original raw version was already preserved, an
+        # approved semantic waiver must not re-commit that same file forever
+        # merely because older immutable variants remain in the union.
         action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
-                  "UNCHANGED" if saved == current else "CREATE_VERSION")
+                  "UNCHANGED" if (saved == current or
+                     (exception_proof is not None and not (current - saved)))
+                  else "CREATE_VERSION")
         result[table] = {"rows": len(fresh), "previous_rows": sum(saved.values()),
                          "action": action, "previous_asof": old_date,
                          "extra_records": sum((current - saved).values())}

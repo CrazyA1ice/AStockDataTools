@@ -47,6 +47,7 @@ class OneStockTransactionTests(unittest.TestCase):
             "detail": "SOURCE_HISTORY_CONFLICT " + T.SYMBOL + " table=Capital",
             "attempts": 1, "asof": self.asof}
         I._save_state(self.work, self.state)
+        self.baseline_ledger = T.sha(T.paths(self.work)[0])
         self.source = {table: [] for table in E.FIN_TABLES}
         self.source["Capital"] = [dict(NEW)]
 
@@ -75,6 +76,7 @@ class OneStockTransactionTests(unittest.TestCase):
         self.assertEqual(before, T.sha(T.paths(self.work)[0]))
         self.assertFalse(T.paths(self.work)[1].exists())
         self.assertFalse(T.paths(self.work)[2].exists())
+        self.assertFalse((self.work / "backups").exists())
         self.assertIsNone(E._financial_snapshot_file(
             self.extra, T.SYMBOL, "Capital", self.asof))
 
@@ -104,7 +106,11 @@ class OneStockTransactionTests(unittest.TestCase):
         self.assertNotIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
         self.assertEqual(len(old["pending"]), 1)
         journal = T.paths(self.work)[1]
-        self.assertEqual(__import__("json").loads(journal.read_text())["phase"], "COMPLETE")
+        doc = __import__("json").loads(journal.read_text())
+        self.assertEqual(doc["phase"], "COMPLETE")
+        self.assertEqual(doc["ledger_before_sha256"], self.baseline_ledger)
+        self.assertEqual(T.sha(Path(doc["ledger_backup_path"])),
+                         doc["ledger_before_sha256"])
         current = E._financial_snapshot_file(
             self.extra, T.SYMBOL, "Capital", self.asof)
         self.assertIsNotNone(current)
@@ -185,6 +191,21 @@ class OneStockTransactionTests(unittest.TestCase):
         self.assertTrue(result["pending_restored"])
         self.assertEqual(POL.read_policy(self.extra, T.SYMBOL, self.work)["status"], "REVOKED")
         self.assertEqual(T.sha(self.baseline), self.baseline_hash)
+
+    def test_compensation_rejects_tampered_ledger_backup(self):
+        normal = T._save
+        def fail_once(path, doc):
+            normal(path, doc)
+            if path == T.paths(self.work)[1] and doc.get("phase") == "PREPARED":
+                raise RuntimeError("INJECTED_AFTER_PREPARED")
+        with patch.object(T, "_save", side_effect=fail_once):
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_AFTER_PREPARED"):
+                self.authorize()
+        doc = __import__("json").loads(T.paths(self.work)[1].read_text())
+        Path(doc["ledger_backup_path"]).write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "P69_ORIGINAL_LEDGER_BACKUP_UNVERIFIED"):
+            T._quarantine_compensate_locked(self.extra, self.work)
+        self.assertIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
 
     def test_default_scheduled_runner_cannot_load_approval(self):
         import inspect

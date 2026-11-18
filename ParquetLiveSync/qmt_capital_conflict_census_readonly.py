@@ -156,9 +156,10 @@ def sample_cached_only(stock_root, state, count, timeout):
     if count <= 0:
         return {"status": "NO_QMT_CALLS", "sampled": 0}
     from qmt_extra_financial_cache_import import (
-        _worker_batch, _recover_utf8_group, _latest_snapshot_day
+        _worker_batch, _recover_utf8_group, _prior_rows
     )
-    from qmt_extra_data import _storage, _financial_snapshot_rows, LIVE
+    from qmt_extra_data import _storage, LIVE
+    import qmt_capital_semantic_proof as PROOF
     codes = representative_capital_symbols(state, count)
     if not codes:
         return {"status": "NO_CAPITAL_PENDING_TO_SAMPLE", "sampled": 0}
@@ -181,17 +182,21 @@ def sample_cached_only(stock_root, state, count, timeout):
                 if not isinstance(data, dict) or "Capital" not in data:
                     observations[code] = {"classification": "QMT_CACHE_MISSING_CAPITAL"}
                     continue
-                day = _latest_snapshot_day(extra, code, "Capital")
-                if day is None:
+                # Reuse the EXACT official importer history-union reader.
+                # A newest-only comparison could miss old business revisions.
+                day, saved_raw = _prior_rows(extra, code, "Capital")
+                if saved_raw is None:
                     observations[code] = {"classification": "BASELINE_MISSING"}
                     continue
-                old = _financial_snapshot_rows(extra, code, "Capital", day)
-                item = classify_capital(old, data["Capital"])
-                item["baseline_asof"] = day
+                item = PROOF.prove_historical_union(
+                    saved_raw, data["Capital"])
+                item["baseline_latest_asof"] = day
                 observations[code] = item
     return {"status": "CACHE_ONLY_SAMPLE_DONE",
             "download_called": False, "canonical_parquet_modified": False,
             "private_ledger_modified": False, "sampled": len(codes),
+        "all_old_selected_history_checked": True,
+        "repair_apply_enabled": False,
             "samples": observations,
             "class_counts": dict(Counter(
                 entry["classification"] for entry in observations.values()))}

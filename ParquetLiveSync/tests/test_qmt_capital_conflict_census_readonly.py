@@ -55,7 +55,7 @@ class CapitalFamilyCensusTests(unittest.TestCase):
         result = C.classify_capital(previous, fresh)
         self.assertEqual(result["classification"], "M_QUARTER_ONLY_CANDIDATE")
         self.assertEqual(result["matched_changed_report_keys"], 2)
-        self.assertEqual(result["field_change_frequency"], [["m_quarter", 2]])
+        self.assertEqual(result["field_change_frequency"], [("m_quarter", 2)])
 
     def test_any_business_field_change_is_kept_quarantined(self):
         old = [{"_index": "0", "m_timetag": 20260930,

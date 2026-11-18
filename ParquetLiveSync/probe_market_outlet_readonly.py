@@ -83,7 +83,7 @@ def _qmt_kline(xt, symbol, now):
     try:
         # Local read ONLY; no xtdata.download_history_data call.
         payload = xt.get_market_data_ex(
-            field_list=["time", "open", "high", "low", "close"],
+            field_list=[],
             stock_list=[symbol], period="1m",
             start_time=now.strftime("%Y%m%d"),
             end_time="", count=5, dividend_type="none", fill_data=False)

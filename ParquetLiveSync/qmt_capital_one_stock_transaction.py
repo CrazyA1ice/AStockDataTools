@@ -124,14 +124,17 @@ def _preflight(extra, workspace, source, asof):
     if (set(staged) != {"Capital"} or
             planned["Capital"]["action"] != "CREATE_VERSION"):
         raise ValueError("P69_ONLY_ONE_NEW_CAPITAL_SNAPSHOT_ALLOWED")
+    # Refuse a same-day snapshot before interpreting the latest observation
+    # as a permissible prior-day baseline. A second real transaction must
+    # never silently coexist with an existing same-day Capital version.
+    if E._financial_snapshot_file(extra, SYMBOL, "Capital", asof) is not None:
+        raise ValueError("P69_CURRENT_DAY_CAPITAL_ALREADY_EXISTS")
     old_asof, saved = I._prior_rows(extra, SYMBOL, "Capital")
     if old_asof is None or saved is None or old_asof >= asof:
         raise ValueError("P69_REQUIRES_PRIOR_DAY_ORIGINAL_BASELINE")
     baseline = E._financial_snapshot_file(extra, SYMBOL, "Capital", old_asof)
     E._verify_financial_snapshot_file(extra, SYMBOL, "Capital", old_asof,
                                       _safe_file(baseline))
-    if E._financial_snapshot_file(extra, SYMBOL, "Capital", asof) is not None:
-        raise ValueError("P69_CURRENT_DAY_CAPITAL_ALREADY_EXISTS")
     rules = _allowed_records(saved, source["Capital"])
     return {
         "format": FORMAT, "status": "READY_FOR_EXPLICIT_ONE_STOCK_APPROVAL",
@@ -232,7 +235,13 @@ def _run_locked(extra, workspace, source, asof, *,
     journal["phase"] = "SNAPSHOT_COMMITTED"
     _save(journal_path, journal)
     policy = _policy(extra, candidate, plan)
-    POL.validate_policy(extra, SYMBOL, asof, policy, plan["_saved"],
+    # P67 validates the COMPLETE selected history, including the newly
+    # committed candidate version. Passing the pre-commit union omits the
+    # approved quarter value, which its strict variant-set check rejects.
+    latest_asof, saved_after_commit = I._prior_rows(extra, SYMBOL, "Capital")
+    if latest_asof != asof or saved_after_commit is None:
+        raise ValueError("P69_POST_COMMIT_HISTORY_NOT_VISIBLE")
+    POL.validate_policy(extra, SYMBOL, asof, policy, saved_after_commit,
                         source["Capital"])
     _save(policy_path, policy)
     if POL.read_policy(extra, SYMBOL, workspace) != policy:

@@ -213,6 +213,11 @@ def _plan_symbol(extra, code, asof, source, *,
                 "other_tables_not_waived": True,
                 "persistent_policy_checked": bool(
                     exception_proof.get("verified_persistent_policy"))}
+            if exception_proof.get("verified_persistent_policy"):
+                # Surface the exact-date scope proved by the read-only
+                # policy reader; never imply this is apply authorization.
+                result[table]["scoped_m_quarter_semantic_exception"][
+                    "allowed_report_dates"] = exception_proof["allowed_report_dates"]
         if action == "CREATE_VERSION":
             staged[table] = fresh
     return result, staged

@@ -131,7 +131,15 @@ def _prior_rows(extra, code, table):
     return max(dates), combined
 
 
-def _plan_symbol(extra, code, asof, source):
+def _plan_symbol(extra, code, asof, source, *, capital_approved_symbol=None):
+    """Nine-table all-history planning; scoped semantic exception defaults OFF.
+
+    The optional symbol gate is NOT exposed by run() or scheduled updates.
+    No blanket field removal, no pending mutation and no source alteration.
+    """
+    if capital_approved_symbol is not None and (
+            E.valid_code(capital_approved_symbol) != code):
+        raise ValueError("Capital exception must name exactly the planned stock")
     if set(source) != set(E.FIN_TABLES):
         raise ValueError("QMT cache extraction omitted financial tables")
     result = {}
@@ -147,10 +155,24 @@ def _plan_symbol(extra, code, asof, source):
         current = _rows(fresh)
         saved = saved or Counter()
         missing = saved - current
+        exception_proof = None
         if missing:
-            raise ValueError("SOURCE_HISTORY_CONFLICT " + code +
-                             " table=" + table + " removed_or_revised=" +
-                             str(sum(missing.values())))
+            if table == "Capital" and capital_approved_symbol == code:
+                # All historical SELECTED original raw variants are retained
+                # in 'saved'. We only accept when identical report keys and
+                # EVERY economic field match under this one-field projection.
+                # Other eight tables ALWAYS take the old strict path.
+                from qmt_capital_semantic_proof import prove_historical_union
+                exception_proof = prove_historical_union(saved, fresh)
+                if exception_proof["classification"] != "M_QUARTER_ONLY_CANDIDATE":
+                    raise ValueError("SOURCE_HISTORY_CONFLICT " + code +
+                                     " table=" + table +
+                                     " scoped_m_quarter_proof=" +
+                                     exception_proof["classification"])
+            else:
+                raise ValueError("SOURCE_HISTORY_CONFLICT " + code +
+                                 " table=" + table + " removed_or_revised=" +
+                                 str(sum(missing.values())))
         if old_date is not None and old_date > asof:
             raise ValueError("QMT source observation older than saved snapshot")
         action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
@@ -158,14 +180,23 @@ def _plan_symbol(extra, code, asof, source):
         result[table] = {"rows": len(fresh), "previous_rows": sum(saved.values()),
                          "action": action, "previous_asof": old_date,
                          "extra_records": sum((current - saved).values())}
+        if exception_proof is not None:
+            result[table]["scoped_m_quarter_semantic_exception"] = {
+                "symbol": code, "historical_variants": sum(saved.values()),
+                "m_quarter_differences": exception_proof["m_quarter_differences"],
+                "business_fields_verified": True,
+                "other_tables_not_waived": True}
         if action == "CREATE_VERSION":
             staged[table] = fresh
     return result, staged
 
 
-def _commit_symbol(extra, workspace, code, asof, source):
-    """Validate ALL nine tables before any Parquet write for this stock."""
-    report, staged = _plan_symbol(extra, code, asof, source)
+def _commit_symbol(extra, workspace, code, asof, source, *,
+                   capital_approved_symbol=None):
+    """Validate ALL nine tables before writes; optional pilot scope OFF."""
+    report, staged = _plan_symbol(
+        extra, code, asof, source,
+        capital_approved_symbol=capital_approved_symbol)
     for table, records in staged.items():
         group = "financial/" + table + "/" + code
         # Same-day old version always pinned before a second immutable file.

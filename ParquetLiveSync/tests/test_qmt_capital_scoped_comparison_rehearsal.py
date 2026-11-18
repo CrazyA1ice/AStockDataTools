@@ -166,6 +166,53 @@ class ScopedCapitalComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SOURCE_HISTORY_CONFLICT"):
             I._plan_symbol(self.extra, CODE, "2026-11-19", tables())
 
+    def test_same_asof_old_pin_and_raw_bytes_survive_new_candidate(self):
+        old_capital(self.extra, asof=ASOF_NEW, workspace=self.work)
+        old_file = E._financial_snapshot_file(
+            self.extra, CODE, "Capital", ASOF_NEW)
+        old_hash = E.L.hash_file(old_file)
+        result = I._commit_symbol(
+            self.extra, self.work, CODE, ASOF_NEW, tables(),
+            capital_approved_symbol=CODE)
+        self.assertEqual(result["Capital"]["action"], "CREATE_VERSION")
+        new_file = E._financial_snapshot_file(
+            self.extra, CODE, "Capital", ASOF_NEW)
+        self.assertNotEqual(old_file, new_file)
+        self.assertEqual(E.L.hash_file(old_file), old_hash)
+        self.assertEqual(len(list(self.original_path.glob(
+            "2026-11-18-*.parquet"))), 2)
+        self.assertTrue(E._financial_active_path(
+            self.extra, CODE, "Capital", ASOF_NEW).is_file())
+
+    def test_failure_after_old_pin_does_not_lose_original_snapshot(self):
+        from unittest.mock import patch
+        old_capital(self.extra, asof=ASOF_NEW, workspace=self.work)
+        old_file = E._financial_snapshot_file(
+            self.extra, CODE, "Capital", ASOF_NEW)
+        old_hash = E.L.hash_file(old_file)
+        with patch.object(E, "_snapshot_write",
+                          side_effect=OSError("injected write failure")):
+            with self.assertRaisesRegex(OSError, "injected write failure"):
+                I._commit_symbol(self.extra, self.work, CODE, ASOF_NEW,
+                                 tables(), capital_approved_symbol=CODE)
+        self.assertEqual(E.L.hash_file(old_file), old_hash)
+        self.assertEqual(E._financial_snapshot_file(
+            self.extra, CODE, "Capital", ASOF_NEW), old_file)
+        self.assertEqual(len(list(
+            self.original_path.glob("2026-11-18-*.parquet"))), 1)
+
+    def test_other_table_revision_blocks_before_any_capital_write(self):
+        old_income(self.extra, workspace=self.work)
+        with self.assertRaisesRegex(ValueError, "table=Income"):
+            I._commit_symbol(
+                self.extra, self.work, CODE, ASOF_NEW,
+                tables(other={"_index": "0", "m_timetag": 20260930,
+                              "revenue": 900.}),
+                capital_approved_symbol=CODE)
+        self.assertEqual(len(list(self.original_path.glob(
+            "2026-11-18-*.parquet"))), 0)
+        self.assertFalse((self.work / "financial-coverage.jsonl").exists())
+
     def test_another_stock_stays_strict_even_after_pilot(self):
         old_capital(self.extra, code=OTHER, workspace=self.work)
         I._commit_symbol(self.extra, self.work, CODE, ASOF_NEW, tables(),

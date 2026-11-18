@@ -72,8 +72,10 @@ def _one_tick(symbol, payload, now):
             report["status"] = "NOT_TODAY"
         elif age < -5:
             report["status"] = "CLOCK_MISMATCH"
-        elif age <= 20:
+        elif age <= 20 and report["price_positive"]:
             report["status"] = "TODAY_RECENT_TICK"
+        elif age <= 20:
+            report["status"] = "TODAY_TICK_NO_POSITIVE_TRADE"
         else:
             report["status"] = "TODAY_STALE_TICK"
     return report

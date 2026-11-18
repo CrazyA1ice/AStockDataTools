@@ -12,7 +12,7 @@
 - 除 `_index` 与 `m_quarter` 外，所有源字段完全相同，字段有无、真实股本值、日期及公告时间严格一致
 - 历史旧版本之间亦没有非 `m_quarter` 差异
 - 其他八张财务表仍调用原始严格历史并集比较，不能因为 Capital 的批准放松所有表
-- 返回 `M_QUARTER_ONLY_CANDIDATE` 才可将当前 raw source 原样保存为新的内容寻址 Parquet；**旧版快照字节和 pin 均不修改**
+- 返回 `M_QUARTER_ONLY_CANDIDATE` 才可将当前 raw source 原样保存为新的内容寻址 Parquet；**旧版快照字节及过去日期的 pin 均不修改；同一 asof 如已有旧活动版本，新增版本可能更新该日期的 active pin，正式 apply 必须事先保留可回退的 pin 凭证**
 - 若当前 raw 版本此前已存档，则标记 `UNCHANGED` 而非无限重复提交新版本，即便全部旧版 `m_quarter` 变化记录仍然保留
 
 ## 未完成及严格边界

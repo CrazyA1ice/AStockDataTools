@@ -478,7 +478,8 @@ def _guard_mass_history_conflicts(state, catalog_size):
 def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         batch_size=5, max_minutes=0, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
-        finance_dir=None, clock=None, progress=print, worker=None):
+        finance_dir=None, clock=None, progress=print, worker=None,
+        capital_mquarter_nonbusiness=False):
     if mode not in ("cache", "daily"):
         raise ValueError("Invalid financial import mode")
     if (not 1 <= batch_size <= MAX_GROUP or
@@ -545,6 +546,7 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "old_financial_scan_cursor_modified": False,
         "purchased_8_cycle_modified": False, "h5_modified": False,
         "qmt_full_download_called": False,
+        "capital_mquarter_nonbusiness": bool(capital_mquarter_nonbusiness),
         "daily_sweep_start": (state["daily_sweep_start"] if mode == "daily"
                               else None),
         "daily_sweep_reached_end": (state["daily_sweep_reached_end"]
@@ -602,8 +604,16 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                     consecutive_utf8_errors = 0
                     try:
                         # Compare source against ALL prior active versions.
+                        # The official Capital field dictionary does not list
+                        # m_quarter as a share-capital business quantity.
+                        # Opt-in compares EVERY selected historical version
+                        # and all report dates / other fields strictly, using
+                        # the existing one-field semantic proof. Never change
+                        # the strict path for the other eight finance tables.
                         table_report = _commit_symbol(
-                            extra, workspace, code, asof, source)
+                            extra, workspace, code, asof, source,
+                            **({"capital_approved_symbol": code}
+                               if capital_mquarter_nonbusiness else {}))
                     except ValueError as exc:
                         if not str(exc).startswith("SOURCE_HISTORY_CONFLICT"):
                             raise
@@ -676,6 +686,9 @@ def main(argv=None):
     parser.add_argument("--finance-dir", type=Path,
                         help="Explicit local QMT Finance directory; include historical DAT filenames in stock universe without parsing their contents")
     parser.add_argument("--retry-pending", action="store_true")
+    parser.add_argument("--capital-mquarter-nonbusiness", action="store_true",
+                        help="Opt in: only Capital.m_quarter may differ; all"
+                             " other historical fields/dates/tables stay strict")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     from xtquant import xtdata
@@ -685,7 +698,8 @@ def main(argv=None):
         worker_timeout_seconds=args.worker_timeout_seconds,
         lookback_days=args.lookback_days,
         retry_pending=args.retry_pending,
-        finance_dir=args.finance_dir)
+        finance_dir=args.finance_dir,
+        capital_mquarter_nonbusiness=args.capital_mquarter_nonbusiness)
 
 
 if __name__ == "__main__":

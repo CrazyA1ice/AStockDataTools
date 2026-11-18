@@ -42,7 +42,72 @@ class CapitalFamilyCensusTests(unittest.TestCase):
         self.assertTrue(any(s.endswith(".BJ") for s in samples))
         self.assertEqual(C.representative_capital_symbols(state, 0), [])
         with self.assertRaises(ValueError):
-            C.representative_capital_symbols(state, 6)
+            C.representative_capital_symbols(state, 26)
+
+    def test_25_samples_evenly_cover_five_market_code_ranges(self):
+        codes = (
+            [f"000{i:03d}.SZ" for i in range(1, 21)] +
+            [f"300{i:03d}.SZ" for i in range(1, 21)] +
+            [f"600{i:03d}.SH" for i in range(1, 21)] +
+            [f"688{i:03d}.SH" for i in range(1, 21)] +
+            [f"920{i:03d}.BJ" for i in range(1, 21)])
+        state = {"pending": {s: pending(s) for s in codes}}
+        selected = C.representative_capital_symbols(state, 25)
+        self.assertEqual(len(selected), 25)
+        self.assertEqual(len(set(selected)), 25)
+        self.assertEqual(selected, C.representative_capital_symbols(state, 25))
+        for prefix, suffix in (("000", ".SZ"), ("300", ".SZ"),
+                               ("600", ".SH"), ("688", ".SH"),
+                               ("920", ".BJ")):
+            self.assertEqual(sum(x.startswith(prefix) and x.endswith(suffix)
+                                 for x in selected), 5)
+
+    def test_25_cached_only_samples_split_into_five_worker_batches(self):
+        from unittest.mock import patch
+        from contextlib import ExitStack, nullcontext
+        from collections import Counter
+        import qmt_extra_financial_cache_import as I
+        import qmt_extra_data as E
+        codes = (
+            [f"000{i:03d}.SZ" for i in range(1, 6)] +
+            [f"300{i:03d}.SZ" for i in range(1, 6)] +
+            [f"600{i:03d}.SH" for i in range(1, 6)] +
+            [f"688{i:03d}.SH" for i in range(1, 6)] +
+            [f"920{i:03d}.BJ" for i in range(1, 6)])
+        state = {"pending": {code: pending(code) for code in codes}}
+        prior = {"_index": "0", "m_timetag": 20260930,
+                 "m_quarter": 0., "total_capital": 100.}
+        raw = E.canonical_json({k: v for k, v in prior.items() if k != "_index"})
+        calls = []
+        notes = []
+        def fake_recover(worker, group, mode, asof, lookback, workspace,
+                         timeout, progress):
+            self.assertEqual(mode, "cache")
+            self.assertLessEqual(len(group), 5)
+            calls.append(tuple(group))
+            current = dict(prior, m_quarter=6750319.)
+            return [(code, {"Capital": [current]}, None) for code in group]
+        with tempfile.TemporaryDirectory() as temp:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(
+                    I, "_recover_utf8_group", side_effect=fake_recover))
+                stack.enter_context(patch.object(
+                    I, "_prior_rows", return_value=(
+                        "2026-11-17", Counter({raw: 1}))))
+                stack.enter_context(patch.object(
+                    E, "_storage", return_value=Path(temp)))
+                stack.enter_context(patch.object(
+                    E.LIVE, "exclusive_writer", return_value=nullcontext()))
+                result = C.sample_cached_only(Path(temp), state, count=25,
+                                              timeout=180, progress=notes.append)
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(sum(len(group) for group in calls), 25)
+        self.assertEqual(len(notes), 5)
+        self.assertEqual(result["candidate_count"], 25)
+        self.assertEqual(result["review_count"], 0)
+        self.assertEqual(result["m_quarter_changed_rows_in_candidates"], 25)
+        self.assertFalse(result["repair_apply_enabled"])
+        self.assertFalse(result["private_ledger_modified"])
 
     def test_mquarter_only_legacy_rows_are_not_business_field_changes(self):
         previous = [{"_index": "0", "m_timetag": 20260930,

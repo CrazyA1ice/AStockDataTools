@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 import re
 import tempfile
+from time import monotonic
 
 CN = timezone(timedelta(hours=8))
 TABLE_RE = re.compile(r"(?:^|\s)table=([A-Za-z0-9_]+)(?:\s|$)")
@@ -175,7 +176,10 @@ def classify_capital(old_records, fresh_records):
             "important": "m_quarter-only is a classification, not permission to overwrite previous snapshots"}
 
 
-def sample_cached_only(stock_root, state, count, timeout, progress=print):
+def sample_cached_only(stock_root, state, count, timeout, progress=print,
+                       max_minutes=20):
+    if not 1 <= max_minutes <= 60:
+        raise ValueError("Sample budget must be 1..60 minutes")
     if count <= 0:
         return {"status": "NO_QMT_CALLS", "sampled": 0}
     from qmt_extra_financial_cache_import import (
@@ -191,9 +195,16 @@ def sample_cached_only(stock_root, state, count, timeout, progress=print):
     # The only file write is an ephemeral worker output inside OS TEMP.
     # All batches share the canonical interprocess lock: no concurrent apply.
     observations = {}
+    deadline = monotonic() + max_minutes * 60
+    paused = False
     with tempfile.TemporaryDirectory(prefix="capital-readonly-sample-") as temp:
         with LIVE.exclusive_writer():
             for start in range(0, len(codes), WORKER_GROUP_SIZE):
+                # A slow provider must not turn an audit into another
+                # unbounded full-market batch. Preserve partial evidence.
+                if monotonic() >= deadline:
+                    paused = True
+                    break
                 group = codes[start:start + WORKER_GROUP_SIZE]
                 recovered = _recover_utf8_group(
                     _worker_batch, group, "cache", now, 120, Path(temp),
@@ -224,10 +235,15 @@ def sample_cached_only(stock_root, state, count, timeout, progress=print):
                         if code in observations))
                 }, ensure_ascii=False, sort_keys=True))
     counts = Counter(x["classification"] for x in observations.values())
-    return {"status": "CACHE_ONLY_SAMPLE_DONE",
+    return {"status": (
+                "PAUSED_TIME_BUDGET" if paused else "CACHE_ONLY_SAMPLE_DONE"),
             "sampling_scheme": "FIVE_MARKETS_EVEN_CODE_QUANTILES_V2",
             "download_called": False, "canonical_parquet_modified": False,
-            "private_ledger_modified": False, "sampled": len(codes),
+            "private_ledger_modified": False,
+            "sampled": len(observations),
+            "total_planned": len(codes),
+            "remaining_unvisited": len(codes) - len(observations),
+            "max_sample_minutes": max_minutes,
             "all_old_selected_history_checked": True,
             "repair_apply_enabled": False,
             "samples": observations,
@@ -248,11 +264,15 @@ def main(argv=None):
     parser.add_argument("--sample-size", type=int, default=0,
                         help="0: offline census; 1..25: multi-batch cached-only QMT proof")
     parser.add_argument("--timeout-seconds", type=int, default=180)
+    parser.add_argument("--max-sample-minutes", type=int, default=20,
+                        help="Stop before another batch after this duration; partial results are not PASS")
     args = parser.parse_args(argv)
     if not 0 <= args.sample_size <= MAX_SAMPLE:
         parser.error("sample-size must be 0..25")
     if not 30 <= args.timeout_seconds <= 3600:
         parser.error("timeout-seconds must be 30..3600")
+    if not 1 <= args.max_sample_minutes <= 60:
+        parser.error("max-sample-minutes must be 1..60")
     ledger = args.repo / "ParquetLiveSync" / "work" / "qmt_extra" / "financial-cache-progress.json"
     state = read_progress(ledger)
     census = summarize(state)
@@ -267,10 +287,13 @@ def main(argv=None):
             raise ValueError(
                 "LIVE_SAMPLE_REQUIRES_CANONICAL_CHECKOUT: use only offline "
                 "census from a detached Preview worktree")
-        sampled = sample_cached_only(args.stock_root, state, args.sample_size,
-                                     args.timeout_seconds)
+        sampled = sample_cached_only(
+            args.stock_root, state, args.sample_size,
+            args.timeout_seconds, max_minutes=args.max_sample_minutes)
         print("QMT_CAPITAL_CACHED_SAMPLE=" +
               json.dumps(sampled, ensure_ascii=False, sort_keys=True))
+        if sampled["status"] != "CACHE_ONLY_SAMPLE_DONE":
+            raise SystemExit("CAPITAL_SAMPLE_INCOMPLETE_NOT_A_PASS")
     else:
         print("QMT_CAPITAL_PENDING_CENSUS_READONLY_COMPLETE")
 

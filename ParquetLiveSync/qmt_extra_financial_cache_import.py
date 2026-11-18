@@ -44,7 +44,7 @@ def _state(extra, workspace):
     if not path.exists():
         return {"format": FORMAT, "root": str(extra.resolve()),
                 "import_cursor": "", "daily_date": "",
-                "daily_cursor": "", "pending": {},
+                "daily_cursor": "", "pending_retry_cursor": "", "pending": {},
                 "daily_sweep_start": "", "daily_sweep_reached_end": False,
                 "daily_sweep_finished": ""}
     if not path.is_file() or path.is_symlink():
@@ -55,6 +55,7 @@ def _state(extra, workspace):
             or not isinstance(data.get("import_cursor"), str)
             or not isinstance(data.get("daily_date"), str)
             or not isinstance(data.get("daily_cursor"), str)
+            or not isinstance(data.get("pending_retry_cursor", ""), str)
             or not isinstance(data.get("pending"), dict)
             or not isinstance(data.get("daily_sweep_start", ""), str)
             or not isinstance(data.get("daily_sweep_reached_end", False), bool)
@@ -69,6 +70,9 @@ def _state(extra, workspace):
                 not isinstance(entry.get("attempts"), int) or
                 entry["attempts"] < 1):
             raise ValueError("Financial cache pending entry malformed")
+    data.setdefault("pending_retry_cursor", "")
+    if data["pending_retry_cursor"]:
+        E.valid_code(data["pending_retry_cursor"])
     data.setdefault("daily_sweep_start", "")
     data.setdefault("daily_sweep_reached_end", False)
     data.setdefault("daily_sweep_finished", "")
@@ -503,11 +507,22 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
     state = _state(extra, workspace)
     cursor_key = "import_cursor" if mode == "cache" else "daily_cursor"
     universe_start = monotonic()
+    pending_cache_retry = mode == "cache" and retry_pending
     progress("QMT_FINANCIAL_UNIVERSE_QUERY_START=" + E.canonical_json({
-        "mode": mode, "finance_dir_enabled": finance_dir is not None}))
-    catalog, catalog_metadata = _stock_universe(xt, finance_dir)
+        "mode": mode, "finance_dir_enabled": finance_dir is not None,
+        "pending_ledger_only": pending_cache_retry}))
+    if pending_cache_retry:
+        # The pending identities were verified by _state(). No need for a
+        # full sector query / Finance DAT walk on repeated cached-only retry.
+        # This shortcut is NEVER used for ordinary import or daily coverage.
+        catalog = sorted(state["pending"])
+        catalog_metadata = {
+            "source_scope": "VERIFIED_PRIVATE_PENDING_LEDGER_ONLY",
+            "pending_symbols": len(catalog), "finance_directory_scanned": False}
+    else:
+        catalog, catalog_metadata = _stock_universe(xt, finance_dir)
     progress("QMT_FINANCIAL_UNIVERSE_QUERY_DONE=" + E.canonical_json({
-        "stocks": len(catalog),
+        "stocks": len(catalog), "pending_ledger_only": pending_cache_retry,
         "elapsed_seconds": round(monotonic() - universe_start, 3)}))
     universe_hash = hashlib.sha256(
         E.canonical_json(catalog).encode("utf-8")).hexdigest()
@@ -526,7 +541,12 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         if missing:
             raise ValueError("Pending QMT cache symbols disappeared: " +
                              E.canonical_json(sorted(missing)[:20]))
-        selected = sorted(state["pending"])[:max_symbols]
+        # Rotate even if a failing stock remains in pending; repeatedly
+        # processing only the first N causes starvation after N blockers.
+        pending_codes = sorted(state["pending"])
+        retry_cursor = state["pending_retry_cursor"]
+        selected = ([c for c in pending_codes if c > retry_cursor] +
+                    [c for c in pending_codes if c <= retry_cursor])[:max_symbols]
     else:
         selected = [s for s in catalog if s > state[cursor_key]][:max_symbols]
     positions = {code: idx for idx, code in enumerate(catalog)} if mode == "daily" else {}
@@ -539,6 +559,10 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "time_budget_minutes": max_minutes,
         "start_cursor": state[cursor_key],
         "end_cursor": state[cursor_key],
+        "pending_retry_cursor_start": state["pending_retry_cursor"]
+                                      if retry_pending else None,
+        "pending_retry_cursor_end": state["pending_retry_cursor"]
+                                    if retry_pending else None,
         "selected": len(selected), "selected_first": selected[0] if selected else None,
         "processed": 0, "pending_added": 0,
         "new_snapshots": 0, "unchanged_tables": 0,
@@ -638,13 +662,18 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                         progress("QMT_FINANCIAL_CACHE_STOCK_COMMITTED=" +
                                  E.canonical_json({"symbol": code,
                                                    "tables": table_report}))
-                if not retry_pending:
+                if retry_pending:
+                    state["pending_retry_cursor"] = code
+                else:
                     state[cursor_key] = code
                     if mode == "daily" and code == catalog[-1]:
                         state["daily_sweep_reached_end"] = True
                         state["daily_sweep_finished"] = asof
                 _save_state(workspace, state)
                 report["end_cursor"] = state[cursor_key]
+                if retry_pending:
+                    report["pending_retry_cursor_end"] = (
+                        state["pending_retry_cursor"])
                 report["pending_total"] = len(state["pending"])
                 if mode == "daily" and not retry_pending:
                     report["daily_sweep_reached_end"] = state["daily_sweep_reached_end"]

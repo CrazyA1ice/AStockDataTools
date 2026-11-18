@@ -109,6 +109,29 @@ class CapitalFamilyCensusTests(unittest.TestCase):
         self.assertFalse(result["repair_apply_enabled"])
         self.assertFalse(result["private_ledger_modified"])
 
+    def test_stratified_audit_budget_pause_does_not_claim_complete(self):
+        from unittest.mock import patch
+        from contextlib import ExitStack, nullcontext
+        import qmt_extra_data as E
+        state = {"pending": {"688227.SH": pending("688227.SH")}}
+        with tempfile.TemporaryDirectory() as temp:
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(
+                    C, "monotonic", side_effect=[0, 1000]))
+                stack.enter_context(patch.object(
+                    E, "_storage", return_value=Path(temp)))
+                stack.enter_context(patch.object(
+                    E.LIVE, "exclusive_writer", return_value=nullcontext()))
+                result = C.sample_cached_only(
+                    Path(temp), state, count=1, timeout=180,
+                    max_minutes=1, progress=lambda _: None)
+        self.assertEqual(result["status"], "PAUSED_TIME_BUDGET")
+        self.assertEqual(result["total_planned"], 1)
+        self.assertEqual(result["sampled"], 0)
+        self.assertEqual(result["remaining_unvisited"], 1)
+        self.assertEqual(result["candidate_count"], 0)
+        self.assertFalse(result["repair_apply_enabled"])
+
     def test_mquarter_only_legacy_rows_are_not_business_field_changes(self):
         previous = [{"_index": "0", "m_timetag": 20260930,
                      "m_quarter": 0., "total_capital": 100.},

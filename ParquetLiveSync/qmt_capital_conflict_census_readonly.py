@@ -4,8 +4,9 @@
 Default path accesses ONLY financial-cache-progress.json: no broker import, no
 network calls, no Parquet reads, no state/ledger modifications.
 Optional --sample-size N uses ONE isolated existing-cache-only QMT batch
-for at most 5 pending symbols. It never downloads QMT history and never
-writes canonical data, private cursors or source snapshots.
+for at most 5 pending symbols, only in the canonical checkout (shared lock).
+It never downloads QMT history and never writes canonical data, private
+cursors or source snapshots. The existing writer-lock marker may be touched.
 """
 from __future__ import annotations
 
@@ -207,6 +208,14 @@ def main(argv=None):
     print("QMT_CAPITAL_PENDING_CENSUS=" +
           json.dumps(census, ensure_ascii=False, sort_keys=True))
     if args.sample_size:
+        # Shared exclusive writer lock is anchored to the real repository
+        # path. A detached worktree has its own lock, so it is intentionally
+        # forbidden for QMT cache sampling. Offline census remains portable.
+        source_repo = Path(__file__).resolve().parent.parent
+        if source_repo != args.repo.resolve():
+            raise ValueError(
+                "LIVE_SAMPLE_REQUIRES_CANONICAL_CHECKOUT: use only offline "
+                "census from a detached Preview worktree")
         sampled = sample_cached_only(args.stock_root, state, args.sample_size,
                                      args.timeout_seconds)
         print("QMT_CAPITAL_CACHED_SAMPLE=" +

@@ -66,8 +66,8 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertNotIn("FinanceMaxMinutes", runner)
         self.assertNotIn("Before 16:30 China market time", runner)
         # The one scheduled entry executes all four independent stages.
-        sequence = ["-Label 'EIGHT_PERIODS'", "-Label 'FINANCIAL_DAILY'",
-                    "-Label 'SECTORS'", "-Label 'ADJUSTMENTS_ROTATING'"]
+        sequence = ["-Label 'EIGHT_PERIODS'", "-Label 'SECTORS'",
+                    "-Label 'ADJUSTMENTS_ROTATING'", "-Label 'FINANCIAL_DAILY'"]
         positions = [runner.index(token) for token in sequence]
         self.assertEqual(positions, sorted(positions))
         self.assertIn("UNIFIED_SINGLE_RUN", runner)
@@ -83,6 +83,9 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertNotIn("-Action $action ", installer)
         self.assertNotIn('$triggers+=', installer)
         self.assertIn("last-afternoon-unified.json", runner)
+        self.assertIn("[int]$FinanceDailyStockLimit = 200", runner)
+        self.assertIn("'-MaxSymbols',[string]$FinanceDailyStockLimit", runner)
+        self.assertIn("MARKET_1630_FINANCE_FULL_UNIVERSE_DAILY=FALSE", runner)
         self.assertIn("market_daily_verification.py", runner)
         self.assertIn("[System.IO.StreamWriter]::new(", runner)
         self.assertIn("$writer.WriteLine($line)", runner)

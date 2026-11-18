@@ -106,11 +106,12 @@ class AttestedPolicyConsumerTests(unittest.TestCase):
             self.checked(drift)
 
     def test_other_table_change_never_waived(self):
+        income = {"_index": "0", "m_timetag": 20260930, "revenue": 100.}
         E._snapshot_write(
             self.extra, "financial/Income/" + TX.SYMBOL, self.asof,
-            E.snapshot_table(self.asof, TX.SYMBOL, "Income", [
-                {"_index": "0", "m_timetag": 20260930, "revenue": 100.}]),
+            E.snapshot_table(self.asof, TX.SYMBOL, "Income", [income]),
             workspace=self.work)
+        self.source["Income"] = [income]
         self.apply_synthetic()
         drift = {k: [dict(r) for r in v] for k, v in self.source.items()}
         drift["Income"] = [

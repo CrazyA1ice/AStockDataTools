@@ -85,6 +85,38 @@ class NineTableRepairPreviewTests(unittest.TestCase):
         self.assertNotEqual(one["proposed_capital_immutable_filename"],
                             changed["proposed_capital_immutable_filename"])
 
+    def test_preflight_digest_invalidates_on_historical_version_change(self):
+        def changed_prior(extra, code, table):
+            if table == "Capital":
+                changed = dict(CAPITAL, m_quarter=999.)
+                return "2026-11-17", _raw([changed])
+            return _prior(extra, code, table)
+        with patch.object(I, "_prior_rows", side_effect=_prior):
+            old = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                _tables())
+        with patch.object(I, "_prior_rows", side_effect=changed_prior):
+            updated = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                    _tables())
+        self.assertEqual(updated["status"],
+                         "ELIGIBLE_FOR_MANUAL_PILOT_PREVIEW")
+        self.assertNotEqual(old["read_only_preflight_digest"],
+                            updated["read_only_preflight_digest"])
+        self.assertEqual(old["proposed_capital_immutable_filename"],
+                         updated["proposed_capital_immutable_filename"])
+
+    def test_preflight_digest_invalidates_on_observation_day_rollover(self):
+        with patch.object(I, "_prior_rows", side_effect=_prior):
+            old = R.plan_symbol(Path("/unused"), "002237.SZ", "2026-11-18",
+                                _tables())
+            next_day = R.plan_symbol(Path("/unused"), "002237.SZ",
+                                     "2026-11-19", _tables())
+        self.assertEqual(next_day["status"],
+                         "ELIGIBLE_FOR_MANUAL_PILOT_PREVIEW")
+        self.assertNotEqual(old["read_only_preflight_digest"],
+                            next_day["read_only_preflight_digest"])
+        self.assertNotEqual(old["proposed_capital_immutable_filename"],
+                            next_day["proposed_capital_immutable_filename"])
+
     def test_review_required_never_issues_provisional_commit_digest(self):
         fresh = _tables()
         fresh["Balance"][0]["assets"] = 999.

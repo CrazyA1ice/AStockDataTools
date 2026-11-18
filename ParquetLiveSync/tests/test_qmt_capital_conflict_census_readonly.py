@@ -74,6 +74,7 @@ class CapitalFamilyCensusTests(unittest.TestCase):
     def test_cached_only_sample_uses_existing_cache_and_no_download(self):
         from unittest.mock import patch
         from contextlib import nullcontext
+        from collections import Counter
         import qmt_extra_financial_cache_import as I
         import qmt_extra_data as E
         state = {"pending": {"688227.SH": pending("688227.SH")}}
@@ -88,9 +89,13 @@ class CapitalFamilyCensusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with (
                 patch.object(I, "_recover_utf8_group", side_effect=fake_recover),
-                patch.object(I, "_latest_snapshot_day", return_value="2026-11-17"),
+                patch.object(I, "_prior_rows", return_value=(
+                    "2026-11-17",
+                    Counter({E.canonical_json({
+                        k: v for k, v in old[0].items() if k != "_index"
+                    }): 1})
+                )),
                 patch.object(E, "_storage", return_value=Path(temp)),
-                patch.object(E, "_financial_snapshot_rows", return_value=old),
                 patch.object(E.LIVE, "exclusive_writer", return_value=nullcontext())
             ):
                 result = C.sample_cached_only(

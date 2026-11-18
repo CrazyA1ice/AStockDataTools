@@ -49,7 +49,15 @@ function Invoke-MarketStage {
         # A direct UTF-8 writer keeps the evidence lossless and streamed.
         $writer=[System.IO.StreamWriter]::new(
             $stageLog,$false,[System.Text.UTF8Encoding]::new($true))
+        $savedErrorActionPreference=$ErrorActionPreference
         try {
+            # Windows PowerShell 5.1 translates native-process STDERR into
+            # nonterminating ErrorRecord objects after 2>&1. Under Stop,
+            # even a harmless unittest progress line or an intermediate QMT
+            # UTF-8 worker diagnostic aborts this stage before Python's own
+            # retry/split logic can handle it. Capture both streams without
+            # treating STDERR text as an exception; inspect process EXIT CODE.
+            $ErrorActionPreference='Continue'
             & $engine -NoProfile -ExecutionPolicy Bypass -File $Script @Arguments 2>&1 |
                 ForEach-Object {
                     $line=[string]$_
@@ -58,6 +66,7 @@ function Invoke-MarketStage {
                 }
             $code=$LASTEXITCODE
         }finally{
+            $ErrorActionPreference=$savedErrorActionPreference
             $writer.Dispose()
         }
         if($code -ne 0){throw ('Exit code '+$code)}

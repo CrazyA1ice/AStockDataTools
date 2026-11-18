@@ -15,6 +15,7 @@ from copy import deepcopy
 from datetime import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -199,7 +200,25 @@ def _run_locked(extra, workspace, source, asof, *,
         "original_parquet_retained": True,
         "do_not_retry_without_recovery": True,
     }
-    # Durable PREPARED before any physical data or pending mutation.
+    # Preserve exact ledger bytes before even the PREPARED journal.
+    # Backup filename is bound to its CAS digest and cannot be overwritten.
+    backup = Path(workspace) / "backups" / (
+        "capital-ledger-" + SYMBOL + "-" + expected_ledger + ".json")
+    E._path_check(backup)
+    if backup.exists():
+        if not backup.is_file() or sha(backup) != expected_ledger:
+            raise ValueError("P69_LEDGER_BACKUP_DRIFT")
+    else:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        with backup.open("xb") as stream:
+            stream.write(ledger.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+        if sha(backup) != expected_ledger:
+            raise ValueError("P69_LEDGER_BACKUP_MISMATCH")
+    journal["ledger_backup_path"] = str(backup)
+    journal["ledger_backup_sha256"] = sha(backup)
+    # Durable PREPARED before any candidate snapshot or pending mutation.
     _save(journal_path, journal)
     group = "financial/Capital/" + SYMBOL
     table = E.snapshot_table(asof, SYMBOL, "Capital", source["Capital"])
@@ -299,6 +318,8 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path("D:/stock"))
     parser.add_argument("--symbol", default=SYMBOL)
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--compensate-quarantine", action="store_true")
+    parser.add_argument("--compensation-ack")
     parser.add_argument("--approval")
     parser.add_argument("--expected-ledger-sha256")
     parser.add_argument("--expected-preflight-sha256")
@@ -306,6 +327,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.symbol != SYMBOL or not 30 <= args.timeout_seconds <= 3600:
         parser.error("Only 002237.SZ and bounded worker timeout supported")
+    if args.apply and args.compensate_quarantine:
+        parser.error("Apply and compensation are mutually exclusive")
+    if args.compensate_quarantine:
+        if (args.compensation_ack != "RESTORE_QUARANTINE_002237.SZ"
+                or any((args.approval, args.expected_ledger_sha256,
+                        args.expected_preflight_sha256))):
+            parser.error("Quarantine compensation requires exact acknowledgment")
+    elif args.compensation_ack is not None:
+        parser.error("Compensation acknowledgment requires compensation mode")
     if not args.apply and any((args.approval, args.expected_ledger_sha256,
                                args.expected_preflight_sha256)):
         parser.error("Approval options require --apply")
@@ -318,6 +348,11 @@ def main(argv=None):
     repo = _verify_canonical(args.repo, args.root)
     extra = E._storage(args.root)
     workspace = repo / "ParquetLiveSync" / "work" / "qmt_extra"
+    if args.compensate_quarantine:
+        with E.LIVE.exclusive_writer():
+            receipt = _quarantine_compensate_locked(extra, workspace)
+        print("P69_CAPITAL_COMPENSATION_RECEIPT=" + E.canonical_json(receipt))
+        return
     with tempfile.TemporaryDirectory(prefix="p69-capital-one-stock-") as temp:
         with E.LIVE.exclusive_writer():
             now = datetime.now(E.L.UTC8).date().isoformat()

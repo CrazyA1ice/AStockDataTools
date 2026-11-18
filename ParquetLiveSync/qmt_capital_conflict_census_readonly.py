@@ -3,8 +3,9 @@
 
 Default path accesses ONLY financial-cache-progress.json: no broker import, no
 network calls, no Parquet reads, no state/ledger modifications.
-Optional --sample-size N uses ONE isolated existing-cache-only QMT batch
-for at most 5 pending symbols, only in the canonical checkout (shared lock).
+Optional --sample-size N (maximum 25) uses bounded existing-cache-only QMT
+batches of at most 5 symbols, only in the canonical checkout (shared lock).
+Representatives are spread across five equity markets and code ranges.
 It never downloads QMT history and never writes canonical data, private
 cursors or source snapshots. The existing writer-lock marker may be touched.
 """
@@ -20,7 +21,26 @@ import tempfile
 
 CN = timezone(timedelta(hours=8))
 TABLE_RE = re.compile(r"(?:^|\s)table=([A-Za-z0-9_]+)(?:\s|$)")
-MAX_SAMPLE = 5
+MAX_SAMPLE = 25
+WORKER_GROUP_SIZE = 5
+STRATA = (
+    ("SH_MAIN", ".SH", ("60",)),
+    ("STAR", ".SH", ("68",)),
+    ("SZ_MAIN", ".SZ", ("00",)),
+    ("CHINEXT", ".SZ", ("30",)),
+    ("BEIJING", ".BJ", ("8", "9", "4")),
+)
+
+
+def _spread_sorted(items, count):
+    """Deterministic midpoint quantiles without replacement."""
+    if count <= 0:
+        return []
+    items = sorted(set(items))
+    n = min(count, len(items))
+    return [items[((2 * i + 1) * len(items)) // (2 * n)]
+            for i in range(n)]
+
 
 
 def read_progress(path: Path):
@@ -93,31 +113,34 @@ def summarize(state):
 
 def representative_capital_symbols(state, count):
     if not 0 <= count <= MAX_SAMPLE:
-        raise ValueError("Sample must be 0..5")
-    candidates = [
+        raise ValueError("Sample must be 0..25")
+    candidates = sorted({
         code for code, entry in state["pending"].items()
         if isinstance(code, str)
         and isinstance(entry, dict)
         and entry.get("reason") == "SOURCE_HISTORY_CONFLICT"
         and conflict_table(entry) == "Capital"
-    ]
-    candidates = sorted(set(candidates))
+    })
     groups = [
-        [s for s in candidates if s.endswith(".SZ") and s.startswith("00")],
-        [s for s in candidates if s.endswith(".SZ") and s.startswith("30")],
-        [s for s in candidates if s.endswith(".SH") and s.startswith("60")],
-        [s for s in candidates if s.endswith(".SH") and s.startswith("68")],
-        [s for s in candidates if s.endswith(".BJ")],
+        [s for s in candidates
+         if s.endswith(suffix) and s.startswith(prefixes)]
+        for _, suffix, prefixes in STRATA
     ]
-    selected = []
-    for group in groups:
-        if group and len(selected) < count:
-            selected.append(group[len(group) // 2])
-    for code in candidates:
-        if len(selected) >= count:
+    quotas = [0] * len(groups)
+    for i in range(count):
+        for step in range(len(groups)):
+            j = (i + step) % len(groups)
+            if quotas[j] < len(groups[j]):
+                quotas[j] += 1
+                break
+        else:
             break
-        if code not in selected:
-            selected.append(code)
+    selected = set()
+    for group, quota in zip(groups, quotas):
+        selected.update(_spread_sorted(group, quota))
+    if len(selected) < count:
+        rest = [s for s in candidates if s not in selected]
+        selected.update(_spread_sorted(rest, count - len(selected)))
     return sorted(selected)
 
 
@@ -152,7 +175,7 @@ def classify_capital(old_records, fresh_records):
             "important": "m_quarter-only is a classification, not permission to overwrite previous snapshots"}
 
 
-def sample_cached_only(stock_root, state, count, timeout):
+def sample_cached_only(stock_root, state, count, timeout, progress=print):
     if count <= 0:
         return {"status": "NO_QMT_CALLS", "sampled": 0}
     from qmt_extra_financial_cache_import import (
@@ -165,41 +188,57 @@ def sample_cached_only(stock_root, state, count, timeout):
         return {"status": "NO_CAPITAL_PENDING_TO_SAMPLE", "sampled": 0}
     extra = _storage(Path(stock_root))
     now = datetime.now(CN).date().isoformat()
-    # The only file write is an ephemeral worker output inside OS TEMP,
-    # automatically deleted by TemporaryDirectory.  No QMT download.
+    # The only file write is an ephemeral worker output inside OS TEMP.
+    # All batches share the canonical interprocess lock: no concurrent apply.
+    observations = {}
     with tempfile.TemporaryDirectory(prefix="capital-readonly-sample-") as temp:
         with LIVE.exclusive_writer():
-            recovered = _recover_utf8_group(
-                _worker_batch, codes, "cache", now, 120, Path(temp), timeout,
-                progress=lambda line: None)
-            observations = {}
-            for code, data, reason in recovered:
-                if reason is not None:
-                    observations[code] = {
-                        "classification": "QMT_CACHE_UNAVAILABLE",
-                        "provider_reason": reason}
-                    continue
-                if not isinstance(data, dict) or "Capital" not in data:
-                    observations[code] = {"classification": "QMT_CACHE_MISSING_CAPITAL"}
-                    continue
-                # Reuse the EXACT official importer history-union reader.
-                # A newest-only comparison could miss old business revisions.
-                day, saved_raw = _prior_rows(extra, code, "Capital")
-                if saved_raw is None:
-                    observations[code] = {"classification": "BASELINE_MISSING"}
-                    continue
-                item = PROOF.prove_historical_union(
-                    saved_raw, data["Capital"])
-                item["baseline_latest_asof"] = day
-                observations[code] = item
+            for start in range(0, len(codes), WORKER_GROUP_SIZE):
+                group = codes[start:start + WORKER_GROUP_SIZE]
+                recovered = _recover_utf8_group(
+                    _worker_batch, group, "cache", now, 120, Path(temp),
+                    timeout, progress=lambda line: None)
+                for code, data, reason in recovered:
+                    if reason is not None:
+                        observations[code] = {
+                            "classification": "QMT_CACHE_UNAVAILABLE",
+                            "provider_reason": reason}
+                        continue
+                    if not isinstance(data, dict) or "Capital" not in data:
+                        observations[code] = {
+                            "classification": "QMT_CACHE_MISSING_CAPITAL"}
+                        continue
+                    # Use the exact union of ALL previous selected snapshots.
+                    day, saved_raw = _prior_rows(extra, code, "Capital")
+                    if saved_raw is None:
+                        observations[code] = {"classification": "BASELINE_MISSING"}
+                        continue
+                    item = PROOF.prove_historical_union(saved_raw, data["Capital"])
+                    item["baseline_latest_asof"] = day
+                    observations[code] = item
+                progress("QMT_CAPITAL_SAMPLE_BATCH=" + json.dumps({
+                    "completed": len(observations), "total": len(codes),
+                    "group_symbols": group,
+                    "group_classes": dict(Counter(
+                        observations[code]["classification"] for code in group
+                        if code in observations))
+                }, ensure_ascii=False, sort_keys=True))
+    counts = Counter(x["classification"] for x in observations.values())
     return {"status": "CACHE_ONLY_SAMPLE_DONE",
+            "sampling_scheme": "FIVE_MARKETS_EVEN_CODE_QUANTILES_V2",
             "download_called": False, "canonical_parquet_modified": False,
             "private_ledger_modified": False, "sampled": len(codes),
-        "all_old_selected_history_checked": True,
-        "repair_apply_enabled": False,
+            "all_old_selected_history_checked": True,
+            "repair_apply_enabled": False,
             "samples": observations,
-            "class_counts": dict(Counter(
-                entry["classification"] for entry in observations.values()))}
+            "class_counts": dict(sorted(counts.items())),
+            "candidate_count": counts.get("M_QUARTER_ONLY_CANDIDATE", 0),
+            "review_count": len(observations) -
+                            counts.get("M_QUARTER_ONLY_CANDIDATE", 0),
+            "m_quarter_changed_rows_in_candidates": sum(
+                x.get("m_quarter_differences", 0)
+                for x in observations.values()
+                if x["classification"] == "M_QUARTER_ONLY_CANDIDATE")}
 
 
 def main(argv=None):
@@ -207,11 +246,11 @@ def main(argv=None):
     parser.add_argument("--repo", type=Path, default=Path("D:/ChatGPT/AStockDataTools"))
     parser.add_argument("--stock-root", type=Path, default=Path("D:/stock"))
     parser.add_argument("--sample-size", type=int, default=0,
-                        help="0: only JSON pending census; 1..5: ONE cached-only QMT batch")
+                        help="0: offline census; 1..25: multi-batch cached-only QMT proof")
     parser.add_argument("--timeout-seconds", type=int, default=180)
     args = parser.parse_args(argv)
     if not 0 <= args.sample_size <= MAX_SAMPLE:
-        parser.error("sample-size must be 0..5")
+        parser.error("sample-size must be 0..25")
     if not 30 <= args.timeout_seconds <= 3600:
         parser.error("timeout-seconds must be 30..3600")
     ledger = args.repo / "ParquetLiveSync" / "work" / "qmt_extra" / "financial-cache-progress.json"

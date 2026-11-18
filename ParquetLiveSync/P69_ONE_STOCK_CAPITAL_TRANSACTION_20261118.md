@@ -29,7 +29,7 @@
 ## 事务步骤
 
 1. 锁内检查其 `Capital` pending 仍在、九表其余八表字节语义相同、Capital 只变动白名单字段、来源日期集合不变，且候选版仅需创建 Capital 一张表。
-2. 在私有工作空间落 `PREPARED` 日志，记录原始 pending、原账本 SHA、九表预检 SHA、原始版本 SHA 和候选文件名。
+2. 先在私有工作空间创建**不可覆盖的完整账本字节备份**并核验 SHA，然后落 `PREPARED` 日志，记录原始 pending、原账本 SHA、九表预检 SHA、原始版本 SHA、备份位置和候选文件名。
 3. 使用现有 `qmt_extra_data` 内容寻址原语只写新的 **Capital** 单表 Parquet；完整校验后原子更新该 asof 的活动指针。**绝不删除/覆盖旧原始快照**。
 4. 生成严格限定 report_key、approved_quarter、所有旧值、业务字段 hash 的 P67 策略，并由 P67 独立读取验证所有历史原始记录，随后原子写入 policy；只有明确审批的本次事务可以生成此文件。
 5. 比较私有账本 CAS SHA 与旧 pending 精确内容，仅删除 `002237.SZ` 这一项，并原子保存账本，按序写 `LEDGER_RELEASED` 和 `COMPLETE` 事务日志。
@@ -42,4 +42,4 @@
 - 完成单股事务也**不会解锁 5002/5656 mass guard**，当天的财务 daily 仍会阻断，直到具备可信的分批异常恢复机制。
 - 不应直接在 Git Bash/Preview 中写入真实文件；生产状态机只能由安装目录下已验证的主 checkout 执行。
 - `status=ACTIVE` 的文件本身不是信任根；必须依赖对单股显式 SHA 绑定、日志和事务内验证。无人值守导入器不会使用它。
-- 若手工事务中断，不要随意删除 journal、候选快照或策略，应先读取 journal 的 phase 并复核事务以确定安全补偿方式。
+- 若手工事务中断，不要随意删除 journal、候选快照或策略，应先读取 journal 的 phase 并复核事务以确定安全补偿方式。对未完成的真实事务，提供独立的 `--compensate-quarantine --compensation-ack RESTORE_QUARANTINE_002237.SZ` 操作，先验证原完整账本备份 SHA 及基线快照 SHA，再撤销策略并恢复待审条目，**不删除候选的不可变 Parquet，也不声称物理完全回滚**；已完成 `COMPLETE` 的事务拒绝此类补偿。必须核查日志并经过人工确认才运行此恢复操作。

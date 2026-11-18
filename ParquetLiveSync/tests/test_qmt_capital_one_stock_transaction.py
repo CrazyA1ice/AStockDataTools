@@ -207,6 +207,43 @@ class OneStockTransactionTests(unittest.TestCase):
             T._quarantine_compensate_locked(self.extra, self.work)
         self.assertIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
 
+    def test_crash_after_snapshot_leaves_pending_and_can_be_quarantined(self):
+        normal = T._save
+        def fail_once(path, doc):
+            normal(path, doc)
+            if path == T.paths(self.work)[1] and doc.get("phase") == "SNAPSHOT_COMMITTED":
+                raise RuntimeError("INJECTED_AFTER_SNAPSHOT")
+        with patch.object(T, "_save", side_effect=fail_once):
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_AFTER_SNAPSHOT"):
+                self.authorize()
+        self.assertIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
+        self.assertIsNotNone(E._financial_snapshot_file(
+            self.extra, T.SYMBOL, "Capital", self.asof))
+        self.assertTrue(T._quarantine_compensate_locked(
+            self.extra, self.work)["pending_restored"])
+
+    def test_crash_after_ledger_release_restores_pending_and_revokes_policy(self):
+        normal = T._save
+        def fail_once(path, doc):
+            normal(path, doc)
+            if path == T.paths(self.work)[1] and doc.get("phase") == "LEDGER_RELEASED":
+                raise RuntimeError("INJECTED_AFTER_LEDGER")
+        with patch.object(T, "_save", side_effect=fail_once):
+            with self.assertRaisesRegex(RuntimeError, "INJECTED_AFTER_LEDGER"):
+                self.authorize()
+        self.assertNotIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
+        receipt = T._quarantine_compensate_locked(self.extra, self.work)
+        self.assertTrue(receipt["pending_restored"])
+        self.assertIn(T.SYMBOL, I._state(self.extra, self.work)["pending"])
+        self.assertEqual(POL.read_policy(
+            self.extra, T.SYMBOL, self.work)["status"], "REVOKED")
+        self.assertEqual(T.sha(self.baseline), self.baseline_hash)
+
+    def test_complete_transaction_cannot_be_auto_compensated(self):
+        self.authorize()
+        with self.assertRaisesRegex(ValueError, "P69_COMPLETE_NEEDS_SEPARATE"):
+            T._quarantine_compensate_locked(self.extra, self.work)
+
     def test_default_scheduled_runner_cannot_load_approval(self):
         import inspect
         self.assertNotIn("capital_policy", inspect.signature(I.run).parameters)

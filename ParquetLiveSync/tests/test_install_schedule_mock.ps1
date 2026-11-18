@@ -50,10 +50,10 @@ if($reg.Action.Argument -notmatch 'scheduled-afternoon-update.ps1.* -Apply$'){
 }
 $china=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $day=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
-$utc=[TimeZoneInfo]::ConvertTimeToUtc($day.AddHours(16).AddMinutes(30),$china)
+$utc=[TimeZoneInfo]::ConvertTimeToUtc($day.AddHours(20).AddMinutes(5),$china)
 $pc=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
 if($reg.Trigger.At -ne $pc -or -not $reg.Trigger.Daily){
-    throw 'Expected exactly one daily China 16:30 trigger'
+    throw 'Expected exactly one daily China 20:05 trigger'
 }
 if($reg.Settings.ExecutionTimeLimit -ne [TimeSpan]::Zero -or
    $reg.Settings.MultipleInstances -ne 'IgnoreNew' -or
@@ -64,5 +64,5 @@ if($reg.Principal.LogonType -ne 'Interactive' -or
    $reg.Principal.RunLevel -ne 'Limited' -or -not $reg.Force){
     throw 'Expected interactive QMT task replacing same task'
 }
-Write-Host 'PASS_INSTALL_SCHEDULE_MOCK_NO_REAL_TASKS ONLY_CST_1630_NO_TIMEOUT'
+Write-Host 'PASS_INSTALL_SCHEDULE_MOCK_NO_REAL_TASKS ONLY_CST_2005_NO_TIMEOUT'
 Remove-Variable -Name MarketMockRegistrations -Scope Global -ErrorAction SilentlyContinue

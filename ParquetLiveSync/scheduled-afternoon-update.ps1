@@ -5,6 +5,7 @@ param(
     [string]$Root = "D:\stock",
     [string]$FinanceDir = "D:\software\JHQMT\datadir\Finance",
     [ValidateRange(0,1000)][int]$AdjustmentStockLimit = 80,
+    [ValidateRange(1,10000)][int]$FinanceDailyStockLimit = 200,
     [ValidateRange(1,1095)][int]$FinanceLookbackDays = 120
 )
 $ErrorActionPreference='Stop'
@@ -25,6 +26,8 @@ if(-not $Apply){
     Write-Host 'MARKET_1630_FINANCIAL_RUNTIME_LIMIT=NONE'
     Write-Host 'MARKET_1630_WINDOWS_TASK_RUNTIME_LIMIT=NONE'
     Write-Host ('MARKET_1630_ADJUSTMENTS_PER_RUN_LIMIT='+$AdjustmentStockLimit)
+    Write-Host ('MARKET_1630_FINANCE_DAILY_MAX_SYMBOLS='+$FinanceDailyStockLimit)
+    Write-Host 'MARKET_1630_FINANCE_FULL_UNIVERSE_DAILY=FALSE'
     Write-Host 'MARKET_1630_NOTIFICATION=WINDOWS_DESKTOP_AFTER_ALL_OUTCOMES'
     Write-Host 'MARKET_1630_MULTISOURCE=EIGHT_PERIODS_ONLY;OTHER_TYPES_UNVERIFIED'
     return
@@ -114,11 +117,14 @@ try {
     Write-Host 'MARKET_1630_MODE=UNIFIED_SINGLE_RUN'
     # Each source is verified by its own pipeline. No second scheduled retry.
     # Failure in an independent stage is captured; other stages still run.
+    # Market/sector/adjustment updates should not wait for a long or
+    # quarantined financial vendor scan. Run financial LAST; preserve the
+    # existing one-trigger schedule and all private stock-level cursors.
     Invoke-MarketStage -Label 'EIGHT_PERIODS' -Script $update -Arguments @('-Mode','auto','-Root',$Root)
-    Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays)
     Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
     $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
     Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
+    Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit)
 }catch{
     [void]$failures.Add('RUNNER: '+$_.Exception.Message)
     Write-Host ('MARKET_1630_RUNNER_FAILED='+$_.Exception.Message)

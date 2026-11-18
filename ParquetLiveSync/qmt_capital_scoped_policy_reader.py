@@ -25,8 +25,8 @@ HEX = re.compile(r"[0-9a-f]{64}\Z")
 FILENAME = re.compile(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.parquet\Z")
 
 
-def _hash(value):
-    return hashlib.sha256(E.canonical_json(value).encode("utf-8")).hexdigest()
+def _business_sha(row):
+    return hashlib.sha256(P._business(row).encode("utf-8")).hexdigest()
 
 
 def _refuse(reason):
@@ -165,17 +165,21 @@ def validate_policy(extra, code, asof, policy, saved, current_rows):
         if k in rules:
             rule = rules[k]
             if (P._business(current) != P._business(accepted)
-                    or _hash(P._business(current)) != rule["business_sha256"]
+                    or _business_sha(current) != rule["business_sha256"]
                     or E.canonical_json(current[FIELD]) != rule["approved_quarter"]
                     or E.canonical_json(accepted[FIELD]) != rule["approved_quarter"]):
                 _refuse("APPROVED_BUSINESS_OR_QUARTER_DRIFT")
+            observed_quarters = set()
             for old in past:
-                if (P._business(old) != P._business(current)
-                        or E.canonical_json(old[FIELD])
-                        not in rule["allowed_historical_quarters"]):
+                if FIELD not in old or P._business(old) != P._business(current):
+                    _refuse("UNAPPROVED_BUSINESS_HISTORY_VARIANT")
+                quarter = E.canonical_json(old[FIELD])
+                if quarter not in rule["allowed_historical_quarters"]:
                     _refuse("UNAPPROVED_HISTORICAL_VARIANT")
-                changes += (E.canonical_json(old[FIELD])
-                            != rule["approved_quarter"])
+                observed_quarters.add(quarter)
+                changes += (quarter != rule["approved_quarter"])
+            if observed_quarters != set(rule["allowed_historical_quarters"]):
+                _refuse("EXTRA_OR_MISSING_APPROVED_QUARTER_VARIANT")
         else:
             if (len(past) != 1 or _raw(past[0]) != _raw(current)
                     or _raw(accepted) != _raw(current)):

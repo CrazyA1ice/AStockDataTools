@@ -155,7 +155,9 @@ def classify_capital(old_records, fresh_records):
 def sample_cached_only(stock_root, state, count, timeout):
     if count <= 0:
         return {"status": "NO_QMT_CALLS", "sampled": 0}
-    from qmt_extra_financial_cache_import import _worker_batch, _latest_snapshot_day
+    from qmt_extra_financial_cache_import import (
+        _worker_batch, _recover_utf8_group, _latest_snapshot_day
+    )
     from qmt_extra_data import _storage, _financial_snapshot_rows, LIVE
     codes = representative_capital_symbols(state, count)
     if not codes:
@@ -166,20 +168,25 @@ def sample_cached_only(stock_root, state, count, timeout):
     # automatically deleted by TemporaryDirectory.  No QMT download.
     with tempfile.TemporaryDirectory(prefix="capital-readonly-sample-") as temp:
         with LIVE.exclusive_writer():
-            fresh, missing = _worker_batch(
-                codes, "cache", now, 120, Path(temp), timeout,
+            recovered = _recover_utf8_group(
+                _worker_batch, codes, "cache", now, 120, Path(temp), timeout,
                 progress=lambda line: None)
             observations = {}
-            for code in codes:
-                if code in missing or code not in fresh:
-                    observations[code] = {"classification": "QMT_CACHE_MISSING"}
+            for code, data, reason in recovered:
+                if reason is not None:
+                    observations[code] = {
+                        "classification": "QMT_CACHE_UNAVAILABLE",
+                        "provider_reason": reason}
+                    continue
+                if not isinstance(data, dict) or "Capital" not in data:
+                    observations[code] = {"classification": "QMT_CACHE_MISSING_CAPITAL"}
                     continue
                 day = _latest_snapshot_day(extra, code, "Capital")
                 if day is None:
                     observations[code] = {"classification": "BASELINE_MISSING"}
                     continue
                 old = _financial_snapshot_rows(extra, code, "Capital", day)
-                item = classify_capital(old, fresh[code]["Capital"])
+                item = classify_capital(old, data["Capital"])
                 item["baseline_asof"] = day
                 observations[code] = item
     return {"status": "CACHE_ONLY_SAMPLE_DONE",

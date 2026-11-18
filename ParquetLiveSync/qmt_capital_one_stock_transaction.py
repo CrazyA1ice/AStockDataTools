@@ -279,6 +279,19 @@ def _quarantine_compensate_locked(extra, workspace):
         raise ValueError("P69_COMPLETE_NEEDS_SEPARATE_REVERSE_APPROVAL")
     if doc["phase"] == "COMPENSATED":
         return {"status": "ALREADY_COMPENSATED"}
+    expected_backup = Path(workspace) / "backups" / (
+        "capital-ledger-" + SYMBOL + "-" +
+        str(doc.get("ledger_before_sha256")) + ".json")
+    if (doc.get("ledger_backup_path") != str(expected_backup)
+            or not HEX.fullmatch(str(doc.get("ledger_backup_sha256")))
+            or doc["ledger_backup_sha256"] != doc["ledger_before_sha256"]
+            or sha(_safe_file(expected_backup)) != doc["ledger_backup_sha256"]):
+        raise ValueError("P69_ORIGINAL_LEDGER_BACKUP_UNVERIFIED")
+    baseline = (extra / "financial" / "Capital" / SYMBOL /
+                "snapshots" / str(doc.get("baseline_filename")))
+    if (not baseline.name.startswith(str(doc.get("baseline_asof")) + "-")
+            or sha(_safe_file(baseline)) != doc.get("baseline_sha256")):
+        raise ValueError("P69_ORIGINAL_BASELINE_CHANGED")
     state = I._state(extra, workspace)
     observed = state["pending"].get(SYMBOL)
     if observed is not None and observed != doc["pending_before"]:

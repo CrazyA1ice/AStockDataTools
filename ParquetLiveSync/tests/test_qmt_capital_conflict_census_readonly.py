@@ -73,7 +73,7 @@ class CapitalFamilyCensusTests(unittest.TestCase):
 
     def test_cached_only_sample_uses_existing_cache_and_no_download(self):
         from unittest.mock import patch
-        from contextlib import nullcontext
+        from contextlib import nullcontext, ExitStack
         from collections import Counter
         import qmt_extra_financial_cache_import as I
         import qmt_extra_data as E
@@ -87,17 +87,19 @@ class CapitalFamilyCensusTests(unittest.TestCase):
             called.append((codes, mode))
             return [("688227.SH", {"Capital": updated}, None)]
         with tempfile.TemporaryDirectory() as temp:
-            with (
-                patch.object(I, "_recover_utf8_group", side_effect=fake_recover),
-                patch.object(I, "_prior_rows", return_value=(
-                    "2026-11-17",
-                    Counter({E.canonical_json({
-                        k: v for k, v in old[0].items() if k != "_index"
-                    }): 1})
-                )),
-                patch.object(E, "_storage", return_value=Path(temp)),
-                patch.object(E.LIVE, "exclusive_writer", return_value=nullcontext())
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(
+                    I, "_recover_utf8_group", side_effect=fake_recover))
+                stack.enter_context(patch.object(
+                    I, "_prior_rows", return_value=(
+                        "2026-11-17",
+                        Counter({E.canonical_json({
+                            k: v for k, v in old[0].items() if k != "_index"
+                        }): 1}))))
+                stack.enter_context(patch.object(
+                    E, "_storage", return_value=Path(temp)))
+                stack.enter_context(patch.object(
+                    E.LIVE, "exclusive_writer", return_value=nullcontext()))
                 result = C.sample_cached_only(
                     Path(temp), state, count=1, timeout=180)
         self.assertEqual(called[0][1], "cache")

@@ -24,7 +24,7 @@ try {
     $budget=if($MaxMinutes -eq 0){'UNLIMITED'}else{[string]$MaxMinutes}
     Write-Host ('QMT_FINANCIAL_DAILY_TIME_BUDGET='+$budget)
     if(-not(Test-Path -LiteralPath $FinanceDir -PathType Container)){ throw "Required QMT Finance cache directory missing" }
-    $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols",[string]$MaxSymbols,"--max-minutes",[string]$MaxMinutes,"--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays,"--apply")
+    $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols",[string]$MaxSymbols,"--max-minutes",[string]$MaxMinutes,"--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays,"--capital-mquarter-nonbusiness","--apply")
     & $python @cli
     if($LASTEXITCODE -ne 0){ throw "QMT financial daily incremental job failed" }
     Write-Host "QMT_FINANCIAL_DAILY_FINISHED=$((Get-Date).ToString('o'))"

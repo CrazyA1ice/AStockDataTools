@@ -112,6 +112,51 @@ class NineTableRepairPreviewTests(unittest.TestCase):
                                    fresh)
         self.assertIn("Capital:INVALID_SOURCE_RECORDS", result["blockers"])
 
+    def test_canonical_preview_reads_cached_nine_tables_without_state_writes(self):
+        from contextlib import ExitStack, nullcontext
+        import tempfile
+        from unittest.mock import patch
+        state = {"pending": {"002237.SZ": {
+            "reason": "SOURCE_HISTORY_CONFLICT", "attempts": 1,
+            "detail": "SOURCE_HISTORY_CONFLICT 002237.SZ table=Capital removed_or_revised=1"}}}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            work = root / "ParquetLiveSync" / "work" / "qmt_extra"
+            work.mkdir(parents=True)
+            ledger = work / I.STATE_FILE
+            before = b'{"existing":"untouched"}'
+            ledger.write_bytes(before)
+            logs = []
+            worker_calls = []
+            def fake_recover(worker, group, mode, asof, lookback, workspace,
+                             timeout, progress):
+                worker_calls.append((group, mode))
+                return [("002237.SZ", _tables(), None)]
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(
+                    R, "__file__", str(root / "ParquetLiveSync" /
+                                        "qmt_capital_nine_table_repair_preview.py")))
+                stack.enter_context(patch.object(
+                    E, "_storage", return_value=root / "extra"))
+                stack.enter_context(patch.object(
+                    E.LIVE, "exclusive_writer", return_value=nullcontext()))
+                stack.enter_context(patch.object(
+                    I, "_state", return_value=state))
+                stack.enter_context(patch.object(
+                    I, "_recover_utf8_group", side_effect=fake_recover))
+                stack.enter_context(patch.object(
+                    I, "_prior_rows", side_effect=_prior))
+                out = R.preview(root, root, ["002237.SZ"],
+                                progress=logs.append, timeout_seconds=30)
+            self.assertEqual(worker_calls[0][1], "cache")
+            self.assertEqual(out["eligible_for_separate_manual_pilot"], 1)
+            self.assertEqual(out["review_required"], 0)
+            self.assertFalse(out["repair_apply_enabled"])
+            self.assertFalse(out["pending_modified"])
+            self.assertFalse(out["historical_parquet_modified"])
+            self.assertEqual(ledger.read_bytes(), before)
+            self.assertEqual(len(logs), 1)
+
     def test_reject_more_than_five_symbols_without_live_calls(self):
         with self.assertRaisesRegex(ValueError, "1..5"):
             R.preview(Path("/unused"), Path("/unused"),

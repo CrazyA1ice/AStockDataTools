@@ -592,7 +592,18 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                  E.canonical_json(report))
         return report
     consecutive_utf8_errors = 0
-    for offset in range(0, len(selected), batch_size):
+    offset = 0
+    while offset < len(selected):
+        # Pending retry rotation is two individually sorted runs: codes
+        # after the cursor, then codes wrapped from the start. Never pass a
+        # group crossing that boundary to the QMT worker, which correctly
+        # requires each requested stock batch to be strictly sorted.
+        group = selected[offset:offset + batch_size]
+        for pos in range(1, len(group)):
+            if group[pos] <= group[pos - 1]:
+                group = group[:pos]
+                break
+        offset += len(group)
         now = clock().astimezone(E.L.UTC8)
         if now.date().isoformat() != asof:
             report["status"] = "PAUSED_DATE_ROLLOVER"
@@ -600,7 +611,6 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         if deadline is not None and now >= deadline:
             report["status"] = "PAUSED_TIME_BUDGET"
             break
-        group = selected[offset:offset + batch_size]
         # Exclusive writer held across QMT cache access and official commits.
         with E.LIVE.exclusive_writer():
             recovered = _recover_utf8_group(

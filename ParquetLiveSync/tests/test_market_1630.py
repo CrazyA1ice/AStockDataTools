@@ -75,6 +75,9 @@ class EarlyMarketEligibilityTests(unittest.TestCase):
         self.assertNotIn('20:45', runner)
         self.assertNotIn("marketRetryUtc", installer)
         self.assertIn("New-ScheduledTaskTrigger -Daily -At $at", installer)
+        self.assertIn("$todayChina.AddHours(20).AddMinutes(5)", installer)
+        self.assertNotIn("$todayChina.AddHours(16).AddMinutes(30)", installer)
+        self.assertIn("ONE_DAILY_2005_ALL_FOUR_SECTIONS", installer)
         self.assertIn("$taskExecAction=New-ScheduledTaskAction", installer)
         self.assertIn("-Action $taskExecAction", installer)
         # PowerShell variable names are case-insensitive: $action and

@@ -212,6 +212,40 @@ class SyntheticCapitalRecoveryTests(unittest.TestCase):
         compensated = R.synthetic_compensate(self.extra, self.work)
         self.assertTrue(compensated["pending_restored"])
 
+    def test_injected_parquet_write_failure_stays_pending_and_compensates(self):
+        from unittest.mock import patch
+        with patch.object(E, "_snapshot_write",
+                          side_effect=OSError("injected synthetic Parquet failure")):
+            with self.assertRaisesRegex(OSError, "injected synthetic"):
+                self.run_pilot()
+        self.assertIn(CODE, self.state_now()["pending"])
+        self.assertEqual(R.synthetic_compensate(
+            self.extra, self.work)["status"],
+            "COMPENSATED_PENDING_QUARANTINED")
+        self.assertIn(CODE, self.state_now()["pending"])
+
+    def test_ledger_drift_detected_before_pending_release(self):
+        from unittest.mock import patch
+        original_commit = I._commit_symbol
+        def drift_after_commit(extra, workspace, code, asof, source,
+                               capital_approved_symbol=None):
+            report = original_commit(
+                extra, workspace, code, asof, source,
+                capital_approved_symbol=capital_approved_symbol)
+            changed = I._state(extra, workspace)
+            changed["pending"][code]["attempts"] += 1
+            I._save_state(workspace, changed)
+            return report
+        with patch.object(I, "_commit_symbol", side_effect=drift_after_commit):
+            with self.assertRaisesRegex(ValueError,
+                                        "PENDING_LEDGER_DRIFT_BEFORE_RELEASE"):
+                self.run_pilot()
+        self.assertEqual(self.state_now()["pending"][CODE]["attempts"], 2)
+        self.assertTrue((self.work / "capital-recovery-journal" /
+                         (CODE + ".json")).exists())
+        with self.assertRaisesRegex(ValueError, "PENDING_ENTRY_DRIFT"):
+            R.synthetic_compensate(self.extra, self.work)
+
     def test_no_external_provider_calls_in_synthetic_rehearsal(self):
         from unittest.mock import patch
         with patch.object(I, "_worker_batch", side_effect=AssertionError("QMT called")), \

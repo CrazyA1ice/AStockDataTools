@@ -29,9 +29,13 @@ class CachedPendingRotationTests(unittest.TestCase):
             for code in CODES}
         I._save_state(self.work, state)
 
-    def run_retry(self, visited, size=2):
+    def run_retry(self, visited, size=2, groups=None):
         def retry_worker(_worker, group, _mode, _asof, _lookback, _work,
                          _timeout, _progress):
+            if group != sorted(set(group)):
+                raise AssertionError("Worker group crosses the retry wrap")
+            if groups is not None:
+                groups.append(list(group))
             visited.extend(group)
             return [(code, None, "NO_CACHE") for code in group]
         with patch.object(I.E, "_storage", return_value=self.extra), patch.object(
@@ -66,6 +70,19 @@ class CachedPendingRotationTests(unittest.TestCase):
                          list(CODES[:2]))
         self.assertEqual(I._state(self.extra, self.work)["daily_cursor"], "")
         self.assertEqual(I._state(self.extra, self.work)["import_cursor"], "")
+
+    def test_rotated_pending_wrap_never_produces_unsorted_worker_batch(self):
+        # The last BJ stock followed by the first lower-code pending stock
+        # must be two QMT requests, never one non-monotonic worker group.
+        state = I._state(self.extra, self.work)
+        state["pending_retry_cursor"] = CODES[2]
+        I._save_state(self.work, state)
+        visited, groups = [], []
+        report = self.run_retry(visited, size=4, groups=groups)
+        self.assertEqual(groups, [[CODES[3]], list(CODES[:2]), [CODES[2]]])
+        self.assertEqual(visited, [CODES[3], CODES[0], CODES[1], CODES[2]])
+        self.assertEqual(report["pending_total"], 4)
+        self.assertEqual(report["pending_retry_cursor_end"], CODES[2])
 
     def test_empty_pending_skips_worker_and_universe_without_writes(self):
         state = I._state(self.extra, self.work)

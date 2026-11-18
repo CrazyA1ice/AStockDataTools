@@ -120,8 +120,8 @@ def validate_policy(extra, code, asof, policy, saved, current_rows):
                 or not HEX.fullmatch(digest)
                 or not isinstance(current, str)
                 or not isinstance(values, list) or len(values) < 2
-                or len(values) != len(set(values))
                 or any(not isinstance(x, str) for x in values)
+                or len(values) != len(set(values))
                 or current not in values
                 or key in rules):
             _refuse("INVALID_REPORT_RULE_VALUES")

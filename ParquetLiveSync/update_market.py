@@ -188,46 +188,22 @@ def _reference_for_day(root, day):
     return out
 
 
-def normal_qmt_day(raw, code, day, expected, calibration):
-    """Normalize one QMT stock/day while conserving genuine 09:30 auction.
+def verify_materialized_ohlc(rows, expected):
+    """Verify exact persisted 240-bar OHLCVA, including nontraded quotes.
 
-    Keep the original native 241 labels in the QMT API; convert to the paid
-    provider's 240 intervals using the SAME conservation logic as the
-    historical bootstrap. Independently compare the final 240 traded OHLCVA
-    against the official accepted DAY reference before admission.
+    Raise on unsupported zero-volume intrabucket extremes instead of
+    altering vendor prices or fabricating trades. Safe for immutable
+    private Parquet rechecks; no network or filesystem writes.
     """
-    if len(raw) not in (240, 241):
-        raise ValueError("QMT day must contain 240/241 native 1minute bars")
-    native = sorted(P.GRID)
-    clocks = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
-              for r in raw]
-    observed = [(d.hour, d.minute) for d in clocks]
-    if any(d.date() != day for d in clocks):
-        raise ValueError("QMT source minute outside official requested date")
-    if observed != (native if len(raw) == 241 else native[1:]):
-        raise ValueError("QMT native minute grid differs from accepted 241/240 labels")
-    gate = B._calibration(calibration, code)
-    records = pa.Table.from_pylist([
-        {"ts": P.stamp_ms(r["datetime_cn"]),
-         "symbol": L.normal_symbol(code),
-         **{k: float(r[k]) for k in FIELDS}}
-        for r in raw
-    ], schema=P.PRIVATE_SCHEMA)
-    calibrated = B.calibrate_table(records, gate, day.strftime("%Y-%m"))
-    if len(raw) == 241:
-        approved, _ = S.adapt_241_private(
-            calibrated, gate["offset_ms"], day.strftime("%Y-%m"))
-    else:
-        approved = S._canonical(calibrated)
-    if approved.num_rows != 240:
-        raise ValueError("QMT calibrated day is not 240 compatible intervals")
-    L.checked_records(approved, target_year=day.year, target_month=day.month)
-    target_grid = sorted(P.GRID - {(9, 30)})
-    clocks = [datetime.fromtimestamp((int(ts)-gate["offset_ms"])/1000, L.UTC8)
-              for ts in approved["ts"].to_pylist()]
-    if [(d.hour, d.minute) for d in clocks] != target_grid:
-        raise ValueError("QMT converted 240-grid differs from purchased minute convention")
-    rows = approved.to_pylist()
+    if len(rows) != 240:
+        raise ValueError("QMT materialized stock-day must have 240 minutes")
+    for r in rows:
+        if any(not math.isfinite(float(r[k])) or float(r[k]) <= 0
+               for k in ("open", "high", "low", "close")):
+            raise ValueError("QMT materialized minute has nonpositive/nonfinite price")
+        if (float(r["high"]) < max(float(r["open"]), float(r["close"]))
+                or float(r["low"]) > min(float(r["open"]), float(r["close"]))):
+            raise ValueError("QMT materialized minute has impossible OHLC")
     for bar in rows:
         v, a = float(bar["volume"]), float(bar["amount"])
         if not (math.isfinite(v) and math.isfinite(a)
@@ -288,6 +264,49 @@ def normal_qmt_day(raw, code, day, expected, calibration):
         if not math.isclose(total, reference, rel_tol=.03,
                             abs_tol=200 if name == "volume" else 1000):
             raise ValueError("Independent official DAY " + name + " discrepancy")
+
+
+
+def normal_qmt_day(raw, code, day, expected, calibration):
+    """Normalize one QMT stock/day while conserving genuine 09:30 auction.
+
+    Keep the original native 241 labels in the QMT API; convert to the paid
+    provider's 240 intervals using the SAME conservation logic as the
+    historical bootstrap. Independently compare the final 240 traded OHLCVA
+    against the official accepted DAY reference before admission.
+    """
+    if len(raw) not in (240, 241):
+        raise ValueError("QMT day must contain 240/241 native 1minute bars")
+    native = sorted(P.GRID)
+    clocks = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
+              for r in raw]
+    observed = [(d.hour, d.minute) for d in clocks]
+    if any(d.date() != day for d in clocks):
+        raise ValueError("QMT source minute outside official requested date")
+    if observed != (native if len(raw) == 241 else native[1:]):
+        raise ValueError("QMT native minute grid differs from accepted 241/240 labels")
+    gate = B._calibration(calibration, code)
+    records = pa.Table.from_pylist([
+        {"ts": P.stamp_ms(r["datetime_cn"]),
+         "symbol": L.normal_symbol(code),
+         **{k: float(r[k]) for k in FIELDS}}
+        for r in raw
+    ], schema=P.PRIVATE_SCHEMA)
+    calibrated = B.calibrate_table(records, gate, day.strftime("%Y-%m"))
+    if len(raw) == 241:
+        approved, _ = S.adapt_241_private(
+            calibrated, gate["offset_ms"], day.strftime("%Y-%m"))
+    else:
+        approved = S._canonical(calibrated)
+    if approved.num_rows != 240:
+        raise ValueError("QMT calibrated day is not 240 compatible intervals")
+    L.checked_records(approved, target_year=day.year, target_month=day.month)
+    target_grid = sorted(P.GRID - {(9, 30)})
+    clocks = [datetime.fromtimestamp((int(ts)-gate["offset_ms"])/1000, L.UTC8)
+              for ts in approved["ts"].to_pylist()]
+    if [(d.hour, d.minute) for d in clocks] != target_grid:
+        raise ValueError("QMT converted 240-grid differs from purchased minute convention")
+    verify_materialized_ohlc(approved.to_pylist(), expected)
     return approved
 
 

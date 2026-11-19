@@ -64,8 +64,8 @@ class ZeroVolumeOhlcGateTests(unittest.TestCase):
     def test_zero_volume_opening_quote_exceeding_daily_high_is_rejected(self):
         # Reproduces 300472.SZ: 09:31 zero-volume quote > official DAY high.
         rows = minute_day()
-        rows[1].update({"open": 10.4, "high": 10.4, "low": 10.4,
-                        "close": 10.4, "volume": 0., "amount": 0.})
+        rows[1].update({"open": 10.22, "high": 10.22, "low": 10.22,
+                        "close": 10.22, "volume": 0., "amount": 0.})
         with self.assertRaisesRegex(ValueError, "extrema exceed official DAY envelope"):
             U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
 

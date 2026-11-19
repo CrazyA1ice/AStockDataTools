@@ -188,12 +188,41 @@ def _reference_for_day(root, day):
     return out
 
 
-def verify_materialized_ohlc(rows, expected):
-    """Verify exact persisted 240-bar OHLCVA, including nontraded quotes.
+def quote_only_bucket_advisories(rows):
+    """Count zero-volume price extrema in mixed-trade higher-minute buckets.
 
-    Raise on unsupported zero-volume intrabucket extremes instead of
-    altering vendor prices or fabricating trades. Safe for immutable
-    private Parquet rechecks; no network or filesystem writes.
+    This is NOT a rejection gate: quotes carried forward from an earlier
+    interval can lie outside trades executed inside a later 5m bucket.
+    Neither fabricate corrected prices nor assert those quotes are trades.
+    An independent official DAY envelope violation remains a hard error.
+    """
+    if len(rows) != 240:
+        raise ValueError("QMT quote advisory needs exact 240-minute day")
+    counts = {}
+    price_epsilon = .005
+    for session in (rows[:120], rows[120:]):
+        for width in (5, 15, 30, 60):
+            key = str(width) + "min"
+            for start in range(0, 120, width):
+                bucket = session[start:start + width]
+                traded = [r for r in bucket if float(r["volume"]) > 0]
+                untraded = [r for r in bucket if float(r["volume"]) == 0]
+                if not traded or not untraded:
+                    continue
+                ceiling = max(float(r["high"]) for r in traded)
+                floor = min(float(r["low"]) for r in traded)
+                if any(float(r["high"]) > ceiling + price_epsilon
+                       or float(r["low"]) < floor - price_epsilon
+                       for r in untraded):
+                    counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def verify_materialized_ohlc(rows, expected):
+    """Verify materialized OHLCVA against official DAY, without price edits.
+
+    Zero-volume intrabucket quote differences are advisory only. A quote
+    outside the independent DAY envelope remains a hard rejection.
     """
     if len(rows) != 240:
         raise ValueError("QMT materialized stock-day must have 240 minutes")
@@ -240,25 +269,8 @@ def verify_materialized_ohlc(rows, expected):
                                  float(expected["close"]), rel_tol=0,
                                  abs_tol=price_epsilon)):
         raise ValueError("QMT zero-volume terminal close lacks official DAY confirmation")
-    # A zero-volume quote cannot introduce a price extremum into a
-    # traded 5/15/30/60-minute bucket without independent price proof.
-    # No-trade-only buckets remain untouched (no synthetic bars created).
-    for session in (rows[:120], rows[120:]):
-        for width in (5, 15, 30, 60):
-            for start in range(0, 120, width):
-                bucket = session[start:start + width]
-                with_trades = [r for r in bucket if r["volume"] > 0]
-                without_trades = [r for r in bucket if r["volume"] == 0]
-                if not with_trades or not without_trades:
-                    continue
-                maximum = max(float(r["high"]) for r in with_trades)
-                minimum = min(float(r["low"]) for r in with_trades)
-                if (any(float(r["high"]) > maximum + price_epsilon
-                        or float(r["low"]) < minimum - price_epsilon
-                        for r in without_trades)):
-                    raise ValueError(
-                        "QMT untraded minute extends traded bucket OHLC: "
-                        + str(width) + "min")
+    # Intrabucket quote/trade differences are recorded as advisories, not
+    # hard failures. Only independent DAY / OHLCVA violations reject admission.
     for name in ("volume", "amount"):
         total = sum(float(r[name]) for r in rows)
         reference = float(expected[name])
@@ -346,6 +358,9 @@ def stage_day(root, day, reference, calib, sources_config, *,
     bad = {}
     valid = 0
     selected_samples = {}
+    quote_advisory_stock_days = 0
+    quote_advisory_buckets = Counter()
+    quote_advisory_examples = []
     import random
     target_count = int(sources_config.get("sample_stocks", 8))
     sample = set(random.Random(day.isoformat()).sample(
@@ -357,6 +372,13 @@ def stage_day(root, day, reference, calib, sources_config, *,
                 try:
                     raw = fetch_one(xtdata, code, day)
                     ready = normal_qmt_day(raw, code, day, reference[symbol], calib)
+                    advisory = quote_only_bucket_advisories(ready.to_pylist())
+                    if advisory:
+                        quote_advisory_stock_days += 1
+                        quote_advisory_buckets.update(advisory)
+                        if len(quote_advisory_examples) < 12:
+                            quote_advisory_examples.append(
+                                {"symbol": symbol, "buckets": advisory})
                     writer.write_table(ready, row_group_size=240)
                     valid += 1
                     if symbol in sample:
@@ -402,6 +424,11 @@ def stage_day(root, day, reference, calib, sources_config, *,
                "sha256": L.hash_file(output), "rows": valid * 240,
                "stock_days_accepted": valid, "expected_stock_days": len(codes),
                "quarantined": bad, "source_family": "QMT_AND_TDX_OFFICIAL_DAY",
+               "quote_only_bucket_advisories": {
+                   "stock_days": quote_advisory_stock_days,
+                   "bucket_counts": dict(sorted(quote_advisory_buckets.items())),
+                   "examples": quote_advisory_examples,
+                   "not_independent_evidence_of_corruption": True},
                "sampled_minute_sources": check, "production_merge_authorized": False}
         S._save(receipt, doc)
         progress("MARKET_DAILY_STAGED=" + json.dumps(

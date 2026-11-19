@@ -420,6 +420,13 @@ def stage_day(root, day, reference, calib, sources_config, *,
             tmp.close()
         import os
         os.replace(scratch, output)
+        if quote_advisory_stock_days:
+            progress("MARKET_QUOTE_ONLY_BUCKET_ADVISORIES=" +
+                     json.dumps({"day": day.isoformat(),
+                                 "stock_days": quote_advisory_stock_days,
+                                 "bucket_counts": dict(sorted(quote_advisory_buckets.items())),
+                                 "not_hard_failures": True},
+                                ensure_ascii=False, sort_keys=True))
         doc = {"format": FORMAT, "date": day.isoformat(),
                "sha256": L.hash_file(output), "rows": valid * 240,
                "stock_days_accepted": valid, "expected_stock_days": len(codes),

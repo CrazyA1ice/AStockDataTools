@@ -236,14 +236,52 @@ def normal_qmt_day(raw, code, day, expected, calibration):
     traded = [r for r in rows if r["volume"] > 0]
     if not traded:
         raise ValueError("QMT day contains no genuine trading minutes")
-    ohlc = {"open": traded[0]["open"],
-            "high": max(r["high"] for r in traded),
-            "low": min(r["low"] for r in traded),
-            "close": traded[-1]["close"]}
+    # Validate precisely the bars that will be persisted and aggregated.
+    # The final zero-volume 15:00 bar may carry the official closing price;
+    # the last *traded* close is not necessarily the exchange closing price.
+    ohlc = {"open": rows[0]["open"],
+            "high": max(r["high"] for r in rows),
+            "low": min(r["low"] for r in rows),
+            "close": rows[-1]["close"]}
     for name, value in ohlc.items():
         if not math.isclose(float(value), float(expected[name]),
                             rel_tol=.006, abs_tol=.04):
-            raise ValueError("Independent official DAY OHLC discrepancy: " + name)
+            raise ValueError("Independent official DAY materialized OHLC discrepancy: " + name)
+    # Daily OHLC tolerance alone can miss a 1-2 cent phantom quote: a
+    # zero-volume minute outside the independently accepted DAY price
+    # envelope would otherwise poison 1/5/15/30/60-minute OHLC.
+    # Half a cent accommodates IEEE floating point, not a real tick.
+    price_epsilon = .005
+    if (float(ohlc["high"]) > float(expected["high"]) + price_epsilon
+            or float(ohlc["low"]) < float(expected["low"]) - price_epsilon):
+        raise ValueError("QMT materialized minute extrema exceed official DAY envelope")
+    # When a zero-volume terminal close differs from the last traded
+    # close, accept it only with *cent-precision* official DAY evidence.
+    if (rows[-1]["volume"] == 0
+            and abs(float(rows[-1]["close"]) - float(traded[-1]["close"])) > price_epsilon
+            and not math.isclose(float(rows[-1]["close"]),
+                                 float(expected["close"]), rel_tol=0,
+                                 abs_tol=price_epsilon)):
+        raise ValueError("QMT zero-volume terminal close lacks official DAY confirmation")
+    # A zero-volume quote cannot introduce a price extremum into a
+    # traded 5/15/30/60-minute bucket without independent price proof.
+    # No-trade-only buckets remain untouched (no synthetic bars created).
+    for session in (rows[:120], rows[120:]):
+        for width in (5, 15, 30, 60):
+            for start in range(0, 120, width):
+                bucket = session[start:start + width]
+                with_trades = [r for r in bucket if r["volume"] > 0]
+                without_trades = [r for r in bucket if r["volume"] == 0]
+                if not with_trades or not without_trades:
+                    continue
+                maximum = max(float(r["high"]) for r in with_trades)
+                minimum = min(float(r["low"]) for r in with_trades)
+                if (any(float(r["high"]) > maximum + price_epsilon
+                        or float(r["low"]) < minimum - price_epsilon
+                        for r in without_trades)):
+                    raise ValueError(
+                        "QMT untraded minute extends traded bucket OHLC: "
+                        + str(width) + "min")
     for name in ("volume", "amount"):
         total = sum(float(r[name]) for r in rows)
         reference = float(expected[name])

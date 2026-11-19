@@ -56,6 +56,9 @@ def audit(root: Path, trading_day: date, source_project: Path):
     errors = []
     accepted = 0
     zero_volume_bars = 0
+    advisory_stock_days = 0
+    advisory_bucket_counts = {}
+    advisory_examples = []
     try:
         if reader.schema_arrow != P.PRIVATE_SCHEMA:
             raise ValueError("Immutable 1minute daily source schema mismatch")
@@ -73,6 +76,14 @@ def audit(root: Path, trading_day: date, source_project: Path):
                 raise ValueError("Source stock-day timestamp outside selected date")
             accepted += 1
             zero_volume_bars += sum(float(row["volume"]) == 0 for row in rows)
+            warnings = U.quote_only_bucket_advisories(rows)
+            if warnings:
+                advisory_stock_days += 1
+                for period, count in warnings.items():
+                    advisory_bucket_counts[period] = (
+                        advisory_bucket_counts.get(period, 0) + count)
+                if len(advisory_examples) < 12:
+                    advisory_examples.append({"symbol": symbol, "buckets": warnings})
             try:
                 if symbol not in reference:
                     raise ValueError("Accepted symbol absent from official DAY")
@@ -98,7 +109,11 @@ def audit(root: Path, trading_day: date, source_project: Path):
         "originally_quarantined": len(quarantined),
         "original_quarantine_examples": dict(list(sorted(quarantined.items()))[:15]),
         "new_gate_rejected_existing_stock_days": len(errors),
-        "new_gate_reject_examples": errors[:40],
+        "new_gate_reject_examples": errors[:15],
+        "quote_only_bucket_advisory_stock_days": advisory_stock_days,
+        "quote_only_bucket_advisory_counts": dict(sorted(advisory_bucket_counts.items())),
+        "quote_only_bucket_advisory_examples": advisory_examples,
+        "quote_only_bucket_advisories_not_hard_failures": True,
         "zero_volume_minute_rows": zero_volume_bars,
         "candidate_sha256": doc["sha256"],
         "candidate_sha_verified": True,

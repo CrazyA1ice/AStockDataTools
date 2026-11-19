@@ -76,14 +76,15 @@ class OpeningEvidenceTests(unittest.TestCase):
             source = Path(temp) / "2026-11.parquet"
             source.write_bytes(b"synthetic-placeholder-only")
             actual_sha = L.hash_file(source)
-            with patch.object(E, "read_findings", return_value=(issues, "synthetic-sha")), (
-                    patch.object(A, "official_reference",
-                                 return_value=(references, {str(DAY): 32}))), (
-                    patch.object(E.S, "state_for", return_value={})), (
-                    patch.object(A, "check_month_identity",
-                                 return_value=(source, actual_sha))), (
-                    patch.object(E.pq, "read_table",
-                                 return_value=pa.Table.from_pylist(rows))):
+            with (patch.object(E, "read_findings",
+                               return_value=(issues, "synthetic-sha")),
+                  patch.object(A, "official_reference",
+                               return_value=(references, {str(DAY): 32})),
+                  patch.object(E.S, "state_for", return_value={}),
+                  patch.object(A, "check_month_identity",
+                               return_value=(source, actual_sha)),
+                  patch.object(E.pq, "read_table",
+                               return_value=pa.Table.from_pylist(rows))):
                 report = E.examine("D:/stock", "D:/ChatGPT/AStockDataTools",
                                    "synthetic-findings.jsonl")
         self.assertEqual(len(report["cases"]), 32)

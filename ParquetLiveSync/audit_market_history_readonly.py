@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 from datetime import date
 import json
 import math
@@ -58,15 +59,18 @@ class Findings:
         self.counts = Counter()
         self.examples = {}
         self.per_period = {}
+        self.all_findings = []
 
     def add(self, period, issue, day, symbol, detail=None):
         label = period + ":" + issue
         self.counts[label] += 1
+        item = {"period": period, "issue": issue,
+                "date": str(day), "symbol": symbol}
+        if detail is not None:
+            item["detail"] = detail
+        self.all_findings.append(item)
         collection = self.examples.setdefault(label, [])
         if len(collection) < 8:
-            item = {"date": str(day), "symbol": symbol}
-            if detail is not None:
-                item["detail"] = detail
             collection.append(item)
 
 
@@ -327,6 +331,8 @@ def audit(root, source_project, start, end):
         "official_day_counts": day_counts,
         "periods": findings.per_period,
         "findings": dict(sorted(findings.counts.items())),
+        "full_finding_records": len(findings.all_findings),
+        "_all_findings_private": findings.all_findings,
         "examples_capped_to_8_per_issue": dict(sorted(findings.examples.items())),
         "physical_month_sha256": paths,
         "historical_repair_authorized": False,
@@ -336,14 +342,46 @@ def audit(root, source_project, start, end):
     }
 
 
+def write_private_findings(root, destination, findings):
+    """Write complete issue inventory outside AllCycleAStockData, never overwrite.
+
+    This optional private JSONL artifact is not a market-data modification
+    and does NOT authorize any repair.
+    """
+    destination = Path(destination)
+    if destination.is_symlink() or destination.parent.is_symlink():
+        raise ValueError("Redirected private findings path")
+    market_root = L.storage_root(root).resolve()
+    if destination.resolve().is_relative_to(market_root):
+        raise ValueError("Refusing findings output inside market data tree")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.parent.is_symlink():
+        raise ValueError("Redirected findings directory")
+    digest = hashlib.sha256()
+    with destination.open("xb") as handle:
+        for finding in findings:
+            raw = (json.dumps(finding, sort_keys=True, ensure_ascii=False,
+                              allow_nan=False, separators=(",", ":")) + "\n").encode("utf-8")
+            handle.write(raw)
+            digest.update(raw)
+    return {"path": str(destination.resolve()), "sha256": digest.hexdigest(),
+            "records": len(findings), "market_files_modified": False}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("D:/stock"))
     parser.add_argument("--source-project", type=Path, required=True)
     parser.add_argument("--start", type=date.fromisoformat, default=START)
     parser.add_argument("--end", type=date.fromisoformat, default=END)
+    parser.add_argument("--details-out", type=Path,
+                        help="Optional private JSONL of ALL findings; never overwrites")
     args = parser.parse_args(argv)
     result = audit(args.root, args.source_project, args.start, args.end)
+    full = result.pop("_all_findings_private")
+    if args.details_out is not None:
+        result["private_findings_file"] = write_private_findings(
+            args.root, args.details_out, full)
     print("MARKET_HISTORY_READONLY_AUDIT=" + json.dumps(
         result, ensure_ascii=False, sort_keys=True, allow_nan=False), flush=True)
 

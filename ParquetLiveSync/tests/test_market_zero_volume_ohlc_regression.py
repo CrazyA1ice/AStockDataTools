@@ -69,15 +69,18 @@ class ZeroVolumeOhlcGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "extrema exceed official DAY envelope"):
             U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
 
-    def test_zero_volume_bucket_extremum_within_day_envelope_is_rejected(self):
-        # DAY high exists later; quote-only high must not poison 09:31-09:35.
+    def test_intrabucket_quote_extremum_is_reported_not_quarantined(self):
+        # Sparse trades can carry an earlier price inside the DAY envelope.
+        # A 5m quote/trade mismatch alone is insufficient to reject.
         rows = minute_day()
         for bar in rows[1:6]:
             bar["high"] = 10.1
         rows[3].update({"open": 10.2, "high": 10.2, "low": 10.2,
                         "close": 10.2, "volume": 0., "amount": 0.})
-        with self.assertRaisesRegex(ValueError, "untraded minute extends traded bucket OHLC"):
-            U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
+        accepted = U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
+        counts = U.quote_only_bucket_advisories(accepted.to_pylist())
+        self.assertGreater(counts.get("5min", 0), 0)
+        self.assertEqual(accepted.num_rows, 240)
 
     def test_bad_zero_volume_terminal_close_cannot_pass_using_last_trade(self):
         # Previously traded[-1].close agreed while persisted close disagreed.

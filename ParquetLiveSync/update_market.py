@@ -219,18 +219,19 @@ def verify_materialized_ohlc(rows, expected):
             "high": max(r["high"] for r in rows),
             "low": min(r["low"] for r in rows),
             "close": rows[-1]["close"]}
-    for name, value in ohlc.items():
-        if not math.isclose(float(value), float(expected[name]),
-                            rel_tol=.006, abs_tol=.04):
-            raise ValueError("Independent official DAY materialized OHLC discrepancy: " + name)
-    # Daily OHLC tolerance alone can miss a 1-2 cent phantom quote: a
-    # zero-volume minute outside the independently accepted DAY price
-    # envelope would otherwise poison 1/5/15/30/60-minute OHLC.
+    # Validate the physical price envelope BEFORE the tolerant OHLC fit:
+    # a quote-only extreme can violate both daily open and daily high.
+    # Report the invariant that makes the persisted bars unsafe, rather
+    # than allowing the first tolerant-field error to mask the cause.
     # Half a cent accommodates IEEE floating point, not a real tick.
     price_epsilon = .005
     if (float(ohlc["high"]) > float(expected["high"]) + price_epsilon
             or float(ohlc["low"]) < float(expected["low"]) - price_epsilon):
         raise ValueError("QMT materialized minute extrema exceed official DAY envelope")
+    for name, value in ohlc.items():
+        if not math.isclose(float(value), float(expected[name]),
+                            rel_tol=.006, abs_tol=.04):
+            raise ValueError("Independent official DAY materialized OHLC discrepancy: " + name)
     # When a zero-volume terminal close differs from the last traded
     # close, accept it only with *cent-precision* official DAY evidence.
     if (rows[-1]["volume"] == 0

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import date, datetime, timedelta, time
+from datetime import date, datetime, timedelta
 import hashlib
 import json
 import os
@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from time import monotonic
 
 import qmt_extra_data as E
 
@@ -26,8 +27,6 @@ FORMAT = "qmt_financial_cache_import_v1"
 MAX_GROUP = 20
 MAX_PAYLOAD = 256 * 1024 * 1024
 STATE_FILE = "financial-cache-progress.json"
-BLACKOUT_START = time(21, 0)
-BLACKOUT_END = time(23, 5)
 
 
 class QMTCacheDecodeError(RuntimeError):
@@ -45,7 +44,9 @@ def _state(extra, workspace):
     if not path.exists():
         return {"format": FORMAT, "root": str(extra.resolve()),
                 "import_cursor": "", "daily_date": "",
-                "daily_cursor": "", "pending": {}}
+                "daily_cursor": "", "pending": {},
+                "daily_sweep_start": "", "daily_sweep_reached_end": False,
+                "daily_sweep_finished": ""}
     if not path.is_file() or path.is_symlink():
         raise ValueError("Invalid QMT cache import progress file")
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -54,7 +55,10 @@ def _state(extra, workspace):
             or not isinstance(data.get("import_cursor"), str)
             or not isinstance(data.get("daily_date"), str)
             or not isinstance(data.get("daily_cursor"), str)
-            or not isinstance(data.get("pending"), dict)):
+            or not isinstance(data.get("pending"), dict)
+            or not isinstance(data.get("daily_sweep_start", ""), str)
+            or not isinstance(data.get("daily_sweep_reached_end", False), bool)
+            or not isinstance(data.get("daily_sweep_finished", ""), str)):
         raise ValueError("Financial cache progress identity malformed")
     for code, entry in data["pending"].items():
         if (E.valid_code(code) != code or
@@ -65,6 +69,9 @@ def _state(extra, workspace):
                 not isinstance(entry.get("attempts"), int) or
                 entry["attempts"] < 1):
             raise ValueError("Financial cache pending entry malformed")
+    data.setdefault("daily_sweep_start", "")
+    data.setdefault("daily_sweep_reached_end", False)
+    data.setdefault("daily_sweep_finished", "")
     return data
 
 
@@ -354,27 +361,41 @@ def _stock_universe(xt, finance_dir=None):
                     "finance_directory": str(finance_dir)}
 
 
-def _is_blackout(now, worker_timeout):
-    local = now.timetz().replace(tzinfo=None)
-    if BLACKOUT_START <= local < BLACKOUT_END:
-        return True
-    if local < BLACKOUT_START:
-        guard = datetime.combine(now.date(), BLACKOUT_START,
-                                 tzinfo=E.L.UTC8)
-        if (guard - now).total_seconds() < worker_timeout + 240:
-            return True
-    return False
+def _prepare_daily_sweep(state, asof, catalog, *, retry_pending=False):
+    """Continue incomplete QMT daily sweeps across calendar days.
+
+    'reached_end' means all source securities were visited, not that each
+    pending history conflict was resolved. Existing v1 progress files without
+    these optional keys remain valid and keep their existing cursors.
+    """
+    if retry_pending:
+        return
+    previous_date = state["daily_date"]
+    if previous_date == asof:
+        if not state["daily_sweep_start"]:
+            state["daily_sweep_start"] = asof
+        return
+    exhausted = (state["daily_sweep_reached_end"] or
+                 (bool(previous_date) and
+                  state["daily_cursor"] >= catalog[-1]))
+    if exhausted:
+        state["daily_cursor"] = ""
+        state["daily_sweep_start"] = asof
+        state["daily_sweep_reached_end"] = False
+    elif not state["daily_sweep_start"]:
+        state["daily_sweep_start"] = previous_date or asof
+    state["daily_date"] = asof
 
 
 def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
-        batch_size=5, max_minutes=1440, worker_timeout_seconds=180,
+        batch_size=5, max_minutes=0, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
         finance_dir=None, clock=None, progress=print, worker=None):
     if mode not in ("cache", "daily"):
         raise ValueError("Invalid financial import mode")
     if (not 1 <= batch_size <= MAX_GROUP or
             not 1 <= max_symbols <= 10000 or
-            not 1 <= max_minutes <= 1440 or
+            not 0 <= max_minutes <= 1440 or
             not 30 <= worker_timeout_seconds <= 3600 or
             not 1 <= lookback_days <= 1095):
         raise ValueError("Invalid QMT cache importer bounds")
@@ -387,19 +408,26 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         raise ValueError("Financial importer needs aware clock")
     now = raw_now.astimezone(E.L.UTC8)
     asof = now.date().isoformat()
-    deadline = now + timedelta(minutes=max_minutes)
+    deadline = (now + timedelta(minutes=max_minutes)
+                if max_minutes else None)
     extra = E._storage(Path(root))
     state = _state(extra, workspace)
-    if mode == "daily" and state["daily_date"] != asof:
-        state["daily_cursor"] = ""
-        state["daily_date"] = asof
     cursor_key = "import_cursor" if mode == "cache" else "daily_cursor"
+    universe_start = monotonic()
+    progress("QMT_FINANCIAL_UNIVERSE_QUERY_START=" + E.canonical_json({
+        "mode": mode, "finance_dir_enabled": finance_dir is not None}))
     catalog, catalog_metadata = _stock_universe(xt, finance_dir)
+    progress("QMT_FINANCIAL_UNIVERSE_QUERY_DONE=" + E.canonical_json({
+        "stocks": len(catalog),
+        "elapsed_seconds": round(monotonic() - universe_start, 3)}))
     universe_hash = hashlib.sha256(
         E.canonical_json(catalog).encode("utf-8")).hexdigest()
     if mode == "daily" and state["import_cursor"] < catalog[-1]:
         raise ValueError("Initial QMT financial cache import has not reached "
                          "the end of current stock universe; finish --mode cache first")
+    if mode == "daily":
+        _prepare_daily_sweep(state, asof, catalog,
+                             retry_pending=retry_pending)
     if retry_pending:
         missing = set(state["pending"]) - set(catalog)
         if missing:
@@ -408,12 +436,14 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         selected = sorted(state["pending"])[:max_symbols]
     else:
         selected = [s for s in catalog if s > state[cursor_key]][:max_symbols]
+    positions = {code: idx for idx, code in enumerate(catalog)} if mode == "daily" else {}
     report = {
         "status": "PREVIEW", "mode": mode, "apply": apply,
         "asof": asof, "universe_symbols": len(catalog),
         "universe_sha256": universe_hash,
         "universe_metadata": catalog_metadata,
         "source_completeness_verified": False,
+        "time_budget_minutes": max_minutes,
         "start_cursor": state[cursor_key],
         "end_cursor": state[cursor_key],
         "selected": len(selected), "selected_first": selected[0] if selected else None,
@@ -422,7 +452,17 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "empty_tables": 0, "pending_total": len(state["pending"]),
         "old_financial_scan_cursor_modified": False,
         "purchased_8_cycle_modified": False, "h5_modified": False,
-        "qmt_full_download_called": False}
+        "qmt_full_download_called": False,
+        "daily_sweep_start": (state["daily_sweep_start"] if mode == "daily"
+                              else None),
+        "daily_sweep_reached_end": (state["daily_sweep_reached_end"]
+                                     if mode == "daily" else None),
+        "daily_sweep_finished": (state["daily_sweep_finished"]
+                                   if mode == "daily" else None),
+        "daily_remaining_unvisited": (sum(code > state["daily_cursor"]
+                                          for code in catalog)
+                                      if mode == "daily" and not retry_pending
+                                      else None)}
     if not apply:
         progress("QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=" +
                  E.canonical_json(report))
@@ -439,11 +479,8 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         if now.date().isoformat() != asof:
             report["status"] = "PAUSED_DATE_ROLLOVER"
             break
-        if now >= deadline:
+        if deadline is not None and now >= deadline:
             report["status"] = "PAUSED_TIME_BUDGET"
-            break
-        if _is_blackout(now, worker_timeout_seconds):
-            report["status"] = "PAUSED_SCHEDULE_PROTECTION"
             break
         group = selected[offset:offset + batch_size]
         # Exclusive writer held across QMT cache access and official commits.
@@ -501,9 +538,16 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                                                    "tables": table_report}))
                 if not retry_pending:
                     state[cursor_key] = code
+                    if mode == "daily" and code == catalog[-1]:
+                        state["daily_sweep_reached_end"] = True
+                        state["daily_sweep_finished"] = asof
                 _save_state(workspace, state)
                 report["end_cursor"] = state[cursor_key]
                 report["pending_total"] = len(state["pending"])
+                if mode == "daily" and not retry_pending:
+                    report["daily_sweep_reached_end"] = state["daily_sweep_reached_end"]
+                    report["daily_sweep_finished"] = state["daily_sweep_finished"]
+                    report["daily_remaining_unvisited"] = len(catalog) - positions[code] - 1
                 progress("QMT_FINANCIAL_CACHE_CHECKPOINT=" +
                          E.canonical_json({"symbol": code,
                                            "cursor": state[cursor_key],
@@ -517,9 +561,12 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                         "Three consecutive QMT single-stock UTF-8 errors; "
                         "stopping to avoid mass false source deferrals")
     else:
-        report["status"] = ("PAUSED_SYMBOL_LIMIT" if
-                            len(selected) == max_symbols else
-                            "SOURCE_UNIVERSE_EXHAUSTED")
+        report["status"] = (
+            "SOURCE_UNIVERSE_EXHAUSTED"
+            if mode == "daily" and not retry_pending
+            and state["daily_sweep_reached_end"]
+            else "PAUSED_SYMBOL_LIMIT" if len(selected) == max_symbols
+            else "SOURCE_UNIVERSE_EXHAUSTED")
     progress("QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=" + E.canonical_json(report))
     return report
 
@@ -530,7 +577,8 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("cache", "daily"), default="cache")
     parser.add_argument("--max-symbols", type=int, default=6000)
     parser.add_argument("--batch-size", type=int, default=5)
-    parser.add_argument("--max-minutes", type=int, default=1440)
+    parser.add_argument("--max-minutes", type=int, default=0,
+                        help="0 disables total job time limit; per-worker safety timeout stays")
     parser.add_argument("--worker-timeout-seconds", type=int, default=180)
     parser.add_argument("--lookback-days", type=int, default=120)
     parser.add_argument("--finance-dir", type=Path,

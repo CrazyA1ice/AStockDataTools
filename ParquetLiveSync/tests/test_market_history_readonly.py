@@ -115,6 +115,29 @@ class MarketHistoryReadOnlyTests(unittest.TestCase):
         A.evaluate_groups("1min", {}, references, CALIB, RULES, results, {})
         self.assertEqual(results.per_period["1min"]["missing_stock_days"], 2)
 
+    def test_full_findings_jsonl_cannot_write_into_market_tree(self):
+        findings = A.Findings()
+        findings.add("1min", "PRICE_OUTSIDE_OFFICIAL_DAY",
+                     DAY, SYM, {"high": 10.02})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "stock"
+            market = root / "AllCycleAStockData"
+            for period in L.PERIODS:
+                (market / period).mkdir(parents=True, exist_ok=True)
+            destination = Path(tmp) / "readiness" / "issues.jsonl"
+            info = A.write_private_findings(root, destination,
+                                            findings.all_findings)
+            self.assertEqual(info["records"], 1)
+            self.assertTrue(destination.is_file())
+            self.assertIn("PRICE_OUTSIDE_OFFICIAL_DAY",
+                          destination.read_text(encoding="utf-8"))
+            with self.assertRaises(FileExistsError):
+                A.write_private_findings(root, destination, findings.all_findings)
+            with self.assertRaisesRegex(ValueError, "inside market data tree"):
+                A.write_private_findings(
+                    root, market / "1min" / "forbidden.jsonl",
+                    findings.all_findings)
+
     def test_after_freeze_is_rejected_before_any_files_are_opened(self):
         with self.assertRaisesRegex(ValueError, "Only 2026"):
             A.audit("D:/stock", "D:/ChatGPT/AStockDataTools",

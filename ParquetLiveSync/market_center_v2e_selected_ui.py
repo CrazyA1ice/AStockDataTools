@@ -618,6 +618,89 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                   text="故障以本轮回执和检查点为准。连接测试、文件清单均不能解锁写入；20:05 任务不变。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
 
+    def start_historical_inventory(self):
+        """Only the explicit button triggers bounded metadata-only inspection."""
+        if self.historical_inventory_running:
+            return
+        if self.market_root is None:
+            messagebox.showinfo(
+                "尚未指定市场目录",
+                "启动时必须显式指定 --market-root，才能只读盘点历史财务版本。")
+            return
+        self.historical_inventory_running = True
+        self.historical_inventory_result = None
+        generation = self.fault_diagnosis_generation
+        receipt_sha = (self.fault_diagnosis or {}).get("receipt_sha256")
+        progress_sha = (self.fault_diagnosis or {}).get("finance_progress_sha256")
+        for button in self.historical_inventory_buttons:
+            button.state(["disabled"])
+        self.historical_inventory_summary.set(
+            "正在只读统计失败批次的历史财务快照和活动指针；不创建备份。")
+
+        def worker():
+            try:
+                report = inventory_historical_versions(
+                    state_module=self.state_module,
+                    market_root=self.market_root)
+            except (PreflightBlocked, FaultEvidenceBlocked, OSError, ValueError) as exc:
+                report = {
+                    "status": "V2E_HISTORY_INVENTORY_BLOCKED",
+                    "detail": str(exc)[:160], "can_execute": False,
+                }
+            except Exception as exc:
+                report = {
+                    "status": "V2E_HISTORY_INVENTORY_FAILED",
+                    "detail": "unexpected_" + type(exc).__name__,
+                    "can_execute": False,
+                }
+            self.historical_inventory_queue.put(
+                (generation, receipt_sha, progress_sha, report))
+
+        threading.Thread(
+            target=worker, name="v2e-finance-history-readonly",
+            daemon=True).start()
+        self.after(160, self._poll_historical_inventory)
+
+    def _poll_historical_inventory(self):
+        try:
+            generation, receipt_sha, progress_sha, report = (
+                self.historical_inventory_queue.get_nowait())
+        except queue.Empty:
+            if self.historical_inventory_running:
+                self.after(160, self._poll_historical_inventory)
+            return
+        self.historical_inventory_running = False
+        for button in self.historical_inventory_buttons:
+            button.state(["!disabled"])
+        current = self.fault_diagnosis
+        stale = (
+            current is None
+            or generation != self.fault_diagnosis_generation
+            or receipt_sha != current.get("receipt_sha256")
+            or progress_sha != current.get("finance_progress_sha256")
+            or report.get("receipt_sha256", receipt_sha) != receipt_sha
+            or report.get("finance_progress_sha256", progress_sha) != progress_sha
+        )
+        if stale:
+            self.historical_inventory_result = None
+            self.historical_inventory_summary.set(
+                "本轮回执或游标已变化，历史版本清单失效，请重新核对。")
+        elif report.get("status") == "V2D2C_HISTORICAL_FINANCE_METADATA_NOT_RESTORABLE":
+            self.historical_inventory_result = report
+            self.historical_inventory_summary.set(
+                "历史盘点：" + str(report.get("historical_snapshot_count", 0)) +
+                " 个快照、" +
+                str(report.get("historical_active_pin_count", 0)) +
+                " 个活动指针；只统计元数据，未备份、未验证回滚。")
+            self._set_fault_detail(json.dumps(
+                report, ensure_ascii=False, indent=2))
+        else:
+            self.historical_inventory_result = None
+            self.historical_inventory_summary.set(
+                "历史只读盘点未通过：" + str(report.get("detail", "未知原因")))
+        self.status_line.set(
+            "历史财务版本仅盘点元数据；无论结果如何，一键恢复均未开放")
+
     def refresh_fault_diagnosis(self):
         self.historical_inventory_result = None
         self.historical_inventory_summary.set("回执刷新后需重新盘点历史财务版本范围")

@@ -169,6 +169,20 @@ class V2AContractTests(unittest.TestCase):
                 self.assertIn("SYNTHETIC_LOG_OK", UI._read_log_tail(str(legitimate)))
                 self.assertIn("不属于", UI._read_log_tail(str(outside)))
 
+    def test_explicit_canonical_status_source_is_read_only(self):
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            module.mkdir()
+            with patch.object(UI, "MarketCenterV2") as fake_app:
+                UI.main(["--state-module", str(module)])
+                fake_app.assert_called_once_with(state_module=module)
+                fake_app.return_value.mainloop.assert_called_once()
+
+    def test_ui_refuses_non_module_status_directory(self):
+        with TemporaryDirectory() as tmp:
+            with self.assertRaises(SystemExit):
+                UI.main(["--state-module", tmp])
+
     def test_no_prod_update_process_is_reachable_from_preview(self):
         # UI imports but does not start its desktop in this test.
         self.assertTrue(hasattr(UI, "MarketCenterV2"))

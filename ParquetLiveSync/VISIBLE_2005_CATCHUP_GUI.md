@@ -70,3 +70,34 @@ $ErrorActionPreference="Stop"; $r="D:\ChatGPT\AStockDataTools"; $py=Join-Path $r
 - 自动/手动同一时刻只有一个活动写入任务，手动撞上自动返回 `MARKET_2005_ALREADY_RUNNING` 而不是重复执行。
 - 20:05 之前不更新当日财务或数据，20:05 后更新仍需通过原来源校验。月线只在自然月完整闭合后发布。
 - `SUCCESS/PARTIAL/FAILED`、异常与分阶段日志有据可查，不把`PerShare`空源和财务44条修订隔离宣称全部通过。
+
+
+## 2026-11-20 QMT 服务断连根因与就绪门禁（新增补丁，Draft）
+
+用户本机实测：11 月 20 日 09:19 的唯一四阶段任务全部退出 1，四阶段真实日志同样报「无法连接xtquant服务」；当日 17:xx 在 Quant 同一登录会话中使用项目 `D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe` 执行 `xtdata.get_client()` 已连接 `127.0.0.1:58610`，QMT `XtItClient.exe` 当前进程 17:29:57 才启动。历史断连最可能是错过调度后的 QMT 初始化顺序问题；并不能单凭当前启动时间断言上午完全没有 QMT。
+
+**新处理顺序**：进入四阶段前，在原统一运行器（`scheduled-afternoon-update.ps1`）完成现有工作树、原始账本、路径、单实例 mutex 检查和日志启动后，先运行 `qmt_connect_preflight.py`。这个 helper 只在隔离 Python 子进程中执行一次 `xtdata.get_client()`，没有行情、财务、板块、除权下载。每次子进程最多 25 秒；调用脚本最多尝试 6 次，失败两次尝试间等待 10 秒，最多 5 次等待。连接失败时退出码非零，runner 跳过八周期/板块/除权/财务**全部阶段**，发出 `MARKET_2005_QMT_SERVICE_UNAVAILABLE=TRUE`，将 `qmt_preflight_status=QMT_SERVICE_UNAVAILABLE`、`qmt_preflight_attempts=6`、`stage_records={}`、`status=FAILED` 写入本次私有 JSON 回执，并保存 PowerShell transcript 和桌面通知。不会覆盖原始行情或绕过失败的采购源。工作树没有通过预检查、进程无法启动、出错时仍然 FAIL closed。
+
+QMT 已连接时输出 `MARKET_2005_QMT_PREFLIGHT_CONNECTED_ATTEMPT=N`，写入 `qmt_preflight_status=CONNECTED` 后才执行原流程。GUI 展示最新正式四阶段和 20:05 前历史补更的 QMT 就绪状态、尝试次数。**该门禁仅证明此刻 xtquant 客户端建立连接，不等于行情源质量/历史冲突/PIT/复权/全部财务周期通过。** 并非后台持续监测，不会尝试代替用户启动 QMT 或登录券商账户。
+
+### Windows 下一轮验收（继续复用现有 detached 审计 worktree）
+
+**A.** 把旧 `work\market2005-gui-audit-20261120` 的 detached HEAD 安全快进到当前 Draft 分支，不改正式工作树：
+
+```powershell
+$ErrorActionPreference="Stop"; $r="D:\ChatGPT\AStockDataTools"; $w=Join-Path $r "work\market2005-gui-audit-20261120"; if(-not(Test-Path -LiteralPath $w -PathType Container)){throw "Test worktree missing"}; if(@(git -C $w status --porcelain).Count -ne 0){throw "Test worktree not clean"}; git -C $r -c http.sslBackend=schannel -c http.version=HTTP/1.1 fetch origin feat/market-2005-visible-log-catchup-gui-20261120; if($LASTEXITCODE -ne 0){throw "Fetch failed"}; $pin=(git -C $r rev-parse FETCH_HEAD).Trim(); git -C $w switch --detach $pin; if($LASTEXITCODE -ne 0){throw "Cannot update detached test worktree"}; git -C $w rev-parse HEAD
+```
+
+**B.** 纯离线合成和 PowerShell AST/mock，**不调用真实 QMT、不下载、不注册任务**：
+
+```powershell
+$ErrorActionPreference="Stop"; $w="D:\ChatGPT\AStockDataTools\work\market2005-gui-audit-20261120"; $py="D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe"; $env:PYTHONPATH=Join-Path $w "ParquetLiveSync"; foreach($p in @("test_qmt_connect_preflight.py","test_market_update_dashboard.py")){& $py -u -B -m unittest discover -s (Join-Path $w "ParquetLiveSync\tests") -p $p -v; if($LASTEXITCODE -ne 0){throw "Python offline tests failed: $p"}}; foreach($p in @("test_qmt_service_gate_contract_mock.ps1","test_visible_catchup_safety_mock.ps1","test_install_schedule_mock.ps1","test_native_stderr_stage_mock.ps1")){& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $w ("ParquetLiveSync\tests\"+$p)); if($LASTEXITCODE -ne 0){throw "PowerShell offline tests failed: $p"}}; Write-Host "QMT_SERVICE_PREFLIGHT_OFFLINE_GATE_COMPLETE"
+```
+
+**C.** 只有 B 全通过时，可单独测试当前本地 QMT 连通性：只尝试 `xtdata.get_client()`，没有实际数据更新，也不受 20:05 盘后更新门禁限制：
+
+```powershell
+$ErrorActionPreference="Stop"; $w="D:\ChatGPT\AStockDataTools\work\market2005-gui-audit-20261120"; $py="D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe"; & $py -u -B (Join-Path $w "ParquetLiveSync\qmt_connect_preflight.py"); if($LASTEXITCODE -ne 0){throw "QMT service not ready; check QMT login and client service"}
+```
+
+只有 Windows 结果确认后才允许考虑把已审核代码以原有分支流程整合到真正的 `D:\ChatGPT\AStockDataTools` canonical 工作树、重新安装**已有唯一任务**。Detached worktree 绝不能使用 `-Apply` 或 `-Action Install`。既有旧任务此刻仍为 `-WindowStyle Hidden`；测试/代码提交不会自动调整本机任务动作。

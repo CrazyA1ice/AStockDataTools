@@ -1,4 +1,4 @@
-"""A股数据更新与核验中心 V2-A: minimal read-only Tkinter UI preview.
+"""A股数据更新与核验中心 V2-B: read-only Tkinter UI and bounded history audit.
 
 This is NOT a replacement for the working 20:05 scheduled task, updater,
 audit engine, or original market_update_dashboard.py. There is intentionally
@@ -10,14 +10,19 @@ from datetime import date
 import argparse
 import json
 import os
+import queue
+import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from market_center_v2_model import (
-    MODULES, InvalidPlan, latest_status, parse_symbols, plan_preview,
+    MODULES, HISTORY_POLICIES, InvalidPlan, latest_status, parse_symbols, plan_preview,
     safe_cutoff, source_info,
 )
+
+from market_center_v2_audit_cli import audited_query
+from market_center_v2_readonly_audit import AuditBlocked, FROZEN_ASOF, PERIODS
 
 HERE = Path(__file__).resolve().parent
 WORK = HERE / "work"
@@ -124,9 +129,13 @@ def _read_log_tail(path_text: str, *, limit: int = 40 * 1024,
 
 
 class MarketCenterV2(tk.Tk):
-    def __init__(self, *, state_module: Path = HERE):
+    def __init__(self, *, state_module: Path = HERE,
+                 market_root: Path | None = None):
         super().__init__()
         self.state_module = Path(state_module)
+        self.market_root = Path(market_root) if market_root is not None else None
+        self.audit_queue = queue.Queue()
+        self.audit_running = False
         self.state_work = self.state_module / "work"
         self.title("A股数据更新与核验中心 V2 · 设计预览")
         self.geometry("1080x710")
@@ -135,6 +144,8 @@ class MarketCenterV2(tk.Tk):
         self.app_style = apply_theme(self)
         self.mode = tk.StringVar(value="更新数据")
         self.scope = tk.StringVar(value="全部股票")
+        self.history_policy = tk.StringVar(value=HISTORY_POLICIES[0])
+        self.audit_period = tk.StringVar(value="day")
         cutoff = safe_cutoff()
         self.start = tk.StringVar(value=cutoff.replace(day=1).isoformat())
         self.end = tk.StringVar(value=cutoff.isoformat())
@@ -142,7 +153,7 @@ class MarketCenterV2(tk.Tk):
         self.stock_count = tk.StringVar(value="指定股票尚未填写")
         self.overview_info = tk.StringVar(value="尚未读取")
         self.last_run_details = tk.StringVar(value="最近任务历史记录尚未读取")
-        self.status_line = tk.StringVar(value="V2-A：只读预览，不会启动数据处理")
+        self.status_line = tk.StringVar(value="V2-B：仅历史物理行情只读核验；更新和修复仍不开放")
         self.source_line = tk.StringVar(value="数据源：读取当前项目配置")
         self.plan_ready = None
         self.make_widgets()
@@ -152,18 +163,21 @@ class MarketCenterV2(tk.Tk):
         head = ttk.Frame(self, padding=(18, 14))
         head.pack(fill="x")
         ttk.Label(head, text="A股数据更新与核验中心", style="AppTitle.TLabel").pack(side="left")
-        ttk.Label(head, text="● 只读预览  |  每晚 20:05 自动任务不变",
+        ttk.Label(head, text="● 只读核验  |  每晚 20:05 自动任务不变",
                   style="Muted.TLabel").pack(side="right")
         self.book = ttk.Notebook(self)
         self.book.pack(fill="both", expand=True, padx=16, pady=(0, 10))
         self.home = ttk.Frame(self.book, padding=14)
         self.action = ttk.Frame(self.book, padding=14)
         self.logs = ttk.Frame(self.book, padding=14)
+        self.audit_page = ttk.Frame(self.book, padding=14)
         self.book.add(self.home, text="  运行总览  ")
         self.book.add(self.action, text="  更新 / 核验  ")
+        self.book.add(self.audit_page, text="  核验结果  ")
         self.book.add(self.logs, text="  运行日志  ")
         self.build_home()
         self.build_action()
+        self.build_audit_results()
         self.build_logs()
         ttk.Label(self, textvariable=self.status_line, style="Muted.TLabel",
                   padding=(18, 5)).pack(fill="x")
@@ -176,7 +190,7 @@ class MarketCenterV2(tk.Tk):
         tiles = ttk.Frame(self.home)
         tiles.pack(fill="x")
         self.cards = {}
-        for label in ("已提交最新交易日", "最近任务状态", "当前安全截止", "QMT 最近预检", "财务待审"):
+        for label in ("已提交最新交易日", "上次任务结果", "当前安全截止", "QMT 最近预检", "财务待审"):
             card = ttk.LabelFrame(tiles, text=label, padding=12,
                                   style="Card.TLabelframe")
             card.pack(side="left", fill="x", expand=True, padx=(0, 8))
@@ -214,7 +228,7 @@ class MarketCenterV2(tk.Tk):
                    command=lambda: self.go_action("更新数据")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="配置数据核验", command=lambda: self.go_action("数据核验")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="查看运行日志", command=lambda: self.book.select(self.logs)).pack(side="left")
-        ttk.Label(self.home, text="已有日期：跳过或拒绝冲突覆盖  |  自动任务占用时：手动更新必须等待执行锁  |  当前为只读预览",
+        ttk.Label(self.home, text="已有日期可选择补缺失、对比或审核修复（写入功能待开放）  |  20:05任务运行期间只读核验需取得共享锁",
                   style="Muted.TLabel", wraplength=930).pack(anchor="w", pady=(18, 0))
 
     def build_action(self):
@@ -235,12 +249,19 @@ class MarketCenterV2(tk.Tk):
         top = ttk.Frame(content)
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text="操作配置", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
-        ttk.Label(top, text="● 预览模式：真实执行暂未开放",
+        ttk.Label(top, text="● 历史行情只读核验已接入 · 写入仍关闭",
                   style="Muted.TLabel").pack(side="right")
         mode_row = ttk.LabelFrame(content, text="任务类型（共用下方同一组范围）", padding=8)
         mode_row.pack(fill="x", pady=(0, 10))
         for item in ("更新数据", "数据核验"):
             ttk.Radiobutton(mode_row, text=item, value=item, variable=self.mode).pack(side="left", padx=12)
+        policy = ttk.LabelFrame(content, text="已有历史数据的处理方式（仅更新模式）", padding=10)
+        policy.pack(fill="x", pady=(0, 10))
+        for item in HISTORY_POLICIES:
+            ttk.Radiobutton(policy, text=item, value=item, variable=self.history_policy).pack(
+                side="left", padx=(3, 24))
+        ttk.Label(policy, text="补缺失先核验；重新获取只比较；修复必须审核。三种写入功能均待开放。",
+                  style="Section.TLabel").pack(anchor="w", pady=(8, 0))
         dates = ttk.LabelFrame(content, text="处理时间段 · 同时适用于更新和核验", padding=10)
         dates.pack(fill="x", pady=(0, 10))
         ttk.Label(dates, text="开始日期").pack(side="left")
@@ -295,9 +316,163 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(row, text="预览任务", style="Primary.TButton",
                    command=self.show_preview).pack(side="left")
         ttk.Button(row, text="复制计划", command=self.copy_preview).pack(side="left", padx=10)
-        ttk.Label(row, text="已提交数据不可盲目覆盖；运行中禁止重复写入",
+        ttk.Label(row, text="历史数据可重查，但不能盲目覆盖；运行中的任务拥有互斥锁",
                   style="Section.TLabel").pack(side="right")
+        audit_bar = ttk.Frame(content)
+        audit_bar.pack(fill="x", pady=(12, 0))
+        ttk.Label(audit_bar, text="只读核验周期（首版每次一个）").pack(side="left")
+        ttk.Combobox(audit_bar, state="readonly", width=12,
+                     textvariable=self.audit_period,
+                     values=PERIODS).pack(side="left", padx=8)
+        self.audit_button = ttk.Button(audit_bar, text="开始历史行情只读核验",
+                                       style="Primary.TButton", command=self.run_readonly_audit)
+        self.audit_button.pack(side="left", padx=8)
+        if self.market_root is None:
+            self.audit_button.configure(state="disabled")
+        ttk.Label(audit_bar, text="需指定行情根目录；仅限20只股票、31日、截至2026-11-19",
+                  style="Muted.TLabel").pack(side="left", padx=8)
 
+    def build_audit_results(self):
+        ttk.Label(self.audit_page, text="历史行情核验 · 物理证据，不是官方完整性认证",
+                  font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        ttk.Label(self.audit_page,
+                  text="未查到记录不等于确认缺失：停牌、非交易日、上市前均需结合交易日历和股票池核对。",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
+        outer = ttk.Frame(self.audit_page)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        self.audit_result_text = tk.Text(
+            outer, wrap="none", font=("Consolas", 10), borderwidth=0,
+            background=COLORS["log_bg"], foreground=COLORS["log_fg"],
+            padx=12, pady=12)
+        scroll = ttk.Scrollbar(outer, orient="vertical",
+                               command=self.audit_result_text.yview)
+        self.audit_result_text.configure(yscrollcommand=scroll.set)
+        self.audit_result_text.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.audit_result_text.insert("1.0", "选择「数据核验」、指定股票、仅勾选八周期行情，并选择周期后开始。\n"
+                                     "所有更新/修复功能仍然关闭；核验过程不下载或写入任何行情。")
+        self.audit_result_text.configure(state="disabled")
+
+    def run_readonly_audit(self):
+        """Use only the explicitly chosen local root and narrow UI scope."""
+        if self.audit_running:
+            return
+        if self.market_root is None:
+            messagebox.showerror("行情目录未授权", "启动时需指定 --market-root 本机行情目录。")
+            return
+        if self.mode.get() != "数据核验" or self.scope.get() != "指定股票":
+            messagebox.showinfo("请先选择范围", "请切换为「数据核验」和「指定股票」。")
+            return
+        chosen = [key for key in MODULES if self.modules[key].get()]
+        if chosen != ["八周期行情"]:
+            messagebox.showinfo("当前仅支持行情",
+                                "V2-B 暂只提供八周期行情物理核验；请取消板块、除权、财务。")
+            return
+        try:
+            selection = plan_preview(
+                mode="数据核验", start=self.start.get().strip(),
+                end=self.end.get().strip(), scope="指定股票",
+                stock_text=self.stock_box.get("1.0", "end-1c"),
+                modules=chosen, history_policy=self.history_policy.get())
+            codes = selection["symbols"]
+            if len(codes) > 20:
+                raise InvalidPlan("本轮物理核验最多选择20只股票，请缩小范围")
+            if selection["end_date"] > FROZEN_ASOF.isoformat():
+                raise InvalidPlan("V2-B 冻结只读核验暂截至 2026-11-19")
+        except InvalidPlan as exc:
+            messagebox.showerror("核验范围不符合限制", str(exc))
+            return
+        period = self.audit_period.get()
+        if period not in PERIODS:
+            messagebox.showerror("周期无效", "请选择已支持的八周期之一")
+            return
+        if not messagebox.askyesno(
+            "确认只读核验",
+            "只读取本机选定 Parquet 的指定行组，不连接 QMT、不下载、不覆盖。\n"
+            + "时间：" + selection["start_date"] + " 至 " + selection["end_date"]
+            + "；周期：" + period + "；股票：" + str(len(codes)) + "只。\n"
+            + "最多解压250万候选行，超限将拒绝并要求缩小范围。\n"
+            + "没有读到记录不代表该交易日确实缺失。继续吗？"
+        ):
+            return
+        self.audit_running = True
+        self.audit_button.configure(state="disabled")
+        self.book.select(self.audit_page)
+        self._set_audit_text("只读历史行情核验正在执行。若任务同时启动，执行锁将阻止本次读取。")
+        self.status_line.set("V2-B 有界只读核验运行中，不访问 QMT，不写入行情")
+        def worker():
+            try:
+                result = audited_query(
+                    root=self.market_root, start=selection["start_date"],
+                    end=selection["end_date"], symbols=codes,
+                    periods=[period], explicit_readonly=True)
+                self.audit_queue.put(("result", result))
+            except (AuditBlocked, OSError, ValueError) as exc:
+                self.audit_queue.put(("error", str(exc)))
+            except Exception as exc:
+                self.audit_queue.put(("error", "只读核验未完成：" + type(exc).__name__))
+        threading.Thread(target=worker, name="market-v2-readonly-audit", daemon=True).start()
+        self.after(150, self._poll_audit)
+
+    def _set_audit_text(self, value: str):
+        self.audit_result_text.configure(state="normal")
+        self.audit_result_text.delete("1.0", "end")
+        self.audit_result_text.insert("1.0", value)
+        self.audit_result_text.configure(state="disabled")
+        self.audit_result_text.see("1.0")
+
+    def _poll_audit(self):
+        try:
+            kind, data = self.audit_queue.get_nowait()
+        except queue.Empty:
+            if self.audit_running:
+                self.after(150, self._poll_audit)
+            return
+        self.audit_running = False
+        self.audit_button.configure(state="normal" if self.market_root else "disabled")
+        if kind == "error":
+            self._set_audit_text(
+                "核验阻断（没有修改任何行情文件）\n" + str(data) +
+                "\n请先排除任务占用、文件源变化或行组读取预算超限。")
+            self.status_line.set("只读核验阻断；原始行情保持不变")
+            return
+        rows = data["observations"]
+        statuses = {
+            "ROWS_OBSERVED_UNCERTIFIED": 0,
+            "NO_ROWS_OBSERVED": 0,
+            "ANOMALY_OBSERVED": 0,
+        }
+        for item in rows:
+            statuses[item["status"]] = statuses.get(item["status"], 0) + 1
+        lines = [
+            "历史行情物理观察完成（不能据此宣布交易日完整或跨源认证）",
+            "范围：" + data["scope"]["start"] + " 至 " + data["scope"]["end"],
+            "周期：" + "、".join(data["scope"]["periods"]) +
+            "   股票：" + str(len(data["scope"]["stocks"])) + " 只",
+            "已有记录的标签日：" + str(statuses["ROWS_OBSERVED_UNCERTIFIED"]),
+            "未观察到记录的标签日：" + str(statuses["NO_ROWS_OBSERVED"]) +
+            "（不能据此认定缺失）",
+            "发现异常的标签日：" + str(statuses["ANOMALY_OBSERVED"]),
+            "实际解压候选行数：" + str(data["row_group_budget"]["rows_inspected"]),
+            "缺少物理分区：" + str(len(data["missing_partitions"])),
+            "自动更新/修复：未运行，市场文件写入：否，QMT调用：0",
+            "提示：停牌、上市日期、非交易日及周/月标签均未按交易所日历认证。",
+            "─── 明细（最多前 200 项）───",
+        ]
+        for row in rows[:200]:
+            lines.append(
+                row["period"] + " " + row["symbol"] + " " +
+                row["timestamp_label_day"] + "  " + str(row["rows"]) +
+                " 行  " + row["status"] +
+                ("  " + str(row["anomalies"]) if row["anomalies"] else ""))
+        if len(rows) > 200:
+            lines.append("其余 " + str(len(rows) - 200) +
+                         " 项未在界面展开；缩小日期或股票范围以逐项查看。")
+        self._set_audit_text("\n".join(lines))
+        self.status_line.set("有界只读物理核验完成；已有记录不等于全部认证")
+    
     def build_logs(self):
         head = ttk.Frame(self.logs)
         head.pack(fill="x", pady=(0, 12))
@@ -355,6 +530,7 @@ class MarketCenterV2(tk.Tk):
                 end=self.end.get().strip(), scope=self.scope.get(),
                 stock_text=self.stock_box.get("1.0", "end-1c"),
                 modules=[n for n in MODULES if self.modules[n].get()],
+                history_policy=self.history_policy.get(),
             )
         except InvalidPlan as exc:
             self.plan_ready = None
@@ -369,17 +545,19 @@ class MarketCenterV2(tk.Tk):
             # Failure to read optional history must never turn into permission
             # to overwrite existing data or prevent safe previewing.
             latest = "未证明"
-        overlap = ("⚠ 日期范围可能与已提交行情重叠（最新已提交：" + latest
-                   + "）；禁止盲目覆盖。\n"
+        overlap = ("所选日期与已提交行情可能重叠（最新已提交：" + latest
+                   + "）；允许重新核验，更新时按所选策略处理。\n"
                    if latest != "未证明" and p["start_date"] <= latest else
-                   "尚未证明所选范围与已提交行情是否重叠；执行前必须核验。\n")
+                   "所选日期的股日完整覆盖尚未核对；不能推测存在或缺失。\n")
         description = (p["mode"] + " | " + p["start_date"] + " 至 " + p["end_date"] + "\n"
                        + "股票：" + (p["scope"] if p["scope"] == "全部股票"
                                     else ", ".join(p["symbols"])) + "\n"
                        + "数据：" + "、".join(p["data_types"]) + "\n"
+                       + ("历史数据处理：" + p["history_policy"] + "（尚未开放写入）\n"
+                          if p["mode"] == "更新数据" else "核验：限定范围内只读检查已有行情文件。\n")
                        + overlap
                        + "并发规则：20:05计划任务运行中不允许第二个写入任务。\n"
-                       + "执行状态：禁止（V2-A 只读预览）；需先实现对应日期/股票范围的后端支持。")
+                       + "执行状态：真实更新/修复暂不开放。指定股票+八周期行情可单独执行有限只读核验。")
         self.preview_text.configure(state="normal")
         self.preview_text.delete("1.0", "end")
         self.preview_text.insert("1.0", description)
@@ -401,7 +579,7 @@ class MarketCenterV2(tk.Tk):
             obj = latest_status(self.state_module)
             src = source_info(self.state_module)
             self.cards["已提交最新交易日"].set(obj["last_accepted_trading_day"])
-            self.cards["最近任务状态"].set(str(obj["last_run_status"]))
+            self.cards["上次任务结果"].set(str(obj["last_run_status"]))
             self.cards["当前安全截止"].set(obj["safe_candidate_cutoff"])
             self.cards["QMT 最近预检"].set(obj["qmt_last_preflight"])
             pending = obj["finance_pending_count"]
@@ -414,7 +592,7 @@ class MarketCenterV2(tk.Tk):
                 "上次任务开始：" + str(obj["last_run_started"]) +
                 "　｜　以上 QMT 预检是历史回执，不代表当前实时连接状态")
             run_status = str(obj["last_run_status"]).upper()
-            self.card_widgets["最近任务状态"].configure(
+            self.card_widgets["上次任务结果"].configure(
                 style=("Failure.CardValue.TLabel" if run_status in ("FAILED", "FAIL")
                        else "Success.CardValue.TLabel" if run_status == "SUCCESS"
                        else "Warning.CardValue.TLabel"))
@@ -483,16 +661,27 @@ class MarketCenterV2(tk.Tk):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="V2-A 只读界面原型")
+    parser = argparse.ArgumentParser(description="V2-B 只读历史行情核验界面")
     parser.add_argument("--state-module", type=Path, default=HERE,
                         help="显式指定只读状态来源的 ParquetLiveSync 目录")
+    parser.add_argument("--market-root", type=Path,
+                        help="显式指定本机 AllCycleAStockData 物理目录，仅用于只读核验")
     args = parser.parse_args(argv)
     path = args.state_module
     if not path.is_absolute() or path.name.lower() != "parquetlivesync" or not path.is_dir():
         parser.error("state-module 必须是已存在的绝对 ParquetLiveSync 目录")
     if any(parent.is_symlink() for parent in (path, *path.parents)):
         parser.error("拒绝符号链接的状态目录")
-    MarketCenterV2(state_module=path).mainloop()
+    if args.market_root is not None:
+        market = args.market_root
+        if (not market.is_absolute()
+                or market.name.lower() != "allcycleastockdata"
+                or not market.is_dir()
+                or any(parent.is_symlink() for parent in (market, *market.parents))):
+            parser.error("market-root 必须是安全的绝对 AllCycleAStockData 目录")
+        MarketCenterV2(state_module=path, market_root=market).mainloop()
+    else:
+        MarketCenterV2(state_module=path).mainloop()
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ import re
 CHINA = timezone(timedelta(hours=8))
 MODULES = ("八周期行情", "板块", "除权", "财务")
 MODES = ("更新数据", "数据核验")
+HISTORY_POLICIES = (
+    "只补缺失数据",
+    "重新获取并核对差异",
+    "审核后修复异常数据",
+)
 MARKETS = ("SH", "SZ", "BJ")
 SYMBOL = re.compile(r"^[0-9]{6}\.(?:SH|SZ|BJ)$")
 MAX_STOCKS = 500
@@ -70,10 +75,13 @@ def parse_symbols(value: str) -> tuple[str, ...]:
 
 
 def plan_preview(*, mode: str, start: str, end: str, scope: str,
-                 stock_text: str, modules, now: datetime | None = None) -> dict:
+                 stock_text: str, modules, now: datetime | None = None,
+                 history_policy: str = HISTORY_POLICIES[0]) -> dict:
     """Validation is purely in-memory; no task launch or market file access."""
     if mode not in MODES:
         raise InvalidPlan("未知的操作模式")
+    if history_policy not in HISTORY_POLICIES:
+        raise InvalidPlan("未知的历史数据处理方式")
     lo, hi = clean_day(start), clean_day(end)
     if lo > hi:
         raise InvalidPlan("开始日期不得晚于结束日期")
@@ -93,6 +101,8 @@ def plan_preview(*, mode: str, start: str, end: str, scope: str,
     return {
         "format": "market_center_v2_plan_preview_only_v1",
         "mode": mode,
+        "history_policy": history_policy,
+        "history_policy_applies_only_to_updates": mode == "更新数据",
         "start_date": lo.isoformat(),
         "end_date": hi.isoformat(),
         "scope": scope,
@@ -104,11 +114,11 @@ def plan_preview(*, mode: str, start: str, end: str, scope: str,
         "stock_universe_membership_certified": False,
         "physical_data_certified": False,
         "allowed_to_execute": False,
-        "existing_history_policy": "行情普通增量仅从最新已提交日后续传；已提交来源可幂等跳过，日期交叉重叠或版本冲突必须拒绝盲目覆盖；财务历史冲突继续隔离",
+        "existing_history_policy": "允许选择已存在日期。补缺失先核验股日记录；重新获取仅对比并产出差异；修复必须有独立备份、来源版本及人工审核。以上模式尚未开放写入。",
         "concurrent_task_policy": "实际更新必须经过同一执行锁；20:05计划任务运行中拒绝第二个写入作业，日志只读仍可查看",
         "existing_stock_day_coverage_scanned": False,
         "scheduled_task_live_state_checked": False,
-        "reason": "V2-A 仅配置预览；指定日期/股票的更新与核验后端尚未验收，禁止隐式全市场执行",
+        "reason": "历史更新、重新获取、修复均尚未开放写入；V2-B 仅提供明确范围的只读物理行情核验，不得隐式全市场执行",
     }
 
 

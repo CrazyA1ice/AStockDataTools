@@ -140,7 +140,10 @@ class V2ERealWidgetSmokeTests(TestCase):
         try:
             self.app = MarketCenterV2SelectedUI(state_module=path)
         except tk.TclError as exc:
-            self.skipTest("No GUI display available: " + str(exc))
+            reason = str(exc).lower()
+            if "no display name" in reason or "couldn't connect to display" in reason:
+                self.skipTest("No GUI display available: " + str(exc))
+            raise
         self.app.withdraw()
         self.addCleanup(self.app.destroy)
 

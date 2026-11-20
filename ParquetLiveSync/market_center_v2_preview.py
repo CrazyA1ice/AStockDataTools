@@ -556,6 +556,7 @@ class MarketCenterV2(tk.Tk):
             "NO_ROWS_POSTLISTING_DECLARED_UNCERTIFIED": "声明退市后，未认证",
             "NO_ROWS_SUSPENDED_DECLARED_UNCERTIFIED": "声明停牌，未认证",
             "NO_ROWS_ELIGIBILITY_INDETERMINATE": "缺失判断仍不确定",
+            "PHYSICAL_PARTITION_MISSING_STOCK_GAP_UNDETERMINED": "物理分区缺失，逐股待核实",
             "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED": "疑似缺失，源未认证",
             "LONG_CYCLE_LABEL_NEEDS_CLOSURE_PROOF": "周/月需要闭合证明",
         }

@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from time import monotonic
+from time import monotonic, sleep
 
 import qmt_extra_data as E
 
@@ -31,6 +31,10 @@ STATE_FILE = "financial-cache-progress.json"
 
 class QMTCacheDecodeError(RuntimeError):
     """Verified provider UnicodeDecodeError only, not a generic source outage."""
+
+
+class QMTCacheConnectionError(RuntimeError):
+    """Worker-confirmed xtquant client outage, not an empty stock cache."""
 
 
 def _state_file(workspace):
@@ -275,9 +279,14 @@ def _worker_batch(symbols, mode, asof, lookback_days, workspace, timeout_seconds
                "--mode", mode]
         if mode == "daily":
             cmd += ["--start", start, "--end", end.strftime("%Y%m%d")]
-        # Retry exactly once ONLY on dedicated UTF-8 decode failure.
-        # A transient truncated provider response can recover on the retry.
-        for attempt in (1, 2):
+        # Retry two more times ONLY when the isolated worker positively
+        # identifies xtquant client disconnection (exit 86). Preserve the
+        # original one additional UTF-8 attempt (exit 85). No retry for any
+        # other failure, including timeout, schema, or untyped exit 1.
+        # A new process on each attempt must reconnect from scratch.
+        utf8_failures = 0
+        connect_failures = 0
+        for attempt in range(1, 6):  # strict combined retry ceiling
             try:
                 completed = subprocess.run(
                     cmd, timeout=timeout_seconds, check=False)
@@ -286,14 +295,32 @@ def _worker_batch(symbols, mode, asof, lookback_days, workspace, timeout_seconds
                     "QMT cache financial batch worker timed out: " +
                     E.canonical_json(symbols)) from exc
             if completed.returncode == 85:
-                if path.exists():
+                if path.exists() or path.with_suffix(".part").exists():
                     raise ValueError("UTF-8 failed worker left unexpected output")
-                progress("QMT_CACHE_BATCH_UTF8_RETRY=" + E.canonical_json({
-                    "symbols": symbols, "attempt": attempt}))
-                if attempt == 2:
+                utf8_failures += 1
+                if utf8_failures >= 2:
                     raise QMTCacheDecodeError(
                         "QMT reported repeated UTF-8 decode failures: " +
                         E.canonical_json(symbols))
+                progress("QMT_CACHE_BATCH_UTF8_RETRY=" + E.canonical_json({
+                    "symbols": symbols, "attempt": attempt}))
+                continue
+            if completed.returncode == 86:
+                if path.exists() or path.with_suffix(".part").exists():
+                    raise ValueError(
+                        "Disconnected QMT worker left unexpected output")
+                connect_failures += 1
+                progress("QMT_CACHE_BATCH_CONNECT_UNAVAILABLE=" +
+                         E.canonical_json({
+                             "symbols": symbols, "attempt": connect_failures,
+                             "max_attempts": 3,
+                             "previous_symbols_committed_unchanged": True}))
+                if connect_failures >= 3:
+                    raise QMTCacheConnectionError(
+                        "QMT client unavailable after three isolated worker "
+                        "attempts; batch not checkpointed: " +
+                        E.canonical_json(symbols))
+                sleep(2 ** connect_failures)  # 2s, 4s; bounded
                 continue
             if completed.returncode != 0:
                 raise RuntimeError(
@@ -301,6 +328,9 @@ def _worker_batch(symbols, mode, asof, lookback_days, workspace, timeout_seconds
                     str(completed.returncode) + " stocks=" +
                     E.canonical_json(symbols))
             break
+        else:
+            raise RuntimeError(
+                "QMT cache batch exceeded total isolated worker attempts")
         E._path_check(path)
         if (not path.is_file() or path.is_symlink() or
                 path.stat().st_size > MAX_PAYLOAD):

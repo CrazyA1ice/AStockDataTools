@@ -23,6 +23,9 @@ from market_center_v2_model import (
 
 from market_center_v2_faults import FaultEvidenceBlocked, diagnose_latest
 from market_center_v2_qmt_live import observe_qmt_connection, outstanding_resume_gates
+from market_center_v2_recovery_inventory import (
+    PreflightBlocked, inspect_recovery_prerequisites,
+)
 from market_center_v2_audit_cli import audited_query
 from market_center_v2_readonly_audit import AuditBlocked, FROZEN_ASOF, PERIODS
 
@@ -170,6 +173,12 @@ class MarketCenterV2(tk.Tk):
         self.qmt_probe_running = False
         self.fault_diagnosis_generation = 0
         self.qmt_probe_buttons = []
+        self.finance_inventory = None
+        self.finance_inventory_status = tk.StringVar(
+            value="正式代码版本和财务快照范围尚未只读核对")
+        self.inventory_queue = queue.Queue()
+        self.inventory_running = False
+        self.inventory_buttons = []
         self.status_line = tk.StringVar(value="V2-B：仅历史物理行情只读核验；更新和修复仍不开放")
         self.source_line = tk.StringVar(value="数据源：读取当前项目配置")
         self.plan_ready = None
@@ -283,6 +292,11 @@ class MarketCenterV2(tk.Tk):
             command=self.start_qmt_live_probe)
         live.pack(side="left", padx=(9, 0))
         self.qmt_probe_buttons.append(live)
+        inventory_btn = ttk.Button(
+            shortcuts, text="核对正式版本与备份范围（只读）",
+            command=self.start_finance_inventory)
+        inventory_btn.pack(side="left", padx=(9, 0))
+        self.inventory_buttons.append(inventory_btn)
         ttk.Label(diagnosis, textvariable=self.qmt_gate_summary,
                   style="Muted.TLabel", wraplength=960).pack(anchor="w", pady=(6, 0))
         actions = ttk.Frame(page)
@@ -333,6 +347,11 @@ class MarketCenterV2(tk.Tk):
             command=self.start_qmt_live_probe)
         live.pack(side="left", padx=(10, 0))
         self.qmt_probe_buttons.append(live)
+        inventory_btn = ttk.Button(
+            commands, text="核对正式版本与备份范围（只读）",
+            command=self.start_finance_inventory)
+        inventory_btn.pack(side="left", padx=(10, 0))
+        self.inventory_buttons.append(inventory_btn)
         self.fault_repair_disabled = ttk.Button(
             commands, text="一键重试（尚未开放）", state="disabled")
         self.fault_repair_disabled.pack(side="left", padx=(10, 0))
@@ -342,6 +361,9 @@ class MarketCenterV2(tk.Tk):
         ttk.Label(gate_panel, textvariable=self.qmt_gate_details,
                   style="Section.TLabel", justify="left",
                   wraplength=1050).pack(anchor="w")
+        ttk.Label(gate_panel, textvariable=self.finance_inventory_status,
+                  style="Muted.TLabel", wraplength=1050).pack(
+                      anchor="w", pady=(5, 0))
         ttk.Label(
             self.fault_page,
             text="QMT连接成功仍不授予写入许可；独占锁、正式版本、历史备份未认证，旧日财务任务不得直接重放。",
@@ -374,6 +396,9 @@ class MarketCenterV2(tk.Tk):
     def refresh_fault_diagnosis(self):
         self.fault_diagnosis_generation += 1
         self.qmt_live_result = None
+        self.finance_inventory = None
+        self.finance_inventory_status.set(
+            "本轮正式版本与财务备份范围尚未重新核对")
         try:
             result = diagnose_latest(self.state_module)
         except (FaultEvidenceBlocked, OSError, ValueError) as exc:
@@ -430,7 +455,8 @@ class MarketCenterV2(tk.Tk):
     def _update_qmt_gate_display(self):
         preview = (self.fault_diagnosis or {}).get("finance_resume_preview", {})
         gates = outstanding_resume_gates(
-            preview, qmt_observation=self.qmt_live_result)
+            preview, qmt_observation=self.qmt_live_result,
+            inventory_observation=self.finance_inventory)
         self.qmt_gate_details.set("\n".join(
             ("✓" if item["ok"] else "○") + " " + item["label"] +
             "：" + item["detail"] for item in gates))
@@ -488,6 +514,85 @@ class MarketCenterV2(tk.Tk):
                 "读取任务回执期间已发生变化，请重新检查QMT即时连接")
         self._update_qmt_gate_display()
 
+    def start_finance_inventory(self):
+        """Explicit on-demand file metadata only; never copy/create backups."""
+        if self.inventory_running:
+            return
+        if self.market_root is None:
+            messagebox.showerror(
+                "不能检查备份范围", "需要启动软件时显式指定 AllCycleAStockData 目录")
+            return
+        self.inventory_running = True
+        self.finance_inventory = None
+        generation = self.fault_diagnosis_generation
+        receipt_sha = (self.fault_diagnosis or {}).get("receipt_sha256")
+        progress_sha = (self.fault_diagnosis or {}).get("finance_progress_sha256")
+        for button in self.inventory_buttons:
+            button.state(["disabled"])
+        self.finance_inventory_status.set(
+            "正在读取正式代码指纹与财务快照文件元信息；不生成备份、不写入")
+        self._update_qmt_gate_display()
+
+        def worker():
+            try:
+                result = inspect_recovery_prerequisites(
+                    state_module=self.state_module,
+                    market_root=self.market_root)
+            except (PreflightBlocked, FaultEvidenceBlocked, OSError, ValueError) as exc:
+                result = {
+                    "status": "V2D2B_INVENTORY_BLOCKED",
+                    "reason": str(exc)[:180], "can_execute": False,
+                }
+            except Exception as exc:
+                result = {
+                    "status": "V2D2B_INVENTORY_FAILED",
+                    "reason": "unexpected_" + type(exc).__name__,
+                    "can_execute": False,
+                }
+            self.inventory_queue.put((generation, receipt_sha, progress_sha, result))
+
+        threading.Thread(
+            target=worker, name="v2d2b-finance-metadata-inventory",
+            daemon=True).start()
+        self.after(150, self._poll_finance_inventory)
+
+    def _poll_finance_inventory(self):
+        try:
+            generation, receipt_sha, progress_sha, result = (
+                self.inventory_queue.get_nowait())
+        except queue.Empty:
+            if self.inventory_running:
+                self.after(150, self._poll_finance_inventory)
+            return
+        self.inventory_running = False
+        for button in self.inventory_buttons:
+            button.state(["!disabled"])
+        old = generation != self.fault_diagnosis_generation
+        if not old and self.fault_diagnosis is not None:
+            old = (
+                receipt_sha != self.fault_diagnosis.get("receipt_sha256")
+                or progress_sha !=
+                self.fault_diagnosis.get("finance_progress_sha256"))
+        if old or self.fault_diagnosis is None:
+            self.finance_inventory = None
+            self.finance_inventory_status.set(
+                "正式回执/进度已更新；之前的元信息清单已失效，请重新核对")
+        elif (result.get("status") ==
+              "V2D2B_READONLY_RECOVERY_INVENTORY_NOT_EXECUTABLE"):
+            self.finance_inventory = result
+            count = result.get("finance_scope_count", 0)
+            self.finance_inventory_status.set(
+                "已只读记录" + str(len(result.get("code_fingerprints", []))) +
+                "个代码指纹和" + str(count) +
+                "个财务候选股表范围；未批准部署、未生成备份、未验证回滚")
+            self._set_fault_detail(json.dumps(
+                result, ensure_ascii=False, indent=2))
+        else:
+            self.finance_inventory = None
+            self.finance_inventory_status.set(
+                "只读清单检查阻断：" + result.get("reason", "未知原因"))
+        self._update_qmt_gate_display()
+
     def open_fault_page(self):
         self.book.select(self.fault_page)
 
@@ -499,6 +604,11 @@ class MarketCenterV2(tk.Tk):
             messagebox.showerror("不能生成续跑计划", str(exc))
             return
         observed = self.qmt_live_result
+        inventory = self.finance_inventory
+        if (type(inventory) is not dict
+                or inventory.get("receipt_sha256") != fresh["receipt_sha256"]
+                or inventory.get("finance_progress_sha256") != fresh["finance_progress_sha256"]):
+            inventory = None
         if (type(observed) is not dict
                 or observed.get("bound_receipt_sha256") != fresh["receipt_sha256"]
                 or observed.get("bound_progress_sha256") != fresh["finance_progress_sha256"]):
@@ -509,8 +619,16 @@ class MarketCenterV2(tk.Tk):
             "finance_progress_sha256": fresh["finance_progress_sha256"],
             "finance_resume_preview": fresh["finance_resume_preview"],
             "qmt_connection_observation": observed,
+            "canonical_inventory_summary": ({
+                "code_fingerprints": inventory.get("code_fingerprints"),
+                "finance_scope_count": inventory.get("finance_scope_count"),
+                "backup_plan": inventory.get("backup_plan"),
+                "blockers": inventory.get("blockers"),
+                "can_execute": False,
+            } if inventory else None),
             "outstanding_recovery_gates": outstanding_resume_gates(
-                fresh["finance_resume_preview"], qmt_observation=observed),
+                fresh["finance_resume_preview"], qmt_observation=observed,
+                inventory_observation=inventory),
             "allowed_to_execute": False,
             "allowed_to_download": False,
         }

@@ -314,7 +314,7 @@ class V2AContractTests(unittest.TestCase):
         view = inspect.getsource(UI.MarketCenterV2.build_audit_results)
         self.assertIn("self.audit_cards", view)
         self.assertIn("ttk.Treeview", view)
-        self.assertIn('"show"=', view.replace('show=', '"show"='))  # table headings
+        self.assertIn('show="headings"', view)
         self.assertIn("self.audit_details_visible = False", view)
         self.assertIn("self.audit_table.tag_configure", view)
         self.assertIn("self._toggle_audit_details", view)

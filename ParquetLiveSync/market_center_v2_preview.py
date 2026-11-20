@@ -7,6 +7,7 @@ no subprocess.Popen, QMT import, data download, task install or Apply button.
 from __future__ import annotations
 
 from datetime import date
+import argparse
 import json
 import os
 from pathlib import Path
@@ -31,13 +32,14 @@ LABEL_FONT = ("Microsoft YaHei UI", 10)
 TITLE_FONT = ("Microsoft YaHei UI", 17, "bold")
 
 
-def _read_log_tail(path_text: str, *, limit: int = 40 * 1024) -> str:
+def _read_log_tail(path_text: str, *, limit: int = 40 * 1024,
+                   work_dir: Path | None = None) -> str:
     """Only the bounded last part of an existing private work/afternoon log."""
     if not isinstance(path_text, str) or not path_text:
         return "暂无日志文件"
     path = Path(path_text)
     try:
-        root = WORK.resolve(strict=True)
+        root = (work_dir or WORK).resolve(strict=True)
         real = path.resolve(strict=True)
         if (not real.is_relative_to(root) or real.suffix.lower() != ".log"
                 or path.is_symlink() or not real.is_file()):
@@ -53,8 +55,10 @@ def _read_log_tail(path_text: str, *, limit: int = 40 * 1024) -> str:
 
 
 class MarketCenterV2(tk.Tk):
-    def __init__(self):
+    def __init__(self, *, state_module: Path = HERE):
         super().__init__()
+        self.state_module = Path(state_module)
+        self.state_work = self.state_module / "work"
         self.title("A股数据更新与核验中心 V2 · 设计预览")
         self.geometry("1070x760")
         self.minsize(850, 600)
@@ -245,8 +249,8 @@ class MarketCenterV2(tk.Tk):
 
     def refresh_overview(self):
         try:
-            obj = latest_status(HERE)
-            src = source_info(HERE)
+            obj = latest_status(self.state_module)
+            src = source_info(self.state_module)
             self.cards["已提交最新交易日"].set(obj["last_accepted_trading_day"])
             self.cards["最近任务状态"].set(str(obj["last_run_status"]))
             self.cards["当前安全截止"].set(obj["safe_candidate_cutoff"])
@@ -273,28 +277,36 @@ class MarketCenterV2(tk.Tk):
 
     def refresh_logs(self):
         try:
-            obj = latest_status(HERE)
-            receipt_path = WORK / "last-afternoon-unified.json"
+            receipt_path = self.state_work / "last-afternoon-unified.json"
             last = {}
             if receipt_path.is_file() and not receipt_path.is_symlink():
                 if receipt_path.stat().st_size <= 2 * 1024 * 1024:
                     last = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
             path = last.get("log_path", "") if isinstance(last, dict) else ""
-            text = _read_log_tail(path)
+            text = _read_log_tail(path, work_dir=self.state_work)
         except (OSError, ValueError, InvalidPlan):
             text = "日志暂不可读"
         self.log_text.delete("1.0", "end")
         self.log_text.insert("1.0", text)
 
     def open_log_folder(self):
-        if os.name == "nt" and WORK.is_dir():
-            os.startfile(str(WORK))
+        if os.name == "nt" and self.state_work.is_dir():
+            os.startfile(str(self.state_work))
         else:
             messagebox.showinfo("日志目录", "本地日志目录暂不存在")
 
 
-def main():
-    MarketCenterV2().mainloop()
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="V2-A 只读界面原型")
+    parser.add_argument("--state-module", type=Path, default=HERE,
+                        help="显式指定只读状态来源的 ParquetLiveSync 目录")
+    args = parser.parse_args(argv)
+    path = args.state_module
+    if not path.is_absolute() or path.name.lower() != "parquetlivesync" or not path.is_dir():
+        parser.error("state-module 必须是已存在的绝对 ParquetLiveSync 目录")
+    if any(parent.is_symlink() for parent in (path, *path.parents)):
+        parser.error("拒绝符号链接的状态目录")
+    MarketCenterV2(state_module=path).mainloop()
 
 
 if __name__ == "__main__":

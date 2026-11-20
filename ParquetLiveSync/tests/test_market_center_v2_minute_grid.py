@@ -84,7 +84,8 @@ class MinuteLabelGateTests(unittest.TestCase):
     def test_outside_continuous_session_is_candidate_only(self):
         result = G.inspect_minute_labels(
             period="1min", day=DAY, timestamps_ms={
-                milliseconds(9, 25), milliseconds(9, 31)})
+                milliseconds(9, 25), milliseconds(9, 31),
+                milliseconds(15, 0)})
         self.assertEqual(result["outside_continuous_sessions_count"], 1)
         self.assertEqual(result["status"],
                          "TIME_LABEL_PROFILE_CANDIDATE_NOT_CERTIFIED")
@@ -122,7 +123,8 @@ class MinuteLabelGateTests(unittest.TestCase):
         self.assertFalse(result["allowed_to_backfill"])
 
     def test_wrong_day_or_nonint_rejected(self):
-        for stamps_input in ({milliseconds(9, 31), milliseconds(11, 31, 1)},
+        for stamps_input in ({milliseconds(9, 31),
+                              milliseconds(9, 31) + 86_400_000},
                              {1.2}, {"09:31"}):
             with self.subTest(stamps_input=stamps_input):
                 with self.assertRaises(G.GridScopeError):

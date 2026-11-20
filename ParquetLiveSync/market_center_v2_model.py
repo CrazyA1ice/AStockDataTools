@@ -141,10 +141,20 @@ def source_info(module_dir: Path) -> dict:
     available = [human for key, human in names.items()
                  if isinstance(checks.get(key), dict)
                  and checks[key].get("enabled") is True]
+    primary = doc.get("primary")
+    if primary == "qmt":
+        minute = "QMT / 已购分钟源（依既有校准门禁）"
+    elif primary is None:
+        minute = "数据源配置缺失：不能认定当前行情主来源"
+    else:
+        minute = "主来源配置为 " + str(primary)[:48] + "，尚未完成 V2 来源适配认证"
+    official = doc.get("official_day_source")
+    day = ("TDX 已接受 DAY 来源" if official == "TDX_accepted_daily_overlay"
+           else "日线主来源未确认，请查阅当前实际更新日志")
     return {
         "config_file": "本地覆盖配置" if used == override else "项目默认配置",
-        "market_minute_update": "QMT / 已购分钟源（依既有校准门禁）",
-        "market_day_update": "TDX 已接受 DAY 来源",
+        "market_minute_update": minute,
+        "market_day_update": day,
         "market_week_month_update": "经认证的闭合派生及已购校准锚点",
         "other_update": "板块、除权、财务：QMT 对应服务或缓存",
         "minute_crosschecks_configured": available,

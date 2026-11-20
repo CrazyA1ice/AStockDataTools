@@ -162,6 +162,7 @@ class EvidenceGatedClassificationTests(unittest.TestCase):
         with TemporaryDirectory() as temp:
             path, sha = pin(base_evidence(), Path(temp))
             report = base_report([observation(DAYS[0], period="week")])
+            report["scope"]["periods"] = ["week"]
             got = E.classify(report, E.load_pinned_evidence(path, sha, report["scope"]))
             self.assertEqual(got["observations"][0]["interpretation"],
                              "LONG_CYCLE_LABEL_NEEDS_CLOSURE_PROOF")
@@ -177,6 +178,11 @@ class EvidenceGatedClassificationTests(unittest.TestCase):
         report = base_report([observation(DAYS[0], count=0)])
         report["observations"][0]["status"] = "ROWS_OBSERVED_UNCERTIFIED"
         with self.assertRaisesRegex(E.EvidenceBlocked, "inconsistent"):
+            E.classify(report)
+
+    def test_observation_period_outside_declared_scope_blocked(self):
+        report = base_report([observation(DAYS[0], period="1min")])
+        with self.assertRaisesRegex(E.EvidenceBlocked, "invalid_observation_record"):
             E.classify(report)
 
     def test_manifest_only_proves_integrity_not_source_identity(self):

@@ -195,11 +195,24 @@ class MarketCenterV2(tk.Tk):
                   padding=(18, 5)).pack(fill="x")
 
     def build_home(self):
-        top = ttk.Frame(self.home)
+        # A fault panel increases home content; scroll on small laptop screens.
+        canvas = tk.Canvas(self.home, background=COLORS["bg"], highlightthickness=0,
+                           borderwidth=0)
+        vertical = ttk.Scrollbar(self.home, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vertical.set)
+        vertical.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        page = ttk.Frame(canvas)
+        slot = canvas.create_window((0, 0), window=page, anchor="nw")
+        page.bind("<Configure>",
+                  lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda event: canvas.itemconfigure(slot, width=event.width))
+        top = ttk.Frame(page)
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text="最近运行状态", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
         ttk.Button(top, text="刷新状态", command=self.refresh_overview).pack(side="right")
-        tiles = ttk.Frame(self.home)
+        tiles = ttk.Frame(page)
         tiles.pack(fill="x")
         self.cards = {}
         for label in ("已提交最新交易日", "上次任务结果", "当前安全截止", "QMT 最近预检", "财务待审"):
@@ -213,15 +226,15 @@ class MarketCenterV2(tk.Tk):
             self.cards[label] = variable
             self.card_widgets = getattr(self, "card_widgets", {})
             self.card_widgets[label] = display
-        ttk.Label(self.home, textvariable=self.last_run_details,
+        ttk.Label(page, textvariable=self.last_run_details,
                   style="Muted.TLabel").pack(anchor="w", pady=(9, 0))
-        changed = ttk.LabelFrame(self.home, text="本次相比上次，有什么变化？", padding=14)
+        changed = ttk.LabelFrame(page, text="本次相比上次，有什么变化？", padding=14)
         changed.pack(fill="x", pady=(18, 12))
         ttk.Label(changed, textvariable=self.overview_info, wraplength=900,
                   style="Section.TLabel").pack(anchor="w")
         ttk.Label(changed, text="暂无可信前后快照时，仅显示证据不足，不推测新增量。",
                   style="Section.TLabel").pack(anchor="w", pady=(6, 0))
-        phases = ttk.LabelFrame(self.home, text="上一次运行的四个阶段", padding=10)
+        phases = ttk.LabelFrame(page, text="上一次运行的四个阶段", padding=10)
         phases.pack(fill="x")
         self.stage_labels = {}
         for key, title in STAGES:
@@ -235,7 +248,7 @@ class MarketCenterV2(tk.Tk):
             self.stage_widgets = getattr(self, "stage_widgets", {})
             self.stage_widgets[key] = stage_view
         diagnosis = ttk.LabelFrame(
-            self.home, text="错误诊断与快速恢复建议（只读）", padding=10)
+            page, text="错误诊断与快速恢复建议（只读）", padding=10)
         diagnosis.pack(fill="x", pady=(12, 0))
         ttk.Label(diagnosis, textvariable=self.fault_headline,
                   style="Failure.Section.TLabel",
@@ -256,13 +269,13 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(shortcuts, text="复制安全续跑预览",
                    command=self.copy_finance_resume_preview).pack(
                        side="left", padx=(9, 0))
-        actions = ttk.Frame(self.home)
+        actions = ttk.Frame(page)
         actions.pack(anchor="w", pady=(12, 0))
         ttk.Button(actions, text="配置更新范围", style="Primary.TButton",
                    command=lambda: self.go_action("更新数据")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="配置数据核验", command=lambda: self.go_action("数据核验")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="查看运行日志", command=lambda: self.book.select(self.logs)).pack(side="left")
-        ttk.Label(self.home, text="已有日期可选择补缺失、对比或审核修复（写入功能待开放）  |  20:05任务运行期间只读核验需取得共享锁",
+        ttk.Label(page, text="已有日期可选择补缺失、对比或审核修复（写入功能待开放）  |  20:05任务运行期间只读核验需取得共享锁",
                   style="Muted.TLabel", wraplength=930).pack(anchor="w", pady=(18, 0))
 
     def build_fault_page(self):

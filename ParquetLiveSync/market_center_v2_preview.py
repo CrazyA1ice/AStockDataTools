@@ -530,7 +530,9 @@ class MarketCenterV2(tk.Tk):
         self.audit_table_rows.clear()
         count_present = sum(row["interpretation"] == "RECORDS_PRESENT_NOT_CERTIFIED"
                             for row in rows)
-        count_alert = sum(row["interpretation"] == "PHYSICAL_ANOMALY_NEEDS_REVIEW"
+        count_alert = sum(row["interpretation"] in (
+            "PHYSICAL_ANOMALY_NEEDS_REVIEW",
+            "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED")
                           for row in rows)
         count_candidate = sum(
             row["interpretation"] == "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED"
@@ -550,6 +552,7 @@ class MarketCenterV2(tk.Tk):
         status_names = {
             "RECORDS_PRESENT_NOT_CERTIFIED": "存在记录，未认证",
             "PHYSICAL_ANOMALY_NEEDS_REVIEW": "物理异常待复核",
+            "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED": "物理记录与来源声明矛盾",
             "NO_ROWS_CALENDAR_AND_ELIGIBILITY_UNKNOWN": "无记录，证据不足",
             "NO_ROWS_NONTRADING_DECLARED_UNCERTIFIED": "声明非交易日，未认证",
             "NO_ROWS_PRELISTING_DECLARED_UNCERTIFIED": "声明上市前，未认证",
@@ -562,7 +565,9 @@ class MarketCenterV2(tk.Tk):
         }
         for row in rows[:600]:
             interpretation = row["interpretation"]
-            tag = ("alert" if interpretation == "PHYSICAL_ANOMALY_NEEDS_REVIEW"
+            tag = ("alert" if interpretation in (
+                        "PHYSICAL_ANOMALY_NEEDS_REVIEW",
+                        "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED")
                    else "candidate" if (
                        interpretation == "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED"
                        or interpretation.startswith("NO_ROWS")) else "neutral")

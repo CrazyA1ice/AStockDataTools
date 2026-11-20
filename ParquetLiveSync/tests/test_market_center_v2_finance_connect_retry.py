@@ -22,10 +22,10 @@ import qmt_extra_financial_cache_worker as Worker
 SYMBOLS = ["000756.SZ", "000757.SZ"]
 
 
-def synthetic_payload(symbols):
+def synthetic_payload(symbols, mode):
     return json.dumps({
         "format": "qmt_financial_cache_batch_v1",
-        "mode": "daily",
+        "mode": mode,
         "symbols": symbols,
         "missing_symbols": [],
         "records": {
@@ -51,7 +51,9 @@ class ConnectionRetryTests(unittest.TestCase):
             output = Path(cmd[cmd.index("--output") + 1])
             if code == 0 or (code == 86 and create_unexpected):
                 output.write_text(
-                    synthetic_payload(cmd[cmd.index("--symbols") + 1].split(",")),
+                    synthetic_payload(
+                        cmd[cmd.index("--symbols") + 1].split(","),
+                        cmd[cmd.index("--mode") + 1]),
                     encoding="utf-8")
             return SimpleNamespace(returncode=code)
         with TemporaryDirectory() as folder:

@@ -174,6 +174,7 @@ class UpdaterDashboard(tk.Tk):
             ledger = safe_json(WORK / "market_update" / "commits.json")
             finance = safe_json(WORK / "qmt_extra" / "financial-cache-progress.json")
             last = safe_json(WORK / "last-afternoon-unified.json")
+            historical = safe_json(WORK / "last-manual-market-only.json")
             accepted = accepted_minute_day(ledger)
             limit = safe_refresh_limit()
             self.market.set(
@@ -192,7 +193,8 @@ class UpdaterDashboard(tk.Tk):
                 "最近任务：" + status +
                 "    触发：" + str(last.get("invocation", "原有计划任务/未知")) +
                 "    开始：" + str(last.get("china_start", "未知")) +
-                "    结束：" + str(last.get("finished_local", "未知"))
+                "    结束：" + str(last.get("finished_local", "未知")) +
+                "    历史独立补更：" + str(historical.get("status", "尚未执行"))
             )
             self.show_stages(last)
             self.update_logs()
@@ -244,7 +246,10 @@ class UpdaterDashboard(tk.Tk):
         if latest != self.log_options:
             self.log_options = latest
             self.log_combo.configure(values=[p.name for p in latest])
-        if self.active_log is None and latest:
+        if latest and (self.active_log is None or
+                       (self.process is not None and
+                        latest[0] != self.active_log and
+                        latest[0].stat().st_mtime_ns > self.active_log.stat().st_mtime_ns)):
             self.active_log = latest[0]
             self.log_combo.set(latest[0].name)
         if self.active_log and self.active_log in latest:
@@ -278,6 +283,8 @@ class UpdaterDashboard(tk.Tk):
             return
         latest = accepted_minute_day(safe_json(WORK / "market_update" / "commits.json"))
         limit = safe_refresh_limit()
+        now_cn = datetime.now(SHANGHAI)
+        historical_only = (now_cn.hour, now_cn.minute) < (20, 5)
         if not latest:
             messagebox.showerror("无法补更", "最新成功行情日期不可验证，拒绝盲目下载")
             return
@@ -285,7 +292,10 @@ class UpdaterDashboard(tk.Tk):
             "确认执行增量补更",
             "即将打开新的命令行窗口，使用原有四阶段更新器。\n"
             f"最后 1min 已提交：{latest}\n北京时间本轮截止：{limit.isoformat()}\n"
-            "市场历史按最多30日一批断点续跑，后续刷新板块、除权和财务。\n"
+            "市场历史按最多30日一批断点续跑；" +
+            ("当前未到北京时间20:05，只补已收盘历史行情，板块/除权/财务不运行。\\n"
+             if historical_only else
+             "已过北京时间20:05，本轮会继续板块、除权和财务。\\n")
             "程序可能下载并写入经过校验的月度 Parquet；"
             "请先确保已登录 QMT、网络正常，且磁盘空间充足。\n"
             "同一时刻仅允许一个自动/手动任务。继续吗？"
@@ -293,9 +303,13 @@ class UpdaterDashboard(tk.Tk):
             return
         engine = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
         try:
+            args = [str(engine), "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", str(RUNNER), "-Invocation", "Manual"]
+            if historical_only:
+                args.append("-HistoryOnly")
+            args.append("-Apply")
             self.process = subprocess.Popen(
-                [str(engine), "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-File", str(RUNNER), "-Invocation", "Manual", "-Apply"],
+                args,
                 cwd=str(REPO), creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             self.last_process_rc = None

@@ -206,6 +206,19 @@ class ReadOnlyFinanceInventoryTests(unittest.TestCase):
                         now=TIME)
                 diag.assert_not_called()
 
+    def test_near_2005_window_refuses_inventory_before_file_scan(self):
+        with TemporaryDirectory() as tmp:
+            module, market, report = fixture(Path(tmp))
+            for hour, minute in ((19, 50), (20, 5), (20, 24)):
+                with self.subTest(clock=(hour, minute)):
+                    with patch.object(I, "diagnose_latest") as read:
+                        with self.assertRaisesRegex(
+                                I.PreflightBlocked, "reserved_2005"):
+                            I.inspect_recovery_prerequisites(
+                                state_module=module, market_root=market,
+                                now=TIME.replace(hour=hour, minute=minute))
+                        read.assert_not_called()
+
     def test_cross_day_does_not_pretend_yesterday_is_today(self):
         with TemporaryDirectory() as tmp:
             module, market, report = fixture(Path(tmp))

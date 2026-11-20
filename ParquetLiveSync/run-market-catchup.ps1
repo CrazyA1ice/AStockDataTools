@@ -63,6 +63,13 @@ while($latest -lt $target){
     & $engine -NoProfile -ExecutionPolicy Bypass -File $updater -Mode auto -Root $Root -Day $end.ToString('yyyy-MM-dd') -MaxDays 30
     if($LASTEXITCODE -ne 0){throw ('Market incremental window failed: '+$end.ToString('yyyy-MM-dd')+' exit='+$LASTEXITCODE)}
     $after=Get-LatestCommittedDay
+    if($after -eq $latest -and $end -eq $target){
+        # Existing eight-cycle engine exits zero ONLY after checking the QMT
+        # exchange calendar and rejecting any missing latest required trade.
+        # A holiday can therefore be current without adding new ledger dates.
+        Write-Host ('MARKET_CATCHUP_NO_NEW_EXCHANGE_TRADING_DAY_THROUGH='+$end.ToString('yyyy-MM-dd'))
+        break
+    }
     if($after -le $latest){
         throw ('MARKET_CATCHUP_NO_LEDGER_PROGRESS expected window through '+$end.ToString('yyyy-MM-dd'))
     }

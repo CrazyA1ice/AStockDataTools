@@ -151,6 +151,22 @@ class V2AContractTests(unittest.TestCase):
             self.assertIn("无法计算", summary["comparison"])
             self.assertFalse(summary["qmt_is_live_now_verified"])
 
+    def test_pending_financial_count_is_only_shown_when_evidenced(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            before = M.latest_status(root, now=NOW)
+            self.assertIsNone(before["finance_pending_count"])
+            self.assertFalse(before["finance_pending_count_evidenced"])
+            financial = root / "work" / "qmt_extra"
+            financial.mkdir(parents=True)
+            (financial / "financial-cache-progress.json").write_text(
+                json.dumps({"pending": {"000001.SZ": "source_conflict",
+                                        "688259.SH": "utf8_decode"}}),
+                encoding="utf-8")
+            after = M.latest_status(root, now=NOW)
+            self.assertEqual(after["finance_pending_count"], 2)
+            self.assertTrue(after["finance_pending_count_evidenced"])
+
     def test_oversized_source_config_fails_closed(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

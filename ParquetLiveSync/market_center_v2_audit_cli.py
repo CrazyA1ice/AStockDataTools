@@ -14,8 +14,12 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 from market_center_v2_readonly_audit import AuditBlocked, PERIODS, survey
+from market_center_v2_evidence_gate import (
+    EvidenceBlocked, classify, load_pinned_evidence,
+)
 
 RUN_MUTEX = r"Local\AStockDataTools2005AllStages"
 CHINA = timezone(timedelta(hours=8))
@@ -26,6 +30,21 @@ def _scheduled_window_reserved(now: datetime | None = None) -> bool:
     now = (now or datetime.now(CHINA)).astimezone(CHINA)
     local = now.hour * 60 + now.minute
     return 19 * 60 + 55 <= local < 20 * 60 + 20
+
+
+def _read_budget_seconds(now: datetime | None = None) -> float:
+    """Default 45 seconds, and always release before the protected window."""
+    local = (now or datetime.now(CHINA)).astimezone(CHINA)
+    if _scheduled_window_reserved(local):
+        raise AuditBlocked("reserved_2005_automatic_update_window")
+    boundary = local.replace(hour=19, minute=55, second=0, microsecond=0)
+    if boundary <= local:
+        boundary += timedelta(days=1)
+    remaining = (boundary - local).total_seconds() - 30.0
+    budget = min(45.0, remaining)
+    if budget < 5.0:
+        raise AuditBlocked("too_close_to_2005_reserved_window")
+    return budget
 
 
 @contextmanager
@@ -73,13 +92,26 @@ def shared_market_read_guard():
 def audited_query(*, root: str | Path, start: str, end: str,
                   symbols: list[str] | tuple[str, ...],
                   periods: list[str] | tuple[str, ...],
-                  explicit_readonly: bool = False) -> dict:
+                  explicit_readonly: bool = False,
+                  evidence_file: str | Path | None = None,
+                  evidence_sha256: str | None = None) -> dict:
     if explicit_readonly is not True:
         raise AuditBlocked("explicit_readonly_optin_required")
+    if (evidence_file is None) != (evidence_sha256 is None):
+        raise EvidenceBlocked("evidence_file_and_sha256_must_be_supplied_together")
     with shared_market_read_guard():
-        return survey(root=root, start=start, end=end,
-                      symbols=symbols, periods=periods,
-                      explicit_readonly=explicit_readonly)
+        deadline = time.monotonic() + _read_budget_seconds()
+        physical = survey(root=root, start=start, end=end,
+                          symbols=symbols, periods=periods,
+                          explicit_readonly=explicit_readonly,
+                          deadline_monotonic=deadline)
+        evidence = (load_pinned_evidence(evidence_file, evidence_sha256,
+                                         physical["scope"])
+                    if evidence_file is not None else None)
+        if time.monotonic() >= deadline:
+            raise AuditBlocked("audit_wall_clock_budget_exceeded")
+        physical["evidence_interpretation"] = classify(physical, evidence)
+        return physical
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,14 +123,20 @@ def main(argv: list[str] | None = None) -> int:
                    help="comma-separated exchange-qualified symbols")
     p.add_argument("--period", choices=PERIODS, action="append", required=True)
     p.add_argument("--explicit-readonly", action="store_true")
+    p.add_argument("--evidence-file",
+                   help="Optional explicit eligibility manifest. Does not certify authenticity.")
+    p.add_argument("--evidence-sha256",
+                   help="SHA256 of exact manifest bytes; required with --evidence-file.")
     args = p.parse_args(argv)
     symbols = [v.strip().upper() for v in args.symbols.split(",") if v.strip()]
     try:
         result = audited_query(
             root=args.market_root, start=args.start, end=args.end,
             symbols=symbols, periods=args.period,
-            explicit_readonly=args.explicit_readonly)
-    except AuditBlocked as exc:
+            explicit_readonly=args.explicit_readonly,
+            evidence_file=args.evidence_file,
+            evidence_sha256=args.evidence_sha256)
+    except (AuditBlocked, EvidenceBlocked) as exc:
         print(json.dumps({
             "status": "V2B_AUDIT_BLOCKED", "reason": str(exc),
             "market_file_writes": False, "qmt_calls": 0,

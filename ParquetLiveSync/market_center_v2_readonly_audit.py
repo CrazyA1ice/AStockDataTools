@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 import math
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 PERIODS = ("1min", "5min", "15min", "30min", "60min", "day", "week", "month")
@@ -36,6 +37,11 @@ EXCHANGES = {"XSHG": "SH", "XSHE": "SZ", "BSE": "BJ"}
 
 class AuditBlocked(ValueError):
     """Fail-closed audit gate. No output may be presented as certified."""
+
+
+def _check_deadline(deadline_monotonic: float | None):
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise AuditBlocked("audit_wall_clock_budget_exceeded")
 
 
 def _day(value: str) -> date:
@@ -139,10 +145,12 @@ def _schema(schema) -> bool:
 def survey(*, root: str | Path, start: str, end: str,
            symbols: list[str] | tuple[str, ...],
            periods: list[str] | tuple[str, ...],
-           explicit_readonly: bool = False) -> dict:
+           explicit_readonly: bool = False,
+           deadline_monotonic: float | None = None) -> dict:
     """Bounded one-shot audit; rejects over-budget reads BEFORE row decompression."""
     if explicit_readonly is not True:
         raise AuditBlocked("explicit_readonly_optin_required")
+    _check_deadline(deadline_monotonic)
     lo, hi, pairs = _validate_scope(start, end, symbols, periods)
     selected = {canonical for canonical, _ in pairs}
     try:
@@ -167,6 +175,7 @@ def survey(*, root: str | Path, start: str, end: str,
     # Phase 1: inspect footers only; reject expensive scope before data access.
     for period, partitions in files.items():
         for partition, path in partitions:
+            _check_deadline(deadline_monotonic)
             if path is None:
                 missing.append({"period": period, "partition": partition,
                                 "reason": "PHYSICAL_PARTITION_NOT_FOUND"})
@@ -186,6 +195,7 @@ def survey(*, root: str | Path, start: str, end: str,
                     index = reader.schema_arrow.get_field_index("ts")
                     ids = []
                     for i in range(meta.num_row_groups):
+                        _check_deadline(deadline_monotonic)
                         group = meta.row_group(i)
                         col = group.column(index)
                         stats = col.statistics
@@ -220,15 +230,18 @@ def survey(*, root: str | Path, start: str, end: str,
         lambda: defaultdict(int))
     inspected_rows = 0
     for period, _partition, path, prior, rowgroups in queue:
+        _check_deadline(deadline_monotonic)
         if _stat(path) != prior:
             raise AuditBlocked("market_file_changed_before_read")
         try:
             reader = pq.ParquetFile(str(path))
             try:
                 for idx in rowgroups:
+                    _check_deadline(deadline_monotonic)
                     for batch in reader.iter_batches(
                             row_groups=[idx], batch_size=8192,
                             columns=list(REQUIRED), use_threads=False):
+                        _check_deadline(deadline_monotonic)
                         values = batch.to_pydict()
                         inspected_rows += batch.num_rows
                         if inspected_rows > MAX_DECOMPRESSED_ROWS:
@@ -271,6 +284,7 @@ def survey(*, root: str | Path, start: str, end: str,
         if _stat(path) != prior:
             raise AuditBlocked("market_file_changed_during_read")
 
+    _check_deadline(deadline_monotonic)
     days = [(lo + timedelta(days=d)).isoformat()
             for d in range((hi - lo).days + 1)]
     observations = []

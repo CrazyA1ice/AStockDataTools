@@ -130,10 +130,14 @@ def _read_log_tail(path_text: str, *, limit: int = 40 * 1024,
 
 class MarketCenterV2(tk.Tk):
     def __init__(self, *, state_module: Path = HERE,
-                 market_root: Path | None = None):
+                 market_root: Path | None = None,
+                 evidence_file: Path | None = None,
+                 evidence_sha256: str | None = None):
         super().__init__()
         self.state_module = Path(state_module)
         self.market_root = Path(market_root) if market_root is not None else None
+        self.evidence_file = Path(evidence_file) if evidence_file is not None else None
+        self.evidence_sha256 = evidence_sha256
         self.audit_queue = queue.Queue()
         self.audit_running = False
         self.state_work = self.state_module / "work"
@@ -333,27 +337,119 @@ class MarketCenterV2(tk.Tk):
                   style="Muted.TLabel").pack(side="left", padx=8)
 
     def build_audit_results(self):
-        ttk.Label(self.audit_page, text="历史行情核验 · 物理证据，不是官方完整性认证",
-                  font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        ttk.Label(self.audit_page, text="历史行情核验 · 结果总览",
+                  font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 6))
         ttk.Label(self.audit_page,
-                  text="未查到记录不等于确认缺失：停牌、非交易日、上市前均需结合交易日历和股票池核对。",
-                  style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
-        outer = ttk.Frame(self.audit_page)
-        outer.pack(fill="both", expand=True)
-        outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(0, weight=1)
+                  text="已出现记录 ≠ 官方完整；未出现记录 ≠ 确认缺失。条件证据只有文件完整性校验，不能当作独立来源认证。",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 9))
+        top = ttk.Frame(self.audit_page)
+        top.pack(fill="x", pady=(0, 10))
+        self.audit_cards = {}
+        for label in ("已观察记录", "异常待复核", "未观察/待确认", "缺失候选"):
+            tile = ttk.LabelFrame(top, text=label, style="Card.TLabelframe", padding=10)
+            tile.pack(side="left", fill="x", expand=True, padx=(0, 9))
+            value = tk.StringVar(value="—")
+            display = ttk.Label(tile, textvariable=value, style="CardValue.TLabel")
+            display.pack(anchor="w")
+            self.audit_cards[label] = value
+        self.audit_evidence_note = tk.StringVar(value="尚无核验记录")
+        ttk.Label(self.audit_page, textvariable=self.audit_evidence_note,
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 7))
+        frame = ttk.LabelFrame(self.audit_page, text="逐股票 · 周期 · 日期观察明细", padding=8)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        columns = ("period", "symbol", "date", "count", "physical", "interpretation")
+        self.audit_table = ttk.Treeview(frame, columns=columns, show="headings",
+                                        selectmode="browse", height=12)
+        headings = (
+            ("period", "周期", 90),
+            ("symbol", "股票", 110),
+            ("date", "时间戳标签日", 130),
+            ("count", "行数", 70),
+            ("physical", "物理观察", 180),
+            ("interpretation", "证据判定（非认证）", 280),
+        )
+        self.audit_sort_reverse = {}
+        for key, title, width in headings:
+            self.audit_table.heading(
+                key, text=title,
+                command=lambda col=key: self._sort_audit_column(col))
+            self.audit_table.column(key, width=width, stretch=(key == "interpretation"))
+        vertical = ttk.Scrollbar(frame, orient="vertical", command=self.audit_table.yview)
+        horizontal = ttk.Scrollbar(frame, orient="horizontal", command=self.audit_table.xview)
+        self.audit_table.configure(yscrollcommand=vertical.set,
+                                   xscrollcommand=horizontal.set)
+        self.audit_table.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.audit_table.tag_configure("alert", foreground=COLORS["red"])
+        self.audit_table.tag_configure("candidate", foreground=COLORS["amber"])
+        self.audit_table.tag_configure("neutral", foreground=COLORS["navy"])
+        self.audit_table.bind("<<TreeviewSelect>>", self._select_audit_row)
+        self.audit_table_rows = {}
+        control = ttk.Frame(self.audit_page)
+        control.pack(fill="x", pady=(9, 0))
+        self.audit_details_button = ttk.Button(
+            control, text="展开原始核验证据", command=self._toggle_audit_details)
+        self.audit_details_button.pack(side="left")
+        ttk.Label(control,
+                  text="这不是数据修复按钮；没有官方交易日历和有效股票池时不可自动补缺失",
+                  style="Muted.TLabel").pack(side="left", padx=12)
+        self.audit_detail_frame = ttk.LabelFrame(
+            self.audit_page, text="原始只读证据 / 当前选中条目", padding=8)
+        self.audit_detail_frame.columnconfigure(0, weight=1)
+        self.audit_detail_frame.rowconfigure(0, weight=1)
         self.audit_result_text = tk.Text(
-            outer, wrap="none", font=("Consolas", 10), borderwidth=0,
-            background=COLORS["log_bg"], foreground=COLORS["log_fg"],
-            padx=12, pady=12)
-        scroll = ttk.Scrollbar(outer, orient="vertical",
-                               command=self.audit_result_text.yview)
-        self.audit_result_text.configure(yscrollcommand=scroll.set)
+            self.audit_detail_frame, wrap="none", height=8, font=("Consolas", 9),
+            borderwidth=0, background=COLORS["log_bg"],
+            foreground=COLORS["log_fg"], padx=10, pady=8)
+        details_scroll = ttk.Scrollbar(
+            self.audit_detail_frame, orient="vertical",
+            command=self.audit_result_text.yview)
+        self.audit_result_text.configure(yscrollcommand=details_scroll.set)
         self.audit_result_text.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.audit_result_text.insert("1.0", "选择「数据核验」、指定股票、仅勾选八周期行情，并选择周期后开始。\n"
-                                     "所有更新/修复功能仍然关闭；核验过程不下载或写入任何行情。")
-        self.audit_result_text.configure(state="disabled")
+        details_scroll.grid(row=0, column=1, sticky="ns")
+        self.audit_details_visible = False
+        self.audit_raw_report = (
+            "请选择「数据核验」、指定股票、只勾选八周期行情，再选择核验周期。"
+            "\n更新与修复仍不开放，核验过程不下载或写入行情。")
+        self._set_audit_text(self.audit_raw_report)
+
+    def _toggle_audit_details(self):
+        if self.audit_details_visible:
+            self.audit_detail_frame.pack_forget()
+            self.audit_details_button.configure(text="展开原始核验证据")
+            self.audit_details_visible = False
+        else:
+            self.audit_detail_frame.pack(fill="x", pady=(8, 0))
+            self.audit_details_button.configure(text="收起原始核验证据")
+            self.audit_details_visible = True
+
+    def _sort_audit_column(self, column):
+        if column not in self.audit_table["columns"]:
+            return
+        entries = [(self.audit_table.set(item, column), item)
+                   for item in self.audit_table.get_children("")]
+        def key(pair):
+            if column == "count":
+                try:
+                    return int(pair[0])
+                except ValueError:
+                    return -1
+            return pair[0]
+        reverse = self.audit_sort_reverse.get(column, False)
+        entries.sort(key=key, reverse=reverse)
+        for index, (_value, item) in enumerate(entries):
+            self.audit_table.move(item, "", index)
+        self.audit_sort_reverse[column] = not reverse
+
+    def _select_audit_row(self, _event=None):
+        selected = self.audit_table.selection()
+        if selected and selected[0] in self.audit_table_rows:
+            self._set_audit_text(json.dumps(
+                self.audit_table_rows[selected[0]],
+                ensure_ascii=False, indent=2))
 
     def run_readonly_audit(self):
         """Use only the explicitly chosen local root and narrow UI scope."""
@@ -399,6 +495,13 @@ class MarketCenterV2(tk.Tk):
             return
         self.audit_running = True
         self.audit_button.configure(state="disabled")
+        old_rows = self.audit_table.get_children()
+        if old_rows:
+            self.audit_table.delete(*old_rows)
+        self.audit_table_rows.clear()
+        for field in self.audit_cards.values():
+            field.set("—")
+        self.audit_evidence_note.set("核验进行中，等待有界物理数据扫描与资格证据判断")
         self.book.select(self.audit_page)
         self._set_audit_text("只读历史行情核验正在执行。若任务同时启动，执行锁将阻止本次读取。")
         self.status_line.set("V2-B 有界只读核验运行中，不访问 QMT，不写入行情")
@@ -407,7 +510,9 @@ class MarketCenterV2(tk.Tk):
                 result = audited_query(
                     root=self.market_root, start=selection["start_date"],
                     end=selection["end_date"], symbols=codes,
-                    periods=[period], explicit_readonly=True)
+                    periods=[period], explicit_readonly=True,
+                    evidence_file=self.evidence_file,
+                    evidence_sha256=self.evidence_sha256)
                 self.audit_queue.put(("result", result))
             except (AuditBlocked, OSError, ValueError) as exc:
                 self.audit_queue.put(("error", str(exc)))
@@ -433,46 +538,82 @@ class MarketCenterV2(tk.Tk):
         self.audit_running = False
         self.audit_button.configure(state="normal" if self.market_root else "disabled")
         if kind == "error":
-            self._set_audit_text(
+            self.audit_evidence_note.set("核验已阻断：" + str(data)[:240])
+            self.audit_raw_report = (
                 "核验阻断（没有修改任何行情文件）\n" + str(data) +
-                "\n请先排除任务占用、文件源变化或行组读取预算超限。")
+                "\n请先排除任务占用、来源证据不一致或行组读取预算超限。")
+            self._set_audit_text(self.audit_raw_report)
+            if not self.audit_details_visible:
+                self._toggle_audit_details()
             self.status_line.set("只读核验阻断；原始行情保持不变")
             return
-        rows = data["observations"]
-        statuses = {
-            "ROWS_OBSERVED_UNCERTIFIED": 0,
-            "NO_ROWS_OBSERVED": 0,
-            "ANOMALY_OBSERVED": 0,
+        result = data.get("evidence_interpretation", {})
+        rows = result.get("observations", [])
+        old_rows = self.audit_table.get_children()
+        if old_rows:
+            self.audit_table.delete(*old_rows)
+        self.audit_table_rows.clear()
+        count_present = sum(row["interpretation"] == "RECORDS_PRESENT_NOT_CERTIFIED"
+                            for row in rows)
+        count_alert = sum(row["interpretation"] in (
+            "PHYSICAL_ANOMALY_NEEDS_REVIEW",
+            "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED")
+                          for row in rows)
+        count_candidate = sum(
+            row["interpretation"] == "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED"
+            for row in rows)
+        count_unobserved = sum(row["rows"] == 0 for row in rows)
+        self.audit_cards["已观察记录"].set(str(count_present))
+        self.audit_cards["异常待复核"].set(str(count_alert))
+        self.audit_cards["未观察/待确认"].set(str(count_unobserved))
+        self.audit_cards["缺失候选"].set(str(count_candidate))
+        self.audit_evidence_note.set(
+            "状态：只读物理观察完成 | 已解压候选行：" +
+            str(data["row_group_budget"]["rows_inspected"]) +
+            " | 资格证据：" +
+            ("仅 SHA 完整性检查，来源未认证"
+             if result.get("source_integrity_checked") else "未提供交易日历/股票状态证据")
+            + " | 确认缺失：0（无自动补更）")
+        status_names = {
+            "RECORDS_PRESENT_NOT_CERTIFIED": "存在记录，未认证",
+            "PHYSICAL_ANOMALY_NEEDS_REVIEW": "物理异常待复核",
+            "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED": "物理记录与来源声明矛盾",
+            "NO_ROWS_CALENDAR_AND_ELIGIBILITY_UNKNOWN": "无记录，证据不足",
+            "NO_ROWS_NONTRADING_DECLARED_UNCERTIFIED": "声明非交易日，未认证",
+            "NO_ROWS_PRELISTING_DECLARED_UNCERTIFIED": "声明上市前，未认证",
+            "NO_ROWS_POSTLISTING_DECLARED_UNCERTIFIED": "声明退市后，未认证",
+            "NO_ROWS_SUSPENDED_DECLARED_UNCERTIFIED": "声明停牌，未认证",
+            "NO_ROWS_ELIGIBILITY_INDETERMINATE": "缺失判断仍不确定",
+            "PHYSICAL_PARTITION_MISSING_STOCK_GAP_UNDETERMINED": "物理分区缺失，逐股待核实",
+            "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED": "疑似缺失，源未认证",
+            "LONG_CYCLE_LABEL_NEEDS_CLOSURE_PROOF": "周/月需要闭合证明",
         }
-        for item in rows:
-            statuses[item["status"]] = statuses.get(item["status"], 0) + 1
-        lines = [
-            "历史行情物理观察完成（不能据此宣布交易日完整或跨源认证）",
-            "范围：" + data["scope"]["start"] + " 至 " + data["scope"]["end"],
-            "周期：" + "、".join(data["scope"]["periods"]) +
-            "   股票：" + str(len(data["scope"]["stocks"])) + " 只",
-            "已有记录的标签日：" + str(statuses["ROWS_OBSERVED_UNCERTIFIED"]),
-            "未观察到记录的标签日：" + str(statuses["NO_ROWS_OBSERVED"]) +
-            "（不能据此认定缺失）",
-            "发现异常的标签日：" + str(statuses["ANOMALY_OBSERVED"]),
-            "实际解压候选行数：" + str(data["row_group_budget"]["rows_inspected"]),
-            "缺少物理分区：" + str(len(data["missing_partitions"])),
-            "自动更新/修复：未运行，市场文件写入：否，QMT调用：0",
-            "提示：停牌、上市日期、非交易日及周/月标签均未按交易所日历认证。",
-            "─── 明细（最多前 200 项）───",
-        ]
-        for row in rows[:200]:
-            lines.append(
-                row["period"] + " " + row["symbol"] + " " +
-                row["timestamp_label_day"] + "  " + str(row["rows"]) +
-                " 行  " + row["status"] +
-                ("  " + str(row["anomalies"]) if row["anomalies"] else ""))
-        if len(rows) > 200:
-            lines.append("其余 " + str(len(rows) - 200) +
-                         " 项未在界面展开；缩小日期或股票范围以逐项查看。")
-        self._set_audit_text("\n".join(lines))
-        self.status_line.set("有界只读物理核验完成；已有记录不等于全部认证")
-    
+        for row in rows[:600]:
+            interpretation = row["interpretation"]
+            tag = ("alert" if interpretation in (
+                        "PHYSICAL_ANOMALY_NEEDS_REVIEW",
+                        "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED")
+                   else "candidate" if (
+                       interpretation == "MISSING_CANDIDATE_SOURCE_AUTHENTICITY_UNVERIFIED"
+                       or interpretation.startswith("NO_ROWS")) else "neutral")
+            ident = self.audit_table.insert("", "end",
+                values=(row["period"], row["symbol"], row["label_day"],
+                        row["rows"], row["physical_status"],
+                        status_names.get(interpretation, interpretation)),
+                tags=(tag,))
+            self.audit_table_rows[ident] = row
+        self.audit_raw_report = json.dumps(
+            {"scope": data["scope"], "source_partitions": data["source_partitions"],
+             "missing_partitions": data["missing_partitions"],
+             "row_group_budget": data["row_group_budget"],
+             "evidence_interpretation": result,
+             "market_file_writes": False, "qmt_calls": 0},
+            ensure_ascii=False, indent=2)
+        self._set_audit_text(self.audit_raw_report)
+        self.status_line.set(
+            "只读历史核验完成 · " + str(len(rows)) +
+            " 条标签日观察；确认缺失为0，任何历史写入仍禁止")
+
     def build_logs(self):
         head = ttk.Frame(self.logs)
         head.pack(fill="x", pady=(0, 12))
@@ -666,12 +807,20 @@ def main(argv=None):
                         help="显式指定只读状态来源的 ParquetLiveSync 目录")
     parser.add_argument("--market-root", type=Path,
                         help="显式指定本机 AllCycleAStockData 物理目录，仅用于只读核验")
+    parser.add_argument("--evidence-file", type=Path,
+                        help="可选显式完整资格证据快照，须带 --evidence-sha256")
+    parser.add_argument("--evidence-sha256",
+                        help="可选证据快照字节SHA256，仅验证完整性非来源真实性")
     args = parser.parse_args(argv)
     path = args.state_module
     if not path.is_absolute() or path.name.lower() != "parquetlivesync" or not path.is_dir():
         parser.error("state-module 必须是已存在的绝对 ParquetLiveSync 目录")
     if any(parent.is_symlink() for parent in (path, *path.parents)):
         parser.error("拒绝符号链接的状态目录")
+    if (args.evidence_file is None) != (args.evidence_sha256 is None):
+        parser.error("--evidence-file 和 --evidence-sha256 必须同时提供")
+    if args.evidence_file is not None and args.market_root is None:
+        parser.error("使用证据文件时必须显式提供 --market-root")
     if args.market_root is not None:
         market = args.market_root
         if (not market.is_absolute()
@@ -679,7 +828,11 @@ def main(argv=None):
                 or not market.is_dir()
                 or any(parent.is_symlink() for parent in (market, *market.parents))):
             parser.error("market-root 必须是安全的绝对 AllCycleAStockData 目录")
-        MarketCenterV2(state_module=path, market_root=market).mainloop()
+        options = {"state_module": path, "market_root": market}
+        if args.evidence_file is not None:
+            options["evidence_file"] = args.evidence_file
+            options["evidence_sha256"] = args.evidence_sha256
+        MarketCenterV2(**options).mainloop()
     else:
         MarketCenterV2(state_module=path).mainloop()
 

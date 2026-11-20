@@ -310,6 +310,50 @@ class V2AContractTests(unittest.TestCase):
                 mock_app.assert_called_once_with(
                     state_module=module, market_root=market)
 
+    def test_v2b2_result_view_is_cards_table_and_collapsed_evidence(self):
+        view = inspect.getsource(UI.MarketCenterV2.build_audit_results)
+        self.assertIn("self.audit_cards", view)
+        self.assertIn("ttk.Treeview", view)
+        self.assertIn('show="headings"', view)
+        self.assertIn("self.audit_details_visible = False", view)
+        self.assertIn("self.audit_table.tag_configure", view)
+        self.assertIn("self._toggle_audit_details", view)
+        render = inspect.getsource(UI.MarketCenterV2._poll_audit)
+        self.assertIn('data.get("evidence_interpretation"', render)
+        self.assertIn("self.audit_table.insert", render)
+        self.assertIn("确认缺失：0", render)
+
+    def test_v2b2_explicit_evidence_flags_are_forwarded_only_on_opt_in(self):
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            module.mkdir()
+            market = Path(tmp) / "AllCycleAStockData"
+            market.mkdir()
+            manifest = Path(tmp) / "synthetic_evidence.json"
+            manifest.write_text("{}", encoding="utf-8")
+            sha = "0" * 64
+            with patch.object(UI, "MarketCenterV2") as fake_app:
+                UI.main(["--state-module", str(module),
+                         "--market-root", str(market),
+                         "--evidence-file", str(manifest),
+                         "--evidence-sha256", sha])
+                fake_app.assert_called_once_with(
+                    state_module=module, market_root=market,
+                    evidence_file=manifest, evidence_sha256=sha)
+
+    def test_v2b2_mismatched_evidence_flags_are_rejected_before_opening_ui(self):
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            module.mkdir()
+            market = Path(tmp) / "AllCycleAStockData"
+            market.mkdir()
+            with patch.object(UI, "MarketCenterV2") as fake_app:
+                with self.assertRaises(SystemExit):
+                    UI.main(["--state-module", str(module),
+                             "--market-root", str(market),
+                             "--evidence-sha256", "0" * 64])
+                fake_app.assert_not_called()
+
     def test_no_prod_update_process_is_reachable_from_preview(self):
         # UI imports but does not start its desktop in this test.
         self.assertTrue(hasattr(UI, "MarketCenterV2"))

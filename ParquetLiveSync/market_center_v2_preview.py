@@ -474,7 +474,9 @@ class MarketCenterV2(tk.Tk):
             return
         self.audit_running = True
         self.audit_button.configure(state="disabled")
-        self.audit_table.delete(*self.audit_table.get_children())
+        old_rows = self.audit_table.get_children()
+        if old_rows:
+            self.audit_table.delete(*old_rows)
         self.audit_table_rows.clear()
         for field in self.audit_cards.values():
             field.set("—")
@@ -526,7 +528,9 @@ class MarketCenterV2(tk.Tk):
             return
         result = data.get("evidence_interpretation", {})
         rows = result.get("observations", [])
-        self.audit_table.delete(*self.audit_table.get_children())
+        old_rows = self.audit_table.get_children()
+        if old_rows:
+            self.audit_table.delete(*old_rows)
         self.audit_table_rows.clear()
         count_present = sum(row["interpretation"] == "RECORDS_PRESENT_NOT_CERTIFIED"
                             for row in rows)

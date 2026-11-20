@@ -262,6 +262,51 @@ class V2AContractTests(unittest.TestCase):
         self.assertIn("未证明", inspect.getsource(
             UI.MarketCenterV2.show_preview))
 
+    def test_three_history_modes_are_choices_not_write_permission(self):
+        self.assertEqual(len(M.HISTORY_POLICIES), 3)
+        for policy in M.HISTORY_POLICIES:
+            with self.subTest(policy=policy):
+                result = self.base(history_policy=policy)
+                self.assertEqual(result["history_policy"], policy)
+                self.assertFalse(result["allowed_to_execute"])
+                self.assertTrue(result["history_policy_applies_only_to_updates"])
+        with self.assertRaisesRegex(M.InvalidPlan, "历史数据处理方式"):
+            self.base(history_policy="覆盖所有已有数据")
+
+    def test_history_mode_persists_when_switching_to_readonly_verification(self):
+        policy = "重新获取并核对差异"
+        a = self.base(history_policy=policy)
+        b = self.base(history_policy=policy, mode="数据核验")
+        self.assertEqual(a["history_policy"], b["history_policy"])
+        self.assertFalse(b["history_policy_applies_only_to_updates"])
+        self.assertFalse(b["allowed_to_execute"])
+
+    def test_gui_has_bounded_readonly_audit_only_with_explicit_root(self):
+        source = inspect.getsource(UI.MarketCenterV2)
+        self.assertIn('command=self.run_readonly_audit', source)
+        self.assertIn("if self.market_root is None", source)
+        self.assertIn('mode="数据核验"', source)
+        self.assertIn('"指定股票"', source)
+        self.assertIn('chosen != ["八周期行情"]', source)
+        self.assertIn("len(codes) > 20", source)
+        self.assertIn('periods=[period], explicit_readonly=True', source)
+        self.assertIn('self.audit_queue.put(("result", result))', source)
+        self.assertNotIn("subprocess.Popen", source)
+        self.assertNotIn("manual_update(", source)
+        self.assertNotIn("download_history", source)
+
+    def test_interface_root_is_required_for_real_bounded_audit(self):
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            module.mkdir()
+            market = Path(tmp) / "AllCycleAStockData"
+            market.mkdir()
+            with patch.object(UI, "MarketCenterV2") as mock_app:
+                UI.main(["--state-module", str(module),
+                         "--market-root", str(market)])
+                mock_app.assert_called_once_with(
+                    state_module=module, market_root=market)
+
     def test_no_prod_update_process_is_reachable_from_preview(self):
         # UI imports but does not start its desktop in this test.
         self.assertTrue(hasattr(UI, "MarketCenterV2"))

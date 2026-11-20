@@ -36,7 +36,7 @@ if(-not $Apply){
 }
 # Shared named mutex: Task Scheduler IgnoreNew alone does not protect manual GUI runs.
 # Fail closed if the scheduled task or another manual invocation already owns it.
-$runMutex=[System.Threading.Mutex]::new($false,'Local\\AStockDataTools2005AllStages')
+$runMutex=[System.Threading.Mutex]::new($false,'Local\AStockDataTools2005AllStages')
 $runMutexHeld=$false
 try {
     try {$runMutexHeld=$runMutex.WaitOne(0)}

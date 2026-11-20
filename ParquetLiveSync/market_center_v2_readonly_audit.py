@@ -18,6 +18,10 @@ import re
 import time
 from typing import Any
 
+from market_center_v2_minute_grid import (
+    PERIOD_MINUTES, GridScopeError, inspect_minute_labels,
+)
+
 PERIODS = ("1min", "5min", "15min", "30min", "60min", "day", "week", "month")
 MINUTE_COUNTS = {"1min": 240, "5min": 48, "15min": 16, "30min": 8, "60min": 4}
 CN = timezone(timedelta(hours=8))
@@ -288,6 +292,7 @@ def survey(*, root: str | Path, start: str, end: str,
     days = [(lo + timedelta(days=d)).isoformat()
             for d in range((hi - lo).days + 1)]
     observations = []
+    minute_grid_observations = []
     for period in periods:
         for canonical, presentation in pairs:
             for day in days:
@@ -299,6 +304,17 @@ def survey(*, root: str | Path, start: str, end: str,
                 if count and period in MINUTE_COUNTS and count != MINUTE_COUNTS[period]:
                     errors["MINUTE_BAR_COUNT_DIFFERS_FROM_STANDARD_GRID"] = abs(
                         count - MINUTE_COUNTS[period])
+                if period in PERIOD_MINUTES:
+                    try:
+                        minute = inspect_minute_labels(
+                            period=period, day=day,
+                            timestamps_ms=seen[key])
+                    except GridScopeError as exc:
+                        raise AuditBlocked(
+                            "minute_label_grid_observation_blocked_" + str(exc)) from exc
+                    minute_grid_observations.append({
+                        "symbol": presentation, **minute,
+                    })
                 observations.append({
                     "period": period,
                     "symbol": presentation,
@@ -325,6 +341,8 @@ def survey(*, root: str | Path, start: str, end: str,
                              "groups_preflight": candidate_groups,
                              "rows_inspected": inspected_rows},
         "observations": observations,
+        "minute_grid_observations": minute_grid_observations,
+        "minute_grid_is_comparison_only": True,
         "exchange_trading_calendar_verified": False,
         "no_rows_does_not_certify_missing_trading_day": True,
         "week_month_timestamp_not_exact_trading_day": True,

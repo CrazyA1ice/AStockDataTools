@@ -29,7 +29,76 @@ STAGES = (
     ("FINANCIAL_DAILY", "财务"),
 )
 LABEL_FONT = ("Microsoft YaHei UI", 10)
-TITLE_FONT = ("Microsoft YaHei UI", 17, "bold")
+TITLE_FONT = ("Microsoft YaHei UI", 18, "bold")
+COLORS = {
+    "bg": "#F3F7FD",
+    "surface": "#FFFFFF",
+    "navy": "#172B4D",
+    "text": "#263E5E",
+    "muted": "#687C96",
+    "blue": "#1769D1",
+    "blue_hover": "#0D55B6",
+    "blue_tint": "#E8F2FF",
+    "border": "#D8E3F1",
+    "green": "#17824C",
+    "red": "#C53B42",
+    "amber": "#A66A0A",
+    "log_bg": "#101E31",
+    "log_fg": "#E9F2FF",
+}
+
+
+def apply_theme(root: tk.Tk):
+    """No third-party theme; uses Tkinter's built-in clam for Windows ttk colors."""
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    root.configure(background=COLORS["bg"])
+    style.configure(".", font=LABEL_FONT, foreground=COLORS["text"],
+                    background=COLORS["bg"])
+    style.configure("TFrame", background=COLORS["bg"])
+    style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["text"])
+    style.configure("TLabelframe", background=COLORS["surface"],
+                    bordercolor=COLORS["border"], relief="solid")
+    style.configure("TLabelframe.Label", background=COLORS["surface"],
+                    foreground=COLORS["navy"], font=("Microsoft YaHei UI", 10, "bold"))
+    style.configure("Card.TLabelframe", background=COLORS["surface"],
+                    bordercolor=COLORS["border"])
+    style.configure("Card.TLabelframe.Label", background=COLORS["surface"],
+                    foreground=COLORS["muted"], font=("Microsoft YaHei UI", 9))
+    style.configure("CardValue.TLabel", background=COLORS["surface"],
+                    foreground=COLORS["navy"], font=("Microsoft YaHei UI", 13, "bold"))
+    for name, color in (("Success", COLORS["green"]), ("Failure", COLORS["red"]),
+                        ("Warning", COLORS["amber"]), ("Neutral", COLORS["navy"])):
+        style.configure(name + ".CardValue.TLabel",
+                        background=COLORS["surface"], foreground=color,
+                        font=("Microsoft YaHei UI", 13, "bold"))
+        style.configure(name + ".Section.TLabel",
+                        background=COLORS["surface"], foreground=color)
+    style.configure("Section.TLabel", background=COLORS["surface"],
+                    foreground=COLORS["text"])
+    style.configure("Muted.TLabel", foreground=COLORS["muted"])
+    style.configure("AppTitle.TLabel", foreground=COLORS["navy"],
+                    font=TITLE_FONT)
+    style.configure("Primary.TButton", background=COLORS["blue"],
+                    foreground=COLORS["surface"], bordercolor=COLORS["blue"],
+                    padding=(14, 8), font=("Microsoft YaHei UI", 10, "bold"))
+    style.map("Primary.TButton",
+              background=[("active", COLORS["blue_hover"])],
+              foreground=[("active", COLORS["surface"])])
+    style.configure("TButton", padding=(11, 6), background=COLORS["blue_tint"],
+                    foreground=COLORS["blue"], bordercolor=COLORS["border"])
+    style.map("TButton", background=[("active", "#D3E7FF")])
+    style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
+    style.configure("TNotebook.Tab", background="#E3EBF7",
+                    foreground=COLORS["muted"], padding=(19, 8))
+    style.map("TNotebook.Tab",
+              background=[("selected", COLORS["surface"])],
+              foreground=[("selected", COLORS["blue"])])
+    style.configure("TRadiobutton", background=COLORS["surface"])
+    style.configure("TCheckbutton", background=COLORS["surface"])
+    style.configure("TEntry", fieldbackground=COLORS["surface"],
+                    bordercolor=COLORS["border"], padding=5)
+    return style
 
 
 def _read_log_tail(path_text: str, *, limit: int = 40 * 1024,
@@ -60,9 +129,10 @@ class MarketCenterV2(tk.Tk):
         self.state_module = Path(state_module)
         self.state_work = self.state_module / "work"
         self.title("A股数据更新与核验中心 V2 · 设计预览")
-        self.geometry("1070x760")
-        self.minsize(850, 600)
+        self.geometry("1080x710")
+        self.minsize(900, 610)
         self.option_add("*Font", LABEL_FONT)
+        self.app_style = apply_theme(self)
         self.mode = tk.StringVar(value="更新数据")
         self.scope = tk.StringVar(value="全部股票")
         cutoff = safe_cutoff()
@@ -80,9 +150,9 @@ class MarketCenterV2(tk.Tk):
     def make_widgets(self):
         head = ttk.Frame(self, padding=(18, 14))
         head.pack(fill="x")
-        ttk.Label(head, text="A股数据更新与核验中心", font=TITLE_FONT).pack(side="left")
-        ttk.Label(head, text="V2-A · 预览版 | 20:05 自动任务保持不变",
-                  foreground="#4b647f").pack(side="right")
+        ttk.Label(head, text="A股数据更新与核验中心", style="AppTitle.TLabel").pack(side="left")
+        ttk.Label(head, text="● 只读预览  |  每晚 20:05 自动任务不变",
+                  style="Muted.TLabel").pack(side="right")
         self.book = ttk.Notebook(self)
         self.book.pack(fill="both", expand=True, padx=16, pady=(0, 10))
         self.home = ttk.Frame(self.book, padding=14)
@@ -94,8 +164,8 @@ class MarketCenterV2(tk.Tk):
         self.build_home()
         self.build_action()
         self.build_logs()
-        ttk.Label(self, textvariable=self.status_line, foreground="#546579",
-                  padding=(18, 4)).pack(fill="x")
+        ttk.Label(self, textvariable=self.status_line, style="Muted.TLabel",
+                  padding=(18, 5)).pack(fill="x")
 
     def build_home(self):
         top = ttk.Frame(self.home)
@@ -106,18 +176,22 @@ class MarketCenterV2(tk.Tk):
         tiles.pack(fill="x")
         self.cards = {}
         for label in ("已提交最新交易日", "最近任务状态", "当前安全截止", "QMT 最近预检"):
-            card = ttk.LabelFrame(tiles, text=label, padding=12)
+            card = ttk.LabelFrame(tiles, text=label, padding=12,
+                                  style="Card.TLabelframe")
             card.pack(side="left", fill="x", expand=True, padx=(0, 8))
             variable = tk.StringVar(value="—")
-            ttk.Label(card, textvariable=variable, font=("Microsoft YaHei UI", 13, "bold"),
-                      wraplength=190).pack(anchor="w")
+            display = ttk.Label(card, textvariable=variable, style="CardValue.TLabel",
+                                wraplength=195)
+            display.pack(anchor="w")
             self.cards[label] = variable
+            self.card_widgets = getattr(self, "card_widgets", {})
+            self.card_widgets[label] = display
         changed = ttk.LabelFrame(self.home, text="本次相比上次，有什么变化？", padding=14)
         changed.pack(fill="x", pady=(18, 12))
         ttk.Label(changed, textvariable=self.overview_info, wraplength=900,
-                  foreground="#334b69").pack(anchor="w")
-        ttk.Label(changed, text="如未有可信的前后快照，不能编造新增数量。",
-                  foreground="#697b90").pack(anchor="w", pady=(6, 0))
+                  style="Section.TLabel").pack(anchor="w")
+        ttk.Label(changed, text="暂无可信前后快照时，仅显示证据不足，不推测新增量。",
+                  style="Section.TLabel").pack(anchor="w", pady=(6, 0))
         phases = ttk.LabelFrame(self.home, text="上一次运行的四个阶段", padding=10)
         phases.pack(fill="x")
         self.stage_labels = {}
@@ -126,22 +200,26 @@ class MarketCenterV2(tk.Tk):
             self.stage_labels[key] = var
             line = ttk.Frame(phases)
             line.pack(fill="x", pady=4)
-            ttk.Label(line, text=title, width=15).pack(side="left")
-            ttk.Label(line, textvariable=var).pack(side="left", fill="x")
+            ttk.Label(line, text=title, width=15, style="Section.TLabel").pack(side="left")
+            stage_view = ttk.Label(line, textvariable=var, style="Neutral.Section.TLabel")
+            stage_view.pack(side="left", fill="x")
+            self.stage_widgets = getattr(self, "stage_widgets", {})
+            self.stage_widgets[key] = stage_view
         actions = ttk.Frame(self.home)
         actions.pack(anchor="w", pady=(18, 0))
-        ttk.Button(actions, text="配置更新范围", command=lambda: self.go_action("更新数据")).pack(side="left", padx=(0, 10))
+        ttk.Button(actions, text="配置更新范围", style="Primary.TButton",
+                   command=lambda: self.go_action("更新数据")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="配置数据核验", command=lambda: self.go_action("数据核验")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="查看运行日志", command=lambda: self.book.select(self.logs)).pack(side="left")
-        ttk.Label(self.home, text="正在运行的老版本更新器不受此预览界面影响；未完成日期和股票定向接口验收之前不能执行。",
-                  foreground="#6a798c", wraplength=900).pack(anchor="w", pady=(18, 0))
+        ttk.Label(self.home, text="已有日期：跳过或拒绝冲突覆盖  |  自动任务占用时：手动更新必须等待执行锁  |  当前为只读预览",
+                  style="Muted.TLabel", wraplength=930).pack(anchor="w", pady=(18, 0))
 
     def build_action(self):
         top = ttk.Frame(self.action)
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text="操作配置", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
-        ttk.Label(top, text="仅生成计划 · 暂不执行生产更新或核验",
-                  foreground="#936d27").pack(side="right")
+        ttk.Label(top, text="● 预览模式：真实执行暂未开放",
+                  style="Muted.TLabel").pack(side="right")
         mode_row = ttk.LabelFrame(self.action, text="任务类型（共用下方同一组范围）", padding=8)
         mode_row.pack(fill="x", pady=(0, 10))
         for item in ("更新数据", "数据核验"):
@@ -164,10 +242,20 @@ class MarketCenterV2(tk.Tk):
         ttk.Label(bar, textvariable=self.stock_count, foreground="#41678d").pack(side="right")
         ttk.Label(stocks, text="指定多只：输入 000001.SZ, 600519.SH，或换行粘贴；自动去重，最多 500 只。",
                   foreground="#637a91").pack(anchor="w", pady=(8, 2))
-        self.stock_box = tk.Text(stocks, height=3, font=("Consolas", 10), wrap="word")
-        self.stock_box.pack(fill="x")
+        stock_holder = ttk.Frame(stocks)
+        stock_holder.pack(fill="x")
+        self.stock_box = tk.Text(stock_holder, height=3, font=("Consolas", 10), wrap="word",
+                                 background=COLORS["surface"], foreground=COLORS["navy"],
+                                 selectbackground=COLORS["blue"])
+        stock_scroll = ttk.Scrollbar(stock_holder, orient="vertical",
+                                      command=self.stock_box.yview)
+        self.stock_box.configure(yscrollcommand=stock_scroll.set)
+        self.stock_box.pack(side="left", fill="x", expand=True)
+        stock_scroll.pack(side="right", fill="y")
         self.stock_box.insert("1.0", "000001.SZ, 600519.SH")
         ttk.Button(stocks, text="检查股票列表", command=self.check_stocks).pack(anchor="e", pady=(4, 0))
+        self.scope.trace_add("write", lambda *_: self.sync_stock_scope())
+        self.sync_stock_scope()
         types = ttk.LabelFrame(self.action, text="数据类型（可多选）", padding=10)
         types.pack(fill="x", pady=(0, 10))
         for name in MODULES:
@@ -178,18 +266,20 @@ class MarketCenterV2(tk.Tk):
                   justify="left").pack(anchor="w")
         preview = ttk.LabelFrame(self.action, text="任务预览 / 执行门禁", padding=10)
         preview.pack(fill="both", expand=True)
-        self.preview_text = tk.Text(preview, height=5, font=("Microsoft YaHei UI", 10), wrap="word",
-                                    background="#f6f8fb", foreground="#304761")
-        self.preview_text.pack(fill="both", expand=True)
+        self.preview_text = tk.Text(preview, height=5, font=("Microsoft YaHei UI", 10),
+                                    wrap="word", borderwidth=0, padx=12, pady=10,
+                                    background="#EDF5FF", foreground=COLORS["navy"])
+        self.preview_text.pack(fill="x")
         self.preview_text.insert("1.0", "请检查日期、股票及数据类型后点击「预览任务」。\n"
                                            "目前不提供真实执行入口，防止把定向任务错误地变为全市场写入。")
         self.preview_text.configure(state="disabled")
         row = ttk.Frame(preview)
         row.pack(fill="x", pady=(9, 0))
-        ttk.Button(row, text="预览任务", command=self.show_preview).pack(side="left")
+        ttk.Button(row, text="预览任务", style="Primary.TButton",
+                   command=self.show_preview).pack(side="left")
         ttk.Button(row, text="复制计划", command=self.copy_preview).pack(side="left", padx=10)
-        ttk.Label(row, text="执行功能待后端能力验收后开放",
-                  foreground="#a06f22").pack(side="right")
+        ttk.Label(row, text="已提交数据不可盲目覆盖；运行中禁止重复写入",
+                  style="Section.TLabel").pack(side="right")
 
     def build_logs(self):
         head = ttk.Frame(self.logs)
@@ -198,14 +288,37 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(head, text="刷新日志", command=self.refresh_logs).pack(side="right")
         ttk.Label(self.logs, text="这里仅显示最新任务末尾内容；完整日志始终保存在原目录。",
                   foreground="#667b90").pack(anchor="w", pady=(0, 10))
-        self.log_text = tk.Text(self.logs, font=("Consolas", 10), wrap="none",
-                                background="#152235", foreground="#e3ebf7")
-        self.log_text.pack(fill="both", expand=True)
+        log_area = ttk.Frame(self.logs)
+        log_area.pack(fill="both", expand=True)
+        log_area.columnconfigure(0, weight=1)
+        log_area.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(log_area, font=("Consolas", 10), wrap="none",
+                                borderwidth=0, padx=12, pady=10,
+                                background=COLORS["log_bg"], foreground=COLORS["log_fg"],
+                                selectbackground=COLORS["blue"], insertbackground=COLORS["log_fg"])
+        self.log_vertical_scroll = ttk.Scrollbar(
+            log_area, orient="vertical", command=self.log_text.yview)
+        self.log_horizontal_scroll = ttk.Scrollbar(
+            log_area, orient="horizontal", command=self.log_text.xview)
+        self.log_text.configure(yscrollcommand=self.log_vertical_scroll.set,
+                                xscrollcommand=self.log_horizontal_scroll.set)
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        self.log_vertical_scroll.grid(row=0, column=1, sticky="ns")
+        self.log_horizontal_scroll.grid(row=1, column=0, sticky="ew")
+        self.log_text.configure(state="disabled")
         ttk.Button(self.logs, text="打开原日志文件夹", command=self.open_log_folder).pack(anchor="e", pady=8)
 
     def go_action(self, mode):
         self.mode.set(mode)
         self.book.select(self.action)
+
+    def sync_stock_scope(self):
+        if self.scope.get() == "指定股票":
+            self.stock_box.configure(state="normal", background=COLORS["surface"])
+            self.stock_count.set("可填写多只股票")
+        else:
+            self.stock_box.configure(state="disabled", background="#EAF0F8")
+            self.stock_count.set("全部股票 · 无需输入")
 
     def check_stocks(self):
         try:
@@ -257,12 +370,28 @@ class MarketCenterV2(tk.Tk):
             self.cards["最近任务状态"].set(str(obj["last_run_status"]))
             self.cards["当前安全截止"].set(obj["safe_candidate_cutoff"])
             self.cards["QMT 最近预检"].set(obj["qmt_last_preflight"])
+            run_status = str(obj["last_run_status"]).upper()
+            self.card_widgets["最近任务状态"].configure(
+                style=("Failure.CardValue.TLabel" if run_status in ("FAILED", "FAIL")
+                       else "Success.CardValue.TLabel" if run_status == "SUCCESS"
+                       else "Warning.CardValue.TLabel"))
+            self.card_widgets["QMT 最近预检"].configure(
+                style=("Success.CardValue.TLabel"
+                       if obj["qmt_last_preflight"] == "CONNECTED"
+                       else "Failure.CardValue.TLabel"
+                       if obj["qmt_last_preflight"] == "QMT_SERVICE_UNAVAILABLE"
+                       else "Warning.CardValue.TLabel"))
             self.overview_info.set(obj["comparison"])
             for key, name in STAGES:
                 entry = obj["stage_records"][key]
+                code = entry["exit_code"]
                 self.stage_labels[key].set(
-                    ("退出码 " + str(entry["exit_code"])) if entry["exit_code"] is not None
-                    else "未记录本阶段执行")
+                    ("✓ 已执行（退出码 0）" if code == 0 else "✕ 失败（退出码 " + str(code) + "）")
+                    if code is not None else "— 本轮未记录")
+                self.stage_widgets[key].configure(
+                    style=("Success.Section.TLabel" if code == 0
+                           else "Failure.Section.TLabel" if code is not None
+                           else "Neutral.Section.TLabel"))
             cross = "、".join(src["minute_crosschecks_configured"]) or "当前未启用抽样核验"
             self.source_line.set(
                 "更新：分钟 " + src["market_minute_update"] +
@@ -288,8 +417,11 @@ class MarketCenterV2(tk.Tk):
             text = _read_log_tail(path, work_dir=self.state_work)
         except (OSError, ValueError, InvalidPlan):
             text = "日志暂不可读"
+        self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.insert("1.0", text)
+        self.log_text.configure(state="disabled")
+        self.log_text.see("end")
 
     def open_log_folder(self):
         if os.name == "nt" and self.state_work.is_dir():

@@ -91,7 +91,7 @@ def _run_identity(latest: dict) -> tuple[str, str]:
             if (latest.get("format") != "qmt_daily_single_trigger_v3"
                     or latest.get("mode") != "UNIFIED_SINGLE_RUN"
                     or re.fullmatch(
-                        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{7}",
+                        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}",
                         started) is None):
                 raise ValueError("unapproved_offsetless_timestamp")
             timestamp = timestamp.replace(tzinfo=CN)

@@ -110,6 +110,7 @@ class UpdaterDashboard(tk.Tk):
         self.last_process_rc: int | None = None
         self.active_log: Path | None = None
         self.log_options: list[Path] = []
+        self.auto_follow = tk.BooleanVar(value=True)
         self.finance_cap = tk.StringVar(value="200")
         self.adjust_cap = tk.StringVar(value="80")
         self.info = tk.StringVar(value="读取本地更新状态中")
@@ -170,6 +171,7 @@ class UpdaterDashboard(tk.Tk):
         self.log_combo = ttk.Combobox(bar, state="readonly", width=78)
         self.log_combo.pack(side="left", fill="x", expand=True)
         self.log_combo.bind("<<ComboboxSelected>>", self.select_log)
+        ttk.Checkbutton(bar, text="跟随最新", variable=self.auto_follow).pack(side="left", padx=6)
         ttk.Button(bar, text="打开日志文件", command=self.open_log).pack(side="left", padx=(8, 0))
         holder = ttk.Frame(display)
         holder.pack(fill="both", expand=True)
@@ -257,10 +259,7 @@ class UpdaterDashboard(tk.Tk):
         if latest != self.log_options:
             self.log_options = latest
             self.log_combo.configure(values=[p.name for p in latest])
-        if latest and (self.active_log is None or
-                       (self.process is not None and
-                        latest[0] != self.active_log and
-                        latest[0].stat().st_mtime_ns > self.active_log.stat().st_mtime_ns)):
+        if latest and (self.active_log is None or self.auto_follow.get()):
             self.active_log = latest[0]
             self.log_combo.set(latest[0].name)
         if self.active_log and self.active_log in latest:
@@ -271,6 +270,7 @@ class UpdaterDashboard(tk.Tk):
                 self.output.see("end")
 
     def select_log(self, _event=None):
+        self.auto_follow.set(False)
         choice = self.log_combo.get()
         for path in self.log_options:
             if path.name == choice:
@@ -334,6 +334,7 @@ class UpdaterDashboard(tk.Tk):
             )
             self.last_process_rc = None
             self.active_log = None
+            self.auto_follow.set(True)
             self.info.set("手动补更已启动，实时输出位于弹出的 PowerShell 控制台")
         except OSError as exc:
             self.process = None

@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 from market_center_v2_readonly_audit import AuditBlocked, PERIODS, survey
 from market_center_v2_evidence_gate import (
@@ -29,6 +30,21 @@ def _scheduled_window_reserved(now: datetime | None = None) -> bool:
     now = (now or datetime.now(CHINA)).astimezone(CHINA)
     local = now.hour * 60 + now.minute
     return 19 * 60 + 55 <= local < 20 * 60 + 20
+
+
+def _read_budget_seconds(now: datetime | None = None) -> float:
+    """Default 45 seconds, and always release before the protected window."""
+    local = (now or datetime.now(CHINA)).astimezone(CHINA)
+    if _scheduled_window_reserved(local):
+        raise AuditBlocked("reserved_2005_automatic_update_window")
+    boundary = local.replace(hour=19, minute=55, second=0, microsecond=0)
+    if boundary <= local:
+        boundary += timedelta(days=1)
+    remaining = (boundary - local).total_seconds() - 30.0
+    budget = min(45.0, remaining)
+    if budget < 5.0:
+        raise AuditBlocked("too_close_to_2005_reserved_window")
+    return budget
 
 
 @contextmanager
@@ -84,12 +100,16 @@ def audited_query(*, root: str | Path, start: str, end: str,
     if (evidence_file is None) != (evidence_sha256 is None):
         raise EvidenceBlocked("evidence_file_and_sha256_must_be_supplied_together")
     with shared_market_read_guard():
+        deadline = time.monotonic() + _read_budget_seconds()
         physical = survey(root=root, start=start, end=end,
                           symbols=symbols, periods=periods,
-                          explicit_readonly=explicit_readonly)
+                          explicit_readonly=explicit_readonly,
+                          deadline_monotonic=deadline)
         evidence = (load_pinned_evidence(evidence_file, evidence_sha256,
                                          physical["scope"])
                     if evidence_file is not None else None)
+        if time.monotonic() >= deadline:
+            raise AuditBlocked("audit_wall_clock_budget_exceeded")
         physical["evidence_interpretation"] = classify(physical, evidence)
         return physical
 

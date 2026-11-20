@@ -174,7 +174,7 @@ class UpdaterDashboard(tk.Tk):
             ledger = safe_json(WORK / "market_update" / "commits.json")
             finance = safe_json(WORK / "qmt_extra" / "financial-cache-progress.json")
             last = safe_json(WORK / "last-afternoon-unified.json")
-            historical = safe_json(WORK / "last-manual-market-only.json")
+            historical = safe_json(WORK / "last-precutoff-market-only.json")
             accepted = accepted_minute_day(ledger)
             limit = safe_refresh_limit()
             self.market.set(
@@ -194,7 +194,7 @@ class UpdaterDashboard(tk.Tk):
                 "    触发：" + str(last.get("invocation", "原有计划任务/未知")) +
                 "    开始：" + str(last.get("china_start", "未知")) +
                 "    结束：" + str(last.get("finished_local", "未知")) +
-                "    历史独立补更：" + str(historical.get("status", "尚未执行"))
+                "    20:05前历史补更：" + str(historical.get("status", "尚未执行"))
             )
             self.show_stages(last)
             self.update_logs()

@@ -167,7 +167,25 @@ def classify(report: dict, evidence: dict | None = None) -> dict:
         if physical == "ANOMALY_OBSERVED":
             outcome = "PHYSICAL_ANOMALY_NEEDS_REVIEW"
         elif row["rows"] > 0 and physical == "ROWS_OBSERVED_UNCERTIFIED":
-            outcome = "RECORDS_PRESENT_NOT_CERTIFIED"
+            # A sourced non-trading/suspension declaration conflicting with
+            # observed data is a discrepancy to investigate, not proof that
+            # either source is authoritative.
+            if evidence and period not in ("week", "month"):
+                exchange = symbol.rsplit(".", 1)[-1]
+                info = lifecycle[symbol]
+                cal_status = cal[exchange][day]
+                outside_listing = (
+                    day < info["listed_on"] or
+                    (info["valid_through"] is not None
+                     and day > info["valid_through"]))
+                if (cal_status == "NOT_TRADING" or outside_listing or
+                        (cal_status == "TRADING"
+                         and info["day_states"][day] == "SUSPENDED")):
+                    outcome = "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED"
+                else:
+                    outcome = "RECORDS_PRESENT_NOT_CERTIFIED"
+            else:
+                outcome = "RECORDS_PRESENT_NOT_CERTIFIED"
         elif row["rows"] != 0 or physical != "NO_ROWS_OBSERVED":
             raise EvidenceBlocked("inconsistent_observation_status")
         elif period in ("week", "month"):

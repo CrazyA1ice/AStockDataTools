@@ -474,6 +474,11 @@ class MarketCenterV2(tk.Tk):
             return
         self.audit_running = True
         self.audit_button.configure(state="disabled")
+        self.audit_table.delete(*self.audit_table.get_children())
+        self.audit_table_rows.clear()
+        for field in self.audit_cards.values():
+            field.set("—")
+        self.audit_evidence_note.set("核验进行中，等待有界物理数据扫描与资格证据判断")
         self.book.select(self.audit_page)
         self._set_audit_text("只读历史行情核验正在执行。若任务同时启动，执行锁将阻止本次读取。")
         self.status_line.set("V2-B 有界只读核验运行中，不访问 QMT，不写入行情")
@@ -510,9 +515,13 @@ class MarketCenterV2(tk.Tk):
         self.audit_running = False
         self.audit_button.configure(state="normal" if self.market_root else "disabled")
         if kind == "error":
-            self._set_audit_text(
+            self.audit_evidence_note.set("核验已阻断：" + str(data)[:240])
+            self.audit_raw_report = (
                 "核验阻断（没有修改任何行情文件）\n" + str(data) +
-                "\n请先排除任务占用、文件源变化或行组读取预算超限。")
+                "\n请先排除任务占用、来源证据不一致或行组读取预算超限。")
+            self._set_audit_text(self.audit_raw_report)
+            if not self.audit_details_visible:
+                self._toggle_audit_details()
             self.status_line.set("只读核验阻断；原始行情保持不变")
             return
         result = data.get("evidence_interpretation", {})
@@ -788,9 +797,11 @@ def main(argv=None):
                 or not market.is_dir()
                 or any(parent.is_symlink() for parent in (market, *market.parents))):
             parser.error("market-root 必须是安全的绝对 AllCycleAStockData 目录")
-        MarketCenterV2(state_module=path, market_root=market,
-                       evidence_file=args.evidence_file,
-                       evidence_sha256=args.evidence_sha256).mainloop()
+        options = {"state_module": path, "market_root": market}
+        if args.evidence_file is not None:
+            options["evidence_file"] = args.evidence_file
+            options["evidence_sha256"] = args.evidence_sha256
+        MarketCenterV2(**options).mainloop()
     else:
         MarketCenterV2(state_module=path).mainloop()
 

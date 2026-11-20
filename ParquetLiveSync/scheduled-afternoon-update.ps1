@@ -7,7 +7,8 @@ param(
     [ValidateRange(0,1000)][int]$AdjustmentStockLimit = 80,
     [ValidateRange(1,10000)][int]$FinanceDailyStockLimit = 200,
     [ValidateRange(1,1095)][int]$FinanceLookbackDays = 120,
-    [ValidateSet('Scheduled','Manual')][string]$Invocation = 'Scheduled'
+    [ValidateSet('Scheduled','Manual')][string]$Invocation = 'Scheduled',
+    [switch]$HistoryOnly
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -46,15 +47,18 @@ try {
         exit 9
     }
     Write-Host ('MARKET_2005_MUTEX_ACQUIRED=TRUE invocation='+$Invocation)
+if($HistoryOnly -and $Invocation -ne 'Manual'){
+    throw 'History-only pre-cutoff mode is reserved for explicit manual runs'
+}
 $started=(Get-Date).ToString('o')
 $log=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'.log')
-$status=Join-Path $work 'last-afternoon-unified.json'
+$status=Join-Path $work $(if($HistoryOnly){'last-manual-market-only.json'}else{'last-afternoon-unified.json'})
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList
 $stageRecords=[ordered]@{}
 $transcribing=$false
-$stageNames=@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')
+$stageNames=if($HistoryOnly){@('EIGHT_PERIODS')}else{@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')}
 function Invoke-MarketStage {
     param([string]$Label,[string]$Script,[string[]]$Arguments)
     $stageLog=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'-'+$Label+'.log')
@@ -135,10 +139,14 @@ try {
     # quarantined financial vendor scan. Run financial LAST; preserve the
     # existing one-trigger schedule and all private stock-level cursors.
     Invoke-MarketStage -Label 'EIGHT_PERIODS' -Script $catchup -Arguments @('-Root',$Root)
+    if(-not $HistoryOnly){
     Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
     $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
     Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
     Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit)
+    }else{
+        Write-Host 'MARKET_MANUAL_HISTORY_ONLY=TRUE; NO_CURRENT_FINANCE_SECTOR_ADJUSTMENT_QUERIES'
+    }
 }catch{
     [void]$failures.Add('RUNNER: '+$_.Exception.Message)
     Write-Host ('MARKET_1630_RUNNER_FAILED='+$_.Exception.Message)
@@ -156,6 +164,8 @@ try {
         outcome_meaning='Execution status only; see same-run validation evidence'
         mode='UNIFIED_SINGLE_RUN'
         invocation=$Invocation
+        history_only=[bool]$HistoryOnly
+        run_scope=if($HistoryOnly){'MARKET_HISTORY_ONLY_PRE_2005'}else{'ALL_FOUR_SECTIONS'}
         started_local=$started
         finished_local=(Get-Date).ToString('o')
         china_start=$chinaNow.ToString('o')
@@ -172,6 +182,10 @@ try {
     # Verification is derived exclusively from current invocation stage logs.
     # Failure to parse NEVER creates a false PASS and never suppresses notice.
     $stepText='执行'+$completed.Count+'/'+$stageNames.Count+'；数据校验未验证；跨源验证未验证'
+    if($HistoryOnly){
+        $stepText='仅历史行情补更；板块/除权/财务本轮未运行；未做跨源完整认证'
+        $result.validation=@{data_validation='UNVERIFIED';cross_validation='UNVERIFIED';execution='MARKET_HISTORY_ONLY'}
+    }else{
     try {
         New-Item -ItemType Directory -Path $work -Force | Out-Null
         $python=Join-Path $repo '.venv\Scripts\python.exe'
@@ -208,6 +222,7 @@ try {
         $result.status=$outcome
         $stepText+='；验证报告生成失败：'+$_.Exception.Message
         Write-Host ('MARKET_1630_VERIFICATION_FAILED='+$_.Exception.Message)
+    }
     }
     try {
         $result.errors=@($failures.ToArray())

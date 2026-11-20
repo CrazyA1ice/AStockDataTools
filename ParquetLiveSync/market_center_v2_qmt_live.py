@@ -76,10 +76,13 @@ def observe_qmt_connection(*, now: datetime | None = None,
         "is_connection_only": True,
         "connection_stability_certified": False,
     }
-    if SCHEDULE_START_MINUTE <= minute < SCHEDULE_END_MINUTE:
+    seconds_now = china.hour * 3600 + china.minute * 60 + china.second
+    seconds_to_guard = SCHEDULE_START_MINUTE * 60 - seconds_now
+    if (SCHEDULE_START_MINUTE <= minute < SCHEDULE_END_MINUTE
+            or 0 < seconds_to_guard <= timeout_seconds + 5):
         return {**base, "status": "QMT_CONNECTION_PROBE_SCHEDULE_BLOCKED",
                 "connected_now": False, "qmt_connection_attempts": 0,
-                "detail": "北京时间19:55至20:20保留给20:05自动任务"}
+                "detail": "北京时间19:55至20:20预留给自动任务，禁止跨越保护窗口的连接探测"}
     if probe is None:
         # Import is side-effect free; only the explicit invocation below
         # launches an isolated subprocess to call xtdata.get_client().

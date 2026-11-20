@@ -22,6 +22,7 @@ from market_center_v2_model import (
 )
 
 from market_center_v2_faults import FaultEvidenceBlocked, diagnose_latest
+from market_center_v2_qmt_live import observe_qmt_connection, outstanding_resume_gates
 from market_center_v2_audit_cli import audited_query
 from market_center_v2_readonly_audit import AuditBlocked, FROZEN_ASOF, PERIODS
 
@@ -162,6 +163,13 @@ class MarketCenterV2(tk.Tk):
         self.fault_headline = tk.StringVar(value="正在读取本轮错误证据")
         self.fault_explanation = tk.StringVar(value="尚未完成只读诊断")
         self.fault_resume_gate = tk.StringVar(value="未进行财务续跑门禁核验")
+        self.qmt_gate_summary = tk.StringVar(value="实时QMT连接尚未测试；禁止自动恢复")
+        self.qmt_gate_details = tk.StringVar(value="尚未读取财务恢复证据")
+        self.qmt_live_result = None
+        self.qmt_probe_queue = queue.Queue()
+        self.qmt_probe_running = False
+        self.fault_diagnosis_generation = 0
+        self.qmt_probe_buttons = []
         self.status_line = tk.StringVar(value="V2-B：仅历史物理行情只读核验；更新和修复仍不开放")
         self.source_line = tk.StringVar(value="数据源：读取当前项目配置")
         self.plan_ready = None
@@ -270,6 +278,13 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(shortcuts, text="复制安全续跑预览",
                    command=self.copy_finance_resume_preview).pack(
                        side="left", padx=(9, 0))
+        live = ttk.Button(
+            shortcuts, text="检查QMT当前连接（不下载）",
+            command=self.start_qmt_live_probe)
+        live.pack(side="left", padx=(9, 0))
+        self.qmt_probe_buttons.append(live)
+        ttk.Label(diagnosis, textvariable=self.qmt_gate_summary,
+                  style="Muted.TLabel", wraplength=960).pack(anchor="w", pady=(6, 0))
         actions = ttk.Frame(page)
         actions.pack(anchor="w", pady=(12, 0))
         ttk.Button(actions, text="配置更新范围", style="Primary.TButton",
@@ -290,10 +305,10 @@ class MarketCenterV2(tk.Tk):
             text="只根据本次正式任务的日志与保存游标分类；这不是重新下载按钮，未验证的原因不会自动修复。",
             style="Muted.TLabel").pack(anchor="w", pady=(0, 9))
         panel = ttk.LabelFrame(self.fault_page, text="错误与正常待续批次", padding=8)
-        panel.pack(fill="both", expand=True)
+        panel.pack(fill="x")
         columns = ("severity", "stage", "type", "description")
         self.fault_tree = ttk.Treeview(
-            panel, columns=columns, show="headings", selectmode="browse", height=9)
+            panel, columns=columns, show="headings", selectmode="browse", height=5)
         for key, label, width in (
                 ("severity", "等级", 70), ("stage", "模块", 100),
                 ("type", "错误类型", 270), ("description", "说明", 440)):
@@ -302,7 +317,7 @@ class MarketCenterV2(tk.Tk):
                                    stretch=(key == "description"))
         scroll = ttk.Scrollbar(panel, orient="vertical", command=self.fault_tree.yview)
         self.fault_tree.configure(yscrollcommand=scroll.set)
-        self.fault_tree.pack(side="left", fill="both", expand=True)
+        self.fault_tree.pack(side="left", fill="x", expand=True)
         scroll.pack(side="right", fill="y")
         self.fault_tree.bind("<<TreeviewSelect>>", self._select_fault)
         self.fault_case_by_row = {}
@@ -313,12 +328,23 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(commands, text="复制当前安全续跑预览",
                    command=self.copy_finance_resume_preview).pack(
                        side="left", padx=(10, 0))
+        live = ttk.Button(
+            commands, text="检查QMT当前连接（不下载）",
+            command=self.start_qmt_live_probe)
+        live.pack(side="left", padx=(10, 0))
+        self.qmt_probe_buttons.append(live)
         self.fault_repair_disabled = ttk.Button(
             commands, text="一键重试（尚未开放）", state="disabled")
         self.fault_repair_disabled.pack(side="left", padx=(10, 0))
+        gate_panel = ttk.LabelFrame(
+            self.fault_page, text="恢复门禁逐项核对（只有前两项允许只读观察）", padding=8)
+        gate_panel.pack(fill="x", pady=(8, 2))
+        ttk.Label(gate_panel, textvariable=self.qmt_gate_details,
+                  style="Section.TLabel", justify="left",
+                  wraplength=1050).pack(anchor="w")
         ttk.Label(
             self.fault_page,
-            text="执行前仍须检查 QMT 实时连接、唯一写锁、正式版本、检查点和财务快照；旧日期不得盲目续跑。",
+            text="QMT连接成功仍不授予写入许可；独占锁、正式版本、历史备份未认证，旧日财务任务不得直接重放。",
             style="Muted.TLabel").pack(anchor="w")
         details = ttk.LabelFrame(self.fault_page, text="同次运行的证据与建议", padding=8)
         details.pack(fill="both", expand=True, pady=(8, 0))
@@ -346,6 +372,8 @@ class MarketCenterV2(tk.Tk):
                 ensure_ascii=False, indent=2))
 
     def refresh_fault_diagnosis(self):
+        self.fault_diagnosis_generation += 1
+        self.qmt_live_result = None
         try:
             result = diagnose_latest(self.state_module)
         except (FaultEvidenceBlocked, OSError, ValueError) as exc:
@@ -359,6 +387,7 @@ class MarketCenterV2(tk.Tk):
                 self.fault_tree.delete(*rows)
             self.fault_case_by_row.clear()
             self._set_fault_detail("请检查正式任务状态目录，本界面未执行更新或下载")
+            self._update_qmt_gate_display()
             return
         self.fault_diagnosis = result
         cases = result["cases"]
@@ -396,6 +425,68 @@ class MarketCenterV2(tk.Tk):
              "finance_progress_sha256": result["finance_progress_sha256"],
              "allowed_to_execute": False},
             ensure_ascii=False, indent=2))
+        self._update_qmt_gate_display()
+
+    def _update_qmt_gate_display(self):
+        preview = (self.fault_diagnosis or {}).get("finance_resume_preview", {})
+        gates = outstanding_resume_gates(
+            preview, qmt_observation=self.qmt_live_result)
+        self.qmt_gate_details.set("\n".join(
+            ("✓" if item["ok"] else "○") + " " + item["label"] +
+            "：" + item["detail"] for item in gates))
+        if self.qmt_probe_running:
+            self.qmt_gate_summary.set("QMT即时连接检查进行中（单次最长15秒）；不下载、不更新")
+        elif self.qmt_live_result is not None:
+            status = self.qmt_live_result.get("status", "UNKNOWN")
+            self.qmt_gate_summary.set(
+                "QMT即时连接：" + status + "；执行锁、正式版本和备份仍未验证，不能点击重试")
+        else:
+            self.qmt_gate_summary.set(
+                "QMT实时连接尚未测试；即使静态证据门禁通过，仍禁止恢复执行")
+
+    def start_qmt_live_probe(self):
+        """Explicit click only; never probe on GUI startup or refresh."""
+        if self.qmt_probe_running:
+            return
+        self.qmt_probe_running = True
+        self.qmt_live_result = None
+        generation = self.fault_diagnosis_generation
+        receipt_sha = (self.fault_diagnosis or {}).get("receipt_sha256")
+        progress_sha = (self.fault_diagnosis or {}).get("finance_progress_sha256")
+        for button in self.qmt_probe_buttons:
+            button.state(["disabled"])
+        self._update_qmt_gate_display()
+
+        def worker():
+            result = observe_qmt_connection(timeout_seconds=15)
+            result["bound_receipt_sha256"] = receipt_sha
+            result["bound_progress_sha256"] = progress_sha
+            self.qmt_probe_queue.put((generation, result))
+
+        threading.Thread(target=worker, name="v2d2-qmt-connection-probe",
+                         daemon=True).start()
+        self.after(150, self._poll_qmt_live_probe)
+
+    def _poll_qmt_live_probe(self):
+        try:
+            generation, result = self.qmt_probe_queue.get_nowait()
+        except queue.Empty:
+            if self.qmt_probe_running:
+                self.after(150, self._poll_qmt_live_probe)
+            return
+        self.qmt_probe_running = False
+        for button in self.qmt_probe_buttons:
+            button.state(["!disabled"])
+        if generation == self.fault_diagnosis_generation:
+            self.qmt_live_result = result
+            self.status_line.set(
+                "QMT即时连接检查已结束：" + result["status"] +
+                "；不代表财务任务可恢复，未执行任何数据下载")
+        else:
+            self.qmt_live_result = None
+            self.status_line.set(
+                "读取任务回执期间已发生变化，请重新检查QMT即时连接")
+        self._update_qmt_gate_display()
 
     def open_fault_page(self):
         self.book.select(self.fault_page)
@@ -407,12 +498,21 @@ class MarketCenterV2(tk.Tk):
         except (FaultEvidenceBlocked, OSError, ValueError) as exc:
             messagebox.showerror("不能生成续跑计划", str(exc))
             return
+        observed = self.qmt_live_result
+        if (type(observed) is not dict
+                or observed.get("bound_receipt_sha256") != fresh["receipt_sha256"]
+                or observed.get("bound_progress_sha256") != fresh["finance_progress_sha256"]):
+            observed = None
         payload = {
             "run_day": fresh["run_day"],
             "receipt_sha256": fresh["receipt_sha256"],
             "finance_progress_sha256": fresh["finance_progress_sha256"],
             "finance_resume_preview": fresh["finance_resume_preview"],
+            "qmt_connection_observation": observed,
+            "outstanding_recovery_gates": outstanding_resume_gates(
+                fresh["finance_resume_preview"], qmt_observation=observed),
             "allowed_to_execute": False,
+            "allowed_to_download": False,
         }
         self.clipboard_clear()
         self.clipboard_append(json.dumps(payload, ensure_ascii=False, indent=2))

@@ -510,8 +510,11 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                    command=self.refresh_overview).pack(side="right")
         triage_summary = ttk.LabelFrame(self.fault_page, text="本轮诊断摘要与安全门禁", padding=9)
         triage_summary.pack(fill="x", pady=(0, 9))
-        ttk.Label(triage_summary, textvariable=self.fault_headline,
-                  style="Failure.Section.TLabel", wraplength=960).pack(anchor="w")
+        self.fault_page_headline_view = ttk.Label(
+            triage_summary, textvariable=self.fault_headline,
+            style="Neutral.Section.TLabel", wraplength=960,
+        )
+        self.fault_page_headline_view.pack(anchor="w")
         ttk.Label(triage_summary, textvariable=self.fault_explanation,
                   style="Section.TLabel", wraplength=960).pack(anchor="w", pady=4)
         ttk.Label(triage_summary, textvariable=self.fault_resume_gate,
@@ -563,6 +566,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(self.fault_page,
                   text="故障类型以同次回执和检查点为准；当前 QMT 连接与独占写锁未经验证，所有执行入口禁用。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
+
+    def refresh_fault_diagnosis(self):
+        super().refresh_fault_diagnosis()
+        # Use the same evidence-derived tri-state color as the home card.
+        if hasattr(self, "fault_page_headline_view"):
+            self.fault_page_headline_view.configure(
+                style=self.fault_title_view.cget("style"))
 
     def build_logs(self):
         top = ttk.Frame(self.logs)

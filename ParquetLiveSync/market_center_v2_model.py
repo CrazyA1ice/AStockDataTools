@@ -196,6 +196,9 @@ def latest_status(module_dir: Path, *, now: datetime | None = None) -> dict:
     root = module_dir / "work"
     latest = _json_file(root / "last-afternoon-unified.json", MAX_RECEIPT_BYTES)
     ledger = _json_file(root / "market_update" / "commits.json", MAX_RECEIPT_BYTES)
+    financial = _json_file(root / "qmt_extra" / "financial-cache-progress.json", MAX_RECEIPT_BYTES)
+    pending = financial.get("pending")
+    pending_count = len(pending) if isinstance(pending, dict) else None
     validation = latest.get("validation") or {}
     if not isinstance(validation, dict):
         validation = {}
@@ -207,6 +210,8 @@ def latest_status(module_dir: Path, *, now: datetime | None = None) -> dict:
         "last_run_started": latest.get("china_start", "暂无记录"),
         "last_run_ended": latest.get("finished_local", "暂无记录"),
         "last_accepted_trading_day": last_accepted_day(ledger) or "未证明",
+        "finance_pending_count": pending_count,
+        "finance_pending_count_evidenced": pending_count is not None,
         "safe_candidate_cutoff": safe_cutoff(now).isoformat(),
         "qmt_last_preflight": latest.get("qmt_preflight_status", "暂无历史预检"),
         "qmt_is_live_now_verified": False,

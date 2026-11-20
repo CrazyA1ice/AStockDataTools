@@ -110,6 +110,8 @@ class UpdaterDashboard(tk.Tk):
         self.last_process_rc: int | None = None
         self.active_log: Path | None = None
         self.log_options: list[Path] = []
+        self.finance_cap = tk.StringVar(value="200")
+        self.adjust_cap = tk.StringVar(value="80")
         self.info = tk.StringVar(value="读取本地更新状态中")
         self.scheduled = tk.StringVar(value="")
         self.market = tk.StringVar(value="")
@@ -134,6 +136,15 @@ class UpdaterDashboard(tk.Tk):
         self.run_button.pack(side="left")
         ttk.Button(buttons, text="刷新状态", command=self.refresh).pack(side="left", padx=8)
         ttk.Button(buttons, text="打开日志文件夹", command=self.open_folder).pack(side="left")
+        caps = ttk.Frame(outer)
+        caps.pack(fill="x", pady=(0, 6))
+        ttk.Label(caps, text="20:05后手动补更财务每轮上限").pack(side="left")
+        ttk.Combobox(caps, textvariable=self.finance_cap, state="readonly", width=9,
+                     values=("200", "500", "1000", "5000", "10000")).pack(side="left", padx=7)
+        ttk.Label(caps, text="除权每轮上限").pack(side="left", padx=(18, 0))
+        ttk.Combobox(caps, textvariable=self.adjust_cap, state="readonly", width=9,
+                     values=("80", "200", "500", "1000")).pack(side="left", padx=7)
+        ttk.Label(caps, text="异常冲突仍需人工审核；上限≠保证全部完成").pack(side="left", padx=10)
         ttk.Label(
             outer,
             text="手动启动会弹出独立 PowerShell 实时控制台；窗口关闭后仍可在下方阅读日志。正在写入时请勿强制结束进程。",
@@ -288,6 +299,11 @@ class UpdaterDashboard(tk.Tk):
         if not latest:
             messagebox.showerror("无法补更", "最新成功行情日期不可验证，拒绝盲目下载")
             return
+        finance_cap = int(self.finance_cap.get())
+        adjust_cap = int(self.adjust_cap.get())
+        if finance_cap not in (200, 500, 1000, 5000, 10000) or adjust_cap not in (80, 200, 500, 1000):
+            messagebox.showerror("参数无效", "补更数量必须使用受控选项")
+            return
         if not messagebox.askyesno(
             "确认执行增量补更",
             "即将打开新的命令行窗口，使用与计划任务相同的增量更新程序。\n"
@@ -296,6 +312,7 @@ class UpdaterDashboard(tk.Tk):
             ("当前未到北京时间20:05，只补已收盘历史行情，板块/除权/财务不运行。\n"
              if historical_only else
              "已过北京时间20:05，本轮会继续板块、除权和财务。\n") +
+            f"20:05后财务上限 {finance_cap} 只/轮；除权上限 {adjust_cap} 只/轮。\\n" +
             "程序可能下载并写入经过校验的月度 Parquet；"
             "请先确保已登录 QMT、网络正常，且磁盘空间充足。\n"
             "同一时刻仅允许一个自动/手动任务。继续吗？"
@@ -307,6 +324,9 @@ class UpdaterDashboard(tk.Tk):
                     "-File", str(RUNNER), "-Invocation", "Manual"]
             if historical_only:
                 args.append("-HistoryOnly")
+            else:
+                args.extend(["-FinanceDailyStockLimit", str(finance_cap),
+                             "-AdjustmentStockLimit", str(adjust_cap)])
             args.append("-Apply")
             self.process = subprocess.Popen(
                 args,

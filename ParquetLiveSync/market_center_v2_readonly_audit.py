@@ -109,7 +109,9 @@ def _filenames(root: Path, period: str, lo: date, hi: date) -> list[tuple[str, P
     while (y, m) <= (hi.year, hi.month):
         annual = directory / (str(y) + ".parquet")
         monthly = directory / (f"{y}-{m:02d}.parquet")
-        if (annual.exists() or annual.is_symlink()) and (monthly.exists() or monthly.is_symlink()):
+        if annual.is_symlink() or monthly.is_symlink():
+            raise AuditBlocked("symlink_partition_refused_" + period)
+        if annual.exists() and monthly.exists():
             raise AuditBlocked("annual_monthly_partition_collision_" + period)
         selected = monthly if monthly.is_file() else annual if annual.is_file() else None
         if selected is not None and (selected.is_symlink() or selected.stat().st_size == 0):
@@ -161,6 +163,7 @@ def survey(*, root: str | Path, start: str, end: str,
     missing: list[dict] = []
     candidate_rows = 0
     candidate_groups = 0
+    visited_files: set[tuple[str, Path]] = set()
     # Phase 1: inspect footers only; reject expensive scope before data access.
     for period, partitions in files.items():
         for partition, path in partitions:
@@ -168,6 +171,11 @@ def survey(*, root: str | Path, start: str, end: str,
                 missing.append({"period": period, "partition": partition,
                                 "reason": "PHYSICAL_PARTITION_NOT_FOUND"})
                 continue
+            if (period, path) in visited_files:
+                # Multiple requested months can share one historical annual
+                # Parquet. Decode it only once; do not double-count keys.
+                continue
+            visited_files.add((period, path))
             prior = _stat(path)
             try:
                 reader = pq.ParquetFile(str(path))

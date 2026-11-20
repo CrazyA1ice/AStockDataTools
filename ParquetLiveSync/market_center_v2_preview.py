@@ -215,16 +215,30 @@ class MarketCenterV2(tk.Tk):
                   style="Muted.TLabel", wraplength=930).pack(anchor="w", pady=(18, 0))
 
     def build_action(self):
-        top = ttk.Frame(self.action)
+        # The configuration form can exceed a laptop-height window. Keep
+        # every control reachable without enlarging the application.
+        area = tk.Canvas(self.action, background=COLORS["bg"],
+                         highlightthickness=0, borderwidth=0)
+        vertical = ttk.Scrollbar(self.action, orient="vertical", command=area.yview)
+        area.configure(yscrollcommand=vertical.set)
+        vertical.pack(side="right", fill="y")
+        area.pack(side="left", fill="both", expand=True)
+        content = ttk.Frame(area, padding=(5, 5, 16, 18))
+        window = area.create_window((0, 0), anchor="nw", window=content)
+        content.bind("<Configure>",
+                     lambda _event: area.configure(scrollregion=area.bbox("all")))
+        area.bind("<Configure>",
+                  lambda event: area.itemconfigure(window, width=event.width))
+        top = ttk.Frame(content)
         top.pack(fill="x", pady=(0, 12))
         ttk.Label(top, text="操作配置", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
         ttk.Label(top, text="● 预览模式：真实执行暂未开放",
                   style="Muted.TLabel").pack(side="right")
-        mode_row = ttk.LabelFrame(self.action, text="任务类型（共用下方同一组范围）", padding=8)
+        mode_row = ttk.LabelFrame(content, text="任务类型（共用下方同一组范围）", padding=8)
         mode_row.pack(fill="x", pady=(0, 10))
         for item in ("更新数据", "数据核验"):
             ttk.Radiobutton(mode_row, text=item, value=item, variable=self.mode).pack(side="left", padx=12)
-        dates = ttk.LabelFrame(self.action, text="处理时间段 · 同时适用于更新和核验", padding=10)
+        dates = ttk.LabelFrame(content, text="处理时间段 · 同时适用于更新和核验", padding=10)
         dates.pack(fill="x", pady=(0, 10))
         ttk.Label(dates, text="开始日期").pack(side="left")
         ttk.Entry(dates, textvariable=self.start, width=13).pack(side="left", padx=(8, 20))
@@ -232,7 +246,7 @@ class MarketCenterV2(tk.Tk):
         ttk.Entry(dates, textvariable=self.end, width=13).pack(side="left", padx=8)
         ttk.Label(dates, text="YYYY-MM-DD，北京时间 20:05 安全界限",
                   foreground="#687b92").pack(side="left", padx=12)
-        stocks = ttk.LabelFrame(self.action, text="股票范围", padding=10)
+        stocks = ttk.LabelFrame(content, text="股票范围", padding=10)
         stocks.pack(fill="x", pady=(0, 10))
         bar = ttk.Frame(stocks)
         bar.pack(fill="x")
@@ -256,15 +270,15 @@ class MarketCenterV2(tk.Tk):
         ttk.Button(stocks, text="检查股票列表", command=self.check_stocks).pack(anchor="e", pady=(4, 0))
         self.scope.trace_add("write", lambda *_: self.sync_stock_scope())
         self.sync_stock_scope()
-        types = ttk.LabelFrame(self.action, text="数据类型（可多选）", padding=10)
+        types = ttk.LabelFrame(content, text="数据类型（可多选）", padding=10)
         types.pack(fill="x", pady=(0, 10))
         for name in MODULES:
             ttk.Checkbutton(types, text=name, variable=self.modules[name]).pack(side="left", padx=(6, 25))
-        sources = ttk.LabelFrame(self.action, text="数据来源 · 自动按现有配置选择，不允许手选", padding=10)
+        sources = ttk.LabelFrame(content, text="数据来源 · 自动按现有配置选择，不允许手选", padding=10)
         sources.pack(fill="x", pady=(0, 10))
         ttk.Label(sources, textvariable=self.source_line, wraplength=940,
                   justify="left", style="Section.TLabel").pack(anchor="w")
-        preview = ttk.LabelFrame(self.action, text="任务预览 / 执行门禁", padding=10)
+        preview = ttk.LabelFrame(content, text="任务预览 / 执行门禁", padding=10)
         preview.pack(fill="both", expand=True)
         self.preview_text = tk.Text(preview, height=5, font=("Microsoft YaHei UI", 10),
                                     wrap="word", borderwidth=0, padx=12, pady=10,
@@ -346,7 +360,12 @@ class MarketCenterV2(tk.Tk):
         p = self.plan_ready
         # A committed-date frontier is not complete per-stock coverage. Only
         # warn of a possible intersection, never infer exact missing keys.
-        latest = latest_status(self.state_module)["last_accepted_trading_day"]
+        try:
+            latest = latest_status(self.state_module)["last_accepted_trading_day"]
+        except (InvalidPlan, OSError):
+            # Failure to read optional history must never turn into permission
+            # to overwrite existing data or prevent safe previewing.
+            latest = "未证明"
         overlap = ("⚠ 日期范围可能与已提交行情重叠（最新已提交：" + latest
                    + "）；禁止盲目覆盖。\n"
                    if latest != "未证明" and p["start_date"] <= latest else

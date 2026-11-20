@@ -130,6 +130,12 @@ def inspect_recovery_prerequisites(*, state_module: Path | str,
     now = now or datetime.now(CN)
     if now.tzinfo is None or now.utcoffset() is None:
         raise PreflightBlocked("timezone_aware_clock_required")
+    china = now.astimezone(CN)
+    minute = china.hour * 60 + china.minute
+    # An inventory is read-only but still touches snapshot metadata. Leave
+    # extra margin either side of the scheduled market writer's guard.
+    if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+        raise PreflightBlocked("reserved_2005_no_finance_file_inventory")
     source = diagnose_latest(module, now=now)
     preview = source["finance_resume_preview"]
     selected = preview.get("failed_batch", [])

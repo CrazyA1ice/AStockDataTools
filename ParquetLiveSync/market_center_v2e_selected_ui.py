@@ -508,6 +508,14 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                   style="V2E.Heading.TLabel").pack(side="left")
         ttk.Button(header, text="刷新本轮诊断",
                    command=self.refresh_overview).pack(side="right")
+        triage_summary = ttk.LabelFrame(self.fault_page, text="本轮诊断摘要与安全门禁", padding=9)
+        triage_summary.pack(fill="x", pady=(0, 9))
+        ttk.Label(triage_summary, textvariable=self.fault_headline,
+                  style="Failure.Section.TLabel", wraplength=960).pack(anchor="w")
+        ttk.Label(triage_summary, textvariable=self.fault_explanation,
+                  style="Section.TLabel", wraplength=960).pack(anchor="w", pady=4)
+        ttk.Label(triage_summary, textvariable=self.fault_resume_gate,
+                  style="Warning.Section.TLabel", wraplength=960).pack(anchor="w")
         self.fault_split = ttk.PanedWindow(self.fault_page, orient="horizontal")
         self.fault_split.pack(fill="both", expand=True)
         left = ttk.LabelFrame(self.fault_split, text="同一轮任务 · 错误及待续批次", padding=8)

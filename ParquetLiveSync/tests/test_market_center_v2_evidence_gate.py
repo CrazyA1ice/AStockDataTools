@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
+import market_center_v2_readonly_audit as A
 import market_center_v2_evidence_gate as E
 import market_center_v2_audit_cli as CLI
 
@@ -199,6 +201,32 @@ class EvidenceGatedClassificationTests(unittest.TestCase):
         report["allowed_market_write"] = True
         with self.assertRaisesRegex(E.EvidenceBlocked, "not_accepted"):
             E.classify(report)
+
+    def test_declaration_conflict_does_not_override_physical_records(self):
+        with TemporaryDirectory() as temp:
+            path, sha = pin(base_evidence(), Path(temp))
+            report = base_report([observation(DAYS[1], count=1)])
+            evidence = E.load_pinned_evidence(path, sha, report["scope"])
+            got = E.classify(report, evidence)
+            self.assertEqual(got["observations"][0]["interpretation"],
+                             "PHYSICAL_SOURCE_DECLARATION_CONFLICT_UNVERIFIED")
+            self.assertEqual(got["confirmed_missing_count"], 0)
+
+    def test_read_budget_releases_before_1955(self):
+        cn = timezone(timedelta(hours=8))
+        early = datetime(2026, 11, 20, 19, 30, tzinfo=cn)
+        late = datetime(2026, 11, 20, 19, 54, tzinfo=cn)
+        cutoff = datetime(2026, 11, 20, 19, 54, 40, tzinfo=cn)
+        self.assertEqual(CLI._read_budget_seconds(early), 45.0)
+        self.assertEqual(CLI._read_budget_seconds(late), 30.0)
+        with self.assertRaisesRegex(A.AuditBlocked, "too_close"):
+            CLI._read_budget_seconds(cutoff)
+
+    def test_bounded_scan_exits_when_monotonic_deadline_elapsed(self):
+        with patch.object(A.time, "monotonic", return_value=100.0):
+            with self.assertRaisesRegex(A.AuditBlocked, "wall_clock_budget"):
+                A._check_deadline(100.0)
+            A._check_deadline(101.0)
 
     def test_unknown_stock_status_does_not_create_missing_candidate(self):
         snapshot = base_evidence()

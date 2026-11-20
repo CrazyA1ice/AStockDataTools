@@ -203,12 +203,15 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
                 # Offline suite must never inspect or hold the *real*
                 # production named mutex on user's Windows machine.
                 yield
+            # Synthetic tests never acquire the real production mutex and
+            # never inherit local 19:55–20:20 scheduler restrictions.
             with patch.object(CLI, "shared_market_read_guard", mock_guard):
-                with redirect_stdout(buf):
-                    status = CLI.main(["--market-root", str(market),
-                        "--start", "2026-11-17", "--end", "2026-11-17",
-                        "--symbols", "000001.SZ", "--period", "day",
-                        "--explicit-readonly"])
+                with patch.object(CLI, "_read_budget_seconds", return_value=45.0):
+                    with redirect_stdout(buf):
+                        status = CLI.main(["--market-root", str(market),
+                            "--start", "2026-11-17", "--end", "2026-11-17",
+                            "--symbols", "000001.SZ", "--period", "day",
+                            "--explicit-readonly"])
             self.assertEqual(status, 0)
             result = json.loads(buf.getvalue())
             self.assertFalse(result["allowed_market_write"])

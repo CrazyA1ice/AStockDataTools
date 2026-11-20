@@ -116,7 +116,7 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
         with TemporaryDirectory() as temp:
             market, _ = source(Path(temp), period="day", yearly=True,
                                symbols=("SZ000001",))
-            result = self.query(market, start="2026-11-01", end="2026-11-19")
+            result = self.query(market, start="2026-10-28", end="2026-11-19")
             self.assertEqual(result["row_group_budget"]["groups_preflight"], 1)
             self.assertEqual(len(result["source_partitions"]), 1)
             day = next(x for x in result["observations"]

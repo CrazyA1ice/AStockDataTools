@@ -168,6 +168,13 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
                 self.query(market, symbols=tuple(
                     f"{i:06d}.SZ" for i in range(21)))
 
+    def test_automatic_2005_reserved_window_has_priority(self):
+        for h, m, busy in ((19, 54, False), (19, 55, True),
+                           (20, 4, True), (20, 19, True), (20, 20, False)):
+            with self.subTest(hour=h, minute=m):
+                now = datetime(2026, 11, 20, h, m, tzinfo=CN)
+                self.assertEqual(CLI._scheduled_window_reserved(now), busy)
+
     def test_cli_optin_denied_before_mutex_or_market(self):
         with patch.object(CLI, "shared_market_read_guard") as guard:
             with self.assertRaisesRegex(A.AuditBlocked, "optin"):

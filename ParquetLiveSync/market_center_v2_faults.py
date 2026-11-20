@@ -171,6 +171,11 @@ def _case(stage: str, item: dict, quality: dict, log: str, evidenced: bool) -> d
         title = "除权：本批成功，轮换仍有后续批次"
         advice = "这不是本批错误；按原计划继续后续轮换，不要重新覆盖本批"
         repair = "NONE"
+    elif quality.get("cross_validation") == "FAIL":
+        category = "CROSS_SOURCE_SAMPLE_DISAGREEMENT"
+        severity = "WARN"
+        title = label + "跨数据源抽样存在价格差异"
+        advice = "保留双方来源版本，按股票和时间比对价量；不能自动覆盖本地记录"
     elif validation in ("FAIL", "PARTIAL"):
         category = "STAGE_DATA_QUALITY_REVIEW"
         severity = "WARN"
@@ -295,6 +300,17 @@ def diagnose_latest(module_dir: str | Path,
             progress_sha = None
     except FaultEvidenceBlocked:
         pass
+    if receipt.get("qmt_preflight_status") == "QMT_SERVICE_UNAVAILABLE":
+        cases.append({
+            "stage": "RUNNER", "name": "任务预检",
+            "severity": "ERROR", "category": "QMT_PRECHECK_UNAVAILABLE",
+            "title": "20:05 任务预检无法连接 QMT",
+            "explanation": "各更新阶段可能尚未执行；检查当前QMT服务，不能将预检失败当作行情文件损坏",
+            "repair_route": "CONNECT_CHECK_BEFORE_ANY_RETRY",
+            "stage_exit_code": None, "same_run_log_verified": False,
+            "last_checkpoint_in_log": None, "failed_stock_batch": [],
+            "automatic_repair_allowed": False,
+        })
     failure = next((c for c in cases
                     if c["category"] == "QMT_FINANCE_CONNECTION_LOST"), None)
     preview = _finance_preview(failure, progress, run_day, now)

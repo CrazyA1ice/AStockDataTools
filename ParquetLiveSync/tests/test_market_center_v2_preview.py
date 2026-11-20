@@ -257,7 +257,10 @@ class V2AContractTests(unittest.TestCase):
         self.assertFalse(plan["allowed_to_execute"])
         self.assertFalse(plan["existing_stock_day_coverage_scanned"])
         self.assertFalse(plan["scheduled_task_live_state_checked"])
-        self.assertIn("拒绝盲目覆盖", plan["existing_history_policy"])
+        self.assertIn("允许选择已存在日期", plan["existing_history_policy"])
+        self.assertIn("补缺失先核验股日记录", plan["existing_history_policy"])
+        self.assertIn("修复必须有独立备份", plan["existing_history_policy"])
+        self.assertIn("尚未开放写入", plan["existing_history_policy"])
         self.assertIn("执行锁", plan["concurrent_task_policy"])
         self.assertIn("未证明", inspect.getsource(
             UI.MarketCenterV2.show_preview))

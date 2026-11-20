@@ -116,6 +116,71 @@ class FaultDiagnosisTests(unittest.TestCase):
             self.assertFalse(p["checks"]["writer_mutex_free_verified"])
             self.assertFalse(p["checks"]["canonical_deployed_worker_version_verified"])
 
+    def test_canonical_powershell_beijing_wallclock_without_zone_is_accepted(self):
+        # scheduled-afternoon-update.ps1 uses ConvertTimeFromUtc and
+        # .ToString('o'): seven fractional digits, but NO +08:00 suffix.
+        with TemporaryDirectory() as temp:
+            root = fixture(Path(temp))
+            receipt = root / "work" / "last-afternoon-unified.json"
+            obj = json.loads(receipt.read_text(encoding="utf-8"))
+            obj["format"] = "qmt_daily_single_trigger_v3"
+            obj["mode"] = "UNIFIED_SINGLE_RUN"
+            obj["china_start"] = "2026-11-20T20:05:02.8228448"
+            receipt.write_text(json.dumps(obj, ensure_ascii=False),
+                               encoding="utf-8")
+            result = F.diagnose_latest(root, now=TODAY)
+            self.assertEqual(result["run_day"], "2026-11-20")
+            self.assertEqual(result["run_stamp"], STAMP)
+            self.assertEqual(result["cases"][0]["category"],
+                             "QMT_FINANCE_CONNECTION_LOST")
+            self.assertEqual(result["cases"][0]["failed_stock_batch"],
+                             WORKER_GROUP)
+            self.assertFalse(result["allowed_to_execute"])
+
+    def test_offsetless_timestamp_without_canonical_receipt_identity_is_denied(self):
+        with TemporaryDirectory() as temp:
+            root = fixture(Path(temp))
+            receipt = root / "work" / "last-afternoon-unified.json"
+            obj = json.loads(receipt.read_text(encoding="utf-8"))
+            obj["china_start"] = "2026-11-20T20:05:02.8228448"
+            receipt.write_text(json.dumps(obj), encoding="utf-8")
+            with self.assertRaisesRegex(F.FaultEvidenceBlocked,
+                                        "invalid_run_identity"):
+                F.diagnose_latest(root, now=TODAY)
+
+    def test_noncanonical_naive_timestamp_and_wrong_offset_denied(self):
+        for text in ("2026-11-20T20:05:02",
+                     "2026-11-20T20:05:02.82284",
+                     "2026-11-20T20:05:02.8228448Z",
+                     "2026-11-20T20:05:02.8228448+09:00"):
+            with self.subTest(text=text), TemporaryDirectory() as temp:
+                root = fixture(Path(temp))
+                receipt = root / "work" / "last-afternoon-unified.json"
+                obj = json.loads(receipt.read_text(encoding="utf-8"))
+                obj["format"] = "qmt_daily_single_trigger_v3"
+                obj["mode"] = "UNIFIED_SINGLE_RUN"
+                obj["china_start"] = text
+                receipt.write_text(json.dumps(obj), encoding="utf-8")
+                with self.assertRaisesRegex(F.FaultEvidenceBlocked,
+                                            "invalid_run_identity"):
+                    F.diagnose_latest(root, now=TODAY)
+
+    def test_canonical_offsetless_timestamp_cannot_claim_old_stage_log(self):
+        with TemporaryDirectory() as temp:
+            root = fixture(Path(temp))
+            receipt = root / "work" / "last-afternoon-unified.json"
+            obj = json.loads(receipt.read_text(encoding="utf-8"))
+            obj["format"] = "qmt_daily_single_trigger_v3"
+            obj["mode"] = "UNIFIED_SINGLE_RUN"
+            obj["china_start"] = "2026-11-20T20:05:03.8228448"
+            receipt.write_text(json.dumps(obj), encoding="utf-8")
+            result = F.diagnose_latest(root, now=TODAY)
+            self.assertEqual(result["run_stamp"], "20261120-200503")
+            self.assertEqual(result["cases"][0]["category"],
+                             "FAILED_LOG_UNVERIFIED")
+            self.assertEqual(result["finance_resume_preview"]["status"],
+                             "PREVIEW_BLOCKED")
+
     def test_resume_blocks_when_ledger_cursor_changed(self):
         with TemporaryDirectory() as temp:
             p = F.diagnose_latest(

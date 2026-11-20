@@ -264,7 +264,8 @@ def diagnose_latest(module_dir: str | Path,
     run_day, stamp = _run_identity(receipt)
     if type(receipt.get("stage_records")) is not dict:
         raise FaultEvidenceBlocked("run_stage_records_missing")
-    sections = receipt.get("validation", {}).get("sections", {})
+    validation = receipt.get("validation")
+    sections = validation.get("sections", {}) if type(validation) is dict else {}
     if type(sections) is not dict:
         sections = {}
     stage_records = receipt["stage_records"]

@@ -18,6 +18,7 @@ $update=Join-Path $module 'update-market.ps1'
 $catchup=Join-Path $module 'run-market-catchup.ps1'
 $finance=Join-Path $module 'run-qmt-financial-daily.ps1'
 $notifier=Join-Path $module 'notify-market-update.ps1'
+$qmtProbe=Join-Path $module 'qmt_connect_preflight.py'
 $work=Join-Path $module 'work'
 $china=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $chinaNow=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
@@ -63,6 +64,8 @@ $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList
 $stageRecords=[ordered]@{}
 $transcribing=$false
+$qmtPreflightStatus='NOT_RUN'
+$qmtPreflightAttempts=0
 $stageNames=@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')
 if($HistoryOnly){$stageNames=@('EIGHT_PERIODS')}
 $runScope=if($HistoryOnly){'MARKET_HISTORY_ONLY_PRE_2005'}else{'ALL_FOUR_SECTIONS'}
@@ -123,7 +126,7 @@ try {
             throw ('Missing canonical private state: '+$file)
         }
     }
-    foreach($file in @($update,$catchup,$finance,$notifier)){
+    foreach($file in @($update,$catchup,$finance,$notifier,$qmtProbe)){
         if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
             throw ('Missing unified market component: '+$file)
         }
@@ -143,6 +146,44 @@ try {
     Set-Location -LiteralPath $repo
     Write-Host ('MARKET_1630_CHINA_NOW='+$chinaNow.ToString('o'))
     Write-Host 'MARKET_1630_MODE=UNIFIED_SINGLE_RUN'
+    # QMT can be visible on Windows while its xtquant service is not yet
+    # ready (for example after StartWhenAvailable replay). Do not run any
+    # data stage until this independent, one-attempt child probe succeeds.
+    # The child has its own 25-second hard timeout; six attempts are bounded
+    # and the waits between attempts are exactly 10 seconds.
+    $qmtPreflightStatus='CONNECTING'
+    $python=Join-Path $repo '.venv\Scripts\python.exe'
+    for($attempt=1;$attempt -le 6;$attempt++){
+        $qmtPreflightAttempts=$attempt
+        Write-Host ('MARKET_2005_QMT_PREFLIGHT_ATTEMPT='+$attempt+'/6')
+        $code=-1
+        $savedErrorActionPreference=$ErrorActionPreference
+        try {
+            # PowerShell 5.1 treats native stderr as ErrorRecord. The vendor
+            # emits expected failures there; only the EXIT CODE is decisive.
+            $ErrorActionPreference='Continue'
+            & $python -u -B $qmtProbe --timeout-seconds 25 2>&1 |
+                ForEach-Object {Write-Host ([string]$_)}
+            $code=$LASTEXITCODE
+        }finally{
+            $ErrorActionPreference=$savedErrorActionPreference
+        }
+        if($code -eq 0){
+            $qmtPreflightStatus='CONNECTED'
+            Write-Host ('MARKET_2005_QMT_PREFLIGHT_CONNECTED_ATTEMPT='+$attempt)
+            break
+        }
+        Write-Host ('MARKET_2005_QMT_PREFLIGHT_RETRYABLE_EXIT='+$code)
+        if($attempt -lt 6){
+            Write-Host 'MARKET_2005_QMT_PREFLIGHT_SLEEP_SECONDS=10'
+            Start-Sleep -Seconds 10
+        }
+    }
+    if($qmtPreflightStatus -ne 'CONNECTED'){
+        $qmtPreflightStatus='QMT_SERVICE_UNAVAILABLE'
+        Write-Host 'MARKET_2005_QMT_SERVICE_UNAVAILABLE=TRUE'
+        throw 'QMT_SERVICE_UNAVAILABLE: xtquant get_client did not connect after six bounded attempts; no update stages executed'
+    }
     # Each source is verified by its own pipeline. No second scheduled retry.
     # Failure in an independent stage is captured; other stages still run.
     # Market/sector/adjustment updates should not wait for a long or
@@ -176,6 +217,9 @@ try {
         invocation=$Invocation
         history_only=[bool]$HistoryOnly
         run_scope=$runScope
+        qmt_preflight_status=$qmtPreflightStatus
+        qmt_preflight_attempts=[int]$qmtPreflightAttempts
+        qmt_probe_only_no_market_downloads=$true
         started_local=$started
         finished_local=(Get-Date).ToString('o')
         china_start=$chinaNow.ToString('o')
@@ -233,6 +277,9 @@ try {
         $stepText+='；验证报告生成失败：'+$_.Exception.Message
         Write-Host ('MARKET_1630_VERIFICATION_FAILED='+$_.Exception.Message)
     }
+    }
+    if($qmtPreflightStatus -eq 'QMT_SERVICE_UNAVAILABLE'){
+        $stepText='QMT_SERVICE_UNAVAILABLE：xtquant连接预检6次失败；四个数据阶段均未运行。请确认QMT已登录并等待服务初始化，然后从GUI安全补更。'
     }
     try {
         $result.errors=@($failures.ToArray())

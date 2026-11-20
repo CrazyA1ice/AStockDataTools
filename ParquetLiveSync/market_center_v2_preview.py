@@ -240,8 +240,10 @@ class MarketCenterV2(tk.Tk):
         self.status_line.set("预览校验通过 · 不会自动更新或下载")
 
     def copy_preview(self):
+        # Recalculate so changing dates, stock selection or mode cannot copy
+        # an old, potentially misleading plan preview.
+        self.show_preview()
         if self.plan_ready is None:
-            messagebox.showinfo("尚无计划", "请先点击「预览任务」。")
             return
         self.clipboard_clear()
         self.clipboard_append(json.dumps(self.plan_ready, ensure_ascii=False, indent=2))

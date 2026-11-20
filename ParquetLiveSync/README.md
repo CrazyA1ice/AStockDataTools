@@ -237,3 +237,7 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 ```
 
 注意：该命令会先下载 SHA 验证的 TDX 私有 DAY 增量（不写正式 day），随后使用 QMT 的本机缓存，并将新数据写到 Git 忽略的 `ParquetLiveSync/work/qmt_1min_market`；**不会更改 `D:\stock\AllCycleAStockData\1min`、其他周期或 H5**。将 QMT 来源与 2026-10 已购/H5 的实际口径完全统一、证明全市场日线量额守恒及实现可恢复的按月正式原子更新，是下一提交阶段，不会用“下载成功”替代正式验收。详细见 `QMT_1MIN_PROBE.md`。
+
+## Market Center V2E · 七页选定视觉方案（独立预览，2026-11-20）
+
+用户选择七页组合：**运行总览A / 更新核验B / 核验结果B / 故障诊断B / 运行日志B / 数据管理A / 高级设置A**。新界面文件 `market_center_v2e_selected_ui.py`，单独启动器 `start-market-center-v2e-seven-pages.cmd`；建立在用户固定验收的V2D1 `0bc42b1d9fc5629823ac2217de144dc64f906584` 上，不修改或替换现有正式GUI及20:05任务。左侧七页导航，三步共享日期/股票/模块配置，双栏核验证据及故障处理，日志搜索和安全限权；设置/历史八周期覆盖仅提供**有证据才显示**的只读摘要。新增34项离线/界面测试**尚待Windows验收**，没有获得任何行情或财务写入许可。启动时显式 `--state-module D:\ChatGPT\AStockDataTools\ParquetLiveSync` 查看正式状态的有限只读快照；默认不传 `--market-root`，物理行情核验按钮禁用。详见 `docs/MARKET_CENTER_V2E_SELECTED_SEVEN_PAGE_UI_20261120.md`。

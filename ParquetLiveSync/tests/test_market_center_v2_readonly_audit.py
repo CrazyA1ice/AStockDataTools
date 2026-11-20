@@ -108,9 +108,15 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
         with TemporaryDirectory() as temp:
             market, _ = source(Path(temp), period="1min", symbols=("SZ000001",))
             result = self.query(market, period="1min")
-            self.assertIn("MINUTE_BAR_COUNT_DIFFERS_FROM_STANDARD_GRID",
-                          result["observations"][0]["anomalies"])
+            self.assertEqual(result["observations"][0]["status"],
+                             "ROWS_OBSERVED_UNCERTIFIED")
+            self.assertEqual(
+                result["observations"][0]["standard_bar_count_difference_candidate"], 239)
+            self.assertNotIn("MINUTE_BAR_COUNT_DIFFERS_FROM_STANDARD_GRID",
+                             result["observations"][0]["anomalies"])
             self.assertFalse(result["source_crosscheck_completed"])
+            self.assertFalse(result["minute_grid_observations"][0]
+                             ["minute_label_complete_certified"])
 
     def test_annual_file_read_once_for_multiple_requested_months(self):
         with TemporaryDirectory() as temp:

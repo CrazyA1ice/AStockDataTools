@@ -25,7 +25,7 @@ if($Action -eq 'Status'){
         Get-ScheduledTaskInfo -TaskName $task |
             Select-Object LastRunTime,LastTaskResult,NextRunTime | Format-List
     }
-    foreach($name in @('last-afternoon-unified.json','last-scheduled-run.json')){
+    foreach($name in @('last-afternoon-unified.json','last-precutoff-market-only.json','last-scheduled-run.json')){
         $recent=Join-Path (Join-Path $module 'work') $name
         if(Test-Path -LiteralPath $recent -PathType Leaf){
             Write-Host ('MARKET_LAST_STATUS='+$name)
@@ -52,7 +52,7 @@ if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project P
 if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
     throw 'Missing original physical market dataset'
 }
-foreach($relative in @('scheduled-afternoon-update.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
+foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
     if(-not(Test-Path -LiteralPath (Join-Path $module $relative) -PathType Leaf)){
         throw 'Required unified market script missing: '+$relative
     }

@@ -138,6 +138,13 @@ def classify(report: dict, evidence: dict | None = None) -> dict:
     scope = report.get("scope")
     if type(scope) is not dict or type(report.get("observations")) is not list:
         raise EvidenceBlocked("invalid_observation_payload")
+    if (type(scope.get("stocks")) is not list
+            or type(scope.get("periods")) is not list
+            or not scope["stocks"] or not scope["periods"]
+            or any(p not in PERIODS for p in scope["periods"])):
+        raise EvidenceBlocked("invalid_scope_stocks_or_periods")
+    allowed_days = set(_days(scope["start"], scope["end"]))
+    allowed_periods = set(scope["periods"])
     if evidence is not None:
         if (type(evidence) is not dict
                 or evidence.get("integrity_verified") is not True
@@ -155,9 +162,9 @@ def classify(report: dict, evidence: dict | None = None) -> dict:
     enriched = []
     for row in report["observations"]:
         if (type(row) is not dict or type(row.get("period")) is not str
-                or row["period"] not in PERIODS
+                or row["period"] not in allowed_periods
                 or row.get("symbol") not in scope["stocks"]
-                or row.get("timestamp_label_day") not in _days(scope["start"], scope["end"])
+                or row.get("timestamp_label_day") not in allowed_days
                 or type(row.get("rows")) is not int or row["rows"] < 0
                 or type(row.get("anomalies")) is not dict):
             raise EvidenceBlocked("invalid_observation_record")

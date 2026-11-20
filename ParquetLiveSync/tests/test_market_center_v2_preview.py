@@ -176,6 +176,42 @@ class V2AContractTests(unittest.TestCase):
             self.assertIn("数据尚未认证", inspect.getsource(
                 UI.MarketCenterV2.refresh_overview))
 
+    def test_v2c_rotating_adjustments_partial_is_backlog_not_corruption(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "work").mkdir()
+            (root / "work" / "last-afternoon-unified.json").write_text(
+                json.dumps({
+                    "status": "PARTIAL",
+                    "stage_records": {
+                        "ADJUSTMENTS_ROTATING": {"exit_code": 0},
+                        "FINANCIAL_DAILY": {"exit_code": 1}},
+                    "validation": {"sections": {
+                        "ADJUSTMENTS_ROTATING": {
+                            "execution": "PASS", "data_validation": "PARTIAL",
+                            "detail": "QMT除权本批处理80只；后续仍有批次"},
+                        "FINANCIAL_DAILY": {
+                            "execution": "FAIL", "data_validation": "FAIL",
+                            "detail": "步骤执行失败，旧数据未据此判为损坏"}}},
+                }, ensure_ascii=False), encoding="utf-8")
+            result = M.latest_status(root, now=NOW)
+            adjustment = result["stage_records"]["ADJUSTMENTS_ROTATING"]
+            finance = result["stage_records"]["FINANCIAL_DAILY"]
+            self.assertEqual(adjustment["exit_code"], 0)
+            self.assertEqual(adjustment["data_validation"], "PARTIAL")
+            self.assertIn("后续仍有批次", adjustment["detail"])
+            self.assertEqual(finance["exit_code"], 1)
+            self.assertIn("旧数据未据此判为损坏", finance["detail"])
+            ui = inspect.getsource(UI.MarketCenterV2.refresh_overview)
+            self.assertIn("本批通过，轮换仍有后续批次", ui)
+            self.assertIn("请查看本次阶段日志", ui)
+
+    def test_v2c_raw_evidence_contains_only_non_certified_minute_grid(self):
+        ui = inspect.getsource(UI.MarketCenterV2._poll_audit)
+        self.assertIn('data.get("minute_grid_observations", [])', ui)
+        self.assertIn("分钟标签：已对照", ui)
+        self.assertIn('"minute_grid_is_comparison_only": True', ui)
+
     def test_pending_financial_count_is_only_shown_when_evidenced(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

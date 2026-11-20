@@ -239,6 +239,8 @@ def latest_status(module_dir: Path, *, now: datetime | None = None) -> dict:
                     if isinstance(sections.get(stage), dict) else "UNVERIFIED",
                 "cross_validation": (sections.get(stage) or {}).get("cross_validation", "UNVERIFIED")
                     if isinstance(sections.get(stage), dict) else "UNVERIFIED",
+                "detail": str((sections.get(stage) or {}).get("detail", ""))[:220]
+                    if isinstance(sections.get(stage), dict) else "",
             } for stage in ("EIGHT_PERIODS", "SECTORS",
                             "ADJUSTMENTS_ROTATING", "FINANCIAL_DAILY")
         },

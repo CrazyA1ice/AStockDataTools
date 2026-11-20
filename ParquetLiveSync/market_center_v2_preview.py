@@ -355,6 +355,124 @@ class MarketCenterV2(tk.Tk):
                                      "所有更新/修复功能仍然关闭；核验过程不下载或写入任何行情。")
         self.audit_result_text.configure(state="disabled")
 
+    def run_readonly_audit(self):
+        """Use only the explicitly chosen local root and narrow UI scope."""
+        if self.audit_running:
+            return
+        if self.market_root is None:
+            messagebox.showerror("行情目录未授权", "启动时需指定 --market-root 本机行情目录。")
+            return
+        if self.mode.get() != "数据核验" or self.scope.get() != "指定股票":
+            messagebox.showinfo("请先选择范围", "请切换为「数据核验」和「指定股票」。")
+            return
+        chosen = [key for key in MODULES if self.modules[key].get()]
+        if chosen != ["八周期行情"]:
+            messagebox.showinfo("当前仅支持行情",
+                                "V2-B 暂只提供八周期行情物理核验；请取消板块、除权、财务。")
+            return
+        try:
+            selection = plan_preview(
+                mode="数据核验", start=self.start.get().strip(),
+                end=self.end.get().strip(), scope="指定股票",
+                stock_text=self.stock_box.get("1.0", "end-1c"),
+                modules=chosen, history_policy=self.history_policy.get())
+            codes = selection["symbols"]
+            if len(codes) > 20:
+                raise InvalidPlan("本轮物理核验最多选择20只股票，请缩小范围")
+            if selection["end_date"] > FROZEN_ASOF.isoformat():
+                raise InvalidPlan("V2-B 冻结只读核验暂截至 2026-11-19")
+        except InvalidPlan as exc:
+            messagebox.showerror("核验范围不符合限制", str(exc))
+            return
+        period = self.audit_period.get()
+        if period not in PERIODS:
+            messagebox.showerror("周期无效", "请选择已支持的八周期之一")
+            return
+        if not messagebox.askyesno(
+            "确认只读核验",
+            "只读取本机选定 Parquet 的指定行组，不连接 QMT、不下载、不覆盖。\n"
+            + "时间：" + selection["start_date"] + " 至 " + selection["end_date"]
+            + "；周期：" + period + "；股票：" + str(len(codes)) + "只。\n"
+            + "最多解压250万候选行，超限将拒绝并要求缩小范围。\n"
+            + "没有读到记录不代表该交易日确实缺失。继续吗？"
+        ):
+            return
+        self.audit_running = True
+        self.audit_button.configure(state="disabled")
+        self.book.select(self.audit_page)
+        self._set_audit_text("只读历史行情核验正在执行。若任务同时启动，执行锁将阻止本次读取。")
+        self.status_line.set("V2-B 有界只读核验运行中，不访问 QMT，不写入行情")
+        def worker():
+            try:
+                result = audited_query(
+                    root=self.market_root, start=selection["start_date"],
+                    end=selection["end_date"], symbols=codes,
+                    periods=[period], explicit_readonly=True)
+                self.audit_queue.put(("result", result))
+            except (AuditBlocked, OSError, ValueError) as exc:
+                self.audit_queue.put(("error", str(exc)))
+            except Exception as exc:
+                self.audit_queue.put(("error", "只读核验未完成：" + type(exc).__name__))
+        threading.Thread(target=worker, name="market-v2-readonly-audit", daemon=True).start()
+        self.after(150, self._poll_audit)
+
+    def _set_audit_text(self, value: str):
+        self.audit_result_text.configure(state="normal")
+        self.audit_result_text.delete("1.0", "end")
+        self.audit_result_text.insert("1.0", value)
+        self.audit_result_text.configure(state="disabled")
+        self.audit_result_text.see("1.0")
+
+    def _poll_audit(self):
+        try:
+            kind, data = self.audit_queue.get_nowait()
+        except queue.Empty:
+            if self.audit_running:
+                self.after(150, self._poll_audit)
+            return
+        self.audit_running = False
+        self.audit_button.configure(state="normal" if self.market_root else "disabled")
+        if kind == "error":
+            self._set_audit_text(
+                "核验阻断（没有修改任何行情文件）\n" + str(data) +
+                "\n请先排除任务占用、文件源变化或行组读取预算超限。")
+            self.status_line.set("只读核验阻断；原始行情保持不变")
+            return
+        rows = data["observations"]
+        statuses = {
+            "ROWS_OBSERVED_UNCERTIFIED": 0,
+            "NO_ROWS_OBSERVED": 0,
+            "ANOMALY_OBSERVED": 0,
+        }
+        for item in rows:
+            statuses[item["status"]] = statuses.get(item["status"], 0) + 1
+        lines = [
+            "历史行情物理观察完成（不能据此宣布交易日完整或跨源认证）",
+            "范围：" + data["scope"]["start"] + " 至 " + data["scope"]["end"],
+            "周期：" + "、".join(data["scope"]["periods"]) +
+            "   股票：" + str(len(data["scope"]["stocks"])) + " 只",
+            "已有记录的标签日：" + str(statuses["ROWS_OBSERVED_UNCERTIFIED"]),
+            "未观察到记录的标签日：" + str(statuses["NO_ROWS_OBSERVED"]) +
+            "（不能据此认定缺失）",
+            "发现异常的标签日：" + str(statuses["ANOMALY_OBSERVED"]),
+            "实际解压候选行数：" + str(data["row_group_budget"]["rows_inspected"]),
+            "缺少物理分区：" + str(len(data["missing_partitions"])),
+            "自动更新/修复：未运行，市场文件写入：否，QMT调用：0",
+            "提示：停牌、上市日期、非交易日及周/月标签均未按交易所日历认证。",
+            "─── 明细（最多前 200 项）───",
+        ]
+        for row in rows[:200]:
+            lines.append(
+                row["period"] + " " + row["symbol"] + " " +
+                row["timestamp_label_day"] + "  " + str(row["rows"]) +
+                " 行  " + row["status"] +
+                ("  " + str(row["anomalies"]) if row["anomalies"] else ""))
+        if len(rows) > 200:
+            lines.append("其余 " + str(len(rows) - 200) +
+                         " 项未在界面展开；缩小日期或股票范围以逐项查看。")
+        self._set_audit_text("\n".join(lines))
+        self.status_line.set("有界只读物理核验完成；已有记录不等于全部认证")
+    
     def build_logs(self):
         head = ttk.Frame(self.logs)
         head.pack(fill="x", pady=(0, 12))

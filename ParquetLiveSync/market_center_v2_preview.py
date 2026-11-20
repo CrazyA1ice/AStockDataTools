@@ -263,7 +263,7 @@ class MarketCenterV2(tk.Tk):
         sources = ttk.LabelFrame(self.action, text="数据来源 · 自动按现有配置选择，不允许手选", padding=10)
         sources.pack(fill="x", pady=(0, 10))
         ttk.Label(sources, textvariable=self.source_line, wraplength=940,
-                  justify="left").pack(anchor="w")
+                  justify="left", style="Section.TLabel").pack(anchor="w")
         preview = ttk.LabelFrame(self.action, text="任务预览 / 执行门禁", padding=10)
         preview.pack(fill="both", expand=True)
         self.preview_text = tk.Text(preview, height=5, font=("Microsoft YaHei UI", 10),
@@ -286,8 +286,8 @@ class MarketCenterV2(tk.Tk):
         head.pack(fill="x", pady=(0, 12))
         ttk.Label(head, text="最近任务原始日志", font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
         ttk.Button(head, text="刷新日志", command=self.refresh_logs).pack(side="right")
-        ttk.Label(self.logs, text="这里仅显示最新任务末尾内容；完整日志始终保存在原目录。",
-                  foreground="#667b90").pack(anchor="w", pady=(0, 10))
+        ttk.Label(self.logs, text="日志保留最近的末尾内容；右侧上下滚动、底部左右滚动，完整原始文件仍保存在本地。",
+                  style="Muted.TLabel").pack(anchor="w", pady=(0, 10))
         log_area = ttk.Frame(self.logs)
         log_area.pack(fill="both", expand=True)
         log_area.columnconfigure(0, weight=1)
@@ -321,6 +321,9 @@ class MarketCenterV2(tk.Tk):
             self.stock_count.set("全部股票 · 无需输入")
 
     def check_stocks(self):
+        if self.scope.get() == "全部股票":
+            self.stock_count.set("全部股票 · 输入列表不参与当前计划")
+            return
         try:
             parsed = parse_symbols(self.stock_box.get("1.0", "end-1c"))
         except InvalidPlan as exc:
@@ -341,10 +344,19 @@ class MarketCenterV2(tk.Tk):
             messagebox.showerror("计划未通过输入校验", str(exc))
             return
         p = self.plan_ready
+        # A committed-date frontier is not complete per-stock coverage. Only
+        # warn of a possible intersection, never infer exact missing keys.
+        latest = latest_status(self.state_module)["last_accepted_trading_day"]
+        overlap = ("⚠ 日期范围可能与已提交行情重叠（最新已提交：" + latest
+                   + "）；禁止盲目覆盖。\n"
+                   if latest != "未证明" and p["start_date"] <= latest else
+                   "尚未证明所选范围与已提交行情是否重叠；执行前必须核验。\n")
         description = (p["mode"] + " | " + p["start_date"] + " 至 " + p["end_date"] + "\n"
                        + "股票：" + (p["scope"] if p["scope"] == "全部股票"
                                     else ", ".join(p["symbols"])) + "\n"
                        + "数据：" + "、".join(p["data_types"]) + "\n"
+                       + overlap
+                       + "并发规则：20:05计划任务运行中不允许第二个写入任务。\n"
                        + "执行状态：禁止（V2-A 只读预览）；需先实现对应日期/股票范围的后端支持。")
         self.preview_text.configure(state="normal")
         self.preview_text.delete("1.0", "end")

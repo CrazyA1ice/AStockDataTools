@@ -6,13 +6,15 @@ param(
     [string]$FinanceDir = "D:\software\JHQMT\datadir\Finance",
     [ValidateRange(0,1000)][int]$AdjustmentStockLimit = 80,
     [ValidateRange(1,10000)][int]$FinanceDailyStockLimit = 200,
-    [ValidateRange(1,1095)][int]$FinanceLookbackDays = 120
+    [ValidateRange(1,1095)][int]$FinanceLookbackDays = 120,
+    [ValidateSet('Scheduled','Manual')][string]$Invocation = 'Scheduled'
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $module=Split-Path -Parent $PSCommandPath
 $repo=Split-Path -Parent $module
 $update=Join-Path $module 'update-market.ps1'
+$catchup=Join-Path $module 'run-market-catchup.ps1'
 $finance=Join-Path $module 'run-qmt-financial-daily.ps1'
 $notifier=Join-Path $module 'notify-market-update.ps1'
 $work=Join-Path $module 'work'
@@ -32,6 +34,18 @@ if(-not $Apply){
     Write-Host 'MARKET_1630_MULTISOURCE=EIGHT_PERIODS_ONLY;OTHER_TYPES_UNVERIFIED'
     return
 }
+# Shared named mutex: Task Scheduler IgnoreNew alone does not protect manual GUI runs.
+# Fail closed if the scheduled task or another manual invocation already owns it.
+$runMutex=[System.Threading.Mutex]::new($false,'Local\\AStockDataTools2005AllStages')
+$runMutexHeld=$false
+try {
+    try {$runMutexHeld=$runMutex.WaitOne(0)}
+    catch [System.Threading.AbandonedMutexException] {$runMutexHeld=$true}
+    if(-not $runMutexHeld){
+        Write-Host 'MARKET_2005_ALREADY_RUNNING=TRUE'
+        exit 9
+    }
+    Write-Host ('MARKET_2005_MUTEX_ACQUIRED=TRUE invocation='+$Invocation)
 $started=(Get-Date).ToString('o')
 $log=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'.log')
 $status=Join-Path $work 'last-afternoon-unified.json'
@@ -95,7 +109,7 @@ try {
             throw ('Missing canonical private state: '+$file)
         }
     }
-    foreach($file in @($update,$finance,$notifier)){
+    foreach($file in @($update,$catchup,$finance,$notifier)){
         if(-not(Test-Path -LiteralPath $file -PathType Leaf)){
             throw ('Missing unified market component: '+$file)
         }
@@ -120,7 +134,7 @@ try {
     # Market/sector/adjustment updates should not wait for a long or
     # quarantined financial vendor scan. Run financial LAST; preserve the
     # existing one-trigger schedule and all private stock-level cursors.
-    Invoke-MarketStage -Label 'EIGHT_PERIODS' -Script $update -Arguments @('-Mode','auto','-Root',$Root)
+    Invoke-MarketStage -Label 'EIGHT_PERIODS' -Script $catchup -Arguments @('-Root',$Root)
     Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
     $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
     Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
@@ -141,6 +155,7 @@ try {
         status=$outcome
         outcome_meaning='Execution status only; see same-run validation evidence'
         mode='UNIFIED_SINGLE_RUN'
+        invocation=$Invocation
         started_local=$started
         finished_local=(Get-Date).ToString('o')
         china_start=$chinaNow.ToString('o')
@@ -223,3 +238,10 @@ try {
     }
 }
 if($failures.Count){throw ('Market daily update failed: '+($failures -join '; '))}
+if($outcome -eq 'PARTIAL'){
+    throw 'MARKET_2005_PARTIAL_DATA_VALIDATION: detailed same-run logs and status receipt retained'
+}
+}finally{
+    if($runMutexHeld){$runMutex.ReleaseMutex()}
+    $runMutex.Dispose()
+}

@@ -118,6 +118,7 @@ class UpdaterDashboard(tk.Tk):
         self.market = tk.StringVar(value="")
         self.finance = tk.StringVar(value="")
         self.last_run = tk.StringVar(value="")
+        self.qmt_status = tk.StringVar(value="QMT服务预检：尚无运行记录")
         self.setup()
         self.refresh()
 
@@ -129,7 +130,7 @@ class UpdaterDashboard(tk.Tk):
             outer,
             text="20:05 北京时间自动更新 · 四阶段共用原定时任务 · 关机漏跑从已提交游标补更 · 数据源错误不强行覆盖",
         ).pack(anchor="w", pady=(2, 10))
-        for variable in (self.info, self.scheduled, self.market, self.finance, self.last_run):
+        for variable in (self.info, self.scheduled, self.market, self.finance, self.last_run, self.qmt_status):
             ttk.Label(outer, textvariable=variable, justify="left").pack(anchor="w", pady=2)
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=10)
@@ -209,6 +210,11 @@ class UpdaterDashboard(tk.Tk):
                 "    结束：" + str(last.get("finished_local", "未知")) +
                 "    20:05前历史补更：" + str(historical.get("status", "尚未执行"))
             )
+            self.qmt_status.set(
+                "QMT服务预检：正式任务=" + str(last.get("qmt_preflight_status", "旧版本未记录")) +
+                "（尝试 " + str(last.get("qmt_preflight_attempts", 0)) + " 次）" +
+                "；20:05前补更=" + str(historical.get("qmt_preflight_status", "尚无记录"))
+            )
             self.show_stages(last)
             self.update_logs()
             self.info.set(
@@ -226,7 +232,7 @@ class UpdaterDashboard(tk.Tk):
                     if code != 0:
                         messagebox.showwarning(
                             "增量更新未完全成功",
-                            f"进程返回 {code}。请查看右下方阶段日志和 last-afternoon-unified.json；"
+                            f"进程返回 {code}。请查看阶段日志、QMT服务预检结果以及当次状态回执；"
                             "已成功提交的日期保持不变。"
                         )
             self.run_button.configure(state="disabled" if self.process else "normal")

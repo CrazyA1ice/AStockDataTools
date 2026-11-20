@@ -370,8 +370,11 @@ class MarketCenterV2(tk.Tk):
             ("physical", "物理观察", 180),
             ("interpretation", "证据判定（非认证）", 280),
         )
+        self.audit_sort_reverse = {}
         for key, title, width in headings:
-            self.audit_table.heading(key, text=title)
+            self.audit_table.heading(
+                key, text=title,
+                command=lambda col=key: self._sort_audit_column(col))
             self.audit_table.column(key, width=width, stretch=(key == "interpretation"))
         vertical = ttk.Scrollbar(frame, orient="vertical", command=self.audit_table.yview)
         horizontal = ttk.Scrollbar(frame, orient="horizontal", command=self.audit_table.xview)
@@ -422,6 +425,24 @@ class MarketCenterV2(tk.Tk):
             self.audit_detail_frame.pack(fill="x", pady=(8, 0))
             self.audit_details_button.configure(text="收起原始核验证据")
             self.audit_details_visible = True
+
+    def _sort_audit_column(self, column):
+        if column not in self.audit_table["columns"]:
+            return
+        entries = [(self.audit_table.set(item, column), item)
+                   for item in self.audit_table.get_children("")]
+        def key(pair):
+            if column == "count":
+                try:
+                    return int(pair[0])
+                except ValueError:
+                    return -1
+            return pair[0]
+        reverse = self.audit_sort_reverse.get(column, False)
+        entries.sort(key=key, reverse=reverse)
+        for index, (_value, item) in enumerate(entries):
+            self.audit_table.move(item, "", index)
+        self.audit_sort_reverse[column] = not reverse
 
     def _select_audit_row(self, _event=None):
         selected = self.audit_table.selection()

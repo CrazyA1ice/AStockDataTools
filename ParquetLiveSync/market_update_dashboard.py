@@ -312,7 +312,7 @@ class UpdaterDashboard(tk.Tk):
             ("当前未到北京时间20:05，只补已收盘历史行情，板块/除权/财务不运行。\n"
              if historical_only else
              "已过北京时间20:05，本轮会继续板块、除权和财务。\n") +
-            f"20:05后财务上限 {finance_cap} 只/轮；除权上限 {adjust_cap} 只/轮。\\n" +
+            f"20:05后财务上限 {finance_cap} 只/轮；除权上限 {adjust_cap} 只/轮。\n" +
             "程序可能下载并写入经过校验的月度 Parquet；"
             "请先确保已登录 QMT、网络正常，且磁盘空间充足。\n"
             "同一时刻仅允许一个自动/手动任务。继续吗？"

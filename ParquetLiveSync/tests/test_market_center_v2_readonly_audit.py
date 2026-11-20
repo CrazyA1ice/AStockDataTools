@@ -191,11 +191,17 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
         with TemporaryDirectory() as temp:
             market, _ = source(Path(temp))
             buf = io.StringIO()
-            with redirect_stdout(buf):
-                status = CLI.main(["--market-root", str(market),
-                    "--start", "2026-11-17", "--end", "2026-11-17",
-                    "--symbols", "000001.SZ", "--period", "day",
-                    "--explicit-readonly"])
+            @contextmanager
+            def mock_guard():
+                # Offline suite must never inspect or hold the *real*
+                # production named mutex on user's Windows machine.
+                yield
+            with patch.object(CLI, "shared_market_read_guard", mock_guard):
+                with redirect_stdout(buf):
+                    status = CLI.main(["--market-root", str(market),
+                        "--start", "2026-11-17", "--end", "2026-11-17",
+                        "--symbols", "000001.SZ", "--period", "day",
+                        "--explicit-readonly"])
             self.assertEqual(status, 0)
             result = json.loads(buf.getvalue())
             self.assertFalse(result["allowed_market_write"])

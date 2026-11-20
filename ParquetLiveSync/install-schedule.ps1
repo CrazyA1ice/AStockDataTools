@@ -12,6 +12,7 @@ if($Action -eq 'Status'){
         Write-Host 'MARKET_SCHEDULE_NOT_INSTALLED'
     }else{
         $entry | Select-Object TaskName,State,TaskPath | Format-List
+        $entry.Actions | Select-Object Execute,Arguments,WorkingDirectory | Format-List
         $entry.Triggers | Select-Object StartBoundary,Enabled | Format-List
         $entry.Settings | Select-Object ExecutionTimeLimit,MultipleInstances | Format-List
         # CIM ExecutionTimeLimit is commonly an ISO-8601 duration string,
@@ -24,7 +25,7 @@ if($Action -eq 'Status'){
         Get-ScheduledTaskInfo -TaskName $task |
             Select-Object LastRunTime,LastTaskResult,NextRunTime | Format-List
     }
-    foreach($name in @('last-afternoon-unified.json','last-scheduled-run.json')){
+    foreach($name in @('last-afternoon-unified.json','last-precutoff-market-only.json','last-scheduled-run.json')){
         $recent=Join-Path (Join-Path $module 'work') $name
         if(Test-Path -LiteralPath $recent -PathType Leaf){
             Write-Host ('MARKET_LAST_STATUS='+$name)
@@ -51,7 +52,7 @@ if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project P
 if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
     throw 'Missing original physical market dataset'
 }
-foreach($relative in @('scheduled-afternoon-update.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
+foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
     if(-not(Test-Path -LiteralPath (Join-Path $module $relative) -PathType Leaf)){
         throw 'Required unified market script missing: '+$relative
     }
@@ -62,7 +63,7 @@ $todayChina=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)).D
 $utc=[TimeZoneInfo]::ConvertTimeToUtc($todayChina.AddHours(20).AddMinutes(5),$shanghai)
 $at=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$arguments=('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
+$arguments=('-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $at
 # Zero means no Task Scheduler runtime cap; IgnoreNew prevents overlap.
@@ -72,5 +73,5 @@ $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -
 $description='One daily 20:05 China-time market-finance-sectors-adjustments update, with completion/failure desktop notification and durable receipt'
 Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
 Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit=NONE user='+$identity)
-Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP'
+Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP; CONSOLE=VISIBLE_WHEN_LOGGED_IN'
 Write-Host 'MARKET_QMT_REQUIREMENT=Logged-in Windows user and connected QMT; machine awake for execution'

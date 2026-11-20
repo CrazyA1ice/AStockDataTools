@@ -301,9 +301,13 @@ def survey(*, root: str | Path, start: str, end: str,
                 errors = dict(problems.get(key, {}))
                 # Counts on a selected label day are evidence, not a full
                 # trade-calendar or 1m grid proof; vendor timestamps vary.
-                if count and period in MINUTE_COUNTS and count != MINUTE_COUNTS[period]:
-                    errors["MINUTE_BAR_COUNT_DIFFERS_FROM_STANDARD_GRID"] = abs(
-                        count - MINUTE_COUNTS[period])
+                # Do NOT mark 239 versus a 240-bar reference as a physical
+                # corruption. Vendor timestamp contract, suspensions and
+                # calendar are not certified by this baseline count.
+                count_gap_candidate = (
+                    abs(count - MINUTE_COUNTS[period])
+                    if count and period in MINUTE_COUNTS
+                    else None)
                 if period in PERIOD_MINUTES:
                     try:
                         minute = inspect_minute_labels(
@@ -320,6 +324,7 @@ def survey(*, root: str | Path, start: str, end: str,
                     "symbol": presentation,
                     "timestamp_label_day": day,
                     "rows": count,
+                    "standard_bar_count_difference_candidate": count_gap_candidate,
                     "status": ("NO_ROWS_OBSERVED" if count == 0 else
                                "ANOMALY_OBSERVED" if errors else
                                "ROWS_OBSERVED_UNCERTIFIED"),

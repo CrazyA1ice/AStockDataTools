@@ -13,6 +13,12 @@
 - market_center_v2_preview.py：首页新增错误诊断提示、错误说明及财务续跑门禁简述。单击可查看本次财务日志、进入逐条错误类型表、复制只读续跑预览。新增独立故障诊断页，可选择每个阶段的同次日志查看。新版首页可垂直滚动。实际一键重试按钮始终禁用。
 - tests/test_market_center_v2_faults.py：纯合成错误、同次日志、财务检查点、进度文件等回归，覆盖错误分类、路径安全、日期变化、游标变化、结果不可执行。
 
+## 真实 Windows 回执时间兼容性修复（首轮 122/122 后）
+
+用户首轮离线测试全部通过，真实命令却返回 `invalid_run_identity`，根因并非行情错误：正式 `scheduled-afternoon-update.ps1` 用 `ConvertTimeFromUtc(..., China Standard Time)` 生成 `$chinaNow`（`.NET DateTime.Kind=Unspecified`），再用 `ToString('o')` 输出 `china_start`，例如 `2026-11-20T20:05:02.8228448`，**没有时区偏移**；初版诊断器却只允许显式 `+08:00`。现仅在已知 `format=qmt_daily_single_trigger_v3` 且 `mode=UNIFIED_SINGLE_RUN` 的正式回执，并精确匹配7位小数的中国本地时间字段时，按北京时间解析；其他无偏移时间仍拒绝。外来 `Z` 或 `+09:00` 时区拒绝，阶段日志文件名仍必须与同次 `yyyyMMdd-HHmmss` 精确一致。
+
+新增4项纯合成回归，用来区分真实 PowerShell 格式与伪造/旧日志。修复后总测试从122项变为126项（正式 Windows 复测前不能宣称已通过）。严格不修改正式20:05任务和任何私有数据。
+
 ## 2026-11-20 的本轮错误预期
 
 财务阶段 exit=1，在 000755.SZ 成功保存检查点之后，股票 000756.SZ、000757.SZ、000758.SZ、000759.SZ、000761.SZ 的批次遇到 xtquant.download_financial_data2 / get_client / connect 的连接不可用异常。预计错误类型 QMT_FINANCE_CONNECTION_LOST，失败批次五只，最后日志检查点 000755.SZ。除权 exit=0、处理80只、next_batch_required=true 是正常轮换批次未结束，应另以 ADJUSTMENTS_ROTATION_PENDING 提示，不计入执行错误。45项 pending 是原有财务待审项目数，不应直接当成今天新增45条错误。

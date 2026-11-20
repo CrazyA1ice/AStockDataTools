@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import inspect
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -182,6 +183,43 @@ class V2AContractTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             with self.assertRaises(SystemExit):
                 UI.main(["--state-module", tmp])
+
+    def test_blue_white_theme_and_tristate_colors(self):
+        self.assertEqual(UI.COLORS["surface"], "#FFFFFF")
+        self.assertEqual(UI.COLORS["blue"], "#1769D1")
+        self.assertNotEqual(UI.COLORS["green"], UI.COLORS["red"])
+        self.assertNotEqual(UI.COLORS["amber"], UI.COLORS["green"])
+        theme = inspect.getsource(UI.apply_theme)
+        self.assertIn('theme_use("clam")', theme)
+        self.assertIn('"Primary.TButton"', theme)
+        self.assertIn('"Success.CardValue.TLabel"', inspect.getsource(
+            UI.MarketCenterV2.refresh_overview))
+
+    def test_log_vertical_and_horizontal_scrollbars_are_connected(self):
+        ui = inspect.getsource(UI.MarketCenterV2.build_logs)
+        self.assertIn('orient="vertical", command=self.log_text.yview', ui)
+        self.assertIn('orient="horizontal", command=self.log_text.xview', ui)
+        self.assertIn('yscrollcommand=self.log_vertical_scroll.set', ui)
+        self.assertIn('xscrollcommand=self.log_horizontal_scroll.set', ui)
+        self.assertIn('self.log_vertical_scroll.grid', ui)
+        self.assertIn('self.log_horizontal_scroll.grid', ui)
+        self.assertIn('state="disabled"', ui)
+
+    def test_short_windows_have_scrollable_configuration_page(self):
+        ui = inspect.getsource(UI.MarketCenterV2.build_action)
+        self.assertIn('tk.Canvas(self.action', ui)
+        self.assertIn('orient="vertical", command=area.yview', ui)
+        self.assertIn('scrollregion=area.bbox("all")', ui)
+
+    def test_preview_discloses_already_committed_and_schedule_collisions(self):
+        plan = self.base()
+        self.assertFalse(plan["allowed_to_execute"])
+        self.assertFalse(plan["existing_stock_day_coverage_scanned"])
+        self.assertFalse(plan["scheduled_task_live_state_checked"])
+        self.assertIn("拒绝盲目覆盖", plan["existing_history_policy"])
+        self.assertIn("执行锁", plan["concurrent_task_policy"])
+        self.assertIn("未证明", inspect.getsource(
+            UI.MarketCenterV2.show_preview))
 
     def test_no_prod_update_process_is_reachable_from_preview(self):
         # UI imports but does not start its desktop in this test.

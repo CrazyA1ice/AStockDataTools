@@ -351,7 +351,7 @@ class MarketCenterV2(tk.Tk):
         self.audit_result_text.configure(yscrollcommand=scroll.set)
         self.audit_result_text.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        self.audit_result_text.insert("1.0", "选择「数据核验」、指定股票、仅勾选八周期行情，并选择周期后开始。\\n"
+        self.audit_result_text.insert("1.0", "选择「数据核验」、指定股票、仅勾选八周期行情，并选择周期后开始。\n"
                                      "所有更新/修复功能仍然关闭；核验过程不下载或写入任何行情。")
         self.audit_result_text.configure(state="disabled")
 

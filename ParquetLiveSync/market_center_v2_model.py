@@ -202,6 +202,9 @@ def latest_status(module_dir: Path, *, now: datetime | None = None) -> dict:
     validation = latest.get("validation") or {}
     if not isinstance(validation, dict):
         validation = {}
+    sections = validation.get("sections") or {}
+    if not isinstance(sections, dict):
+        sections = {}
     stages = latest.get("stage_records") or {}
     if not isinstance(stages, dict):
         stages = {}
@@ -222,6 +225,10 @@ def latest_status(module_dir: Path, *, now: datetime | None = None) -> dict:
             stage: {
                 "exit_code": (stages.get(stage) or {}).get("exit_code"),
                 "log_path": (stages.get(stage) or {}).get("log_path", ""),
+                "data_validation": (sections.get(stage) or {}).get("data_validation", "UNVERIFIED")
+                    if isinstance(sections.get(stage), dict) else "UNVERIFIED",
+                "cross_validation": (sections.get(stage) or {}).get("cross_validation", "UNVERIFIED")
+                    if isinstance(sections.get(stage), dict) else "UNVERIFIED",
             } for stage in ("EIGHT_PERIODS", "SECTORS",
                             "ADJUSTMENTS_ROTATING", "FINANCIAL_DAILY")
         },

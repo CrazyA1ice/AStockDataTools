@@ -17,7 +17,8 @@ SCHEDULE_START_MINUTE = 19 * 60 + 55
 SCHEDULE_END_MINUTE = 20 * 60 + 20
 
 
-def outstanding_resume_gates(preview: dict, *, qmt_observation: dict | None = None) -> list[dict]:
+def outstanding_resume_gates(preview: dict, *, qmt_observation: dict | None = None,
+                             inventory_observation: dict | None = None) -> list[dict]:
     """Display explicit non-cleared gates even when static blockers=[].
 
     These are four *separate* gates; NONE authorizes execution even if
@@ -31,6 +32,16 @@ def outstanding_resume_gates(preview: dict, *, qmt_observation: dict | None = No
         type(qmt_observation) is dict and
         qmt_observation.get("status") == "QMT_CONNECTION_OBSERVED_ONLY" and
         qmt_observation.get("connected_now") is True)
+    inventory_seen = (
+        type(inventory_observation) is dict and
+        inventory_observation.get("status") ==
+        "V2D2B_READONLY_RECOVERY_INVENTORY_NOT_EXECUTABLE" and
+        inventory_observation.get("can_execute") is False)
+    code_observed = inventory_seen and all(
+        item.get("status") == "FINGERPRINT_OBSERVED_NOT_APPROVED"
+        for item in inventory_observation.get("code_fingerprints", []))
+    snapshot_scopes = (inventory_observation.get("finance_scope_count", 0)
+                       if inventory_seen else 0)
     return [
         {"key": "static_evidence", "ok": bool(static_good),
          "label": "同次回执、失败批次与持久化游标",
@@ -44,10 +55,15 @@ def outstanding_resume_gates(preview: dict, *, qmt_observation: dict | None = No
          "detail": "尚未进入正式执行入口；不可仅凭锁空闲状态授权写入"},
         {"key": "production_version", "ok": False,
          "label": "正式执行版本与固定 SHA",
-         "detail": "尚未确认受控重试模块已部署到 canonical 正式目录"},
+         "detail": ("已读取正式代码文件指纹，但未获得独立版本批准"
+                    if code_observed else
+                    "尚未核对 canonical 正式代码文件指纹")},
         {"key": "finance_backup", "ok": False,
          "label": "财务历史版本快照、备份与回滚",
-         "detail": "尚未执行财务事务和可恢复性预检"},
+         "detail": ("只读枚举" + str(snapshot_scopes) +
+                    "个候选股表范围；未复制备份、未验证回滚"
+                    if inventory_seen else
+                    "尚未统计候选快照及备份范围，未执行备份")},
     ]
 
 

@@ -37,9 +37,11 @@ def outstanding_resume_gates(preview: dict, *, qmt_observation: dict | None = No
         inventory_observation.get("status") ==
         "V2D2B_READONLY_RECOVERY_INVENTORY_NOT_EXECUTABLE" and
         inventory_observation.get("can_execute") is False)
-    code_observed = inventory_seen and all(
-        item.get("status") == "FINGERPRINT_OBSERVED_NOT_APPROVED"
-        for item in inventory_observation.get("code_fingerprints", []))
+    code_observed = (
+        inventory_seen and
+        len(inventory_observation.get("code_fingerprints", [])) == 5 and
+        all(item.get("status") == "FINGERPRINT_OBSERVED_NOT_APPROVED"
+            for item in inventory_observation["code_fingerprints"]))
     snapshot_scopes = (inventory_observation.get("finance_scope_count", 0)
                        if inventory_seen else 0)
     return [

@@ -1,4 +1,4 @@
-﻿# One 16:30 China-time trigger -> market, finance, sectors, adjustments.
+﻿# One 20:05 China-time trigger -> market, finance, sectors, adjustments.
 # No runtime deadline. Every finished run attempts user notification.
 param(
     [switch]$Apply,
@@ -58,7 +58,9 @@ $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList
 $stageRecords=[ordered]@{}
 $transcribing=$false
-$stageNames=if($HistoryOnly){@('EIGHT_PERIODS')}else{@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')}
+$stageNames=@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')
+if($HistoryOnly){$stageNames=@('EIGHT_PERIODS')}
+$runScope=if($HistoryOnly){'MARKET_HISTORY_ONLY_PRE_2005'}else{'ALL_FOUR_SECTIONS'}
 function Invoke-MarketStage {
     param([string]$Label,[string]$Script,[string[]]$Arguments)
     $stageLog=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'-'+$Label+'.log')
@@ -140,10 +142,10 @@ try {
     # existing one-trigger schedule and all private stock-level cursors.
     Invoke-MarketStage -Label 'EIGHT_PERIODS' -Script $catchup -Arguments @('-Root',$Root)
     if(-not $HistoryOnly){
-    Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
-    $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
-    Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
-    Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit)
+        Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
+        $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
+        Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
+        Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit)
     }else{
         Write-Host 'MARKET_MANUAL_HISTORY_ONLY=TRUE; NO_CURRENT_FINANCE_SECTOR_ADJUSTMENT_QUERIES'
     }
@@ -165,7 +167,7 @@ try {
         mode='UNIFIED_SINGLE_RUN'
         invocation=$Invocation
         history_only=[bool]$HistoryOnly
-        run_scope=if($HistoryOnly){'MARKET_HISTORY_ONLY_PRE_2005'}else{'ALL_FOUR_SECTIONS'}
+        run_scope=$runScope
         started_local=$started
         finished_local=(Get-Date).ToString('o')
         china_start=$chinaNow.ToString('o')

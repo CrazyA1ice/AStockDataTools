@@ -250,10 +250,11 @@ class MarketCenterV2(tk.Tk):
         diagnosis = ttk.LabelFrame(
             page, text="错误诊断与快速恢复建议（只读）", padding=10)
         diagnosis.pack(fill="x", pady=(12, 0))
-        ttk.Label(diagnosis, textvariable=self.fault_headline,
-                  style="Failure.Section.TLabel",
-                  font=("Microsoft YaHei UI", 10, "bold"),
-                  wraplength=965).pack(anchor="w")
+        self.fault_title_view = ttk.Label(
+            diagnosis, textvariable=self.fault_headline,
+            style="Neutral.Section.TLabel",
+            font=("Microsoft YaHei UI", 10, "bold"), wraplength=965)
+        self.fault_title_view.pack(anchor="w")
         ttk.Label(diagnosis, textvariable=self.fault_explanation,
                   style="Section.TLabel",
                   wraplength=965).pack(anchor="w", pady=(4, 0))
@@ -350,6 +351,7 @@ class MarketCenterV2(tk.Tk):
         except (FaultEvidenceBlocked, OSError, ValueError) as exc:
             self.fault_diagnosis = None
             self.fault_headline.set("本轮诊断证据暂不可用")
+            self.fault_title_view.configure(style="Warning.Section.TLabel")
             self.fault_explanation.set(str(exc)[:180] + "；只读状态无法确认")
             self.fault_resume_gate.set("续跑必须阻断：未取得完整的本次回执与检查点")
             rows = self.fault_tree.get_children()
@@ -362,12 +364,15 @@ class MarketCenterV2(tk.Tk):
         cases = result["cases"]
         failure = next((item for item in cases if item["severity"] == "ERROR"), None)
         if failure:
+            self.fault_title_view.configure(style="Failure.Section.TLabel")
             self.fault_headline.set("发现本轮错误：" + failure["title"])
             self.fault_explanation.set(failure["explanation"])
         elif cases:
+            self.fault_title_view.configure(style="Warning.Section.TLabel")
             self.fault_headline.set("本轮无执行失败；存在待续批次或复核提示")
             self.fault_explanation.set(cases[0]["title"] + "；" + cases[0]["explanation"])
         else:
+            self.fault_title_view.configure(style="Success.Section.TLabel")
             self.fault_headline.set("本轮未从有效回执识别到错误")
             self.fault_explanation.set("这不等于全市场数据完整，仍应查看运行阶段和独立来源证据")
         preview = result["finance_resume_preview"]

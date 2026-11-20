@@ -249,7 +249,8 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.stage_widgets = {}
         matrix = ttk.Frame(phases)
         matrix.pack(fill="x")
-        matrix.columnconfigure((0, 1), weight=1)
+        for column in (0, 1):
+            matrix.columnconfigure(column, weight=1)
         for ix, (key, name) in enumerate(STAGES):
             cell = ttk.LabelFrame(matrix, text=name, padding=10)
             cell.grid(row=ix // 2, column=ix % 2, sticky="ew", padx=5, pady=5)

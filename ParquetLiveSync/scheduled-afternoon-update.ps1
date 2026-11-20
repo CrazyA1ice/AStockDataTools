@@ -24,6 +24,7 @@ $chinaNow=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
 if(-not $Apply){
     Write-Host 'MARKET_1630_PREVIEW_ONLY=TRUE'
     Write-Host ('MARKET_1630_CHINA_NOW='+$chinaNow.ToString('o'))
+    Write-Host ('MARKET_2005_RUN_START_CHINA='+$chinaNow.ToString('o'))
     Write-Host 'MARKET_1630_MODE=UNIFIED_SINGLE_RUN'
     Write-Host 'MARKET_1630_SECTIONS=EIGHT_PERIODS,FINANCIAL_DAILY,SECTORS,ADJUSTMENTS_ROTATING'
     Write-Host 'MARKET_1630_FINANCIAL_RUNTIME_LIMIT=NONE'
@@ -70,6 +71,7 @@ function Invoke-MarketStage {
     $stageLog=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'-'+$Label+'.log')
     $code=-1
     Write-Host ('MARKET_1630_STEP_START='+$Label)
+    Write-Host ('MARKET_2005_STEP_START='+$Label)
     try {
         # Preserve full single-line JSON receipts from *this run*. Out-File
         # can word-wrap JSON using host width in Windows PowerShell 5.1.
@@ -99,10 +101,12 @@ function Invoke-MarketStage {
         if($code -ne 0){throw ('Exit code '+$code)}
         [void]$completed.Add($Label)
         Write-Host ('MARKET_1630_STEP_DONE='+$Label)
+        Write-Host ('MARKET_2005_STEP_DONE='+$Label)
     }catch{
         $msg=$Label+': '+$_.Exception.Message
         [void]$failures.Add($msg)
         Write-Host ('MARKET_1630_STEP_FAILED='+$msg)
+        Write-Host ('MARKET_2005_STEP_FAILED='+$msg)
     }finally{
         $stageRecords[$Label]=@{exit_code=[int]$code;log_path=$stageLog}
     }
@@ -237,6 +241,8 @@ try {
         $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $part -Encoding UTF8
         Move-Item -LiteralPath $part -Destination $status -Force
         Write-Host ('MARKET_1630_SUMMARY='+($result | ConvertTo-Json -Compress -Depth 12))
+        Write-Host ('MARKET_2005_RUN_RESULT='+$result.status)
+        Write-Host ('MARKET_2005_RUN_LOG='+$log)
     }catch{
         [void]$failures.Add('STATUS_SAVE: '+$_.Exception.Message)
         $outcome=if($completed.Count -gt 0){'PARTIAL'}else{'FAILED'}

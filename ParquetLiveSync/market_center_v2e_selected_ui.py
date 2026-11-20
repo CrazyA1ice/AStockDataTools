@@ -594,25 +594,29 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         y.pack(side="right", fill="y")
         buttons = ttk.Frame(self.fault_page)
         buttons.pack(fill="x", pady=(10, 0))
-        ttk.Button(buttons, text="查看选中阶段日志",
+        actions_top = ttk.Frame(buttons)
+        actions_top.pack(fill="x")
+        actions_bottom = ttk.Frame(buttons)
+        actions_bottom.pack(fill="x", pady=(7, 0))
+        ttk.Button(actions_top, text="查看选中阶段日志",
                    command=self.show_selected_fault_log).pack(side="left")
-        ttk.Button(buttons, text="复制安全续跑预览",
+        ttk.Button(actions_top, text="复制安全续跑预览",
                    command=self.copy_finance_resume_preview).pack(
                        side="left", padx=8)
-        live = ttk.Button(buttons, text="检查 QMT 连接（不下载）",
+        live = ttk.Button(actions_top, text="检查 QMT 连接（不下载）",
                           command=self.start_qmt_live_probe)
         live.pack(side="left", padx=8)
         self.qmt_probe_buttons.append(live)
-        short_scope = ttk.Button(buttons, text="版本指纹与当天范围",
+        short_scope = ttk.Button(actions_bottom, text="版本指纹与当天范围",
                                  command=self.start_finance_inventory)
-        short_scope.pack(side="left", padx=8)
+        short_scope.pack(side="left")
         self.inventory_buttons.append(short_scope)
-        all_scope = ttk.Button(buttons, text="历史财务版本范围（只读）",
+        all_scope = ttk.Button(actions_bottom, text="历史财务版本范围（只读）",
                                command=self.start_historical_inventory)
         all_scope.pack(side="left", padx=8)
         self.historical_inventory_buttons.append(all_scope)
         self.fault_repair_disabled = ttk.Button(
-            buttons, text="一键重试（未开放）", state="disabled")
+            actions_bottom, text="一键重试（未开放）", state="disabled")
         self.fault_repair_disabled.pack(side="left", padx=8)
         ttk.Label(self.fault_page,
                   text="故障以本轮回执和检查点为准。连接测试、文件清单均不能解锁写入；20:05 任务不变。",

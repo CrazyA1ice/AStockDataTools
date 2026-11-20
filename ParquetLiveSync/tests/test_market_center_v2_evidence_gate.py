@@ -100,6 +100,21 @@ class EvidenceGatedClassificationTests(unittest.TestCase):
             self.assertFalse(got["market_file_writes"])
             self.assertEqual(got["qmt_calls"], 0)
 
+    def test_missing_physical_shard_is_not_labeled_stock_day_missing(self):
+        report = base_report([observation(DAYS[0])])
+        report["missing_partitions"] = [
+            {"period": "day", "partition": "2026-11",
+             "reason": "PHYSICAL_PARTITION_NOT_FOUND"}]
+        with TemporaryDirectory() as temp:
+            path, sha = pin(base_evidence(), Path(temp))
+            proof = E.load_pinned_evidence(path, sha, report["scope"])
+            got = E.classify(report, proof)
+            self.assertEqual(
+                got["observations"][0]["interpretation"],
+                "PHYSICAL_PARTITION_MISSING_STOCK_GAP_UNDETERMINED")
+            self.assertEqual(got["confirmed_missing_count"], 0)
+            self.assertFalse(got["allowed_repair_or_backfill"])
+
     def test_wrong_sha_rejected_before_claims(self):
         with TemporaryDirectory() as temp:
             path, _ = pin(base_evidence(), Path(temp))

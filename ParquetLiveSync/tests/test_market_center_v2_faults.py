@@ -275,6 +275,44 @@ class FaultDiagnosisTests(unittest.TestCase):
         self.assertNotIn("subprocess.Popen", source)
         self.assertNotIn("download_financial_data2", source)
 
+    def test_redirected_private_progress_is_refused_without_outside_read(self):
+        with TemporaryDirectory() as temp:
+            root = fixture(Path(temp))
+            original = root / "work" / "qmt_extra" / "financial-cache-progress.json"
+            other = Path(temp) / "outside.json"
+            other.write_text(original.read_text(encoding="utf-8"), encoding="utf-8")
+            original.unlink()
+            try:
+                original.symlink_to(other)
+            except (OSError, NotImplementedError):
+                self.skipTest("Windows symlink privileges unavailable")
+            report = F.diagnose_latest(root, now=TODAY)
+            self.assertEqual(report["cases"][0]["category"],
+                             "QMT_FINANCE_CONNECTION_LOST")
+            self.assertIn("financial_progress_missing_or_invalid",
+                          report["finance_resume_preview"]["blockers"])
+
+    def test_small_dashboard_is_scrollable_with_diagnostic_cards(self):
+        import inspect
+        import market_center_v2_preview as UI
+        content = inspect.getsource(UI.MarketCenterV2.build_home)
+        self.assertIn("canvas = tk.Canvas(self.home", content)
+        self.assertIn('orient="vertical", command=canvas.yview', content)
+        self.assertIn("canvas.itemconfigure(slot, width=event.width)", content)
+        self.assertIn("错误诊断与快速恢复建议", content)
+
+    def test_short_latest_receipt_validation_none_keeps_diagnosis_readonly(self):
+        with TemporaryDirectory() as temp:
+            root = fixture(Path(temp))
+            receipt = root / "work" / "last-afternoon-unified.json"
+            obj = json.loads(receipt.read_text(encoding="utf-8"))
+            obj["validation"] = None
+            receipt.write_text(json.dumps(obj), encoding="utf-8")
+            result = F.diagnose_latest(root, now=TODAY)
+            self.assertEqual(result["cases"][0]["category"],
+                             "QMT_FINANCE_CONNECTION_LOST")
+            self.assertFalse(result["allowed_to_execute"])
+
     def test_repeated_diagnosis_only_reads_inputs_no_state_mutation(self):
         with TemporaryDirectory() as temp:
             root = fixture(Path(temp))

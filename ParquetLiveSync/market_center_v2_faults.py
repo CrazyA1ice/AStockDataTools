@@ -81,7 +81,21 @@ def _run_identity(latest: dict) -> tuple[str, str]:
         raise FaultEvidenceBlocked("missing_run_china_start")
     try:
         timestamp = datetime.fromisoformat(started)
-        if timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(hours=8):
+        if timestamp.tzinfo is None:
+            # The canonical scheduled-afternoon-update.ps1 uses
+            # ConvertTimeFromUtc(..., China Standard Time). That operation
+            # creates a .NET DateTime with Kind=Unspecified; ToString('o')
+            # serializes a Beijing wall clock with SEVEN fractional digits
+            # and no UTC offset. Allow *only that exact known receipt
+            # contract*, never reinterpret an arbitrary naive timestamp.
+            if (latest.get("format") != "qmt_daily_single_trigger_v3"
+                    or latest.get("mode") != "UNIFIED_SINGLE_RUN"
+                    or re.fullmatch(
+                        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{7}",
+                        started) is None):
+                raise ValueError("unapproved_offsetless_timestamp")
+            timestamp = timestamp.replace(tzinfo=CN)
+        elif timestamp.utcoffset() != timedelta(hours=8):
             raise ValueError("not_beijing_timezone")
         stamp = timestamp.strftime("%Y%m%d-%H%M%S")
         return timestamp.date().isoformat(), stamp

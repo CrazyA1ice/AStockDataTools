@@ -47,12 +47,16 @@ try {
         exit 9
     }
     Write-Host ('MARKET_2005_MUTEX_ACQUIRED=TRUE invocation='+$Invocation)
-if($HistoryOnly -and $Invocation -ne 'Manual'){
-    throw 'History-only pre-cutoff mode is reserved for explicit manual runs'
+# Delayed StartWhenAvailable tasks can start the NEXT morning, before 20:05.
+# They may resume accepted old market days, but never fetch the current day's
+# finance/sectors/adjustments before the user-defined nightly cutoff.
+if($chinaNow.TimeOfDay -lt (New-TimeSpan -Hours 20 -Minutes 5)){
+    $HistoryOnly=$true
+    Write-Host 'MARKET_2005_PRE_CUTOFF_HISTORY_ONLY=TRUE'
 }
 $started=(Get-Date).ToString('o')
 $log=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'.log')
-$status=Join-Path $work $(if($HistoryOnly){'last-manual-market-only.json'}else{'last-afternoon-unified.json'})
+$status=Join-Path $work $(if($HistoryOnly){'last-precutoff-market-only.json'}else{'last-afternoon-unified.json'})
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList

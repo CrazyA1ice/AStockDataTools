@@ -151,6 +151,31 @@ class V2AContractTests(unittest.TestCase):
             self.assertIn("无法计算", summary["comparison"])
             self.assertFalse(summary["qmt_is_live_now_verified"])
 
+    def test_stage_exit_zero_is_not_data_quality_pass(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "work").mkdir()
+            (root / "work" / "last-afternoon-unified.json").write_text(
+                json.dumps({
+                    "status": "PARTIAL",
+                    "stage_records": {"EIGHT_PERIODS": {
+                        "exit_code": 0,
+                        "log_path": "fictional"}},
+                    "validation": {"sections": {
+                        "EIGHT_PERIODS": {
+                            "execution": "PASS",
+                            "data_validation": "UNVERIFIED",
+                            "cross_validation": "UNVERIFIED"}}},
+                }), encoding="utf-8")
+            summary = M.latest_status(root, now=NOW)
+            stage = summary["stage_records"]["EIGHT_PERIODS"]
+            self.assertEqual(stage["exit_code"], 0)
+            self.assertEqual(stage["data_validation"], "UNVERIFIED")
+            self.assertIn('quality == "PASS"', inspect.getsource(
+                UI.MarketCenterV2.refresh_overview))
+            self.assertIn("数据尚未认证", inspect.getsource(
+                UI.MarketCenterV2.refresh_overview))
+
     def test_pending_financial_count_is_only_shown_when_evidenced(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -428,13 +428,22 @@ class MarketCenterV2(tk.Tk):
             for key, name in STAGES:
                 entry = obj["stage_records"][key]
                 code = entry["exit_code"]
-                self.stage_labels[key].set(
-                    ("✓ 已执行（退出码 0）" if code == 0 else "✕ 失败（退出码 " + str(code) + "）")
-                    if code is not None else "— 本轮未记录")
+                quality = entry["data_validation"]
+                if code is None:
+                    summary, shade = "— 未记录本阶段执行", "Neutral"
+                elif code != 0:
+                    summary, shade = "✕ 运行失败（退出码 " + str(code) + "）", "Failure"
+                elif quality == "PASS":
+                    summary, shade = "✓ 已执行，数据核验通过", "Success"
+                elif quality == "PARTIAL":
+                    summary, shade = "△ 已执行，数据核验部分通过", "Warning"
+                elif quality == "FAIL":
+                    summary, shade = "! 已执行，但数据核验失败", "Failure"
+                else:
+                    summary, shade = "△ 已执行，数据尚未认证", "Warning"
+                self.stage_labels[key].set(summary)
                 self.stage_widgets[key].configure(
-                    style=("Success.Section.TLabel" if code == 0
-                           else "Failure.Section.TLabel" if code is not None
-                           else "Neutral.Section.TLabel"))
+                    style=shade + ".Section.TLabel")
             cross = "、".join(src["minute_crosschecks_configured"]) or "当前未启用抽样核验"
             self.source_line.set(
                 "更新：分钟 " + src["market_minute_update"] +

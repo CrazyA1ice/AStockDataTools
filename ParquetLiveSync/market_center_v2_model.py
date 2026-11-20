@@ -104,6 +104,10 @@ def plan_preview(*, mode: str, start: str, end: str, scope: str,
         "stock_universe_membership_certified": False,
         "physical_data_certified": False,
         "allowed_to_execute": False,
+        "existing_history_policy": "行情普通增量仅从最新已提交日后续传；已提交来源可幂等跳过，日期交叉重叠或版本冲突必须拒绝盲目覆盖；财务历史冲突继续隔离",
+        "concurrent_task_policy": "实际更新必须经过同一执行锁；20:05计划任务运行中拒绝第二个写入作业，日志只读仍可查看",
+        "existing_stock_day_coverage_scanned": False,
+        "scheduled_task_live_state_checked": False,
         "reason": "V2-A 仅配置预览；指定日期/股票的更新与核验后端尚未验收，禁止隐式全市场执行",
     }
 

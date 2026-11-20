@@ -141,6 +141,7 @@ class MarketCenterV2(tk.Tk):
         self.modules = {name: tk.BooleanVar(value=True) for name in MODULES}
         self.stock_count = tk.StringVar(value="指定股票尚未填写")
         self.overview_info = tk.StringVar(value="尚未读取")
+        self.last_run_details = tk.StringVar(value="最近任务历史记录尚未读取")
         self.status_line = tk.StringVar(value="V2-A：只读预览，不会启动数据处理")
         self.source_line = tk.StringVar(value="数据源：读取当前项目配置")
         self.plan_ready = None
@@ -175,7 +176,7 @@ class MarketCenterV2(tk.Tk):
         tiles = ttk.Frame(self.home)
         tiles.pack(fill="x")
         self.cards = {}
-        for label in ("已提交最新交易日", "最近任务状态", "当前安全截止", "QMT 最近预检"):
+        for label in ("已提交最新交易日", "最近任务状态", "当前安全截止", "QMT 最近预检", "财务待审"):
             card = ttk.LabelFrame(tiles, text=label, padding=12,
                                   style="Card.TLabelframe")
             card.pack(side="left", fill="x", expand=True, padx=(0, 8))
@@ -186,6 +187,8 @@ class MarketCenterV2(tk.Tk):
             self.cards[label] = variable
             self.card_widgets = getattr(self, "card_widgets", {})
             self.card_widgets[label] = display
+        ttk.Label(self.home, textvariable=self.last_run_details,
+                  style="Muted.TLabel").pack(anchor="w", pady=(9, 0))
         changed = ttk.LabelFrame(self.home, text="本次相比上次，有什么变化？", padding=14)
         changed.pack(fill="x", pady=(18, 12))
         ttk.Label(changed, textvariable=self.overview_info, wraplength=900,
@@ -401,6 +404,15 @@ class MarketCenterV2(tk.Tk):
             self.cards["最近任务状态"].set(str(obj["last_run_status"]))
             self.cards["当前安全截止"].set(obj["safe_candidate_cutoff"])
             self.cards["QMT 最近预检"].set(obj["qmt_last_preflight"])
+            pending = obj["finance_pending_count"]
+            self.cards["财务待审"].set(str(pending) + " 项" if pending is not None else "未记录")
+            self.card_widgets["财务待审"].configure(
+                style=("Warning.CardValue.TLabel" if pending is not None and pending > 0
+                       else "Success.CardValue.TLabel" if pending == 0
+                       else "Neutral.CardValue.TLabel"))
+            self.last_run_details.set(
+                "上次任务开始：" + str(obj["last_run_started"]) +
+                "　｜　以上 QMT 预检是历史回执，不代表当前实时连接状态")
             run_status = str(obj["last_run_status"]).upper()
             self.card_widgets["最近任务状态"].configure(
                 style=("Failure.CardValue.TLabel" if run_status in ("FAILED", "FAIL")

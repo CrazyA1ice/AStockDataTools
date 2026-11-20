@@ -31,7 +31,8 @@ class FaultEvidenceBlocked(ValueError):
 
 
 def _json_bytes(path: Path, cap: int) -> tuple[dict, str]:
-    if path.is_symlink() or not path.is_file():
+    if (any(p.is_symlink() for p in (path, *path.parents))
+            or not path.is_file()):
         raise FaultEvidenceBlocked("missing_or_redirected_receipt_" + path.name)
     if path.stat().st_size > cap:
         raise FaultEvidenceBlocked("oversized_receipt_" + path.name)

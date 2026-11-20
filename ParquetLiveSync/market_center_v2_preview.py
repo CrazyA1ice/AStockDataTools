@@ -21,6 +21,7 @@ from market_center_v2_model import (
     safe_cutoff, source_info,
 )
 
+from market_center_v2_faults import FaultEvidenceBlocked, diagnose_latest
 from market_center_v2_audit_cli import audited_query
 from market_center_v2_readonly_audit import AuditBlocked, FROZEN_ASOF, PERIODS
 
@@ -157,6 +158,10 @@ class MarketCenterV2(tk.Tk):
         self.stock_count = tk.StringVar(value="指定股票尚未填写")
         self.overview_info = tk.StringVar(value="尚未读取")
         self.last_run_details = tk.StringVar(value="最近任务历史记录尚未读取")
+        self.fault_diagnosis = None
+        self.fault_headline = tk.StringVar(value="正在读取本轮错误证据")
+        self.fault_explanation = tk.StringVar(value="尚未完成只读诊断")
+        self.fault_resume_gate = tk.StringVar(value="未进行财务续跑门禁核验")
         self.status_line = tk.StringVar(value="V2-B：仅历史物理行情只读核验；更新和修复仍不开放")
         self.source_line = tk.StringVar(value="数据源：读取当前项目配置")
         self.plan_ready = None
@@ -175,13 +180,16 @@ class MarketCenterV2(tk.Tk):
         self.action = ttk.Frame(self.book, padding=14)
         self.logs = ttk.Frame(self.book, padding=14)
         self.audit_page = ttk.Frame(self.book, padding=14)
+        self.fault_page = ttk.Frame(self.book, padding=14)
         self.book.add(self.home, text="  运行总览  ")
         self.book.add(self.action, text="  更新 / 核验  ")
         self.book.add(self.audit_page, text="  核验结果  ")
+        self.book.add(self.fault_page, text="  故障诊断  ")
         self.book.add(self.logs, text="  运行日志  ")
         self.build_home()
         self.build_action()
         self.build_audit_results()
+        self.build_fault_page()
         self.build_logs()
         ttk.Label(self, textvariable=self.status_line, style="Muted.TLabel",
                   padding=(18, 5)).pack(fill="x")
@@ -226,14 +234,202 @@ class MarketCenterV2(tk.Tk):
             stage_view.pack(side="left", fill="x")
             self.stage_widgets = getattr(self, "stage_widgets", {})
             self.stage_widgets[key] = stage_view
+        diagnosis = ttk.LabelFrame(
+            self.home, text="错误诊断与快速恢复建议（只读）", padding=10)
+        diagnosis.pack(fill="x", pady=(12, 0))
+        ttk.Label(diagnosis, textvariable=self.fault_headline,
+                  style="Failure.Section.TLabel",
+                  font=("Microsoft YaHei UI", 10, "bold"),
+                  wraplength=965).pack(anchor="w")
+        ttk.Label(diagnosis, textvariable=self.fault_explanation,
+                  style="Section.TLabel",
+                  wraplength=965).pack(anchor="w", pady=(4, 0))
+        ttk.Label(diagnosis, textvariable=self.fault_resume_gate,
+                  style="Muted.TLabel",
+                  wraplength=965).pack(anchor="w", pady=(3, 0))
+        shortcuts = ttk.Frame(diagnosis)
+        shortcuts.pack(fill="x", pady=(7, 0))
+        ttk.Button(shortcuts, text="查看错误类型与受影响批次",
+                   command=self.open_fault_page).pack(side="left")
+        ttk.Button(shortcuts, text="查看本次财务阶段日志",
+                   command=self.show_finance_log).pack(side="left", padx=(9, 0))
+        ttk.Button(shortcuts, text="复制安全续跑预览",
+                   command=self.copy_finance_resume_preview).pack(
+                       side="left", padx=(9, 0))
         actions = ttk.Frame(self.home)
-        actions.pack(anchor="w", pady=(18, 0))
+        actions.pack(anchor="w", pady=(12, 0))
         ttk.Button(actions, text="配置更新范围", style="Primary.TButton",
                    command=lambda: self.go_action("更新数据")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="配置数据核验", command=lambda: self.go_action("数据核验")).pack(side="left", padx=(0, 10))
         ttk.Button(actions, text="查看运行日志", command=lambda: self.book.select(self.logs)).pack(side="left")
         ttk.Label(self.home, text="已有日期可选择补缺失、对比或审核修复（写入功能待开放）  |  20:05任务运行期间只读核验需取得共享锁",
                   style="Muted.TLabel", wraplength=930).pack(anchor="w", pady=(18, 0))
+
+    def build_fault_page(self):
+        head = ttk.Frame(self.fault_page)
+        head.pack(fill="x", pady=(0, 8))
+        ttk.Label(head, text="本轮故障诊断与安全恢复",
+                  font=("Microsoft YaHei UI", 14, "bold")).pack(side="left")
+        ttk.Button(head, text="重新读取本轮回执", command=self.refresh_overview).pack(side="right")
+        ttk.Label(
+            self.fault_page,
+            text="只根据本次正式任务的日志与保存游标分类；这不是重新下载按钮，未验证的原因不会自动修复。",
+            style="Muted.TLabel").pack(anchor="w", pady=(0, 9))
+        panel = ttk.LabelFrame(self.fault_page, text="错误与正常待续批次", padding=8)
+        panel.pack(fill="both", expand=True)
+        columns = ("severity", "stage", "type", "description")
+        self.fault_tree = ttk.Treeview(
+            panel, columns=columns, show="headings", selectmode="browse", height=9)
+        for key, label, width in (
+                ("severity", "等级", 70), ("stage", "模块", 100),
+                ("type", "错误类型", 270), ("description", "说明", 440)):
+            self.fault_tree.heading(key, text=label)
+            self.fault_tree.column(key, width=width,
+                                   stretch=(key == "description"))
+        scroll = ttk.Scrollbar(panel, orient="vertical", command=self.fault_tree.yview)
+        self.fault_tree.configure(yscrollcommand=scroll.set)
+        self.fault_tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.fault_tree.bind("<<TreeviewSelect>>", self._select_fault)
+        self.fault_case_by_row = {}
+        commands = ttk.Frame(self.fault_page)
+        commands.pack(fill="x", pady=(9, 6))
+        ttk.Button(commands, text="查看选中阶段原始日志",
+                   command=self.show_selected_fault_log).pack(side="left")
+        ttk.Button(commands, text="复制当前安全续跑预览",
+                   command=self.copy_finance_resume_preview).pack(
+                       side="left", padx=(10, 0))
+        self.fault_repair_disabled = ttk.Button(
+            commands, text="一键重试（尚未开放）", state="disabled")
+        self.fault_repair_disabled.pack(side="left", padx=(10, 0))
+        ttk.Label(
+            self.fault_page,
+            text="执行前仍须检查 QMT 实时连接、唯一写锁、正式版本、检查点和财务快照；旧日期不得盲目续跑。",
+            style="Muted.TLabel").pack(anchor="w")
+        details = ttk.LabelFrame(self.fault_page, text="同次运行的证据与建议", padding=8)
+        details.pack(fill="both", expand=True, pady=(8, 0))
+        self.fault_detail_text = tk.Text(
+            details, wrap="word", height=9, font=("Consolas", 9),
+            background=COLORS["log_bg"], foreground=COLORS["log_fg"],
+            borderwidth=0, padx=9, pady=7, state="disabled")
+        detail_scroll = ttk.Scrollbar(
+            details, orient="vertical", command=self.fault_detail_text.yview)
+        self.fault_detail_text.configure(yscrollcommand=detail_scroll.set)
+        self.fault_detail_text.pack(side="left", fill="both", expand=True)
+        detail_scroll.pack(side="right", fill="y")
+
+    def _set_fault_detail(self, content):
+        self.fault_detail_text.configure(state="normal")
+        self.fault_detail_text.delete("1.0", "end")
+        self.fault_detail_text.insert("1.0", content)
+        self.fault_detail_text.configure(state="disabled")
+
+    def _select_fault(self, _event=None):
+        selected = self.fault_tree.selection()
+        if selected and selected[0] in self.fault_case_by_row:
+            self._set_fault_detail(json.dumps(
+                self.fault_case_by_row[selected[0]],
+                ensure_ascii=False, indent=2))
+
+    def refresh_fault_diagnosis(self):
+        try:
+            result = diagnose_latest(self.state_module)
+        except (FaultEvidenceBlocked, OSError, ValueError) as exc:
+            self.fault_diagnosis = None
+            self.fault_headline.set("本轮诊断证据暂不可用")
+            self.fault_explanation.set(str(exc)[:180] + "；只读状态无法确认")
+            self.fault_resume_gate.set("续跑必须阻断：未取得完整的本次回执与检查点")
+            rows = self.fault_tree.get_children()
+            if rows:
+                self.fault_tree.delete(*rows)
+            self.fault_case_by_row.clear()
+            self._set_fault_detail("请检查正式任务状态目录，本界面未执行更新或下载")
+            return
+        self.fault_diagnosis = result
+        cases = result["cases"]
+        failure = next((item for item in cases if item["severity"] == "ERROR"), None)
+        if failure:
+            self.fault_headline.set("发现本轮错误：" + failure["title"])
+            self.fault_explanation.set(failure["explanation"])
+        elif cases:
+            self.fault_headline.set("本轮无执行失败；存在待续批次或复核提示")
+            self.fault_explanation.set(cases[0]["title"] + "；" + cases[0]["explanation"])
+        else:
+            self.fault_headline.set("本轮未从有效回执识别到错误")
+            self.fault_explanation.set("这不等于全市场数据完整，仍应查看运行阶段和独立来源证据")
+        preview = result["finance_resume_preview"]
+        self.fault_resume_gate.set(
+            "财务安全续跑：" +
+            ("证据门禁预检通过，但尚未验证 QMT/写锁/正式版本，不能执行"
+             if preview["status"] == "PREVIEW_CHECKS_PASSED_EXECUTION_STILL_DISABLED"
+             else "阻断，" + "、".join(preview["blockers"][:3])))
+        rows = self.fault_tree.get_children()
+        if rows:
+            self.fault_tree.delete(*rows)
+        self.fault_case_by_row.clear()
+        for case in cases:
+            row = self.fault_tree.insert(
+                "", "end", values=(
+                    case["severity"], case["name"], case["category"], case["title"]))
+            self.fault_case_by_row[row] = case
+        self._set_fault_detail(json.dumps(
+            {"cases": cases, "finance_resume_preview": preview,
+             "receipt_sha256": result["receipt_sha256"],
+             "finance_progress_sha256": result["finance_progress_sha256"],
+             "allowed_to_execute": False},
+            ensure_ascii=False, indent=2))
+
+    def open_fault_page(self):
+        self.book.select(self.fault_page)
+
+    def copy_finance_resume_preview(self):
+        # Read again so changing receipts/cursors cannot copy a stale plan.
+        try:
+            fresh = diagnose_latest(self.state_module)
+        except (FaultEvidenceBlocked, OSError, ValueError) as exc:
+            messagebox.showerror("不能生成续跑计划", str(exc))
+            return
+        payload = {
+            "run_day": fresh["run_day"],
+            "receipt_sha256": fresh["receipt_sha256"],
+            "finance_progress_sha256": fresh["finance_progress_sha256"],
+            "finance_resume_preview": fresh["finance_resume_preview"],
+            "allowed_to_execute": False,
+        }
+        self.clipboard_clear()
+        self.clipboard_append(json.dumps(payload, ensure_ascii=False, indent=2))
+        self.status_line.set("已复制安全续跑预览；不是下载或执行许可")
+
+    def _show_fault_stage_log(self, stage):
+        try:
+            current = diagnose_latest(self.state_module)
+            case = next((item for item in current["cases"]
+                         if item["stage"] == stage), None)
+            if not case or not case["same_run_log_verified"]:
+                raise FaultEvidenceBlocked("selected_stage_has_no_same_run_verified_log")
+            receipt = self.state_work / "last-afternoon-unified.json"
+            latest = json.loads(receipt.read_text(encoding="utf-8-sig"))
+            path = latest["stage_records"][stage]["log_path"]
+            content = _read_log_tail(path, work_dir=self.state_work)
+            self.book.select(self.logs)
+            self.log_text.configure(state="normal")
+            self.log_text.delete("1.0", "end")
+            self.log_text.insert("1.0", content)
+            self.log_text.configure(state="disabled")
+            self.log_text.see("end")
+            self.status_line.set("显示本轮 " + case["name"] + " 的原始阶段日志（只读）")
+        except (FaultEvidenceBlocked, OSError, ValueError, KeyError) as exc:
+            messagebox.showerror("无法读取该阶段的同次日志", str(exc))
+
+    def show_selected_fault_log(self):
+        selected = self.fault_tree.selection()
+        if not selected or selected[0] not in self.fault_case_by_row:
+            messagebox.showinfo("请选择故障", "先从错误表中选择需要查看的模块")
+            return
+        self._show_fault_stage_log(self.fault_case_by_row[selected[0]]["stage"])
+
+    def show_finance_log(self):
+        self._show_fault_stage_log("FINANCIAL_DAILY")
 
     def build_action(self):
         # The configuration form can exceed a laptop-height window. Keep
@@ -785,6 +981,7 @@ class MarketCenterV2(tk.Tk):
             )
             self.status_line.set("仅查看本地状态 | 当前 QMT 是否在线未进行实时连接测试")
             self.refresh_logs()
+            self.refresh_fault_diagnosis()
         except (InvalidPlan, OSError) as exc:
             self.status_line.set("状态读取异常：" + str(exc))
 

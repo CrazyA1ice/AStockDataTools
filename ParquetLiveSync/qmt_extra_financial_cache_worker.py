@@ -121,6 +121,19 @@ def main(argv=None):
             "encoding": exc.encoding, "start": exc.start,
             "reason": exc.reason}), file=sys.stderr, flush=True)
         raise SystemExit(85) from None
+    except Exception as exc:
+        # xtquant's get_client() may lose its local QMT connection between
+        # successful stock batches. Only its specific connection error is
+        # recoverable. All other exceptions must retain their original exit.
+        if not str(exc).startswith("无法连接xtquant服务"):
+            raise
+        print("QMT_CACHE_WORKER_CONNECT_UNAVAILABLE=" + E.canonical_json({
+            "symbols": args.symbols.split(","),
+            "mode": args.mode,
+            "reason": "XTQUANT_CLIENT_CONNECTION_UNAVAILABLE",
+            "output_created": args.output.exists(),
+        }), file=sys.stderr, flush=True)
+        raise SystemExit(86) from None
 
 
 if __name__ == "__main__":

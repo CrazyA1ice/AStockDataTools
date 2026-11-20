@@ -567,12 +567,15 @@ class MarketCenterV2(tk.Tk):
         self.audit_cards["异常待复核"].set(str(count_alert))
         self.audit_cards["未观察/待确认"].set(str(count_unobserved))
         self.audit_cards["缺失候选"].set(str(count_candidate))
+        grid_count = len(data.get("minute_grid_observations", []))
         self.audit_evidence_note.set(
             "状态：只读物理观察完成 | 已解压候选行：" +
             str(data["row_group_budget"]["rows_inspected"]) +
             " | 资格证据：" +
             ("仅 SHA 完整性检查，来源未认证"
              if result.get("source_integrity_checked") else "未提供交易日历/股票状态证据")
+            + (" | 分钟标签：已对照" + str(grid_count) + "组，未认证"
+               if grid_count else "")
             + " | 确认缺失：0（无自动补更）")
         status_names = {
             "RECORDS_PRESENT_NOT_CERTIFIED": "存在记录，未认证",
@@ -607,6 +610,8 @@ class MarketCenterV2(tk.Tk):
              "missing_partitions": data["missing_partitions"],
              "row_group_budget": data["row_group_budget"],
              "evidence_interpretation": result,
+             "minute_grid_observations": data.get("minute_grid_observations", []),
+             "minute_grid_is_comparison_only": True,
              "market_file_writes": False, "qmt_calls": 0},
             ensure_ascii=False, indent=2)
         self._set_audit_text(self.audit_raw_report)
@@ -751,11 +756,17 @@ class MarketCenterV2(tk.Tk):
                 if code is None:
                     summary, shade = "— 未记录本阶段执行", "Neutral"
                 elif code != 0:
-                    summary, shade = "✕ 运行失败（退出码 " + str(code) + "）", "Failure"
+                    summary, shade = (
+                        "✕ 运行失败（退出码 " + str(code) + "）；请查看本次阶段日志",
+                        "Failure")
                 elif quality == "PASS":
                     summary, shade = "✓ 已执行，数据核验通过", "Success"
                 elif quality == "PARTIAL":
-                    summary, shade = "△ 已执行，数据核验部分通过", "Warning"
+                    detail = entry.get("detail", "")
+                    if key == "ADJUSTMENTS_ROTATING" and "后续仍有批次" in detail:
+                        summary, shade = "◷ 本批通过，轮换仍有后续批次（非本批失败）", "Warning"
+                    else:
+                        summary, shade = "△ 已执行，数据核验部分通过", "Warning"
                 elif quality == "FAIL":
                     summary, shade = "! 已执行，但数据核验失败", "Failure"
                 else:

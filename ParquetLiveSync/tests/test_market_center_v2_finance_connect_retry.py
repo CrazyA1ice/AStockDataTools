@@ -96,6 +96,21 @@ class ConnectionRetryTests(unittest.TestCase):
         self.assertEqual([x.args[0] for x in sleeps], [2, 4])
         self.assertEqual(sum("QMT_CACHE_BATCH_READ=" in x for x in events), 0)
 
+    def test_failed_group_does_not_become_pending_or_checkpointed(self):
+        events = []
+        def fail_worker(*args, **kwargs):
+            raise Importer.QMTCacheConnectionError(
+                "QMT client unavailable after three isolated worker attempts")
+        with patch.object(Importer, "_pending_mark") as pending:
+            with patch.object(Importer, "_save_state") as checkpoint:
+                with self.assertRaises(Importer.QMTCacheConnectionError):
+                    Importer._recover_utf8_group(
+                        fail_worker, SYMBOLS, "daily", "2026-11-20", 120,
+                        Path("not-read"), 180, events.append)
+                pending.assert_not_called()
+                checkpoint.assert_not_called()
+        self.assertFalse(any("DEFERRED" in event for event in events))
+
     def test_untyped_exit_one_never_retried(self):
         calls, sleeps, _events, output, exc = self.launch([1])
         self.assertIsNone(output)

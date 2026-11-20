@@ -146,6 +146,11 @@ def classify(report: dict, evidence: dict | None = None) -> dict:
         _validate(evidence.get("document"), scope)
     cal = evidence["document"]["exchange_calendar"] if evidence else {}
     lifecycle = evidence["document"]["stocks"] if evidence else {}
+    absent_partitions = {
+        (item.get("period"), item.get("partition"))
+        for item in report.get("missing_partitions", [])
+        if type(item) is dict
+    }
     buckets = Counter()
     enriched = []
     for row in report["observations"]:
@@ -167,6 +172,10 @@ def classify(report: dict, evidence: dict | None = None) -> dict:
             raise EvidenceBlocked("inconsistent_observation_status")
         elif period in ("week", "month"):
             outcome = "LONG_CYCLE_LABEL_NEEDS_CLOSURE_PROOF"
+        elif (period, day[:7]) in absent_partitions:
+            # An absent physical shard is a file-level issue, not proof that
+            # each chosen stock is individually missing an expected bar.
+            outcome = "PHYSICAL_PARTITION_MISSING_STOCK_GAP_UNDETERMINED"
         elif not evidence:
             outcome = "NO_ROWS_CALENDAR_AND_ELIGIBILITY_UNKNOWN"
         else:

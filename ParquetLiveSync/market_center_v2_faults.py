@@ -242,6 +242,14 @@ def _finance_preview(case: dict | None, progress: dict | None,
         reasons.append("reserved_2005_automatic_schedule_window")
     if case and not case["same_run_log_verified"]:
         reasons.append("same_run_log_not_verified")
+    static_issues = {
+        "not_a_verified_finance_connect_outage", "failed_batch_not_anchored",
+        "log_checkpoint_not_anchored", "financial_progress_missing_or_invalid",
+        "saved_daily_date_differs_from_failed_run",
+        "financial_cursor_changed_since_failure",
+        "failed_batch_not_after_persisted_cursor",
+        "same_run_log_not_verified",
+    }
     return {
         "status": "PREVIEW_CHECKS_PASSED_EXECUTION_STILL_DISABLED"
                   if not reasons else "PREVIEW_BLOCKED",
@@ -250,12 +258,22 @@ def _finance_preview(case: dict | None, progress: dict | None,
         "saved_daily_cursor": ledger_cursor,
         "same_run_log_checkpoint": logfile_cursor,
         "saved_daily_date": daily_date,
-        "checks": {"same_run_log_and_cursor_checked": not reasons,
+        "checks": {"same_run_log_and_cursor_checked":
+                       not any(x in static_issues for x in reasons),
                    "qmt_connected_now_verified": False,
                    "writer_mutex_free_verified": False,
                    "canonical_deployed_worker_version_verified": False,
                    "rollback_and_finance_version_snapshot_verified": False},
+        # Only these blockers are checked by the read-only evidence gate.
+        # An empty list NEVER means finance resumption is approved.
         "blockers": reasons,
+        "blockers_scope": "static_evidence_and_time_only_not_execution",
+        "execution_prerequisites_unverified": [
+            "qmt_live_connection_at_execution_time",
+            "writer_mutex_exclusive_ownership",
+            "canonical_approved_worker_sha256",
+            "finance_version_backup_and_rollback",
+        ],
         "allowed_to_execute": False,
         "allowed_to_download": False,
         "allowed_to_modify_progress": False,

@@ -58,6 +58,15 @@ class ExplicitQMTObservationTests(unittest.TestCase):
                     result["status"], "QMT_CONNECTION_PROBE_SCHEDULE_BLOCKED")
                 self.assertEqual(result["qmt_connection_attempts"], 0)
 
+    def test_probe_near_1955_must_not_extend_into_schedule_window(self):
+        fake = Mock(side_effect=AssertionError("cannot start near guard"))
+        at = NOW.replace(hour=19, minute=54, second=48)
+        result = Q.observe_qmt_connection(now=at, probe=fake)
+        fake.assert_not_called()
+        self.assertEqual(result["status"],
+                         "QMT_CONNECTION_PROBE_SCHEDULE_BLOCKED")
+        self.assertEqual(result["qmt_connection_attempts"], 0)
+
     def test_outside_window_can_probe_but_never_download(self):
         for hh, mm in ((19, 54), (20, 20)):
             with self.subTest(time=(hh, mm)):

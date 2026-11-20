@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 import market_center_v2_qmt_live as Q
 import market_center_v2_qmt_live_cli as CLI
 import market_center_v2_preview as UI
+import market_center_v2_faults as F
 
 CN = timezone(timedelta(hours=8))
 NOW = datetime(2026, 11, 20, 21, 35, tzinfo=CN)
@@ -145,6 +146,40 @@ class ExplicitQMTObservationTests(unittest.TestCase):
         self.assertIn("height=5", source)
         details = inspect.getsource(UI.MarketCenterV2._update_qmt_gate_display)
         self.assertIn("outstanding_resume_gates(", details)
+
+    def test_empty_static_blockers_are_never_full_execution_approval(self):
+        case = {
+            "category": "QMT_FINANCE_CONNECTION_LOST",
+            "failed_stock_batch": ["000756.SZ"],
+            "last_checkpoint_in_log": "000755.SZ",
+            "same_run_log_verified": True,
+        }
+        progress = {"daily_date": "2026-11-20",
+                    "daily_cursor": "000755.SZ"}
+        preview = F._finance_preview(case, progress, "2026-11-20", NOW)
+        self.assertEqual(preview["blockers"], [])
+        self.assertEqual(preview["blockers_scope"],
+                         "static_evidence_and_time_only_not_execution")
+        self.assertEqual(len(preview["execution_prerequisites_unverified"]), 4)
+        self.assertFalse(preview["allowed_to_execute"])
+        self.assertFalse(preview["allowed_to_download"])
+
+    def test_elapsed_day_keeps_static_checkpoint_evidence_but_denies_replay(self):
+        case = {
+            "category": "QMT_FINANCE_CONNECTION_LOST",
+            "failed_stock_batch": ["000756.SZ"],
+            "last_checkpoint_in_log": "000755.SZ",
+            "same_run_log_verified": True,
+        }
+        progress = {"daily_date": "2026-11-20",
+                    "daily_cursor": "000755.SZ"}
+        preview = F._finance_preview(
+            case, progress, "2026-11-20", NOW + timedelta(days=1))
+        self.assertTrue(preview["checks"]["same_run_log_and_cursor_checked"])
+        self.assertIn("run_day_elapsed_do_not_replay_old_daily_window",
+                      preview["blockers"])
+        self.assertEqual(preview["status"], "PREVIEW_BLOCKED")
+        self.assertFalse(preview["allowed_to_execute"])
 
     def test_cli_needs_explicit_connection_only_optin(self):
         with patch.object(CLI, "diagnose_latest") as read:

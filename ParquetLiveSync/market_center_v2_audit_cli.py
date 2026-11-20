@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,14 @@ import sys
 from market_center_v2_readonly_audit import AuditBlocked, PERIODS, survey
 
 RUN_MUTEX = r"Local\AStockDataTools2005AllStages"
+CHINA = timezone(timedelta(hours=8))
+
+
+def _scheduled_window_reserved(now: datetime | None = None) -> bool:
+    """Do not delay the 20:05 task by holding its mutex for a UI read."""
+    now = (now or datetime.now(CHINA)).astimezone(CHINA)
+    local = now.hour * 60 + now.minute
+    return 19 * 60 + 55 <= local < 20 * 60 + 20
 
 
 @contextmanager
@@ -25,6 +34,8 @@ def shared_market_read_guard():
     if os.name != "nt":
         yield
         return
+    if _scheduled_window_reserved():
+        raise AuditBlocked("reserved_2005_automatic_update_window")
     import ctypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]

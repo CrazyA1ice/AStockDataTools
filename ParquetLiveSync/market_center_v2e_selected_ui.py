@@ -315,23 +315,23 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             ttk.Label(cell, textvariable=value,
                       style="CardValue.TLabel").pack(anchor="w")
 
+        # Size stage cards to their status text instead of stretching them
+        # vertically across the free dashboard space.
         phases = ttk.LabelFrame(
             left, text="本轮四个阶段", padding=(8, 6))
-        phases.pack(fill="both", expand=True)
+        phases.pack(fill="x")
         self.stage_labels = {}
         self.stage_widgets = {}
         matrix = ttk.Frame(phases)
-        matrix.pack(fill="both", expand=True)
+        matrix.pack(fill="x")
         for column in (0, 1):
             matrix.columnconfigure(column, weight=1)
-        for row in (0, 1):
-            matrix.rowconfigure(row, weight=1)
         for index, (key, name) in enumerate(STAGES):
             cell = ttk.LabelFrame(
-                matrix, text=name, padding=(9, 7))
+                matrix, text=name, padding=(9, 5))
             cell.grid(
                 row=index // 2, column=index % 2,
-                sticky="nsew", padx=3, pady=3)
+                sticky="ew", padx=3, pady=3)
             value = tk.StringVar(value="未记录")
             self.stage_labels[key] = value
             widget = ttk.Label(
@@ -357,7 +357,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
 
         actions = ttk.LabelFrame(
             right, text="常用操作 · 仅只读预检", padding=(10, 7))
-        actions.pack(fill="both", expand=True)
+        actions.pack(fill="x")
         for column in (0, 1):
             actions.columnconfigure(column, weight=1)
         for index, (label, callback, primary) in enumerate((

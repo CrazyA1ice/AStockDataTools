@@ -60,11 +60,31 @@ def _day(value: str) -> date:
     return parsed
 
 
+def read_only_ceiling(accepted_asof: str | None = None,
+                      now: datetime | None = None) -> date:
+    """V2G3: explicit past-date extension for a *read-only* audit.
+
+    The GUI supplies a candidate from its local commit ledger. That ledger
+    is not an independent source nor a coverage certification, so even an
+    extended ceiling cannot authorize backfill or repairs. The original
+    V2-B frozen default is preserved for other callers and CLI usage.
+    """
+    if accepted_asof is None:
+        return FROZEN_ASOF
+    chosen = _day(accepted_asof)
+    clock = (now or datetime.now(CN)).astimezone(CN)
+    yesterday = clock.date() - timedelta(days=1)
+    if chosen > yesterday:
+        raise AuditBlocked("read_only_asof_must_be_before_china_today")
+    return max(chosen, FROZEN_ASOF)
+
+
 def _validate_scope(start: str, end: str, symbols: list[str] | tuple[str, ...],
-                    periods: list[str] | tuple[str, ...]):
+                    periods: list[str] | tuple[str, ...],
+                    accepted_asof: str | None = None):
     lo, hi = _day(start), _day(end)
-    if hi < lo or (hi - lo).days + 1 > MAX_DAYS or hi > FROZEN_ASOF:
-        raise AuditBlocked("date_scope_invalid_or_exceeds_frozen_asof")
+    if hi < lo or (hi - lo).days + 1 > MAX_DAYS or hi > read_only_ceiling(accepted_asof):
+        raise AuditBlocked("date_scope_invalid_or_exceeds_readonly_ceiling")
     if type(symbols) not in (list, tuple) or not 1 <= len(symbols) <= MAX_STOCKS:
         raise AuditBlocked("explicit_1_to_20_stocks_required")
     codes = []
@@ -150,12 +170,14 @@ def survey(*, root: str | Path, start: str, end: str,
            symbols: list[str] | tuple[str, ...],
            periods: list[str] | tuple[str, ...],
            explicit_readonly: bool = False,
-           deadline_monotonic: float | None = None) -> dict:
+           deadline_monotonic: float | None = None,
+           accepted_asof: str | None = None) -> dict:
     """Bounded one-shot audit; rejects over-budget reads BEFORE row decompression."""
     if explicit_readonly is not True:
         raise AuditBlocked("explicit_readonly_optin_required")
     _check_deadline(deadline_monotonic)
-    lo, hi, pairs = _validate_scope(start, end, symbols, periods)
+    lo, hi, pairs = _validate_scope(
+        start, end, symbols, periods, accepted_asof=accepted_asof)
     selected = {canonical for canonical, _ in pairs}
     try:
         import pyarrow.parquet as pq

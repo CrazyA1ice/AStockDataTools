@@ -1196,6 +1196,8 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
     def refresh_fault_diagnosis(self):
         self.historical_inventory_result = None
         self.historical_inventory_summary.set("回执刷新后需重新盘点历史财务版本范围")
+        self.selected_fault_code.set(
+            "在左侧选择错误，可查看完整错误代码。")
         super().refresh_fault_diagnosis()
         # A neutral rail by default; red only for an evidenced execution
         # error, amber for warnings, blue for progress notices. A missing

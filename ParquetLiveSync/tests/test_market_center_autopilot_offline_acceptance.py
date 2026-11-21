@@ -108,10 +108,13 @@ class OfflineAcceptanceTests(unittest.TestCase):
         report = G.acceptance(
             self.module, PIN, full=True,
             runner=self.fake_run, git_runner=good_git)
-        self.assertEqual(len(report["test_suites"]), 9)
+        self.assertEqual(len(report["test_suites"]), 10)
+        self.assertEqual(
+            report["test_suites"][-2]["suite"],
+            "FULL_MARKET_CENTER_REGRESSION")
         self.assertEqual(
             report["test_suites"][-1]["suite"],
-            "FULL_MARKET_CENTER_REGRESSION")
+            "OPERATOR_DASHBOARD_REGRESSION")
 
     def test_failed_suite_stops_before_running_remaining_cases(self):
         def fail_second(arguments, **kwargs):

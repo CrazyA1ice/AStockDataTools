@@ -152,11 +152,11 @@ class SimpleMarketDashboard(UpdaterDashboard):
         ttk.Button(buttons, text="检查选定范围",
                    command=self.preview_selection).pack(side="left")
         self.selected_run_button = ttk.Button(
-            buttons, text="刷新所选QMT财务缓存（不入库）",
+            buttons, text="刷新财务缓存并检查历史（不入库）",
             command=self.run_scoped_finance_cache, state="disabled")
         self.selected_run_button.pack(side="left", padx=10)
         self.preview_line = tk.StringVar(
-            value="指定股票的财务缓存可以受控刷新；其他选择仍仅支持范围预览。")
+            value="可刷新自选股票的QMT财务缓存并进行九表历史核对，不自动入库。")
         self.update_mode.trace_add("write", self._scoped_button_state)
         self.update_scope.trace_add("write", self._scoped_button_state)
         for selected in self.module_vars.values():
@@ -255,7 +255,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
             plan["start"] + " 至 " + plan["end"] +
             "\n此操作会更新QMT客户端的财务缓存，但不会修改正式Parquet、"
             "H5、财务历史快照或待审游标。\n"
-            "只允许单任务运行；本操作不代表多源认证或正式入库。继续吗？"
+            "刷新后将自动核对九张财务表的旧版本；历史冲突会在日志中报告。\n本操作不代表多源认证或正式入库。继续吗？"
         ):
             return
         engine = (Path(os.environ.get("SystemRoot", r"C:\Windows")) /
@@ -273,8 +273,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
                 creationflags=subprocess.CREATE_NEW_CONSOLE)
             self.last_process_rc = None
             self.info.set(
-                "已启动选中股票的QMT财务缓存刷新，回执显示在独立窗口；"
-                "正式财务Parquet尚未更新。")
+                "已启动QMT财务缓存刷新和九表只读历史预检；"
+                "正式财务Parquet未入库，请到异常与日志页查看结果。")
             self.run_button.configure(state="disabled")
             self._scoped_button_state()
         except OSError as exc:
@@ -353,7 +353,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
         except InvalidSimplePlan:
             text += " 定向执行尚未开放；不会将此范围偷换成全市场更新。"
         else:
-            text += " 可刷新QMT财务缓存，不代表正式入库或多源核验。"
+            text += " 可刷新QMT财务缓存并核对九表；不代表正式入库或多源核验。"
         self.preview_line.set(text)
 
     def _coverage_selected(self, _event=None):

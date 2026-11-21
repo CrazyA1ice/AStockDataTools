@@ -882,10 +882,10 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                                         show="headings", selectmode="browse")
         self.audit_sort_reverse = {}
         for key, title, width in (
-            ("period", "周期", 70), ("symbol", "股票", 110),
-            ("date", "时间戳日期", 113), ("count", "行数", 62),
-            ("physical", "物理观察", 150),
-            ("interpretation", "证据判定", 220),
+            ("period", "周期", 52), ("symbol", "股票", 103),
+            ("date", "时间戳日期", 101), ("count", "行数", 43),
+            ("physical", "物理观察", 87),
+            ("interpretation", "证据判定", 155),
         ):
             self.audit_table.heading(
                 key, text=title,
@@ -909,7 +909,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.audit_table_rows = {}
         self.audit_table.bind("<<TreeviewSelect>>", self._select_audit_row)
         self.audit_detail_frame.columnconfigure(0, weight=1)
-        self.audit_detail_frame.rowconfigure(0, weight=1)
+        self.audit_detail_frame.rowconfigure(2, weight=1)
         self.audit_result_text = tk.Text(
             self.audit_detail_frame, wrap="word", borderwidth=0, state="disabled",
             font=("Consolas", 9), background=COLORS["log_bg"],
@@ -918,12 +918,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ys = ttk.Scrollbar(self.audit_detail_frame, orient="vertical",
                            command=self.audit_result_text.yview)
         self.audit_result_text.configure(yscrollcommand=ys.set)
-        self.audit_result_text.grid(row=0, column=0, sticky="nsew")
-        ys.grid(row=0, column=1, sticky="ns")
+        self.audit_result_text.grid(row=2, column=0, sticky="nsew")
+        ys.grid(row=2, column=1, sticky="ns")
+        self.audit_raw_scroll = ys
         self.audit_selection_guide = ttk.Frame(
             self.audit_detail_frame, style="V2F.Card.TFrame", padding=(9, 7))
         self.audit_selection_guide.grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+            row=0, column=0, columnspan=2, sticky="ew", pady=(0, 7))
         self.audit_selected_title = tk.StringVar(
             value="步骤 2/3：选择左侧记录，查看对应的异常原因与复核条件")
         self.audit_selected_next = tk.StringVar(
@@ -937,6 +938,16 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             style="V2F.CardNote.TLabel", wraplength=350,
             justify="left").pack(anchor="w", pady=(4, 0))
         self.audit_selected_review = None
+        self.audit_raw_toggle = ttk.Button(
+            self.audit_detail_frame,
+            text="展开原始 JSON（技术证据）",
+            command=self.toggle_audit_raw_json,
+        )
+        self.audit_raw_toggle.grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        self.audit_raw_visible = False
+        self.audit_result_text.grid_remove()
+        self.audit_raw_scroll.grid_remove()
         bottom = ttk.Frame(self.audit_page)
         bottom.pack(fill="x", pady=(8, 0))
         self.audit_details_visible = True
@@ -956,6 +967,21 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.audit_repair_disabled.pack(side="right")
         self.audit_raw_report = "暂无核验结果。前往「更新 / 核验」选择范围并启动只读核验。"
         self._set_audit_text(self.audit_raw_report)
+        # Keep the actions visible above the large table even on a 1350x890
+        # Windows laptop, while the table takes the remaining height.
+        bottom.pack_configure(before=self.audit_split, pady=(0, 8))
+
+    def toggle_audit_raw_json(self):
+        """Reveal full existing evidence on demand; never reread the market."""
+        self.audit_raw_visible = not self.audit_raw_visible
+        if self.audit_raw_visible:
+            self.audit_result_text.grid()
+            self.audit_raw_scroll.grid()
+            self.audit_raw_toggle.configure(text="收起原始 JSON（技术证据）")
+        else:
+            self.audit_result_text.grid_remove()
+            self.audit_raw_scroll.grid_remove()
+            self.audit_raw_toggle.configure(text="展开原始 JSON（技术证据）")
 
     def _select_audit_row(self, _event=None):
         """Keep original raw evidence and show a separate market-data review."""
@@ -1023,6 +1049,27 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             "步骤 1/3 已完成：" + summary["title"])
         self.audit_flow_next.set(summary["next_step"] +
                                  " 已确认缺失：0；下载和修复不可用。")
+        # The original controller retains raw status codes in memory/JSON.
+        # Translate only the visible physical-observation column so the
+        # entire row (including symbol) fits a normal-width split pane.
+        labels = {
+            "ROWS_OBSERVED_UNCERTIFIED": "有记录",
+            "ANOMALY_OBSERVED": "物理异常",
+            "NO_ROWS_OBSERVED": "无记录",
+        }
+        for ident, observed in self.audit_table_rows.items():
+            values = list(self.audit_table.item(ident, "values"))
+            if len(values) == 6:
+                values[4] = labels.get(
+                    observed.get("physical_status"), "待核实")
+                self.audit_table.item(ident, values=values)
+        self.audit_table.xview_moveto(0)
+        # No action is taken by selection: show the first row's human
+        # explanation immediately, rather than an empty panel plus raw JSON.
+        children = self.audit_table.get_children()
+        if children and not self.audit_table.selection():
+            self.audit_table.selection_set(children[0])
+            self._select_audit_row()
 
     def copy_selected_audit_review(self):
         """Copy only selected non-executable market review guidance."""

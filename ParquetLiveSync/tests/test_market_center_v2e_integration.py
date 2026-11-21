@@ -165,10 +165,13 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
 
     def test_dashboard_cards_are_content_height_not_window_height(self):
         source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
-        phases = source.split('text="本轮四个阶段"', 1)[1].split(
-            'text="本次可信变化"', 1)[0]
-        actions = source.split('text="常用操作 · 仅只读预检"', 1)[1].split(
-            '# A short full-width diagnosis strip', 1)[0]
+        # Inspect complete container creation blocks, not the region
+        # *after* the human-facing heading: V2F renders headings inside
+        # the card, while V2E had them in the enclosing LabelFrame.
+        phases = source.split('        phases = ttk.Frame(', 1)[1].split(
+            '        progress = ttk.Frame(', 1)[0]
+        actions = source.split('        actions = ttk.Frame(', 1)[1].split(
+            '        # A short full-width diagnosis strip', 1)[0]
         self.assertIn('phases.pack(fill="x")', phases)
         self.assertIn('matrix.pack(fill="x")', phases)
         self.assertNotIn('matrix.rowconfigure(row, weight=1)', phases)

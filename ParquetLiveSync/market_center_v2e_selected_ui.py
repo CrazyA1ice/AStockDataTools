@@ -29,7 +29,9 @@ from market_center_v2g2_audit_review import (
 from market_center_v2_model import (
     HISTORY_POLICIES, MODULES, InvalidPlan, latest_status, source_info,
 )
-from market_center_v2_readonly_audit import PERIODS
+from market_center_v2_readonly_audit import (
+    PERIODS, AuditBlocked, FROZEN_ASOF, read_only_ceiling,
+)
 from market_center_v2_preview import (
     COLORS, HERE, STAGES, MarketCenterV2,
 )
@@ -232,7 +234,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.workflow_current_task = None
         self.quick_tools_shown = False
         self.recommended_task_id = "audit"
-        self.title("A股数据更新与核验中心 · Market Center V2G")
+        self.title("A股数据更新与核验中心 · Market Center V2G3")
         self.geometry("1350x860")
         self.minsize(1020, 670)
         self._modernize_theme()
@@ -825,7 +827,10 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.audit_button.pack(side="left", padx=6)
         if self.market_root is None:
             self.audit_button.configure(state="disabled")
-        ttk.Label(audit, text="最多20股、31日；当前冻结核验截至2026-11-19。需显式 --market-root。",
+        self.audit_ceiling_note = tk.StringVar(
+            value="最多20股、31日；旧版默认截止2026-11-19；"
+                  "如提交账本证据允许，可只读核验已提交的更近日期。")
+        ttk.Label(audit, textvariable=self.audit_ceiling_note,
                   style="Muted.TLabel").pack(anchor="w")
         ttk.Button(review_step, text="← 修改配置",
                    command=lambda: steps.select(0)).pack(anchor="w", pady=8)
@@ -1516,6 +1521,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         super().refresh_overview()
         try:
             snapshot = latest_status(self.state_module)
+            self._sync_committed_readonly_ceiling(snapshot)
             recommendation = recommended_task(snapshot)
             self.recommended_task_id = recommendation["task_id"]
             for task_id, button in self.task_buttons.items():
@@ -1529,11 +1535,40 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                 snapshot, source_info(self.state_module),
             )
         except (InvalidPlan, OSError, ValueError) as exc:
+            self._sync_committed_readonly_ceiling({})
             self.recommended_task_id = "audit"
             self.workflow_hint.set(
                 "建议下一步：状态证据不足，可先检查数据或查看本轮日志。")
             self.management_summary.set("状态读取不足：" + str(exc)[:120])
             self.settings_source.set("来源配置不可用；未进行额外读写")
+
+    def _sync_committed_readonly_ceiling(self, status):
+        """Only a local committed-day candidate can extend the old frozen day.
+
+        This candidate limits reading, not historical coverage certification.
+        The existing market mutex, date range and rowgroup guard are unchanged.
+        """
+        self.audit_accepted_asof = None
+        value = status.get("last_accepted_trading_day") if isinstance(status, dict) else None
+        try:
+            ceiling = read_only_ceiling(value if isinstance(value, str) else None)
+            if ceiling > FROZEN_ASOF:
+                self.audit_accepted_asof = value
+        except AuditBlocked:
+            ceiling = FROZEN_ASOF
+        self.audit_ceiling_note.set(
+            "最多20股、31日；当前可核验截止：" + ceiling.isoformat() +
+            "（仅限本地已提交且早于北京时间今天的历史日；不证明行情完整）。")
+        return ceiling
+
+    def run_readonly_audit(self):
+        """Refresh the committed-day bound for each user-initiated audit."""
+        try:
+            snapshot = latest_status(self.state_module)
+        except (OSError, ValueError, InvalidPlan):
+            snapshot = {}
+        self._sync_committed_readonly_ceiling(snapshot)
+        return super().run_readonly_audit()
 
     def go_action(self, mode):
         super().go_action(mode)

@@ -27,7 +27,9 @@ from market_center_v2_recovery_inventory import (
     PreflightBlocked, inspect_recovery_prerequisites,
 )
 from market_center_v2_audit_cli import audited_query
-from market_center_v2_readonly_audit import AuditBlocked, FROZEN_ASOF, PERIODS
+from market_center_v2_readonly_audit import (
+    AuditBlocked, FROZEN_ASOF, PERIODS, read_only_ceiling,
+)
 
 HERE = Path(__file__).resolve().parent
 WORK = HERE / "work"
@@ -765,7 +767,7 @@ class MarketCenterV2(tk.Tk):
         self.audit_button.pack(side="left", padx=8)
         if self.market_root is None:
             self.audit_button.configure(state="disabled")
-        ttk.Label(audit_bar, text="需指定行情根目录；仅限20只股票、31日、截至2026-11-19",
+        ttk.Label(audit_bar, text="需指定行情根目录；仅限20只股票、31日；旧版默认冻结2026-11-19，V2G3可核对已提交历史日",
                   style="Muted.TLabel").pack(side="left", padx=8)
 
     def build_audit_results(self):
@@ -907,8 +909,16 @@ class MarketCenterV2(tk.Tk):
             codes = selection["symbols"]
             if len(codes) > 20:
                 raise InvalidPlan("本轮物理核验最多选择20只股票，请缩小范围")
-            if selection["end_date"] > FROZEN_ASOF.isoformat():
-                raise InvalidPlan("V2-B 冻结只读核验暂截至 2026-11-19")
+            accepted_asof = getattr(self, "audit_accepted_asof", None)
+            try:
+                ceiling = read_only_ceiling(accepted_asof)
+            except AuditBlocked as exc:
+                raise InvalidPlan("历史日核验截止证据无效：" + str(exc)) from exc
+            if selection["end_date"] > ceiling.isoformat():
+                raise InvalidPlan(
+                    "只读核验截止为 " + ceiling.isoformat() +
+                    "；若需检查更新日，请先确认提交账本已记录该日"
+                    "且该日期早于北京时间今天。")
         except InvalidPlan as exc:
             messagebox.showerror("核验范围不符合限制", str(exc))
             return
@@ -944,7 +954,8 @@ class MarketCenterV2(tk.Tk):
                     end=selection["end_date"], symbols=codes,
                     periods=[period], explicit_readonly=True,
                     evidence_file=self.evidence_file,
-                    evidence_sha256=self.evidence_sha256)
+                    evidence_sha256=self.evidence_sha256,
+                    accepted_asof=accepted_asof)
                 self.audit_queue.put(("result", result))
             except (AuditBlocked, OSError, ValueError) as exc:
                 self.audit_queue.put(("error", str(exc)))

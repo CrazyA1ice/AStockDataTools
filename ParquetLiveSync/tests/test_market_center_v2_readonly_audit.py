@@ -162,6 +162,25 @@ class SyntheticReadOnlySurvey(unittest.TestCase):
                     with self.assertRaises(A.AuditBlocked):
                         self.query(market, start=start, end=end)
 
+    def test_november_twentieth_explicit_committed_asof_is_physical_read_only(self):
+        with TemporaryDirectory() as temp:
+            market, path = source(
+                Path(temp), symbols=("SZ000001",),
+                times=(stamp((2026, 11, 20)),))
+            original = path.read_bytes()
+            with self.assertRaises(A.AuditBlocked):
+                self.query(market, start="2026-11-20", end="2026-11-20")
+            result = A.survey(
+                root=market, start="2026-11-20", end="2026-11-20",
+                symbols=["000001.SZ"], periods=["day"],
+                explicit_readonly=True, accepted_asof="2026-11-20")
+            self.assertEqual(result["observations"][0]["rows"], 1)
+            self.assertFalse(result["allowed_market_write"])
+            self.assertFalse(result["exchange_trading_calendar_verified"])
+            self.assertTrue(result["no_rows_does_not_certify_missing_trading_day"])
+            self.assertEqual(result["qmt_calls"], 0)
+            self.assertEqual(path.read_bytes(), original)
+
     def test_stock_scope_and_permission_fail_closed(self):
         with TemporaryDirectory() as temp:
             market, _ = source(Path(temp))

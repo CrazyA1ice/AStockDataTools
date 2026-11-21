@@ -61,7 +61,7 @@ class V2G2ReadOnlyReviewModelTests(unittest.TestCase):
         row = example_row("LONG_CYCLE_LABEL_NEEDS_CLOSURE_PROOF")
         row["period"] = "week"
         item = R.explain_observation(row)
-        self.assertIn("区间", item["next_step"])
+        self.assertIn("起止范围", item["next_step"])
         self.assertFalse(item["can_repair"])
 
     def test_market_physical_anomaly_cannot_be_labeled_finance_qmt_fault(self):

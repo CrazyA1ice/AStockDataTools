@@ -18,6 +18,28 @@ MAX_SYMBOLS = 20
 DOWNLOAD_TABLES = tuple(x for x in E.FIN_TABLES if x != "PerShare")
 
 
+class QMTCacheProviderDisconnected(RuntimeError):
+    """Provider API confirmed a QMT client connection failure."""
+
+
+def _qmt_provider_call(method, *args, **kwargs):
+    """Classify a disconnect only when xtquant itself raises the message.
+
+    Local path checks, provider-data conversion, JSON serialization, and
+    filesystem errors must never be retried as an xtquant connection outage.
+    Preserve UnicodeDecodeError for the existing dedicated exit 85.
+    """
+    try:
+        return method(*args, **kwargs)
+    except UnicodeDecodeError:
+        raise
+    except Exception as exc:
+        if not str(exc).startswith("无法连接xtquant服务"):
+            raise
+        raise QMTCacheProviderDisconnected(
+            "XTQUANT_CLIENT_CONNECTION_UNAVAILABLE") from exc
+
+
 def collect(xt, symbols, output, *, mode="cache", start="", end="",
             progress=print):
     if (not isinstance(symbols, list) or not symbols
@@ -43,16 +65,17 @@ def collect(xt, symbols, output, *, mode="cache", start="", end="",
         progress("QMT_CACHE_WORKER_INCREMENTAL_DOWNLOAD=" +
                  E.canonical_json({"symbols": len(symbols),
                                    "start": start, "end": end}))
-        xt.download_financial_data2(
-            symbols, list(DOWNLOAD_TABLES), start_time=start, end_time=end)
+        _qmt_provider_call(
+            xt.download_financial_data2, symbols, list(DOWNLOAD_TABLES),
+            start_time=start, end_time=end)
         progress("QMT_CACHE_WORKER_INCREMENTAL_DOWNLOAD_DONE=" +
                  E.canonical_json({"symbols": len(symbols)}))
     else:
         progress("QMT_CACHE_WORKER_EXISTING_CACHE_ONLY=" +
                  E.canonical_json({"symbols": len(symbols)}))
-    data = xt.get_financial_data(
-        symbols, list(E.FIN_TABLES), start_time="", end_time="",
-        report_type="report_time")
+    data = _qmt_provider_call(
+        xt.get_financial_data, symbols, list(E.FIN_TABLES),
+        start_time="", end_time="", report_type="report_time")
     if not isinstance(data, dict) or set(data) - set(symbols):
         raise ValueError("Invalid QMT financial cache reply symbols")
     decoded = {}
@@ -121,12 +144,9 @@ def main(argv=None):
             "encoding": exc.encoding, "start": exc.start,
             "reason": exc.reason}), file=sys.stderr, flush=True)
         raise SystemExit(85) from None
-    except Exception as exc:
-        # xtquant's get_client() may lose its local QMT connection between
-        # successful stock batches. Only its specific connection error is
-        # recoverable. All other exceptions must retain their original exit.
-        if not str(exc).startswith("无法连接xtquant服务"):
-            raise
+    except QMTCacheProviderDisconnected:
+        # Exit 86 only for a typed exception raised at an actual xtquant
+        # financial API boundary. Unrelated local failures propagate untyped.
         print("QMT_CACHE_WORKER_CONNECT_UNAVAILABLE=" + E.canonical_json({
             "symbols": args.symbols.split(","),
             "mode": args.mode,

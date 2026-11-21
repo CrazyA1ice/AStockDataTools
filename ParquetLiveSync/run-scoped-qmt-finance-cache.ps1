@@ -13,7 +13,8 @@ $repo=Split-Path -Parent $module
 if(-not(Test-Path -LiteralPath (Join-Path $repo '.git') -PathType Container)){throw 'CANONICAL_CHECKOUT_REQUIRED'}
 $python=Join-Path $repo '.venv\Scripts\python.exe'
 $worker=Join-Path $module 'qmt_extra_financial_cache_worker.py'
-if(-not(Test-Path -LiteralPath $python -PathType Leaf) -or -not(Test-Path -LiteralPath $worker -PathType Leaf)){throw 'FINANCE_WORKER_MISSING'}
+$review=Join-Path $module 'market_scoped_finance_history_review.py'
+if(-not(Test-Path -LiteralPath $python -PathType Leaf) -or -not(Test-Path -LiteralPath $worker -PathType Leaf) -or -not(Test-Path -LiteralPath $review -PathType Leaf)){throw 'FINANCE_WORKER_OR_COMPARATOR_MISSING'}
 $codes=@($Symbols.Split(',') | ForEach-Object {$_.Trim()} | Where-Object {$_})
 if($codes.Count -lt 1 -or $codes.Count -gt 5){throw 'SELECT_ONE_TO_FIVE_STOCKS'}
 foreach($code in $codes){if($code -cnotmatch '^\d{6}\.(SH|SZ|BJ)$'){throw 'INVALID_STOCK_CODE'}}
@@ -77,8 +78,54 @@ try{
     $size=(Get-Item -LiteralPath $output -Force).Length
     if($size -lt 1 -or $size -gt 268435456){throw 'FINANCE_WORKER_OUTPUT_SIZE_INVALID'}
     $digest=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash
+    $ledger=Join-Path $private 'financial-cache-progress.json'
+    if(-not(Test-Path -LiteralPath $ledger -PathType Leaf)){throw 'CANONICAL_FINANCE_LEDGER_MISSING'}
+    $ledgerSha=(Get-FileHash -LiteralPath $ledger -Algorithm SHA256).Hash
+    # Never pass raw records to the UI/log; precommit child reads the private
+    # staged JSON and emits aggregate nine-table counts only.
+    $audit=[System.Diagnostics.ProcessStartInfo]::new()
+    $audit.FileName=$python
+    $audit.Arguments='-u -B "'+$review+'" --root "D:\stock" --workspace "'+$private+'" --cache-file "'+$output+'" --expected-cache-sha256 '+$digest+' --expected-progress-sha256 '+$ledgerSha+' --symbols '+($codes -join ',')+' --start '+$start.ToString('yyyyMMdd')+' --end '+$end.ToString('yyyyMMdd')+' --explicit-readonly'
+    $audit.UseShellExecute=$false
+    $audit.CreateNoWindow=$true
+    $audit.RedirectStandardOutput=$true
+    $check=[System.Diagnostics.Process]::new()
+    $check.StartInfo=$audit
+    try{
+        if(-not $check.Start()){throw 'PRECOMMIT_REVIEW_START_FAILED'}
+        $readTask=$check.StandardOutput.ReadToEndAsync()
+        if(-not $check.WaitForExit(90000)){
+            $check.Kill()
+            [void]$check.WaitForExit(5000)
+            throw 'PRECOMMIT_REVIEW_TIMEOUT_90_SECONDS'
+        }
+        $summary=$readTask.GetAwaiter().GetResult()
+        if($check.ExitCode -ne 0){throw ('PRECOMMIT_REVIEW_EXIT_'+$check.ExitCode)}
+    }finally{$check.Dispose()}
+    if($summary.Length -lt 10 -or $summary.Length -gt 65536){throw 'PRECOMMIT_REVIEW_RECEIPT_SIZE_INVALID'}
+    try{$report=$summary | ConvertFrom-Json -ErrorAction Stop}
+    catch{throw 'PRECOMMIT_REVIEW_RECEIPT_INVALID'}
+    if($report.status -ne 'SCOPED_FINANCE_NINE_TABLE_PRECOMMIT_READONLY' -or
+       $report.can_commit -ne $false -or
+       $report.official_market_writes -ne 0 -or
+       $report.financial_ledger_writes -ne 0 -or
+       $report.qmt_calls -ne 0 -or
+       $report.symbols_requested -ne $codes.Count){
+        throw 'PRECOMMIT_REVIEW_EVIDENCE_REJECTED'
+    }
+    # Recheck both source files after the child exits; any concurrent
+    # mutation refuses a clean receipt even when its own SHA checks passed.
+    if((Get-FileHash -LiteralPath $ledger -Algorithm SHA256).Hash -ne $ledgerSha -or
+       (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash -ne $digest){
+        throw 'PRECOMMIT_REVIEW_EVIDENCE_CHANGED'
+    }
+    Add-Content -LiteralPath $log -Value @(
+        'SCOPED_FINANCE_PRECOMMIT='+$summary.Trim(),
+        'CANONICAL_PARQUET_COMMIT=NO',
+        'MULTISOURCE_VERIFICATION=NOT_RUN') -Encoding UTF8
+    Write-Host ('SCOPED_FINANCE_HISTORY_REVIEW stocks_with_conflict='+$report.stocks_history_conflict+' missing_cache='+$report.stocks_missing_cache+' new_version_candidates='+$report.stocks_candidate_for_review)
     $success='SCOPED_FINANCE_CACHE_READY stock_count='+$codes.Count+' bytes='+$size+' sha256='+$digest
-    Add-Content -LiteralPath $log -Value @($success,'CANONICAL_PARQUET_COMMIT=NO','MULTISOURCE_VERIFICATION=NOT_RUN') -Encoding UTF8
+    Add-Content -LiteralPath $log -Value $success -Encoding UTF8
     Write-Host $success
     Write-Host 'SCOPED_FINANCE_CANONICAL_PARQUET_UNCHANGED=TRUE'
     Write-Host 'SCOPED_FINANCE_HISTORY_REPAIR_APPROVED=FALSE'

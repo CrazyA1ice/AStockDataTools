@@ -6,8 +6,9 @@ explicitly labeled legacy operation behind the original mutex and gates.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 import os
+import subprocess
 import queue
 import threading
 from pathlib import Path
@@ -15,7 +16,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from market_update_dashboard import (
-    MODULE, WORK, UpdaterDashboard, safe_json, safe_refresh_limit,
+    MODULE, REPO, WORK, SHANGHAI, UpdaterDashboard, safe_json, safe_refresh_limit,
 )
 from market_simple_ui_model import (
     MODULES, PERIODS, EXTRAS, InvalidSimplePlan, coverage_rows,
@@ -151,10 +152,16 @@ class SimpleMarketDashboard(UpdaterDashboard):
         ttk.Button(buttons, text="检查选定范围",
                    command=self.preview_selection).pack(side="left")
         self.selected_run_button = ttk.Button(
-            buttons, text="执行指定范围（待接入）", state="disabled")
+            buttons, text="刷新所选QMT财务缓存（不入库）",
+            command=self.run_scoped_finance_cache, state="disabled")
         self.selected_run_button.pack(side="left", padx=10)
         self.preview_line = tk.StringVar(
-            value="指定股票及日期重下载尚未接入安全执行器，仅可预览。")
+            value="指定股票的财务缓存可以受控刷新；其他选择仍仅支持范围预览。")
+        self.update_mode.trace_add("write", self._scoped_button_state)
+        self.update_scope.trace_add("write", self._scoped_button_state)
+        for selected in self.module_vars.values():
+            selected.trace_add("write", self._scoped_button_state)
+        self._scoped_button_state()
         ttk.Label(page, textvariable=self.preview_line,
                   wraplength=1000, justify="left").pack(
                       anchor="w", pady=(10, 9))
@@ -210,6 +217,76 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.output.configure(yscrollcommand=y.set)
         self.output.pack(side="left", fill="both", expand=True)
         y.pack(side="right", fill="y")
+
+    def _scoped_button_state(self, *_):
+        enabled = (self.update_mode.get() == "增量更新"
+                   and self.update_scope.get() == "自选股票"
+                   and [name for name in MODULES if
+                        self.module_vars[name].get()] == ["财务"]
+                   and self.process is None)
+        self.selected_run_button.configure(
+            state="normal" if enabled else "disabled")
+
+    def run_scoped_finance_cache(self):
+        """Explicit QMT local-cache update; no canonical Parquet import."""
+        if self.process is not None:
+            messagebox.showwarning("已有任务运行", "请先等待当前任务结束")
+            return
+        try:
+            plan = preview_request(
+                mode=self.update_mode.get(), scope=self.update_scope.get(),
+                stocks=self.stock_input.get("1.0", "end-1c"),
+                start=self.date_start.get(), end=self.date_end.get(),
+                modules=[name for name in MODULES if
+                         self.module_vars[name].get()])
+            codes = plan["symbols"]
+            if (plan["mode"] != "增量更新"
+                    or plan["scope"] != "自选股票"
+                    or plan["modules"] != ["财务"]
+                    or not 1 <= len(codes) <= 5):
+                raise InvalidSimplePlan("只支持每次1至5只自选股票的财务增量缓存")
+            if ((date.fromisoformat(plan["end"]) -
+                 date.fromisoformat(plan["start"])).days > 30):
+                raise InvalidSimplePlan("公告日期窗口最多31天")
+            script = MODULE / "run-scoped-qmt-finance-cache.ps1"
+            python = REPO / ".venv" / "Scripts" / "python.exe"
+            if (os.name != "nt" or not (REPO / ".git").is_dir()
+                    or not script.is_file() or not python.is_file()):
+                raise InvalidSimplePlan("仅允许正式Windows仓库执行，开发工作树禁止刷新QMT缓存")
+        except (InvalidSimplePlan, ValueError, OSError) as exc:
+            messagebox.showerror("范围检查未通过", str(exc))
+            return
+        if not messagebox.askyesno(
+            "确认刷新QMT财务缓存",
+            "股票：" + "、".join(codes) + "\n公告日期：" +
+            plan["start"] + " 至 " + plan["end"] +
+            "\n此操作会更新QMT客户端的财务缓存，但不会修改正式Parquet、"
+            "H5、财务历史快照或待审游标。\n"
+            "只允许单任务运行；本操作不代表多源认证或正式入库。继续吗？"
+        ):
+            return
+        engine = (Path(os.environ.get("SystemRoot", r"C:\Windows")) /
+                  "System32" / "WindowsPowerShell" / "v1.0" /
+                  "powershell.exe")
+        args = [
+            str(engine), "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(script), "-Symbols", ",".join(codes),
+            "-StartDate", plan["start"], "-EndDate", plan["end"],
+            "-ExplicitCacheRefresh",
+        ]
+        try:
+            self.process = subprocess.Popen(
+                args, cwd=str(REPO),
+                creationflags=subprocess.CREATE_NEW_CONSOLE)
+            self.last_process_rc = None
+            self.info.set(
+                "已启动选中股票的QMT财务缓存刷新，回执显示在独立窗口；"
+                "正式财务Parquet尚未更新。")
+            self.run_button.configure(state="disabled")
+            self._scoped_button_state()
+        except OSError as exc:
+            self.process = None
+            messagebox.showerror("启动失败", str(exc))
 
     def _toggle_stock_entry(self):
         if self.update_scope.get() == "自选股票":
@@ -324,6 +401,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
     def refresh(self):
         # Inherit all legacy safety checks, stage receipts and bounded log tail.
         super().refresh()
+        self._scoped_button_state()
         self._refresh_coverage()
 
 

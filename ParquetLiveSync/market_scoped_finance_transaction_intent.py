@@ -78,7 +78,8 @@ def _manifest_target(extra: Path, code: str, table: str, asof: str,
 
 
 def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
-                 cache_sha: str, progress_sha: str, planner=None) -> dict:
+                 cache_sha: str, progress_sha: str, planner=None,
+                 journal_workspace: Path | None = None) -> dict:
     """Build deterministic target list. Never authorizes writing.
 
     For any ineligible stock, the entire batch remains blocked. No
@@ -122,9 +123,21 @@ def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
         raise IntentBlocked("REVIEW_SYMBOL_COVERAGE_DRIFT")
     manifest = []
     blocked = []
+    unchanged = []
     for item in reports:
         code = item["symbol"]
         status = item.get("status")
+        if journal_workspace is not None:
+            journal_path = (Path(journal_workspace) /
+                            "scoped-finance-transaction-journals" /
+                            (code + ".json"))
+            E._path_check(journal_path)
+            if journal_path.exists() or journal_path.is_symlink():
+                raise IntentBlocked("EXISTING_TRANSACTION_JOURNAL_REQUIRES_REVIEW")
+        if (status == "LOCAL_HISTORY_UNCHANGED_NOT_CERTIFIED"
+                and item.get("pending_previously_recorded") is False):
+            unchanged.append(code)
+            continue
         if (status != "CANDIDATE_NEW_VERSION_NOT_COMMITTED"
                 or item.get("pending_previously_recorded") is not False):
             if status not in BLOCKED_RESULTS and status != "CANDIDATE_NEW_VERSION_NOT_COMMITTED":
@@ -164,6 +177,7 @@ def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
         "progress_sha256": progress_sha.lower(),
         "selected_stocks": codes,
         "candidate_stocks": manifest,
+        "no_change_stocks": unchanged,
         "blocked_stocks": blocked,
     }
     return {
@@ -175,6 +189,7 @@ def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
         "candidate_immutable_files": sum(
             x["table_count"] for x in manifest),
         "batch_has_unresolved_blockers": bool(blocked),
+        "stocks_without_source_changes": len(unchanged),
         "existing_snapshots_preserved": True,
         "pending_entries_preserved": True,
         "source_authenticity_certified": False,
@@ -230,7 +245,8 @@ def preview(*, root: Path, workspace: Path, cache_file: Path,
     result = build_intent(
         payload, review, extra=extra, asof=asof,
         cache_sha=review["cache_sha256"],
-        progress_sha=review["progress_sha256"])
+        progress_sha=review["progress_sha256"],
+        journal_workspace=workspace)
     if (REVIEW._hash_file(cache_file, REVIEW.MAX_STAGE_BYTES) != review["cache_sha256"]
             or REVIEW._hash_file(Path(workspace) / I.STATE_FILE,
                                  REVIEW.MAX_LEDGER_BYTES) != review["progress_sha256"]

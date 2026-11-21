@@ -18,6 +18,7 @@ from tkinter import messagebox, ttk
 from market_center_v2_faults import FaultEvidenceBlocked
 from market_center_v2_recovery_inventory import PreflightBlocked
 from market_center_v2_finance_history_scope import inventory_historical_versions
+from market_daily_autopilot_view import read_view
 from market_center_v2g_workflow import (
     TASKS, task_by_id, recommended_task, workflow_guide,
 )
@@ -441,7 +442,27 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             content, textvariable=self.last_run_details,
             style="Muted.TLabel", wraplength=850,
         )
-        self.home_last_run_view.pack(anchor="w", pady=(0, 12))
+        self.home_last_run_view.pack(anchor="w", pady=(0, 5))
+        # Shared S1 health interpretation is display-only and never replaces
+        # the original PARTIAL/UNVERIFIED evidence or enables a writer.
+        auto = ttk.Frame(content, style="V2F.Card.TFrame", padding=(12, 7))
+        auto.pack(fill="x", pady=(0, 7))
+        self.autopilot_health = tk.StringVar(value="最近任务：等待读取健康状态")
+        self.autopilot_coverage = tk.StringVar(value="财务覆盖：尚未核验")
+        self.autopilot_valuation = tk.StringVar(
+            value="估值派生（总市值 / PE / PB）：尚未启用")
+        self.autopilot_health_view = ttk.Label(
+            auto, textvariable=self.autopilot_health,
+            style="Neutral.Section.TLabel", wraplength=810)
+        self.autopilot_health_view.pack(anchor="w")
+        self.autopilot_coverage_view = ttk.Label(
+            auto, textvariable=self.autopilot_coverage,
+            style="V2F.CardNote.TLabel", wraplength=810)
+        self.autopilot_coverage_view.pack(anchor="w", pady=(2, 0))
+        self.autopilot_valuation_view = ttk.Label(
+            auto, textvariable=self.autopilot_valuation,
+            style="V2F.CardNote.TLabel", wraplength=810)
+        self.autopilot_valuation_view.pack(anchor="w", pady=(2, 0))
 
         # Combine validation, four phases, change summary and controls into
         # two balanced columns; this replaces four tall full-width sections.
@@ -699,6 +720,10 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             return
         self._home_wrap_width = available
         self.home_last_run_view.configure(wraplength=available)
+        for view in (self.autopilot_health_view,
+                     self.autopilot_coverage_view,
+                     self.autopilot_valuation_view):
+            view.configure(wraplength=available)
         self.fault_title_view.configure(wraplength=max(220, available - 160))
         for view in self.home_issue_views[1:]:
             view.configure(wraplength=available)
@@ -1579,9 +1604,23 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             "\n抽样参照（仅已配置）：" + (crosses or "未配置") +
             "\n状态目录（只读）：" + str(self.state_module))
 
+    def _refresh_autopilot_gui(self):
+        result = read_view(self.state_module)
+        self.autopilot_health.set(result["headline"])
+        self.autopilot_coverage.set(
+            result["coverage"] + "  |  " + result["quality"])
+        self.autopilot_valuation.set(result["valuation"])
+        level = result["level"]
+        style = ("Success" if level == "ROUTINE" else
+                 "Failure" if level == "ACTION" else
+                 "Warning" if level == "REVIEW" else "Neutral")
+        self.autopilot_health_view.configure(
+            style=style + ".Section.TLabel")
+
     def refresh_overview(self):
         # V2D1 owns bounded reads, diagnoses and log refresh.
         super().refresh_overview()
+        self._refresh_autopilot_gui()
         try:
             snapshot = latest_status(self.state_module)
             self._sync_committed_readonly_ceiling(snapshot)

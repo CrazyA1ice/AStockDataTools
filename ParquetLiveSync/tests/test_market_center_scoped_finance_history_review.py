@@ -67,6 +67,24 @@ class ReadonlyHistoryGateTests(unittest.TestCase):
         self.assertEqual(result["official_market_writes"], 0)
         self.assertFalse(result["multisource_verified"])
 
+    def test_real_importer_planner_runs_without_any_write(self):
+        p = payload()
+        p["records"]["000001.SZ"]["Capital"] = [row("20260930")]
+        p["row_counts"]["000001.SZ"]["Capital"] = 1
+        with patch.object(R.I, "_prior_rows", side_effect=no_previous), \
+             patch.object(R.I, "_commit_symbol") as persist, \
+             patch.object(R.I, "_save_state") as ledger:
+            output = R.evaluate(
+                p, stocks=["000001.SZ"], start="20261120",
+                end="20261120", extra=Path("UNUSED"),
+                asof="2026-11-21", prior=no_previous,
+                planner=R.I._plan_symbol)
+        persist.assert_not_called()
+        ledger.assert_not_called()
+        self.assertEqual(output["stock_results"][0]["table_actions"][
+            "CREATE_VERSION"], 1)
+        self.assertFalse(output["can_commit"])
+
     def test_all_nine_tables_are_reported_when_two_historical_conflicts(self):
         p = payload()
         p["records"]["000001.SZ"]["Capital"] = [row("20260930")]

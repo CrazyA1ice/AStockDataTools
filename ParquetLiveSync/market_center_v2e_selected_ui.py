@@ -289,8 +289,10 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
 
         # Combine validation, four phases, change summary and controls into
         # two balanced columns; this replaces four tall full-width sections.
+        # Let the fault summary follow the stage/actions area directly;
+        # expanding this frame created a large blank stripe on 1332x882.
         center = ttk.Frame(content)
-        center.pack(fill="both", expand=True, pady=(0, 7))
+        center.pack(fill="x", pady=(0, 7))
         left = ttk.Frame(center)
         left.pack(side="left", fill="both", expand=True, padx=(0, 5))
         right = ttk.Frame(center)

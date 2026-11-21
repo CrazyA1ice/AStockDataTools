@@ -175,8 +175,16 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
         self.assertIn('sticky="ew"', phases)
         self.assertIn('actions.pack(fill="x")', actions)
         self.assertNotIn('actions.pack(fill="both", expand=True)', actions)
-        self.assertIn('center.pack(fill="both", expand=True', source)
+        self.assertIn('center.pack(fill="x", pady=(0, 7))', source)
         self.assertIn('issues.pack(fill="x")', source)
+        self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
+
+    def test_fault_summary_immediately_follows_compact_middle_content(self):
+        source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
+        self.assertIn('center.pack(fill="x", pady=(0, 7))', source)
+        self.assertNotIn('center.pack(fill="both", expand=True)', source)
+        self.assertIn('issues.pack(fill="x")', source)
+        self.assertNotIn("self._scroll_content(self.home)", source)
         self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
 
     def test_home_rewraps_at_narrow_width_without_losing_buttons(self):

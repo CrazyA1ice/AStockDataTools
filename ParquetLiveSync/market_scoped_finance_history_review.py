@@ -6,7 +6,7 @@ No QMT calls, downloads, Parquet writes, cursor updates, or waiver policies.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 import argparse
 import json
@@ -82,6 +82,14 @@ def evaluate(payload: dict, *, stocks: list[str], start: str, end: str,
     """
     prior = I._prior_rows if prior is None else prior
     planner = I._plan_symbol if planner is None else planner
+    try:
+        first = datetime.strptime(start, "%Y%m%d").date()
+        last = datetime.strptime(end, "%Y%m%d").date()
+        today = date.fromisoformat(asof)
+    except (TypeError, ValueError) as exc:
+        raise PrecommitBlocked("ANNOUNCEMENT_WINDOW_DATE_INVALID") from exc
+    if (first > last or (last - first).days > 30 or last > today):
+        raise PrecommitBlocked("ANNOUNCEMENT_WINDOW_OUT_OF_SCOPE")
     if (type(payload) is not dict
             or payload.get("format") != "qmt_financial_cache_batch_v1"
             or payload.get("mode") != "daily"
@@ -147,6 +155,15 @@ def evaluate(payload: dict, *, stocks: list[str], start: str, end: str,
                 })
             historical_rows += sum(saved.values())
             source_rows += len(records)
+        if source_rows == 0 and historical_rows == 0:
+            result.append({
+                "symbol": stock, "status": "SOURCE_CACHE_MISSING",
+                "tables_checked": len(E.FIN_TABLES),
+                "historical_conflicts": [],
+                "pending_previously_recorded": stock in pending,
+                "can_commit": False,
+            })
+            continue
         if conflicts:
             result.append({
                 "symbol": stock, "status": "BLOCKED_HISTORY_CONFLICT",

@@ -163,6 +163,19 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.app.inventory_buttons), 2)
         self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
 
+    def test_home_rewraps_at_narrow_width_without_losing_buttons(self):
+        from types import SimpleNamespace
+        self.app._resize_home_wrapping(SimpleNamespace(width=800))
+        self.assertEqual(
+            int(self.app.home_last_run_view.cget("wraplength")), 755)
+        self.assertLessEqual(
+            int(self.app.home_progress_view.cget("wraplength")), 320)
+        self.assertGreaterEqual(
+            int(next(iter(self.app.stage_widgets.values())).cget("wraplength")),
+            145)
+        self.assertEqual(len(self.app.qmt_probe_buttons), 2)
+        self.assertEqual(len(self.app.inventory_buttons), 2)
+
     def test_data_settings_scrollbar_only_when_content_overflows(self):
         source = inspect.getsource(
             visual.MarketCenterV2SelectedUI._scroll_content)

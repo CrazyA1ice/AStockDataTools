@@ -94,7 +94,8 @@ def audited_query(*, root: str | Path, start: str, end: str,
                   periods: list[str] | tuple[str, ...],
                   explicit_readonly: bool = False,
                   evidence_file: str | Path | None = None,
-                  evidence_sha256: str | None = None) -> dict:
+                  evidence_sha256: str | None = None,
+                  accepted_asof: str | None = None) -> dict:
     if explicit_readonly is not True:
         raise AuditBlocked("explicit_readonly_optin_required")
     if (evidence_file is None) != (evidence_sha256 is None):
@@ -104,7 +105,8 @@ def audited_query(*, root: str | Path, start: str, end: str,
         physical = survey(root=root, start=start, end=end,
                           symbols=symbols, periods=periods,
                           explicit_readonly=explicit_readonly,
-                          deadline_monotonic=deadline)
+                          deadline_monotonic=deadline,
+                          accepted_asof=accepted_asof)
         evidence = (load_pinned_evidence(evidence_file, evidence_sha256,
                                          physical["scope"])
                     if evidence_file is not None else None)

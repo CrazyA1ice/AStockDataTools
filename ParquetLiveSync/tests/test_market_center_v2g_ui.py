@@ -63,6 +63,15 @@ class GuidedWorkflowWidgetTests(unittest.TestCase):
         self.assertFalse(self.app.audit_running)
         self.assertIn("只读核验", self.app.workflow_tip.get())
 
+    def test_manual_mode_radio_switch_updates_guidance_consistently(self):
+        self.assertEqual(self.app.mode.get(), "更新数据")
+        self.assertIn("更新行情", self.app.workflow_tip.get())
+        self.app.mode.set("数据核验")
+        self.assertIn("检查数据", self.app.workflow_tip.get())
+        self.app.mode.set("更新数据")
+        self.assertIn("下载及写入暂不可执行",
+                      self.app.workflow_tip.get())
+
     def test_error_and_management_routes_open_existing_pages(self):
         self.app.open_workflow("diagnose")
         self.assertEqual(self.app.book.index(self.app.book.select()),

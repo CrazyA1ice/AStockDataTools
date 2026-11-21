@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from hashlib import sha256
+import re
 import argparse
 import json
 from pathlib import Path
@@ -97,8 +98,10 @@ def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
             or type(review.get("stock_results")) is not list
             or len(review["stock_results"]) != len(payload["symbols"])
             or not 1 <= len(payload["symbols"]) <= MAX_CANDIDATES
-            or not isinstance(cache_sha, str) or len(cache_sha) != 64
-            or not isinstance(progress_sha, str) or len(progress_sha) != 64):
+            or not isinstance(cache_sha, str)
+            or re.fullmatch(r"[a-fA-F0-9]{64}", cache_sha) is None
+            or not isinstance(progress_sha, str)
+            or re.fullmatch(r"[a-fA-F0-9]{64}", progress_sha) is None):
         raise IntentBlocked("STRICT_NINE_TABLE_REVIEW_REQUIRED")
     try:
         if date.fromisoformat(asof).isoformat() != asof:
@@ -109,6 +112,11 @@ def build_intent(payload: dict, review: dict, *, extra: Path, asof: str,
     codes = payload["symbols"]
     if codes != sorted(set(codes)):
         raise IntentBlocked("STOCK_SCOPE_MUST_BE_SORTED")
+    try:
+        if any(E.valid_code(code) != code for code in codes):
+            raise IntentBlocked("INVALID_INTENT_STOCK_ID")
+    except ValueError as exc:
+        raise IntentBlocked("INVALID_INTENT_STOCK_ID") from exc
     reports = review["stock_results"]
     if [item.get("symbol") for item in reports] != codes:
         raise IntentBlocked("REVIEW_SYMBOL_COVERAGE_DRIFT")
@@ -185,7 +193,8 @@ def recovery_decision(journal: dict) -> dict:
     if (type(journal) is not dict or journal.get("format") != FORMAT
             or journal.get("phase") not in PHASES
             or not isinstance(journal.get("intent_sha256"), str)
-            or len(journal["intent_sha256"]) != 64):
+            or re.fullmatch(r"[a-fA-F0-9]{64}",
+                            journal["intent_sha256"]) is None):
         raise IntentBlocked("INVALID_OR_UNKNOWN_TRANSACTION_JOURNAL")
     state = journal["phase"]
     return {

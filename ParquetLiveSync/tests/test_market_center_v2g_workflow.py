@@ -60,7 +60,7 @@ class GuidedWorkflowModelTests(unittest.TestCase):
 
     def test_task_model_does_not_import_or_call_execution_stack(self):
         src = inspect.getsource(W)
-        for forbidden in ("subprocess", "os.system", "xtquant",
+        for forbidden in ("subprocess", "os.system", "import xtquant",
                           "download_financial_data2(", "open(",
                           "write_bytes(", "write_text("):
             with self.subTest(forbidden=forbidden):

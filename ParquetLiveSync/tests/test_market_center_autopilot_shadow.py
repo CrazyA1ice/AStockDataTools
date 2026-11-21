@@ -93,7 +93,7 @@ class HealthTests(unittest.TestCase):
         a, b = inputs()
         a["validation"] = None
         h = S.classify(a, b)
-        self.assertEqual(h["execution_health"], "EXECUTED_VERIFICATION_MISSING")
+        self.assertEqual(h["execution_health"], "EXECUTED_NEEDS_REVIEW")
         self.assertEqual(h["alert_policy_preview"], "REVIEW")
 
     def test_mass_conflict_requires_safety_review(self):

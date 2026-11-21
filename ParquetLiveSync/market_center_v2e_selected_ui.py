@@ -224,7 +224,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.workflow_hint = tk.StringVar(
             value="建议下一步：先查看最近任务状态，再选择一项工作。")
         self.workflow_tip = tk.StringVar(
-            value=workflow_guide("audit"))
+            value=workflow_guide("update"))
         self.workflow_current_task = None
         self.quick_tools_shown = False
         self.recommended_task_id = "audit"
@@ -643,6 +643,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             self.home_issue_views.append(view)
         self.home.bind("<Configure>", self._resize_home_wrapping)
 
+    def sync_workflow_mode(self):
+        """Keep the guided banner consistent when radio buttons are changed."""
+        if self.mode.get() == "数据核验":
+            self.workflow_tip.set(workflow_guide("audit"))
+        elif self.mode.get() == "更新数据":
+            self.workflow_tip.set(workflow_guide("update"))
+
     def open_workflow(self, task_id):
         """Navigate to the right *read-only* capability, never execute."""
         task_by_id(task_id)  # invalid/forged UI task names fail closed
@@ -714,6 +721,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         for mode in ("更新数据", "数据核验"):
             ttk.Radiobutton(choose, text=mode, value=mode,
                             variable=self.mode).pack(side="left", padx=(0, 25))
+        self.mode.trace_add("write", lambda *_: self.sync_workflow_mode())
         history = self._section(scope_step, "已有历史数据如何处理（仅更新模式）")
         for mode in HISTORY_POLICIES:
             ttk.Radiobutton(history, text=mode, value=mode,

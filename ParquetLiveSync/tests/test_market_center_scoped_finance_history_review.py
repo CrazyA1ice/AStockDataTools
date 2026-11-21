@@ -126,6 +126,22 @@ class ReadonlyHistoryGateTests(unittest.TestCase):
         with self.assertRaisesRegex(R.PrecommitBlocked, "ENVELOPE"):
             self.check(p)
 
+    def test_invalid_calendar_date_in_worker_window_rejected(self):
+        p = payload()
+        p["refresh_start"] = "20261340"
+        with self.assertRaisesRegex(R.PrecommitBlocked, "DATE_INVALID"):
+            R.evaluate(
+                p, stocks=["000001.SZ"], start="20261340",
+                end="20261120", extra=Path("UNUSED"),
+                asof="2026-11-21", prior=no_previous,
+                planner=planning)
+
+    def test_empty_nine_table_present_cache_is_not_candidate(self):
+        result = self.check(payload())
+        self.assertEqual(result["stocks_missing_cache"], 1)
+        self.assertEqual(result["stocks_candidate_for_review"], 0)
+        self.assertFalse(result["stock_results"][0]["can_commit"])
+
     def test_missing_and_present_overlap_rejected(self):
         p = payload()
         p["missing_symbols"].append("000001.SZ")

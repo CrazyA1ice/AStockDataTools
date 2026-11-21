@@ -85,6 +85,21 @@ class V2G2ReviewWidgetTests(unittest.TestCase):
         self.assertEqual(
             str(self.app.audit_repair_disabled["state"]), "disabled")
 
+    def test_running_new_scan_clears_old_review_permission(self):
+        self.app.audit_running = True
+        self.app.audit_copy_review.configure(state="normal")
+        self.app.audit_selected_review = {
+            "can_download": False, "can_repair": False}
+        try:
+            with mock.patch.object(controller.MarketCenterV2, "_poll_audit"):
+                self.app._poll_audit()
+            self.assertIsNone(self.app.audit_selected_review)
+            self.assertEqual(
+                str(self.app.audit_copy_review["state"]), "disabled")
+            self.assertIn("正在进行", self.app.audit_flow_title.get())
+        finally:
+            self.app.audit_running = False
+
     def test_physical_anomaly_row_shows_distinct_market_advice(self):
         observed = row()
         item = self.app.audit_table.insert(

@@ -234,7 +234,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.workflow_current_task = None
         self.quick_tools_shown = False
         self.recommended_task_id = "audit"
-        self.title("A股数据更新与核验中心 · Market Center V2G")
+        self.title("A股数据更新与核验中心 · Market Center V2G3")
         self.geometry("1350x860")
         self.minsize(1020, 670)
         self._modernize_theme()

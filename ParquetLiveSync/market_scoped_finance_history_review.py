@@ -212,7 +212,7 @@ def evaluate(payload: dict, *, stocks: list[str], start: str, end: str,
         "stocks_candidate_for_review": sum(
             item["status"] == "CANDIDATE_NEW_VERSION_NOT_COMMITTED"
             for item in result),
-        "all_nine_tables_verified_for_every_stock": all(
+        "all_nine_tables_locally_compared": all(
             item["tables_checked"] == len(E.FIN_TABLES) for item in result),
         "only_local_qmt_cache_compared": True,
         "source_authenticity_certified": False,

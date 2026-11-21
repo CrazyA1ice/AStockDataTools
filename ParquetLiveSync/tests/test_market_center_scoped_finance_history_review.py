@@ -115,7 +115,7 @@ class ReadonlyHistoryGateTests(unittest.TestCase):
         result = self.check(payload(missing=True))
         self.assertEqual(result["stocks_missing_cache"], 1)
         self.assertEqual(result["stock_results"][0]["tables_checked"], 0)
-        self.assertFalse(result["all_nine_tables_verified_for_every_stock"])
+        self.assertFalse(result["all_nine_tables_locally_compared"])
 
     def test_incomplete_table_set_is_rejected(self):
         p = payload()

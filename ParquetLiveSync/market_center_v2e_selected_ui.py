@@ -81,8 +81,135 @@ def separated_run_evidence(status: dict) -> dict:
     }
 
 
+# Neutral enterprise dashboard palette. This is purely presentation data:
+# no business logic or execution permissions are tied to these colors.
+V2F = {
+    "canvas": "#F5F7FB",
+    "sidebar": "#12233D",
+    "sidebar_selected": "#244C7A",
+    "surface": "#FFFFFF",
+    "border": "#E3EAF2",
+    "subtle": "#F7F9FC",
+    "heading": "#182B46",
+    "text": "#31445E",
+    "secondary": "#78879B",
+    "accent": "#2469B6",
+    "danger": "#B5474B",
+    "danger_bg": "#FFF5F4",
+    "success": "#1F805B",
+    "warning": "#A97124",
+}
+
+
 class MarketCenterV2SelectedUI(MarketCenterV2):
     """V2E visual shell: all current backend safeguards stay in the controller."""
+
+    def _modernize_theme(self):
+        """Lightweight ttk styling, using only built-in Tk; no new dependency."""
+        self.configure(background=V2F["canvas"])
+        style = self.app_style
+        style.configure(".", background=V2F["canvas"],
+                        foreground=V2F["text"],
+                        font=("Microsoft YaHei UI", 10))
+        style.configure("TFrame", background=V2F["canvas"])
+        style.configure("TLabel", background=V2F["canvas"],
+                        foreground=V2F["text"])
+        style.configure("TLabelframe",
+                        background=V2F["surface"],
+                        bordercolor=V2F["border"],
+                        borderwidth=0, relief="flat")
+        style.configure("TLabelframe.Label",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("Card.TLabelframe",
+                        background=V2F["surface"], borderwidth=0)
+        style.configure("Card.TLabelframe.Label",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"])
+        style.configure("CardValue.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Segoe UI", 16, "bold"))
+        for name, color in (
+            ("Success", V2F["success"]), ("Failure", V2F["danger"]),
+            ("Warning", V2F["warning"]), ("Neutral", V2F["heading"])):
+            style.configure(name + ".CardValue.TLabel",
+                            background=V2F["surface"], foreground=color,
+                            font=("Segoe UI", 16, "bold"))
+            style.configure(name + ".Section.TLabel",
+                            background=V2F["surface"], foreground=color)
+        style.configure("Section.TLabel",
+                        background=V2F["surface"], foreground=V2F["text"])
+        style.configure("Muted.TLabel",
+                        background=V2F["canvas"],
+                        foreground=V2F["secondary"])
+        style.configure("V2F.Card.TFrame",
+                        background=V2F["surface"])
+        style.configure("V2F.CardHeading.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("V2F.CardNote.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.MetricHeading.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.Badge.TLabel",
+                        background=V2F["subtle"],
+                        foreground=V2F["secondary"],
+                        padding=(9, 4))
+        style.configure("V2F.Danger.TLabel",
+                        background=V2F["danger_bg"],
+                        foreground=V2F["danger"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("V2F.SectionHeading.TLabel",
+                        background=V2F["canvas"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 12, "bold"))
+        style.configure("V2F.SideTitle.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["text"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.Primary.TButton",
+                        background=V2F["accent"],
+                        bordercolor=V2F["accent"],
+                        foreground=V2F["surface"],
+                        padding=(12, 10),
+                        relief="flat",
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.map("V2F.Primary.TButton",
+                  background=[("active", "#1B578F"),
+                              ("disabled", V2F["subtle"])],
+                  foreground=[("active", "#FFFFFF")])
+        style.configure("Primary.TButton",
+                        background=V2F["accent"], foreground="#FFFFFF",
+                        bordercolor=V2F["accent"], borderwidth=0,
+                        padding=(12, 10), relief="flat")
+        style.map("Primary.TButton",
+                  background=[("active", "#1B578F")])
+        style.configure("TButton",
+                        background=V2F["surface"],
+                        foreground=V2F["accent"],
+                        bordercolor=V2F["border"],
+                        padding=(11, 9), relief="flat")
+        style.map("TButton", background=[("active", "#EDF3FB")])
+        style.configure("TNotebook.Tab", padding=(16, 9))
+        style.configure("Treeview", rowheight=29, background="#FFFFFF",
+                        fieldbackground="#FFFFFF",
+                        foreground=V2F["text"],
+                        borderwidth=0)
+        style.configure("Treeview.Heading",
+                        background=V2F["subtle"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9, "bold"),
+                        relief="flat", padding=(8, 7))
+        style.map("Treeview",
+                  background=[("selected", "#E7F0FA")],
+                  foreground=[("selected", V2F["heading"])])
 
     def make_widgets(self):
         self.historical_inventory_queue = queue.Queue()
@@ -91,50 +218,55 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.historical_inventory_buttons = []
         self.historical_inventory_summary = tk.StringVar(
             value="历史财务版本范围尚未进行只读盘点")
-        self.title("A股数据更新与核验中心 V2E · 综合界面预览")
-        self.geometry("1330x850")
+        self.title("A股数据更新与核验中心 · Market Center V2F")
+        self.geometry("1350x860")
         self.minsize(1020, 670)
+        self._modernize_theme()
         self.app_style.layout("V2E.Hidden.TNotebook.Tab", [])
         self.app_style.configure("V2E.Hidden.TNotebook", tabmargins=0)
         self.app_style.configure("V2E.TNotebook.Tab", padding=(20, 12))
         self.app_style.configure("V2E.Heading.TLabel",
-                                 foreground=COLORS["navy"],
-                                 font=("Microsoft YaHei UI", 15, "bold"))
+                                 foreground=V2F["heading"],
+                                 font=("Microsoft YaHei UI", 17, "bold"))
         self.app_style.configure("V2E.Subheading.TLabel",
-                                 foreground=COLORS["muted"],
+                                 foreground=V2F["secondary"],
                                  font=("Microsoft YaHei UI", 10))
         self.shell = ttk.Frame(self)
         self.shell.pack(fill="both", expand=True)
-        self.sidebar = tk.Frame(self.shell, bg=COLORS["navy"], width=205)
+        self.sidebar = tk.Frame(self.shell, bg=V2F["sidebar"], width=208)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
-        tk.Label(self.sidebar, text="MARKET CENTER", bg=COLORS["navy"],
-                 fg="#F0F6FF", font=("Segoe UI", 15, "bold"),
-                 padx=16, pady=23, anchor="w").pack(fill="x")
-        tk.Label(self.sidebar, text="V2E · 七页整合版 / 只读", bg=COLORS["navy"],
-                 fg="#A9C0DB", font=("Microsoft YaHei UI", 9),
-                 padx=16, anchor="w").pack(fill="x", pady=(0, 18))
+        tk.Label(self.sidebar, text="MARKET CENTER", bg=V2F["sidebar"],
+                 fg="#FFFFFF", font=("Segoe UI", 15, "bold"),
+                 padx=20, pady=26, anchor="w").pack(fill="x")
+        tk.Label(self.sidebar, text="A-STOCK DATA  /  READ ONLY",
+                 bg=V2F["sidebar"],
+                 fg="#91A7C2", font=("Segoe UI", 8, "bold"),
+                 padx=20, anchor="w").pack(fill="x", pady=(0, 26))
         self.nav_controls = {}
         for index, (name, _, _) in enumerate(PAGES):
             button = tk.Button(
-                self.sidebar, text="  " + name, anchor="w",
+                self.sidebar, text="   " + name, anchor="w",
                 font=("Microsoft YaHei UI", 10),
-                relief="flat", borderwidth=0, padx=14, pady=11,
-                bg=COLORS["navy"], fg="#DBE9F8",
-                activebackground="#315D89", activeforeground="white",
+                relief="flat", borderwidth=0, highlightthickness=0,
+                padx=16, pady=12,
+                bg=V2F["sidebar"], fg="#B9C9DE",
+                activebackground=V2F["sidebar_selected"],
+                activeforeground="white",
+                cursor="hand2",
                 command=lambda n=index: self.navigate(n),
             )
-            button.pack(fill="x", padx=9, pady=2)
+            button.pack(fill="x", padx=12, pady=3)
             self.nav_controls[name] = button
         tk.Label(
             self.sidebar, text="仅限本地状态读取\n写入、下载、自动修复：未开放",
-            bg=COLORS["navy"], fg="#C2D5E8", justify="left",
-            font=("Microsoft YaHei UI", 9), padx=16, pady=15,
+            bg=V2F["sidebar"], fg="#8FA3BD", justify="left",
+            font=("Microsoft YaHei UI", 9), padx=18, pady=18,
         ).pack(side="bottom", fill="x")
 
         self.workspace = ttk.Frame(self.shell)
         self.workspace.pack(side="left", fill="both", expand=True)
-        header = ttk.Frame(self.workspace, padding=(19, 17, 19, 12))
+        header = ttk.Frame(self.workspace, padding=(25, 19, 25, 13))
         header.pack(fill="x")
         left = ttk.Frame(header)
         left.pack(side="left", fill="x", expand=True)
@@ -149,8 +281,8 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             style="Muted.TLabel",
         ).pack(side="right")
         self.book = ttk.Notebook(self.workspace, style="V2E.Hidden.TNotebook")
-        self.book.pack(fill="both", expand=True, padx=(10, 17), pady=(0, 8))
-        self.home = ttk.Frame(self.book, padding=13)
+        self.book.pack(fill="both", expand=True, padx=(18, 22), pady=(0, 9))
+        self.home = ttk.Frame(self.book, padding=9)
         self.action = ttk.Frame(self.book, padding=13)
         self.audit_page = ttk.Frame(self.book, padding=13)
         self.fault_page = ttk.Frame(self.book, padding=13)
@@ -171,7 +303,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.build_settings()
         self.book.bind("<<NotebookTabChanged>>", self._navigation_changed)
         self.navigate(0)
-        footer = ttk.Frame(self.workspace, padding=(17, 5, 17, 7))
+        footer = ttk.Frame(self.workspace, padding=(23, 5, 23, 9))
         footer.pack(fill="x")
         ttk.Label(footer, textvariable=self.status_line,
                   style="Muted.TLabel").pack(anchor="w")
@@ -189,9 +321,9 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.page_subtitle.set(subtitle)
         for key, btn in self.nav_controls.items():
             if key == name:
-                btn.configure(bg="#2365A5", fg="white")
+                btn.configure(bg=V2F["sidebar_selected"], fg="white")
             else:
-                btn.configure(bg=COLORS["navy"], fg="#DBE9F8")
+                btn.configure(bg=V2F["sidebar"], fg="#B9C9DE")
 
     def _scroll_content(self, parent):
         """Only display a page scrollbar when contents really overflow.

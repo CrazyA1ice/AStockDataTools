@@ -81,8 +81,135 @@ def separated_run_evidence(status: dict) -> dict:
     }
 
 
+# Neutral enterprise dashboard palette. This is purely presentation data:
+# no business logic or execution permissions are tied to these colors.
+V2F = {
+    "canvas": "#F5F7FB",
+    "sidebar": "#12233D",
+    "sidebar_selected": "#244C7A",
+    "surface": "#FFFFFF",
+    "border": "#E3EAF2",
+    "subtle": "#F7F9FC",
+    "heading": "#182B46",
+    "text": "#31445E",
+    "secondary": "#78879B",
+    "accent": "#2469B6",
+    "danger": "#B5474B",
+    "danger_bg": "#FFF5F4",
+    "success": "#1F805B",
+    "warning": "#A97124",
+}
+
+
 class MarketCenterV2SelectedUI(MarketCenterV2):
     """V2E visual shell: all current backend safeguards stay in the controller."""
+
+    def _modernize_theme(self):
+        """Lightweight ttk styling, using only built-in Tk; no new dependency."""
+        self.configure(background=V2F["canvas"])
+        style = self.app_style
+        style.configure(".", background=V2F["canvas"],
+                        foreground=V2F["text"],
+                        font=("Microsoft YaHei UI", 10))
+        style.configure("TFrame", background=V2F["canvas"])
+        style.configure("TLabel", background=V2F["canvas"],
+                        foreground=V2F["text"])
+        style.configure("TLabelframe",
+                        background=V2F["surface"],
+                        bordercolor=V2F["border"],
+                        borderwidth=0, relief="flat")
+        style.configure("TLabelframe.Label",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("Card.TLabelframe",
+                        background=V2F["surface"], borderwidth=0)
+        style.configure("Card.TLabelframe.Label",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"])
+        style.configure("CardValue.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Segoe UI", 16, "bold"))
+        for name, color in (
+            ("Success", V2F["success"]), ("Failure", V2F["danger"]),
+            ("Warning", V2F["warning"]), ("Neutral", V2F["heading"])):
+            style.configure(name + ".CardValue.TLabel",
+                            background=V2F["surface"], foreground=color,
+                            font=("Segoe UI", 16, "bold"))
+            style.configure(name + ".Section.TLabel",
+                            background=V2F["surface"], foreground=color)
+        style.configure("Section.TLabel",
+                        background=V2F["surface"], foreground=V2F["text"])
+        style.configure("Muted.TLabel",
+                        background=V2F["canvas"],
+                        foreground=V2F["secondary"])
+        style.configure("V2F.Card.TFrame",
+                        background=V2F["surface"])
+        style.configure("V2F.CardHeading.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("V2F.CardNote.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.MetricHeading.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.Badge.TLabel",
+                        background=V2F["subtle"],
+                        foreground=V2F["secondary"],
+                        padding=(9, 4))
+        style.configure("V2F.Danger.TLabel",
+                        background=V2F["danger_bg"],
+                        foreground=V2F["danger"],
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("V2F.SectionHeading.TLabel",
+                        background=V2F["canvas"],
+                        foreground=V2F["heading"],
+                        font=("Microsoft YaHei UI", 12, "bold"))
+        style.configure("V2F.SideTitle.TLabel",
+                        background=V2F["surface"],
+                        foreground=V2F["text"],
+                        font=("Microsoft YaHei UI", 9))
+        style.configure("V2F.Primary.TButton",
+                        background=V2F["accent"],
+                        bordercolor=V2F["accent"],
+                        foreground=V2F["surface"],
+                        padding=(12, 10),
+                        relief="flat",
+                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.map("V2F.Primary.TButton",
+                  background=[("active", "#1B578F"),
+                              ("disabled", V2F["subtle"])],
+                  foreground=[("active", "#FFFFFF")])
+        style.configure("Primary.TButton",
+                        background=V2F["accent"], foreground="#FFFFFF",
+                        bordercolor=V2F["accent"], borderwidth=0,
+                        padding=(12, 10), relief="flat")
+        style.map("Primary.TButton",
+                  background=[("active", "#1B578F")])
+        style.configure("TButton",
+                        background=V2F["surface"],
+                        foreground=V2F["accent"],
+                        bordercolor=V2F["border"],
+                        padding=(11, 9), relief="flat")
+        style.map("TButton", background=[("active", "#EDF3FB")])
+        style.configure("TNotebook.Tab", padding=(16, 9))
+        style.configure("Treeview", rowheight=29, background="#FFFFFF",
+                        fieldbackground="#FFFFFF",
+                        foreground=V2F["text"],
+                        borderwidth=0)
+        style.configure("Treeview.Heading",
+                        background=V2F["subtle"],
+                        foreground=V2F["secondary"],
+                        font=("Microsoft YaHei UI", 9, "bold"),
+                        relief="flat", padding=(8, 7))
+        style.map("Treeview",
+                  background=[("selected", "#E7F0FA")],
+                  foreground=[("selected", V2F["heading"])])
 
     def make_widgets(self):
         self.historical_inventory_queue = queue.Queue()
@@ -91,50 +218,55 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.historical_inventory_buttons = []
         self.historical_inventory_summary = tk.StringVar(
             value="历史财务版本范围尚未进行只读盘点")
-        self.title("A股数据更新与核验中心 V2E · 综合界面预览")
-        self.geometry("1330x850")
+        self.title("A股数据更新与核验中心 · Market Center V2F")
+        self.geometry("1350x860")
         self.minsize(1020, 670)
+        self._modernize_theme()
         self.app_style.layout("V2E.Hidden.TNotebook.Tab", [])
         self.app_style.configure("V2E.Hidden.TNotebook", tabmargins=0)
         self.app_style.configure("V2E.TNotebook.Tab", padding=(20, 12))
         self.app_style.configure("V2E.Heading.TLabel",
-                                 foreground=COLORS["navy"],
-                                 font=("Microsoft YaHei UI", 15, "bold"))
+                                 foreground=V2F["heading"],
+                                 font=("Microsoft YaHei UI", 17, "bold"))
         self.app_style.configure("V2E.Subheading.TLabel",
-                                 foreground=COLORS["muted"],
+                                 foreground=V2F["secondary"],
                                  font=("Microsoft YaHei UI", 10))
         self.shell = ttk.Frame(self)
         self.shell.pack(fill="both", expand=True)
-        self.sidebar = tk.Frame(self.shell, bg=COLORS["navy"], width=205)
+        self.sidebar = tk.Frame(self.shell, bg=V2F["sidebar"], width=208)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
-        tk.Label(self.sidebar, text="MARKET CENTER", bg=COLORS["navy"],
-                 fg="#F0F6FF", font=("Segoe UI", 15, "bold"),
-                 padx=16, pady=23, anchor="w").pack(fill="x")
-        tk.Label(self.sidebar, text="V2E · 七页整合版 / 只读", bg=COLORS["navy"],
-                 fg="#A9C0DB", font=("Microsoft YaHei UI", 9),
-                 padx=16, anchor="w").pack(fill="x", pady=(0, 18))
+        tk.Label(self.sidebar, text="MARKET CENTER", bg=V2F["sidebar"],
+                 fg="#FFFFFF", font=("Segoe UI", 15, "bold"),
+                 padx=20, pady=26, anchor="w").pack(fill="x")
+        tk.Label(self.sidebar, text="A-STOCK DATA  /  READ ONLY",
+                 bg=V2F["sidebar"],
+                 fg="#91A7C2", font=("Segoe UI", 8, "bold"),
+                 padx=20, anchor="w").pack(fill="x", pady=(0, 26))
         self.nav_controls = {}
         for index, (name, _, _) in enumerate(PAGES):
             button = tk.Button(
-                self.sidebar, text="  " + name, anchor="w",
+                self.sidebar, text="   " + name, anchor="w",
                 font=("Microsoft YaHei UI", 10),
-                relief="flat", borderwidth=0, padx=14, pady=11,
-                bg=COLORS["navy"], fg="#DBE9F8",
-                activebackground="#315D89", activeforeground="white",
+                relief="flat", borderwidth=0, highlightthickness=0,
+                padx=16, pady=12,
+                bg=V2F["sidebar"], fg="#B9C9DE",
+                activebackground=V2F["sidebar_selected"],
+                activeforeground="white",
+                cursor="hand2",
                 command=lambda n=index: self.navigate(n),
             )
-            button.pack(fill="x", padx=9, pady=2)
+            button.pack(fill="x", padx=12, pady=3)
             self.nav_controls[name] = button
         tk.Label(
             self.sidebar, text="仅限本地状态读取\n写入、下载、自动修复：未开放",
-            bg=COLORS["navy"], fg="#C2D5E8", justify="left",
-            font=("Microsoft YaHei UI", 9), padx=16, pady=15,
+            bg=V2F["sidebar"], fg="#8FA3BD", justify="left",
+            font=("Microsoft YaHei UI", 9), padx=18, pady=18,
         ).pack(side="bottom", fill="x")
 
         self.workspace = ttk.Frame(self.shell)
         self.workspace.pack(side="left", fill="both", expand=True)
-        header = ttk.Frame(self.workspace, padding=(19, 17, 19, 12))
+        header = ttk.Frame(self.workspace, padding=(25, 19, 25, 13))
         header.pack(fill="x")
         left = ttk.Frame(header)
         left.pack(side="left", fill="x", expand=True)
@@ -149,8 +281,8 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             style="Muted.TLabel",
         ).pack(side="right")
         self.book = ttk.Notebook(self.workspace, style="V2E.Hidden.TNotebook")
-        self.book.pack(fill="both", expand=True, padx=(10, 17), pady=(0, 8))
-        self.home = ttk.Frame(self.book, padding=13)
+        self.book.pack(fill="both", expand=True, padx=(18, 22), pady=(0, 9))
+        self.home = ttk.Frame(self.book, padding=9)
         self.action = ttk.Frame(self.book, padding=13)
         self.audit_page = ttk.Frame(self.book, padding=13)
         self.fault_page = ttk.Frame(self.book, padding=13)
@@ -171,7 +303,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.build_settings()
         self.book.bind("<<NotebookTabChanged>>", self._navigation_changed)
         self.navigate(0)
-        footer = ttk.Frame(self.workspace, padding=(17, 5, 17, 7))
+        footer = ttk.Frame(self.workspace, padding=(23, 5, 23, 9))
         footer.pack(fill="x")
         ttk.Label(footer, textvariable=self.status_line,
                   style="Muted.TLabel").pack(anchor="w")
@@ -189,9 +321,9 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.page_subtitle.set(subtitle)
         for key, btn in self.nav_controls.items():
             if key == name:
-                btn.configure(bg="#2365A5", fg="white")
+                btn.configure(bg=V2F["sidebar_selected"], fg="white")
             else:
-                btn.configure(bg=COLORS["navy"], fg="#DBE9F8")
+                btn.configure(bg=V2F["sidebar"], fg="#B9C9DE")
 
     def _scroll_content(self, parent):
         """Only display a page scrollbar when contents really overflow.
@@ -253,25 +385,28 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         header = ttk.Frame(content)
         header.pack(fill="x", pady=(0, 7))
         ttk.Label(
-            header, text="最近一次运行 · 只展示有证据的结果",
-            style="V2E.Heading.TLabel",
+            header, text="运行概览",
+            style="V2F.SectionHeading.TLabel",
         ).pack(side="left")
         ttk.Label(
-            header, text="运行状态、故障与快捷操作",
+            header, text="最近一次任务 · 仅展示有证据的结果",
             style="Muted.TLabel",
         ).pack(side="right")
 
         # Four key metrics across the top, without separate stacked sections.
         metrics = ttk.Frame(content)
-        metrics.pack(fill="x", pady=(0, 4))
+        metrics.pack(fill="x", pady=(0, 9))
         self.cards = {}
         self.card_widgets = {}
         for label in (
             "已提交最新交易日", "上次任务结果", "当前安全截止", "QMT 最近预检",
         ):
-            box = ttk.LabelFrame(
-                metrics, text=label, style="Card.TLabelframe", padding=(10, 7))
-            box.pack(side="left", fill="both", expand=True, padx=(0, 7))
+            box = ttk.Frame(
+                metrics, style="V2F.Card.TFrame", padding=(15, 11))
+            box.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            ttk.Label(
+                box, text=label, style="V2F.MetricHeading.TLabel"
+            ).pack(anchor="w", pady=(0, 7))
             value = tk.StringVar(value="—")
             self.cards[label] = value
             widget = ttk.Label(
@@ -285,7 +420,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             content, textvariable=self.last_run_details,
             style="Muted.TLabel", wraplength=850,
         )
-        self.home_last_run_view.pack(anchor="w", pady=(0, 8))
+        self.home_last_run_view.pack(anchor="w", pady=(0, 12))
 
         # Combine validation, four phases, change summary and controls into
         # two balanced columns; this replaces four tall full-width sections.
@@ -298,42 +433,63 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         right = ttk.Frame(center)
         right.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        validation = ttk.LabelFrame(
-            left, text="三类结果独立判定", padding=(10, 7))
-        validation.pack(fill="x", pady=(0, 7))
-        badges = ttk.Frame(validation)
+        validation = ttk.Frame(
+            left, style="V2F.Card.TFrame", padding=(15, 11))
+        validation.pack(fill="x", pady=(0, 9))
+        ttk.Label(
+            validation, text="三类结果独立判定",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 11))
+        badges = ttk.Frame(validation, style="V2F.Card.TFrame")
         badges.pack(fill="x")
         self.validation_vars = {}
+        self.validation_value_widgets = {}
         for column, (key, title) in enumerate((
             ("execution", "任务执行"), ("data", "数据核验"),
             ("cross", "跨源状态"),
         )):
-            cell = ttk.Frame(badges)
-            cell.grid(row=0, column=column, sticky="ew", padx=(0, 7))
+            cell = ttk.Frame(badges, style="V2F.Card.TFrame")
+            cell.grid(row=0, column=column, sticky="ew", padx=(0, 9))
             badges.columnconfigure(column, weight=1)
-            ttk.Label(cell, text=title, style="Muted.TLabel").pack(anchor="w")
+            ttk.Label(
+                cell, text=title, style="V2F.MetricHeading.TLabel",
+            ).pack(anchor="w", pady=(0, 4))
             value = tk.StringVar(value="UNVERIFIED")
             self.validation_vars[key] = value
-            ttk.Label(cell, textvariable=value,
-                      style="CardValue.TLabel").pack(anchor="w")
+            widget = ttk.Label(
+                cell, textvariable=value, style="CardValue.TLabel")
+            widget.pack(anchor="w")
+            self.validation_value_widgets[key] = widget
 
         # Size stage cards to their status text instead of stretching them
         # vertically across the free dashboard space.
-        phases = ttk.LabelFrame(
-            left, text="本轮四个阶段", padding=(8, 6))
+        phases = ttk.Frame(
+            left, style="V2F.Card.TFrame", padding=(13, 9))
         phases.pack(fill="x")
+        ttk.Label(
+            phases, text="本轮四个阶段",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", padx=2, pady=(0, 8))
         self.stage_labels = {}
         self.stage_widgets = {}
-        matrix = ttk.Frame(phases)
+        matrix = ttk.Frame(phases, style="V2F.Card.TFrame")
         matrix.pack(fill="x")
         for column in (0, 1):
             matrix.columnconfigure(column, weight=1)
         for index, (key, name) in enumerate(STAGES):
-            cell = ttk.LabelFrame(
-                matrix, text=name, padding=(9, 5))
+            cell = tk.Frame(
+                matrix, background=V2F["surface"],
+                highlightbackground=V2F["border"],
+                highlightthickness=1, bd=0, padx=11, pady=8)
             cell.grid(
                 row=index // 2, column=index % 2,
                 sticky="ew", padx=3, pady=3)
+            tk.Label(
+                cell, text=name, background=V2F["surface"],
+                foreground=V2F["secondary"],
+                font=("Microsoft YaHei UI", 9),
+                anchor="w",
+            ).pack(anchor="w", pady=(0, 5))
             value = tk.StringVar(value="未记录")
             self.stage_labels[key] = value
             widget = ttk.Label(
@@ -343,9 +499,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             widget.pack(anchor="w")
             self.stage_widgets[key] = widget
 
-        progress = ttk.LabelFrame(
-            right, text="本次可信变化", padding=(10, 8))
-        progress.pack(fill="x", pady=(0, 7))
+        progress = ttk.Frame(
+            right, style="V2F.Card.TFrame", padding=(15, 12))
+        progress.pack(fill="x", pady=(0, 9))
+        ttk.Label(
+            progress, text="本次可信变化",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 9))
         self.overview_info = tk.StringVar(value="暂无可比证据")
         self.home_progress_view = ttk.Label(
             progress, textvariable=self.overview_info,
@@ -354,12 +514,17 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.home_progress_view.pack(anchor="w")
         self.home_progress_note = ttk.Label(
             progress, text="没有完整前后快照，不展示猜测的增量或覆盖率。",
-            style="Muted.TLabel", wraplength=300)
+            style="V2F.CardNote.TLabel", wraplength=300)
         self.home_progress_note.pack(anchor="w", pady=(4, 0))
 
-        actions = ttk.LabelFrame(
-            right, text="常用操作 · 仅只读预检", padding=(10, 7))
+        actions = ttk.Frame(
+            right, style="V2F.Card.TFrame", padding=(15, 12))
         actions.pack(fill="x")
+        ttk.Label(
+            actions, text="常用操作 · 仅只读预检",
+            style="V2F.CardHeading.TLabel",
+        ).grid(row=0, column=0, columnspan=2,
+               sticky="w", padx=3, pady=(0, 10))
         for column in (0, 1):
             actions.columnconfigure(column, weight=1)
         for index, (label, callback, primary) in enumerate((
@@ -371,27 +536,35 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             ttk.Button(
                 actions, text=label, command=callback,
                 style="Primary.TButton" if primary else "TButton",
-            ).grid(row=index // 2, column=index % 2,
-                   sticky="ew", padx=3, pady=3)
+            ).grid(row=index // 2 + 1, column=index % 2,
+                   sticky="ew", padx=3, pady=4)
         qmt = ttk.Button(
             actions, text="检查 QMT 当前连接（不下载）",
             command=self.start_qmt_live_probe)
-        qmt.grid(row=2, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+        qmt.grid(row=3, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
         self.qmt_probe_buttons.append(qmt)
         inventory = ttk.Button(
             actions, text="核对正式版本与备份范围（只读）",
             command=self.start_finance_inventory)
         inventory.grid(
-            row=3, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+            row=4, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
         self.inventory_buttons.append(inventory)
 
         # A short full-width diagnosis strip replaces the old tall incident
         # panel. Detailed case rows and original JSON belong in Faults.
-        issues = ttk.LabelFrame(
-            content, text="待处理事项与下一步", padding=(10, 7))
+        alert_rail = tk.Frame(
+            content, bg=V2F["border"], borderwidth=0, padx=3)
+        alert_rail.pack(fill="x", pady=(3, 0))
+        self.home_alert_rail = alert_rail
+        issues = ttk.Frame(
+            alert_rail, style="V2F.Card.TFrame", padding=(15, 10))
         issues.pack(fill="x")
-        headline = ttk.Frame(issues)
-        headline.pack(fill="x", pady=(0, 3))
+        ttk.Label(
+            issues, text="待处理事项与下一步",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+        headline = ttk.Frame(issues, style="V2F.Card.TFrame")
+        headline.pack(fill="x", pady=(0, 4))
         self.fault_headline = tk.StringVar(value="等待诊断")
         self.fault_explanation = tk.StringVar(value="尚无可用证据")
         self.fault_resume_gate = tk.StringVar(value="安全续跑：尚未核对")
@@ -403,20 +576,20 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.fault_title_view.pack(side="left", fill="x", expand=True)
         self.home_issue_views = [self.fault_title_view]
         self.cards["财务待审"] = tk.StringVar(value="未记录")
-        pending = ttk.Frame(headline)
+        pending = ttk.Frame(headline, style="V2F.Card.TFrame")
         pending.pack(side="right", padx=(12, 0))
         ttk.Label(
-            pending, text="财务待审", style="Muted.TLabel").pack(side="left")
+            pending, text="财务待审", style="V2F.CardNote.TLabel").pack(side="left")
         widget = ttk.Label(
             pending, textvariable=self.cards["财务待审"],
             style="Neutral.CardValue.TLabel")
         widget.pack(side="left", padx=(8, 0))
         self.card_widgets["财务待审"] = widget
         for var, style, gap in (
-            (self.fault_explanation, "Section.TLabel", 2),
-            (self.fault_resume_gate, "Warning.Section.TLabel", 2),
-            (self.qmt_gate_summary, "Muted.TLabel", 2),
-            (self.finance_inventory_status, "Muted.TLabel", 0),
+            (self.fault_explanation, "Section.TLabel", 3),
+            (self.fault_resume_gate, "Warning.Section.TLabel", 3),
+            (self.qmt_gate_summary, "V2F.CardNote.TLabel", 3),
+            (self.finance_inventory_status, "V2F.CardNote.TLabel", 0),
         ):
             view = ttk.Label(
                 issues, textvariable=var, style=style,
@@ -831,7 +1004,22 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.historical_inventory_result = None
         self.historical_inventory_summary.set("回执刷新后需重新盘点历史财务版本范围")
         super().refresh_fault_diagnosis()
-        # Use the same evidence-derived tri-state color as the home card.
+        # A neutral rail by default; red only for an evidenced execution
+        # error, amber for warnings, blue for progress notices. A missing
+        # receipt must never be painted as a certified green success.
+        cases = (self.fault_diagnosis or {}).get("cases", [])
+        severity = {item.get("severity") for item in cases
+                    if isinstance(item, dict)}
+        if "ERROR" in severity:
+            rail_color = V2F["danger"]
+        elif "WARN" in severity:
+            rail_color = V2F["warning"]
+        elif "INFO" in severity:
+            rail_color = V2F["accent"]
+        else:
+            rail_color = V2F["border"]
+        if hasattr(self, "home_alert_rail"):
+            self.home_alert_rail.configure(bg=rail_color)
         if hasattr(self, "fault_page_headline_view"):
             self.fault_page_headline_view.configure(
                 style=self.fault_title_view.cget("style"))
@@ -975,7 +1163,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         for key, name in (
             ("execution", "execution"), ("data", "data"), ("cross", "cross"),
         ):
-            self.validation_vars[key].set(states[name])
+            status = states[name]
+            self.validation_vars[key].set(status)
+            shade = ("Success" if status in ("PASS", "SUCCESS") else
+                     "Failure" if status in ("FAIL", "FAILED") else
+                     "Warning" if status == "PARTIAL" else "Neutral")
+            self.validation_value_widgets[key].configure(
+                style=shade + ".CardValue.TLabel")
         accepted = current.get("last_accepted_trading_day", "未证明")
         detail = current.get("stage_records", {}).get("EIGHT_PERIODS", {})
         phase = format_evidence_state(detail.get("data_validation"))

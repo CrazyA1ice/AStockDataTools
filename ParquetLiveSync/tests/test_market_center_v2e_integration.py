@@ -165,10 +165,13 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
 
     def test_dashboard_cards_are_content_height_not_window_height(self):
         source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
-        phases = source.split('text="本轮四个阶段"', 1)[1].split(
-            'text="本次可信变化"', 1)[0]
-        actions = source.split('text="常用操作 · 仅只读预检"', 1)[1].split(
-            '# A short full-width diagnosis strip', 1)[0]
+        # Inspect complete container creation blocks, not the region
+        # *after* the human-facing heading: V2F renders headings inside
+        # the card, while V2E had them in the enclosing LabelFrame.
+        phases = source.split('        phases = ttk.Frame(', 1)[1].split(
+            '        progress = ttk.Frame(', 1)[0]
+        actions = source.split('        actions = ttk.Frame(', 1)[1].split(
+            '        # A short full-width diagnosis strip', 1)[0]
         self.assertIn('phases.pack(fill="x")', phases)
         self.assertIn('matrix.pack(fill="x")', phases)
         self.assertNotIn('matrix.rowconfigure(row, weight=1)', phases)
@@ -207,6 +210,75 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
         self.assertIn("scroll.pack_forget()", source)
         self.assertIn('scroll.pack(side="right", fill="y", before=canvas)', source)
         self.assertNotIn('scroll.pack(side="right", fill="y")\n        canvas.pack', source)
+
+    def test_v2f_uses_flat_cards_not_nested_native_label_frames_on_home(self):
+        source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
+        self.assertNotIn("ttk.LabelFrame(", source)
+        self.assertIn('style="V2F.Card.TFrame"', source)
+        self.assertIn('style="V2F.MetricHeading.TLabel"', source)
+        self.assertIn('style="V2F.CardHeading.TLabel"', source)
+        self.assertIn("self.home_alert_rail = alert_rail", source)
+        self.assertNotIn("self._scroll_content(self.home)", source)
+
+    def test_v2f_sidebar_and_typography_use_single_consistent_palette(self):
+        theme = inspect.getsource(
+            visual.MarketCenterV2SelectedUI._modernize_theme)
+        self.assertIn('style.configure("Treeview"', theme)
+        self.assertIn('style.configure("Primary.TButton"', theme)
+        self.assertIn('style.configure("TLabelframe"', theme)
+        self.assertIn('style.configure("V2F.Card.TFrame"', theme)
+        self.assertEqual(
+            self.app.sidebar.cget("bg"), visual.V2F["sidebar"])
+        self.assertEqual(len(self.app.nav_controls), 7)
+
+    def test_v2f_alert_rail_is_not_always_red(self):
+        for severity, expected in (
+                ("ERROR", visual.V2F["danger"]),
+                ("WARN", visual.V2F["warning"]),
+                ("INFO", visual.V2F["accent"]),
+                ("", visual.V2F["border"])):
+            with self.subTest(severity=severity):
+                self.app.fault_diagnosis = {
+                    "cases": ([{"severity": severity}] if severity else [])}
+                with mock.patch.object(
+                        controller.MarketCenterV2, "refresh_fault_diagnosis"):
+                    self.app.refresh_fault_diagnosis()
+                self.assertEqual(
+                    self.app.home_alert_rail.cget("bg"), expected)
+
+    def test_v2f_quality_statuses_get_independent_evidence_colors(self):
+        current = {
+            "execution_validation": "PARTIAL",
+            "data_validation": "FAIL",
+            "cross_validation": "UNVERIFIED",
+            "last_accepted_trading_day": "2026-11-20",
+            "stage_records": {"EIGHT_PERIODS": {"data_validation": "PASS"}},
+        }
+        config = {
+            "minute_crosschecks_configured": [],
+            "config_file": "synthetic",
+            "market_minute_update": "no-QMT",
+            "market_day_update": "no-QMT",
+        }
+        self.app._refresh_auxiliary(current, config)
+        self.assertEqual(
+            self.app.validation_value_widgets["execution"].cget("style"),
+            "Warning.CardValue.TLabel")
+        self.assertEqual(
+            self.app.validation_value_widgets["data"].cget("style"),
+            "Failure.CardValue.TLabel")
+        self.assertEqual(
+            self.app.validation_value_widgets["cross"].cget("style"),
+            "Neutral.CardValue.TLabel")
+
+    def test_v2f_visual_only_preserves_disabled_recovery_and_two_qmt_controls(self):
+        self.assertEqual(str(self.app.fault_repair_disabled["state"]),
+                         "disabled")
+        self.assertEqual(len(self.app.qmt_probe_buttons), 2)
+        self.assertEqual(len(self.app.inventory_buttons), 2)
+        self.assertFalse(self.app.qmt_probe_running)
+        self.assertFalse(self.app.inventory_running)
+        self.assertFalse(self.app.historical_inventory_running)
 
     def test_no_market_root_still_disables_history_audit(self):
         self.assertIsNone(self.app.market_root)

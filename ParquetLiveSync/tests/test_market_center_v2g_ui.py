@@ -134,6 +134,73 @@ class GuidedWorkflowWidgetTests(unittest.TestCase):
         self.app.toggle_fault_technical()
         self.assertFalse(self.app.fault_technical_visible)
 
+    def test_fault_instructions_are_four_separate_readable_steps(self):
+        self.app.navigate(UI.PAGE_MAP["故障诊断"])
+        steps = [label.cget("text") for label in self.app.fault_step_labels]
+        self.assertEqual(
+            steps,
+            ["查看错误与同轮日志", "按需检查 QMT 当前连接",
+             "核对代码与财务版本", "等待受控恢复入口"])
+        self.assertEqual(self.app.fault_gate_frame.winfo_manager(), "")
+        self.assertEqual(self.app.fault_technical_frame.winfo_manager(), "")
+
+    def test_fault_gate_details_are_collapsed_without_triggering_probes(self):
+        with mock.patch.object(
+                self.app, "start_qmt_live_probe",
+                side_effect=AssertionError("unexpected QMT check")), \
+             mock.patch.object(
+                self.app, "start_finance_inventory",
+                side_effect=AssertionError("unexpected inventory")), \
+             mock.patch.object(
+                self.app, "start_historical_inventory",
+                side_effect=AssertionError("unexpected history scan")):
+            self.app.toggle_fault_gate_details()
+            self.assertTrue(self.app.fault_gate_visible)
+            self.assertEqual(self.app.fault_gate_frame.winfo_manager(), "pack")
+            self.app.toggle_fault_gate_details()
+            self.assertFalse(self.app.fault_gate_visible)
+            self.assertEqual(self.app.fault_gate_frame.winfo_manager(), "")
+
+    def test_side_navigation_clears_stale_current_goal_status(self):
+        self.app.open_workflow("update")
+        self.assertIn("当前目标：更新行情", self.app.status_line.get())
+        self.app.navigate(UI.PAGE_MAP["故障诊断"])
+        self.assertIn("当前页面：故障诊断", self.app.status_line.get())
+        self.assertNotIn("当前目标：更新行情", self.app.status_line.get())
+        self.app.navigate(UI.PAGE_MAP["运行总览"])
+        self.assertIn("当前页面：运行总览", self.app.status_line.get())
+
+    def test_selected_error_shows_full_code_without_executing_anything(self):
+        row = self.app.fault_tree.insert(
+            "", "end", values=("ERROR", "财务",
+                                "QMT_FINANCE_CONNECTION_LOST", "连接中断"))
+        self.app.fault_case_by_row[row] = {
+            "category": "QMT_FINANCE_CONNECTION_LOST",
+            "severity": "ERROR", "title": "财务连接中断"}
+        self.app.fault_tree.selection_set(row)
+        self.app._select_fault()
+        self.assertIn(
+            "QMT_FINANCE_CONNECTION_LOST",
+            self.app.selected_fault_code.get())
+        self.assertFalse(self.app.fault_gate_visible)
+        self.assertFalse(self.app.fault_technical_visible)
+        self.assertEqual(
+            str(self.app.fault_repair_disabled["state"]), "disabled")
+
+    def test_fault_details_and_existing_write_block_remain_intact(self):
+        self.app.navigate(UI.PAGE_MAP["故障诊断"])
+        self.assertEqual(len(self.app.qmt_probe_buttons), 2)
+        self.assertEqual(len(self.app.inventory_buttons), 2)
+        self.assertEqual(len(self.app.historical_inventory_buttons), 1)
+        self.assertEqual(
+            str(self.app.fault_repair_disabled["state"]), "disabled")
+        self.app._set_fault_detail('{"receipt":"synthetic-evidence"}')
+        self.app.toggle_fault_technical()
+        self.assertIn(
+            "synthetic-evidence",
+            self.app.fault_detail_text.get("1.0", "end"))
+        self.app.toggle_fault_technical()
+
     def test_no_stale_scopes_or_additional_executors_created(self):
         source = inspect.getsource(UI.MarketCenterV2SelectedUI)
         for forbidden in ("subprocess.Popen", "download_financial_data2(",

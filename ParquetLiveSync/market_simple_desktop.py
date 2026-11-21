@@ -20,7 +20,7 @@ from market_update_dashboard import (
 )
 from market_simple_ui_model import (
     MODULES, PERIODS, EXTRAS, InvalidSimplePlan, coverage_rows,
-    initial_date, preview_request,
+    initial_date, preview_request, finance_cache_refresh_scope,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -239,15 +239,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
                 start=self.date_start.get(), end=self.date_end.get(),
                 modules=[name for name in MODULES if
                          self.module_vars[name].get()])
-            codes = plan["symbols"]
-            if (plan["mode"] != "增量更新"
-                    or plan["scope"] != "自选股票"
-                    or plan["modules"] != ["财务"]
-                    or not 1 <= len(codes) <= 5):
-                raise InvalidSimplePlan("只支持每次1至5只自选股票的财务增量缓存")
-            if ((date.fromisoformat(plan["end"]) -
-                 date.fromisoformat(plan["start"])).days > 30):
-                raise InvalidSimplePlan("公告日期窗口最多31天")
+            scope = finance_cache_refresh_scope(plan)
+            codes = scope["symbols"]
             script = MODULE / "run-scoped-qmt-finance-cache.ps1"
             python = REPO / ".venv" / "Scripts" / "python.exe"
             if (os.name != "nt" or not (REPO / ".git").is_dir()
@@ -352,11 +345,16 @@ class SimpleMarketDashboard(UpdaterDashboard):
             return
         quantity = (str(len(result["symbols"])) + "只"
                     if result["scope"] == "自选股票" else "全市场")
-        self.preview_line.set(
-            "预览：%s / %s / %s 至 %s / %s。"
-            " 定向执行尚未开放；不得将此选择交给原全市场任务。" %
-            (result["mode"], quantity, result["start"], result["end"],
-             "、".join(result["modules"])))
+        text = ("预览：%s / %s / %s 至 %s / %s。" %
+                (result["mode"], quantity, result["start"], result["end"],
+                 "、".join(result["modules"])))
+        try:
+            finance_cache_refresh_scope(result)
+        except InvalidSimplePlan:
+            text += " 定向执行尚未开放；不会将此范围偷换成全市场更新。"
+        else:
+            text += " 可刷新QMT财务缓存，不代表正式入库或多源核验。"
+        self.preview_line.set(text)
 
     def _coverage_selected(self, _event=None):
         selected = self.coverage_table.selection()

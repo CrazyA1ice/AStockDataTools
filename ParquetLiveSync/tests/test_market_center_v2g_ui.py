@@ -170,6 +170,23 @@ class GuidedWorkflowWidgetTests(unittest.TestCase):
         self.app.navigate(UI.PAGE_MAP["运行总览"])
         self.assertIn("当前页面：运行总览", self.app.status_line.get())
 
+    def test_selected_error_shows_full_code_without_executing_anything(self):
+        row = self.app.fault_tree.insert(
+            "", "end", values=("ERROR", "财务",
+                                "QMT_FINANCE_CONNECTION_LOST", "连接中断"))
+        self.app.fault_case_by_row[row] = {
+            "category": "QMT_FINANCE_CONNECTION_LOST",
+            "severity": "ERROR", "title": "财务连接中断"}
+        self.app.fault_tree.selection_set(row)
+        self.app._select_fault()
+        self.assertIn(
+            "QMT_FINANCE_CONNECTION_LOST",
+            self.app.selected_fault_code.get())
+        self.assertFalse(self.app.fault_gate_visible)
+        self.assertFalse(self.app.fault_technical_visible)
+        self.assertEqual(
+            str(self.app.fault_repair_disabled["state"]), "disabled")
+
     def test_fault_details_and_existing_write_block_remain_intact(self):
         self.app.navigate(UI.PAGE_MAP["故障诊断"])
         self.assertEqual(len(self.app.qmt_probe_buttons), 2)

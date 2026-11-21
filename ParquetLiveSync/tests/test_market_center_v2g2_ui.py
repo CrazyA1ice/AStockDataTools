@@ -95,7 +95,7 @@ class V2G2ReviewWidgetTests(unittest.TestCase):
         self.app._select_audit_row()
         self.assertIn("行情物理异常待复核",
                       self.app.audit_selected_title.get())
-        self.assertIn("独立行情来源",
+        self.assertIn("权威来源",
                       self.app.audit_selected_next.get())
         self.assertIn("步骤 3/3", self.app.audit_selected_next.get())
         self.assertEqual(str(self.app.audit_copy_review["state"]), "normal")
@@ -108,7 +108,7 @@ class V2G2ReviewWidgetTests(unittest.TestCase):
         self.app.audit_table.selection_set(item)
         self.app._select_audit_row()
         self.assertIn("疑似行情缺失", self.app.audit_selected_title.get())
-        self.assertIn("未认证", self.app.audit_selected_next.get())
+        self.assertIn("候选缺失", self.app.audit_selected_next.get())
         self.assertEqual(str(self.app.audit_repair_disabled["state"]), "disabled")
 
     def test_copy_checklist_never_invokes_qmt_and_contains_no_apply(self):

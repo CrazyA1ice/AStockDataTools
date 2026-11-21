@@ -211,6 +211,34 @@ class IntentPureTests(unittest.TestCase):
                 self.assertEqual(result["decision"],
                                  "QUARANTINE_PENDING_MANUAL_RECOVERY")
 
+    def test_existing_transaction_journal_blocks_repreparation(self):
+        journals = Path(self.temp.name) / "private" / (
+            "scoped-finance-transaction-journals")
+        journals.mkdir(parents=True)
+        (journals / (STOCK + ".json")).write_text(
+            '{"phase":"PREPARED"}', encoding="utf-8")
+        with patch.object(I, "_prior_rows", return_value=(None, None)):
+            with self.assertRaisesRegex(
+                    T.IntentBlocked, "EXISTING_TRANSACTION_JOURNAL"):
+                self.build(journal_workspace=journals.parent)
+
+    def test_clean_no_change_is_not_an_error_or_new_commit(self):
+        result = self.build(
+            reviewed=proof(status="LOCAL_HISTORY_UNCHANGED_NOT_CERTIFIED"))
+        self.assertEqual(result["stocks_without_source_changes"], 1)
+        self.assertFalse(result["batch_has_unresolved_blockers"])
+        self.assertFalse(result["can_apply"])
+
+    def test_only_exact_hex_fingerprints_are_accepted(self):
+        with self.assertRaisesRegex(T.IntentBlocked, "STRICT_NINE_TABLE"):
+            T.build_intent(payload(), proof(), extra=self.extra,
+                           asof=ASOF, cache_sha=None,
+                           progress_sha=digest("b"))
+        with self.assertRaisesRegex(T.IntentBlocked, "STRICT_NINE_TABLE"):
+            T.build_intent(payload(), proof(), extra=self.extra,
+                           asof=ASOF, cache_sha=digest(),
+                           progress_sha="z" * 64)
+
     def test_unknown_journal_refused(self):
         with self.assertRaisesRegex(T.IntentBlocked, "UNKNOWN_TRANSACTION"):
             T.recovery_decision({

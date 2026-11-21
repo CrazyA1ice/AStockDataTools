@@ -1523,6 +1523,26 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(source_box,
                   text="跨源抽样配置 ≠ 本次比对成功；未查询历史分区，不展示虚构覆盖率。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
+        value = self._section(
+            content, "财务及价值因子 · 数据能力状态")
+        ttk.Label(
+            value,
+            text="已设计的数据类别：Balance、Income、CashFlow、Capital、"
+                 "Top10Holder、Top10FlowHolder、HolderNum、PershareIndex、PerShare。",
+            style="Section.TLabel", wraplength=940,
+        ).pack(anchor="w", pady=(0, 5))
+        ttk.Label(
+            value,
+            text="市值、PE(TTM)、PB需要行情与按公告时点可用的财务数据联算；"
+                 "估值派生表尚未构建，不得视为每日指标已更新。",
+            style="Warning.Section.TLabel", wraplength=940,
+        ).pack(anchor="w", pady=(0, 5))
+        ttk.Label(
+            value,
+            text="规划：公告事件先发现变更股票，定向增量更新；"
+                 "全市场轮换继续兜底。该优化尚未接入正式20:05任务。",
+            style="Muted.TLabel", wraplength=940,
+        ).pack(anchor="w")
         data_actions = ttk.Frame(content)
         data_actions.pack(fill="x")
         ttk.Button(data_actions, text="重新读取状态摘要",

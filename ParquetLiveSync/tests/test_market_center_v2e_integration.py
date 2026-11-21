@@ -140,6 +140,50 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
         self.app._toggle_audit_details()
         self.assertEqual(len(self.app.audit_split.panes()), 2)
 
+    def test_home_is_direct_dashboard_without_page_canvas_scrollbar(self):
+        self.assertIsInstance(self.app.home_dashboard, visual.ttk.Frame)
+        self.assertIn(self.app.home_dashboard, self.app.home.winfo_children())
+        self.assertFalse(any(
+            isinstance(child, tk.Canvas) or isinstance(child, visual.ttk.Scrollbar)
+            for child in self.app.home.winfo_children()))
+        source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
+        self.assertNotIn("self._scroll_content(self.home)", source)
+        self.assertIn('text="三类结果独立判定"', source)
+        self.assertIn('text="本轮四个阶段"', source)
+        self.assertIn('text="待处理事项与下一步"', source)
+
+    def test_home_keeps_all_five_metrics_four_phases_and_six_actions(self):
+        self.assertEqual(set(self.app.cards), {
+            "已提交最新交易日", "上次任务结果", "当前安全截止",
+            "QMT 最近预检", "财务待审"})
+        self.assertEqual(len(self.app.stage_labels), 4)
+        self.assertEqual(set(self.app.validation_vars),
+                         {"execution", "data", "cross"})
+        self.assertEqual(len(self.app.qmt_probe_buttons), 2)
+        self.assertEqual(len(self.app.inventory_buttons), 2)
+        self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
+
+    def test_home_rewraps_at_narrow_width_without_losing_buttons(self):
+        from types import SimpleNamespace
+        self.app._resize_home_wrapping(SimpleNamespace(width=800))
+        self.assertEqual(
+            int(self.app.home_last_run_view.cget("wraplength")), 755)
+        self.assertLessEqual(
+            int(self.app.home_progress_view.cget("wraplength")), 320)
+        self.assertGreaterEqual(
+            int(next(iter(self.app.stage_widgets.values())).cget("wraplength")),
+            145)
+        self.assertEqual(len(self.app.qmt_probe_buttons), 2)
+        self.assertEqual(len(self.app.inventory_buttons), 2)
+
+    def test_data_settings_scrollbar_only_when_content_overflows(self):
+        source = inspect.getsource(
+            visual.MarketCenterV2SelectedUI._scroll_content)
+        self.assertIn("inside.winfo_reqheight() > viewport + 2", source)
+        self.assertIn("scroll.pack_forget()", source)
+        self.assertIn('scroll.pack(side="right", fill="y", before=canvas)', source)
+        self.assertNotIn('scroll.pack(side="right", fill="y")\n        canvas.pack', source)
+
     def test_no_market_root_still_disables_history_audit(self):
         self.assertIsNone(self.app.market_root)
         self.assertEqual(str(self.app.audit_button["state"]), "disabled")

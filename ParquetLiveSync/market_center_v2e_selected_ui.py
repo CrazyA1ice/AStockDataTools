@@ -21,6 +21,10 @@ from market_center_v2_finance_history_scope import inventory_historical_versions
 from market_center_v2g_workflow import (
     TASKS, task_by_id, recommended_task, workflow_guide,
 )
+from market_center_v2g2_audit_review import (
+    AuditFlowBlocked, explain_observation, format_review_text,
+    summarize_readonly_report,
+)
 
 from market_center_v2_model import (
     HISTORY_POLICIES, MODULES, InvalidPlan, latest_status, source_info,
@@ -830,6 +834,20 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(self.audit_page,
                   text="结果仅代表实际扫描到的物理记录；不是官方交易日或上市资格认证。",
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 9))
+        guide = ttk.Frame(
+            self.audit_page, style="V2F.Card.TFrame", padding=(13, 9))
+        guide.pack(fill="x", pady=(0, 8))
+        self.audit_flow_title = tk.StringVar(
+            value="步骤 1/3：选择股票、日期和周期，启动受限只读核验")
+        self.audit_flow_next = tk.StringVar(
+            value="核验后先查看物理观察，再按选中记录逐项复核；修复未开放。")
+        ttk.Label(guide, textvariable=self.audit_flow_title,
+                  style="V2F.CardHeading.TLabel",
+                  wraplength=960, justify="left").pack(anchor="w")
+        ttk.Label(guide, textvariable=self.audit_flow_next,
+                  style="V2F.CardNote.TLabel",
+                  wraplength=1000, justify="left").pack(
+                      anchor="w", pady=(4, 0))
         cards = ttk.Frame(self.audit_page)
         cards.pack(fill="x", pady=(0, 8))
         self.audit_cards = {}
@@ -897,16 +915,127 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.audit_result_text.configure(yscrollcommand=ys.set)
         self.audit_result_text.grid(row=0, column=0, sticky="nsew")
         ys.grid(row=0, column=1, sticky="ns")
+        self.audit_selection_guide = ttk.Frame(
+            self.audit_detail_frame, style="V2F.Card.TFrame", padding=(9, 7))
+        self.audit_selection_guide.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.audit_selected_title = tk.StringVar(
+            value="步骤 2/3：选择左侧记录，查看对应的异常原因与复核条件")
+        self.audit_selected_next = tk.StringVar(
+            value="所有结论仍是只读观察，不代表缺失已经认证。")
+        ttk.Label(
+            self.audit_selection_guide, textvariable=self.audit_selected_title,
+            style="V2F.CardHeading.TLabel", wraplength=350,
+            justify="left").pack(anchor="w")
+        ttk.Label(
+            self.audit_selection_guide, textvariable=self.audit_selected_next,
+            style="V2F.CardNote.TLabel", wraplength=350,
+            justify="left").pack(anchor="w", pady=(4, 0))
+        self.audit_selected_review = None
         bottom = ttk.Frame(self.audit_page)
         bottom.pack(fill="x", pady=(8, 0))
         self.audit_details_visible = True
         self.audit_details_button = ttk.Button(
             bottom, text="隐藏右侧证据", command=self._toggle_audit_details)
         self.audit_details_button.pack(side="left")
-        ttk.Label(bottom, text="没有正式交易日历和股票池证据时，缺失候选不可自动回填。",
-                  style="Muted.TLabel").pack(side="left", padx=12)
+        self.audit_retry_scope = ttk.Button(
+            bottom, text="返回调整核验范围",
+            command=lambda: self.open_workflow("audit"))
+        self.audit_retry_scope.pack(side="left", padx=(8, 0))
+        self.audit_copy_review = ttk.Button(
+            bottom, text="复制本条复核清单（不修复）",
+            command=self.copy_selected_audit_review, state="disabled")
+        self.audit_copy_review.pack(side="left", padx=(8, 0))
+        self.audit_repair_disabled = ttk.Button(
+            bottom, text="自动修复（未开放）", state="disabled")
+        self.audit_repair_disabled.pack(side="right")
         self.audit_raw_report = "暂无核验结果。前往「更新 / 核验」选择范围并启动只读核验。"
         self._set_audit_text(self.audit_raw_report)
+
+    def _select_audit_row(self, _event=None):
+        """Keep original raw evidence and show a separate market-data review."""
+        super()._select_audit_row(_event)
+        selected = self.audit_table.selection()
+        row = (self.audit_table_rows.get(selected[0])
+               if selected else None)
+        try:
+            if row is None:
+                raise AuditFlowBlocked("no_selected_market_observation")
+            review = explain_observation(row)
+        except AuditFlowBlocked:
+            self.audit_selected_review = None
+            self.audit_selected_title.set(
+                "步骤 2/3：请选择要复核的行情观察行")
+            self.audit_selected_next.set(
+                "没有可信观察时，不能推断缺失、生成恢复许可或修改行情。")
+            self.audit_copy_review.configure(state="disabled")
+            return
+        self.audit_selected_review = review
+        self.audit_selected_title.set(
+            "步骤 2/3：" + review["focus"] + " · " + review["title"])
+        self.audit_selected_next.set(
+            "下一步：" + review["next_step"] +
+            "\n复核前提：" + review["required_evidence"] +
+            "\n步骤 3/3：仅能生成复核清单，自动修复未开放。")
+        self.audit_copy_review.configure(state="normal")
+
+    def _poll_audit(self):
+        """Use the existing guarded scanner, then interpret its read-only JSON.
+
+        No extra market I/O, no retry of the scanner, no QMT connection.
+        """
+        super()._poll_audit()
+        if self.audit_running:
+            self.audit_selected_review = None
+            self.audit_copy_review.configure(state="disabled")
+            self.audit_flow_title.set(
+                "步骤 1/3：只读核验正在进行，尚无本轮结果")
+            self.audit_flow_next.set(
+                "等待有界物理扫描结束；期间不能复制旧结果或触发自动修复。")
+            return
+        self.audit_selected_review = None
+        self.audit_copy_review.configure(state="disabled")
+        self.audit_selected_title.set(
+            "步骤 2/3：选择左侧观察行，查看对应的复核条件")
+        self.audit_selected_next.set(
+            "本工具不提供自动补缺、历史覆盖或写入能力。")
+        try:
+            report = json.loads(self.audit_raw_report)
+            summary = summarize_readonly_report(report)
+        except (ValueError, TypeError, AuditFlowBlocked):
+            if self.audit_raw_report.startswith("核验阻断"):
+                self.audit_flow_title.set(
+                    "核验已阻断：当前没有可用于修复的结果")
+                self.audit_flow_next.set(
+                    "检查任务占用、只读范围或读取预算；不得自动重试写入。")
+            else:
+                self.audit_flow_title.set(
+                    "步骤 1/3：先从「更新 / 核验」启动一次有界只读核验")
+                self.audit_flow_next.set(
+                    "历史行情尚无有效观察，不能给出缺失或修复结论。")
+            return
+        self.audit_flow_title.set(
+            "步骤 1/3 已完成：" + summary["title"])
+        self.audit_flow_next.set(summary["next_step"] +
+                                 " 已确认缺失：0；下载和修复不可用。")
+
+    def copy_selected_audit_review(self):
+        """Copy only selected non-executable market review guidance."""
+        selected = self.audit_table.selection()
+        if not selected:
+            return
+        row = self.audit_table_rows.get(selected[0])
+        try:
+            if row is None:
+                return
+            review = explain_observation(row)
+            content = format_review_text(review)
+        except (AuditFlowBlocked, KeyError, TypeError):
+            return
+        self.clipboard_clear()
+        self.clipboard_append(content)
+        self.status_line.set(
+            "已复制行情只读复核清单；未调用QMT、未下载或修改数据")
 
     def _toggle_audit_details(self):
         if self.audit_details_visible:

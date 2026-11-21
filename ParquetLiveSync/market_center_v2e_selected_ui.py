@@ -986,6 +986,12 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         """
         super()._poll_audit()
         if self.audit_running:
+            self.audit_selected_review = None
+            self.audit_copy_review.configure(state="disabled")
+            self.audit_flow_title.set(
+                "步骤 1/3：只读核验正在进行，尚无本轮结果")
+            self.audit_flow_next.set(
+                "等待有界物理扫描结束；期间不能复制旧结果或触发自动修复。")
             return
         self.audit_selected_review = None
         self.audit_copy_review.configure(state="disabled")

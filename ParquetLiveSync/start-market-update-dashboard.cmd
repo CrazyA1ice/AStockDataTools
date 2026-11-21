@@ -7,7 +7,7 @@ if not exist "%PY%" (
   pause
   exit /b 2
 )
-"%PY%" -u -B "%~dp0market_update_dashboard.py"
+"%PY%" -u -B "%~dp0market_simple_desktop.py"
 if errorlevel 1 (
   echo [ERROR] Dashboard ended with an error.
   pause

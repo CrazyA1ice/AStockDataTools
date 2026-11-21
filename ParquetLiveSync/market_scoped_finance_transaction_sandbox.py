@@ -27,6 +27,7 @@ FAIL_POINTS = (
     "PREPARED", "AFTER_SNAPSHOT_BEFORE_JOURNAL", "SNAPSHOT_WRITTEN",
     "AFTER_PIN_BEFORE_JOURNAL", "PINS_UPDATED",
     "AFTER_LEDGER_BEFORE_JOURNAL", "LEDGER_RELEASED", "COMPLETE",
+    "CORRUPT_BACKUP_BEFORE_VERIFY",
 )
 
 
@@ -213,6 +214,13 @@ def _sandbox_case(home: Path, *, failure_at: str | None,
         trip("COMPLETE")
     except SyntheticInterruption:
         outcome = "SANDBOX_INTERRUPTED_QUARANTINE_REQUIRED"
+    # Corrupt a private synthetic backup to prove integrity failure blocks
+    # recovery and cannot be treated as a completed transaction.
+    if failure_at == "CORRUPT_BACKUP_BEFORE_VERIFY":
+        with backup_pin.open("ab") as stream:
+            stream.write(b"synthetic-corruption")
+            stream.flush()
+            os.fsync(stream.fileno())
     # We NEVER rollback/replay on an incomplete phase, regardless of where
     # the injected failure occurred, because bytes may already have changed.
     persisted = json.loads(journal.read_text(encoding="utf-8"))

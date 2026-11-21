@@ -147,6 +147,28 @@ class HealthTests(unittest.TestCase):
             self.assertEqual(first, (receipt.read_bytes(), ledger.read_bytes()))
             self.assertEqual(report["writes"], 0)
 
+
+    def test_nonplanned_kline_partial_requires_review_not_green(self):
+        a, b = inputs()
+        a["validation"]["sections"]["EIGHT_PERIODS"]["data_validation"] = "PARTIAL"
+        h = S.classify(a, b)
+        self.assertEqual(h["alert_policy_preview"], "REVIEW")
+        self.assertEqual(h["other_partial_stages_require_review"],
+                         ["EIGHT_PERIODS"])
+
+    def test_run_global_fail_is_never_hidden_by_stage_pass(self):
+        a, b = inputs()
+        a["validation"]["data_validation"] = "FAIL"
+        h = S.classify(a, b)
+        self.assertEqual(h["alert_policy_preview"], "ACTION")
+        self.assertIn("RUN_GLOBAL_VALIDATION", h["stage_quality_failures"])
+
+    def test_failed_run_receipt_never_green_even_with_all_stage_exit_zero(self):
+        a, b = inputs(status="FAILED")
+        h = S.classify(a, b)
+        self.assertEqual(h["alert_policy_preview"], "ACTION")
+        self.assertIn("RUN_RECEIPT_FAILED", h["stage_execution_errors"])
+
     def test_unknown_receipt_format_never_green(self):
         a, b = inputs()
         a["format"] = "unexpected_format"

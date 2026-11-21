@@ -93,6 +93,7 @@ def classify(receipt: dict, ledger: dict) -> dict:
     errors = []
     unverified = []
     quality_failures = []
+    unexpected_partial = []
     planned = []
     for name in STAGES:
         record = receipt["stage_records"].get(name)
@@ -117,6 +118,8 @@ def classify(receipt: dict, ledger: dict) -> dict:
         if exit_code == 0 and qa == "PARTIAL" and name in (
                 "FINANCIAL_DAILY", "ADJUSTMENTS_ROTATING"):
             planned.append(name)
+        elif qa == "PARTIAL":
+            unexpected_partial.append(name)
         stages.append({
             "stage": name, "exit_code": exit_code,
             "data_validation": qa, "cross_validation": cross,
@@ -125,6 +128,12 @@ def classify(receipt: dict, ledger: dict) -> dict:
         raise HealthBlocked("invalid_daily_runner_error_list")
     if receipt["errors"]:
         errors.append("RUNNER_REPORTED_ERRORS")
+    if receipt["status"] == "FAILED":
+        errors.append("RUN_RECEIPT_FAILED")
+    if type(section_source) is dict and (
+            section_source.get("data_validation") == "FAIL"
+            or section_source.get("cross_validation") == "FAIL"):
+        quality_failures.append("RUN_GLOBAL_VALIDATION")
     if receipt.get("qmt_preflight_status") == "QMT_SERVICE_UNAVAILABLE":
         errors.append("QMT_SERVICE_UNAVAILABLE")
     if ledger["daily_date"] != run_day:
@@ -143,15 +152,12 @@ def classify(receipt: dict, ledger: dict) -> dict:
     reached_end = ledger.get("daily_sweep_reached_end")
     if type(reached_end) is not bool:
         reached_end = None
-    if not errors and not quality_failures:
-        if type(sections) is not dict:
-            state, alert = "EXECUTED_VERIFICATION_MISSING", "REVIEW"
-        else:
-            state, alert = "ROUTINE_CONTINUATION", "NONE"
+    if errors or quality_failures:
+        state, alert = "ATTENTION_REQUIRED", "ACTION"
+    elif type(sections) is not dict or unexpected_partial:
+        state, alert = "EXECUTED_NEEDS_REVIEW", "REVIEW"
     else:
-        state, alert = "ATTENTION_REQUIRED", "ACTION"
-    if quality_failures and alert != "ACTION":
-        state, alert = "ATTENTION_REQUIRED", "ACTION"
+        state, alert = "ROUTINE_CONTINUATION", "NONE"
     # Coverage is not a binary success flag. Pending may remain even after
     # reaching the end of a stock universe.
     if reached_end is False:
@@ -172,6 +178,7 @@ def classify(receipt: dict, ledger: dict) -> dict:
         "stage_quality_failures": sorted(set(quality_failures)),
         "unverified_stage_labels": sorted(set(unverified)),
         "normal_partial_stages": sorted(set(planned)),
+        "other_partial_stages_require_review": sorted(set(unexpected_partial)),
         "coverage": {
             "financial_sweep": coverage,
             "financial_daily_cursor": ledger["daily_cursor"],

@@ -7,11 +7,11 @@
 
 ## 本次 Safety-first S1 (shadow)
 新增 `market_daily_autopilot_shadow.py`：显式 --state-module/--explicit-readonly，仅读取 canonical `work/last-afternoon-unified.json` 和 `work/qmt_extra/financial-cache-progress.json`，限制文件2MiB、无符号链接、读取前后sha256一致；只输出聚合、SHA，不输出财务原始内容。输出分为：
-1. **执行健康**：所有阶段exit0且runner无错误，正常计划内财务/除权PARTIAL归类 ROUTINE_CONTINUATION；非0、runner errors、质量FAIL、跨源FAIL、财务日期错配或大量历史版本冲突(>=500)归类 ATTENTION_REQUIRED；缺校验信息只为 REVIEW，不能绿灯认证。
+1. **执行健康**：所有阶段exit0且runner无错误，正常计划内财务/除权PARTIAL归类 ROUTINE_CONTINUATION；非0、runner errors、质量FAIL、跨源FAIL（含当次全局校验）、财务日期错配或大量历史版本冲突(>=500)归类 ATTENTION_REQUIRED；非计划内的K线或板块PARTIAL、缺校验信息只为 REVIEW，不能绿灯认证。
 2. **覆盖进度**：财务游标、跨日扫尾时间、当次处理数、待遍历数、pending按原因；覆盖完一轮不代表pending已解决。
 3. **数据质量**：保持每个阶段 PASS/PARTIAL/UNVERIFIED/FAIL，以及整体独立跨源未认证标记，不得压成“所有数据通过”。
 4. **告警建议**：ACTION 才发即时提醒、REVIEW供摘要、普通轮换NONE；本阶段只做 preview，不发送通知、未写健康状态、未配置重复消息去重、未更改正式每日任务。持久化去重与异常冷却必须在后续单独审查后集成，不能凭当日状态猜测“异常是旧的”。
-5. **安全边界**：不调用QMT、不抓取新财务、没有任何文件写入、不修改20:05调度、财务pending或正式H5/Parquet。P1–P5保持Draft，无生产部署。新增12项纯合成单元测试，预计 `test_market_center*.py` 全量 **363项**，尚未Windows实机验收。
+5. **安全边界**：不调用QMT、不抓取新财务、没有任何文件写入、不修改20:05调度、财务pending或正式H5/Parquet。P1–P5保持Draft，无生产部署。新增15项纯合成单元测试，预计 `test_market_center*.py` 全量 **366项**，尚未Windows实机验收。
 
 ## 财务与估值：保留全部9类表
 原始9类：Balance、Income、CashFlow、Capital、Top10FlowHolder、Top10Holder、HolderNum、PershareIndex、PerShare。来源接口中没有证明每日PE/PB与总市值直接构成这些表的永久字段，建议未来分别建立 `valuation_daily` 派生视图/表：

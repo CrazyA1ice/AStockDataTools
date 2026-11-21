@@ -32,6 +32,7 @@ TESTS = (
     "test_market_center_scoped_finance_history_review.py",
     "test_market_center_scoped_finance_transaction_intent.py",
     "test_market_center_scoped_finance_transaction_sandbox.py",
+    "test_market_center_autopilot_offline_acceptance.py",
 )
 
 

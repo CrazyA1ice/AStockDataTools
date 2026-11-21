@@ -37,6 +37,7 @@ if($end -gt $cutoff){throw 'DATE_AFTER_SAFE_CUTOFF'}
 $mutex=[System.Threading.Mutex]::new($false,'Local\AStockDataTools2005AllStages')
 $held=$false
 $jobDir=$null
+$log=$null
 try{
     try{$held=$mutex.WaitOne(0)}catch [System.Threading.AbandonedMutexException]{$held=$true}
     if(-not $held){throw 'DAILY_UPDATE_ALREADY_RUNNING'}
@@ -52,16 +53,42 @@ try{
     $jobDir=Join-Path $root ([guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $jobDir -ErrorAction Stop | Out-Null
     $output=Join-Path $jobDir 'cache.json'
-    Write-Host ('SCOPED_FINANCE_CACHE_REFRESH_BEGIN='+$codes.Count+' symbols; announcement_dates='+$StartDate+'..'+$EndDate)
-    & $python -u -B $worker --symbols ($codes -join ',') --output $output --mode daily --start ($start.ToString('yyyyMMdd')) --end ($end.ToString('yyyyMMdd'))
-    if($LASTEXITCODE -ne 0){throw ('FINANCE_WORKER_EXIT_'+$LASTEXITCODE)}
+    $log=Join-Path $work ('afternoon-'+$now.ToString('yyyyMMdd-HHmmss')+'-SCOPED_FINANCE-'+[guid]::NewGuid().ToString('N')+'.log')
+    $startLine='SCOPED_FINANCE_CACHE_START stock_count='+$codes.Count+' dates='+$StartDate+'..'+$EndDate
+    Set-Content -LiteralPath $log -Value $startLine -Encoding UTF8 -ErrorAction Stop
+    Write-Host $startLine
+    $info=[System.Diagnostics.ProcessStartInfo]::new()
+    $info.FileName=$python
+    $info.Arguments='-u -B "'+$worker+'" --symbols '+($codes -join ',')+' --output "'+$output+'" --mode daily --start '+$start.ToString('yyyyMMdd')+' --end '+$end.ToString('yyyyMMdd')
+    $info.UseShellExecute=$false
+    $info.CreateNoWindow=$false
+    $child=[System.Diagnostics.Process]::new()
+    $child.StartInfo=$info
+    try{
+        if(-not $child.Start()){throw 'FINANCE_WORKER_START_FAILED'}
+        if(-not $child.WaitForExit(300000)){
+            $child.Kill()
+            [void]$child.WaitForExit(5000)
+            throw 'FINANCE_WORKER_TIMEOUT_300_SECONDS'
+        }
+        if($child.ExitCode -ne 0){throw ('FINANCE_WORKER_EXIT_'+$child.ExitCode)}
+    }finally{$child.Dispose()}
     if(-not(Test-Path -LiteralPath $output -PathType Leaf)){throw 'FINANCE_WORKER_OUTPUT_MISSING'}
     $size=(Get-Item -LiteralPath $output -Force).Length
     if($size -lt 1 -or $size -gt 268435456){throw 'FINANCE_WORKER_OUTPUT_SIZE_INVALID'}
     $digest=(Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash
-    Write-Host ('SCOPED_FINANCE_CACHE_READY='+$codes.Count+' symbols; bytes='+$size+' sha256='+$digest)
+    $success='SCOPED_FINANCE_CACHE_READY stock_count='+$codes.Count+' bytes='+$size+' sha256='+$digest
+    Add-Content -LiteralPath $log -Value @($success,'CANONICAL_PARQUET_COMMIT=NO','MULTISOURCE_VERIFICATION=NOT_RUN') -Encoding UTF8
+    Write-Host $success
     Write-Host 'SCOPED_FINANCE_CANONICAL_PARQUET_UNCHANGED=TRUE'
     Write-Host 'SCOPED_FINANCE_HISTORY_REPAIR_APPROVED=FALSE'
+}
+catch{
+    if($log){
+        $message=([string]$_.Exception.Message -replace '[\r\n]',' ')
+        Add-Content -LiteralPath $log -Value ('SCOPED_FINANCE_CACHE_FAILED='+$message.Substring(0,[math]::Min($message.Length,220))) -Encoding UTF8 -ErrorAction SilentlyContinue
+    }
+    throw
 }
 finally{
     if($jobDir -and (Test-Path -LiteralPath $jobDir)){Remove-Item -LiteralPath $jobDir -Recurse -Force}

@@ -15,6 +15,8 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from market_daily_autopilot_view import read_view
+
 MODULE = Path(__file__).resolve().parent
 REPO = MODULE.parent
 WORK = MODULE / "work"
@@ -119,6 +121,11 @@ class UpdaterDashboard(tk.Tk):
         self.finance = tk.StringVar(value="")
         self.last_run = tk.StringVar(value="")
         self.qmt_status = tk.StringVar(value="QMT服务预检：尚无运行记录")
+        self.autopilot_status = tk.StringVar(value="自动健康：等待读取")
+        self.autopilot_coverage = tk.StringVar(value="财务覆盖：未确认")
+        self.autopilot_quality = tk.StringVar(value="质量校验：未认证")
+        self.autopilot_valuation = tk.StringVar(
+            value="估值派生（总市值 / PE / PB）：尚未启用")
         self.setup()
         self.refresh()
 
@@ -132,6 +139,14 @@ class UpdaterDashboard(tk.Tk):
         ).pack(anchor="w", pady=(2, 10))
         for variable in (self.info, self.scheduled, self.market, self.finance, self.last_run, self.qmt_status):
             ttk.Label(outer, textvariable=variable, justify="left").pack(anchor="w", pady=2)
+        automatic = ttk.LabelFrame(
+            outer, text="无人值守健康度 · 最近一次正式回执（只读预览）",
+            padding=8)
+        automatic.pack(fill="x", pady=(7, 3))
+        for variable in (self.autopilot_status, self.autopilot_coverage,
+                         self.autopilot_quality, self.autopilot_valuation):
+            ttk.Label(automatic, textvariable=variable,
+                      justify="left").pack(anchor="w", pady=1)
         buttons = ttk.Frame(outer)
         buttons.pack(fill="x", pady=10)
         self.run_button = ttk.Button(buttons, text="补更至最近允许日期（四阶段）", command=self.manual_update)
@@ -215,6 +230,12 @@ class UpdaterDashboard(tk.Tk):
                 "（尝试 " + str(last.get("qmt_preflight_attempts", 0)) + " 次）" +
                 "；20:05前补更=" + str(historical.get("qmt_preflight_status", "尚无记录"))
             )
+            model = read_view(MODULE)
+            self.autopilot_status.set(model["headline"])
+            self.autopilot_coverage.set(model["coverage"])
+            self.autopilot_quality.set(model["quality"] +
+                                       "  |  " + model["action"])
+            self.autopilot_valuation.set(model["valuation"])
             self.show_stages(last)
             self.update_logs()
             self.info.set(

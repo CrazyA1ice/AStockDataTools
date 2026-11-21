@@ -18,7 +18,7 @@ import qmt_extra_data as E
 import qmt_extra_financial_cache_import as I
 
 MAX_STOCKS = 5
-MAX_STAGE_BYTES = 256 * 1024 * 1024
+MAX_STAGE_BYTES = 64 * 1024 * 1024
 MAX_LEDGER_BYTES = 2 * 1024 * 1024
 MAX_ROWS_PER_TABLE = 100000
 SHA = re.compile(r"[0-9a-fA-F]{64}")

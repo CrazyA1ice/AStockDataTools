@@ -139,7 +139,8 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
             module, 600, runner=runner)
         checks.append({"suite": "FULL_MARKET_CENTER_REGRESSION", **result})
     all_pass = (len(checks) >= len(TESTS)
-                and all(item["pass"] for item in checks))
+                and all(item["pass"] for item in checks)
+                and powershell == "PASS")
     return {
         "status": ("OFFLINE_ACCEPTANCE_PASS" if all_pass
                    else "OFFLINE_ACCEPTANCE_FAILED"),

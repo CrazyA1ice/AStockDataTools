@@ -942,6 +942,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         right = ttk.LabelFrame(self.fault_split, text="证据、检查点与下一步", padding=9)
         self.fault_split.add(left, weight=3)
         self.fault_split.add(right, weight=2)
+        self.selected_fault_code = tk.StringVar(
+            value="在左侧选择错误，可查看完整错误代码。")
+        ttk.Label(
+            right, textvariable=self.selected_fault_code,
+            style="V2F.CardNote.TLabel",
+            wraplength=380, justify="left",
+        ).pack(anchor="w", pady=(0, 7))
         gates = ttk.Frame(right, style="V2F.Card.TFrame", padding=(11, 9))
         gates.pack(fill="x", pady=(0, 9))
         ttk.Label(
@@ -1064,6 +1071,19 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(self.fault_page,
                   text="故障以本轮回执和检查点为准。连接测试、文件清单均不能解锁写入；20:05 任务不变。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
+
+    def _select_fault(self, _event=None):
+        """Keep original evidence selection; reveal full error type in prose."""
+        super()._select_fault(_event)
+        selected = self.fault_tree.selection()
+        case = (self.fault_case_by_row.get(selected[0])
+                if selected else None)
+        if isinstance(case, dict):
+            self.selected_fault_code.set(
+                "当前错误代码：" + str(case.get("category", "未提供")))
+        else:
+            self.selected_fault_code.set(
+                "在左侧选择错误，可查看完整错误代码。")
 
     def toggle_fault_gate_details(self):
         """Disclose complete gate notes without running a probe."""

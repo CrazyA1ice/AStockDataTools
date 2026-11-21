@@ -553,8 +553,9 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         # A short full-width diagnosis strip replaces the old tall incident
         # panel. Detailed case rows and original JSON belong in Faults.
         alert_rail = tk.Frame(
-            content, bg=V2F["danger"], borderwidth=0, padx=3)
+            content, bg=V2F["border"], borderwidth=0, padx=3)
         alert_rail.pack(fill="x", pady=(3, 0))
+        self.home_alert_rail = alert_rail
         issues = ttk.Frame(
             alert_rail, style="V2F.Card.TFrame", padding=(15, 10))
         issues.pack(fill="x")
@@ -1003,7 +1004,22 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.historical_inventory_result = None
         self.historical_inventory_summary.set("回执刷新后需重新盘点历史财务版本范围")
         super().refresh_fault_diagnosis()
-        # Use the same evidence-derived tri-state color as the home card.
+        # A neutral rail by default; red only for an evidenced execution
+        # error, amber for warnings, blue for progress notices. A missing
+        # receipt must never be painted as a certified green success.
+        cases = (self.fault_diagnosis or {}).get("cases", [])
+        severity = {item.get("severity") for item in cases
+                    if isinstance(item, dict)}
+        if "ERROR" in severity:
+            rail_color = V2F["danger"]
+        elif "WARN" in severity:
+            rail_color = V2F["warning"]
+        elif "INFO" in severity:
+            rail_color = V2F["accent"]
+        else:
+            rail_color = V2F["border"]
+        if hasattr(self, "home_alert_rail"):
+            self.home_alert_rail.configure(bg=rail_color)
         if hasattr(self, "fault_page_headline_view"):
             self.fault_page_headline_view.configure(
                 style=self.fault_title_view.cget("style"))
@@ -1147,7 +1163,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         for key, name in (
             ("execution", "execution"), ("data", "data"), ("cross", "cross"),
         ):
-            self.validation_vars[key].set(states[name])
+            status = states[name]
+            self.validation_vars[key].set(status)
+            shade = ("Success" if status in ("PASS", "SUCCESS") else
+                     "Failure" if status in ("FAIL", "FAILED") else
+                     "Warning" if status == "PARTIAL" else "Neutral")
+            self.validation_value_widgets[key].configure(
+                style=shade + ".CardValue.TLabel")
         accepted = current.get("last_accepted_trading_day", "未证明")
         detail = current.get("stage_records", {}).get("EIGHT_PERIODS", {})
         phase = format_evidence_state(detail.get("data_validation"))

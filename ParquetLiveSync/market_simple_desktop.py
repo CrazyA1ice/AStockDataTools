@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 import os
+import queue
 import threading
 from pathlib import Path
 import tkinter as tk
@@ -29,6 +30,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
     def __init__(self):
         self._default_date = ""
         self._coverage_snapshot = None
+        self._calendar_receipts = queue.Queue()
         super().__init__()
         self._resolve_default_session()
 
@@ -129,6 +131,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
 
         row = ttk.Frame(page)
         row.pack(fill="x", pady=(3, 9))
+        self.date_row = row
         ttk.Label(row, text="开始日期").pack(side="left")
         ttk.Entry(row, textvariable=self.date_start,
                   width=15).pack(side="left", padx=(8, 18))
@@ -211,7 +214,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
     def _toggle_stock_entry(self):
         if self.update_scope.get() == "自选股票":
             self.stock_frame.pack(fill="x", pady=(0, 7),
-                                  before=self.date_source.master if False else None)
+                                  before=self.date_row)
         else:
             self.stock_frame.pack_forget()
 
@@ -240,13 +243,23 @@ class SimpleMarketDashboard(UpdaterDashboard):
         def worker():
             try:
                 result = query_calendar(limit)
-                self.after(0, lambda: self._apply_default_day(
-                    result["last"], result["source"]))
+                self._calendar_receipts.put((result["last"], result["source"]))
             except (CalendarUnavailable, OSError, ValueError):
-                self.after(0, lambda: self.date_source.set(
-                    self.date_source.get() + "；QMT日历暂不可用"))
+                self._calendar_receipts.put((None, "QMT日历暂不可用"))
         threading.Thread(target=worker, daemon=True,
                          name="readonly-qmt-calendar").start()
+        self.after(150, self._poll_calendar)
+
+    def _poll_calendar(self):
+        try:
+            latest, source = self._calendar_receipts.get_nowait()
+        except queue.Empty:
+            self.after(150, self._poll_calendar)
+            return
+        if latest is None:
+            self.date_source.set(self.date_source.get() + "；" + source)
+        else:
+            self._apply_default_day(latest, source)
 
     def preview_selection(self):
         try:

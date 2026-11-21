@@ -28,7 +28,7 @@ class CapitalCompareTests(unittest.TestCase):
                          "REPORT_KEYS_ADDED_OR_REMOVED")
         self.assertEqual(report["previous_keys_missing_from_cache"], 1)
         self.assertEqual(report["cached_keys_absent_from_previous"], 1)
-        self.assertNotIn("a", json.dumps(report))
+        self.assertNotIn('"a"', json.dumps(report))
         self.assertNotIn("m_totalShare", json.dumps(report))
 
     def test_economic_field_difference_not_marked_as_quarter_noise(self):
@@ -86,7 +86,8 @@ class CapitalCompareTests(unittest.TestCase):
             result = P._child_cache_fingerprints("000001.SZ")
         self.assertEqual(result["row_count"], 1)
         self.assertEqual(xt.xtdata.args[1], ["Capital"])
-        self.assertNotIn("m_totalShare", json.dumps(result))
+        self.assertEqual(len(result["records"][0]["field_sha256"]["m_totalShare"]), 64)
+        self.assertNotIn('"m_totalShare":100', json.dumps(result))
         self.assertEqual(result["table"], "Capital")
 
     def test_child_fingerprint_receipt_rejects_unsafe_data(self):

@@ -1049,6 +1049,22 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             "步骤 1/3 已完成：" + summary["title"])
         self.audit_flow_next.set(summary["next_step"] +
                                  " 已确认缺失：0；下载和修复不可用。")
+        # The guarded controller displays at most 600 observations, while
+        # its in-memory evidence report retains all rows. Disclose the
+        # discrepancy to prevent treating a preview as complete coverage.
+        visible_rows = len(self.audit_table_rows)
+        total_rows = summary["observation_count"]
+        if total_rows > visible_rows:
+            limit_note = (
+                " | 表格仅展示" + str(visible_rows) + "/" +
+                str(total_rows) + "条观察；展开原始JSON查看完整清单")
+            if " | 表格仅展示" not in self.audit_evidence_note.get():
+                self.audit_evidence_note.set(
+                    self.audit_evidence_note.get() + limit_note)
+            self.audit_flow_next.set(
+                self.audit_flow_next.get() +
+                " 表格展示不完整，不能凭可见行数判断全部数据；"
+                "请缩小核验范围以逐条复核。")
         # The original controller retains raw status codes in memory/JSON.
         # Translate only the visible physical-observation column so the
         # entire row (including symbol) fits a normal-width split pane.

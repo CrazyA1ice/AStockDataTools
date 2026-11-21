@@ -227,6 +227,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             value=workflow_guide("audit"))
         self.workflow_current_task = None
         self.quick_tools_shown = False
+        self.recommended_task_id = "audit"
         self.title("A股数据更新与核验中心 · Market Center V2G")
         self.geometry("1350x860")
         self.minsize(1020, 670)
@@ -557,13 +558,20 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                 wraplength=190, justify="center",
             ).pack(anchor="center", pady=(3, 0))
             self.task_buttons[task["id"]] = task_button
+        guidance = ttk.Frame(
+            actions, style="V2F.Card.TFrame")
+        guidance.grid(row=3, column=0, columnspan=2,
+                      sticky="ew", padx=5, pady=(8, 1))
         self.workflow_recommendation = ttk.Label(
-            actions, textvariable=self.workflow_hint,
-            style="V2F.CardNote.TLabel", wraplength=420,
+            guidance, textvariable=self.workflow_hint,
+            style="V2F.CardNote.TLabel", wraplength=260,
             justify="left")
-        self.workflow_recommendation.grid(
-            row=3, column=0, columnspan=2, sticky="w", padx=5,
-            pady=(8, 1))
+        self.workflow_recommendation.pack(side="left", fill="x", expand=True)
+        self.follow_recommendation_button = ttk.Button(
+            guidance, text="按建议继续",
+            command=self.follow_recommendation)
+        self.follow_recommendation_button.pack(
+            side="right", padx=(7, 0))
         self.quick_tools_toggle = ttk.Button(
             actions, text="展开高级只读检查",
             command=self.toggle_home_tools)
@@ -651,6 +659,10 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.status_line.set(
             "当前目标：" + task_by_id(task_id)["title"] +
             "；V2G仅提供预览、只读核验与故障诊断，下载和自动修复未开放")
+
+    def follow_recommendation(self):
+        """The recommendation only opens a page, never starts an operation."""
+        self.open_workflow(self.recommended_task_id)
 
     def toggle_home_tools(self):
         """Show advanced diagnostics on demand; never run them on expand."""
@@ -1288,12 +1300,19 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         try:
             snapshot = latest_status(self.state_module)
             recommendation = recommended_task(snapshot)
+            self.recommended_task_id = recommendation["task_id"]
+            for task_id, button in self.task_buttons.items():
+                button.configure(
+                    style=("Primary.TButton"
+                           if task_id == self.recommended_task_id
+                           else "TButton"))
             self.workflow_hint.set(
                 "建议下一步：" + recommendation["reason"])
             self._refresh_auxiliary(
                 snapshot, source_info(self.state_module),
             )
         except (InvalidPlan, OSError, ValueError) as exc:
+            self.recommended_task_id = "audit"
             self.workflow_hint.set(
                 "建议下一步：状态证据不足，可先检查数据或查看本轮日志。")
             self.management_summary.set("状态读取不足：" + str(exc)[:120])

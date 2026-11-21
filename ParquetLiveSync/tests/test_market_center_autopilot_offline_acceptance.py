@@ -25,6 +25,11 @@ def good_git(command, **kwargs):
 
 class OfflineAcceptanceTests(unittest.TestCase):
     def setUp(self):
+        # Mock PowerShell AST validation only for portable harness tests;
+        # the real acceptance gate requires Windows parser success.
+        ps = patch.object(G, "powershell_ast", return_value="PASS")
+        ps.start()
+        self.addCleanup(ps.stop)
         self.temp = TemporaryDirectory(prefix="autopilot-review-fixture-")
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name) / "work" / "autopilot-s7-review"
@@ -89,6 +94,15 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.assertTrue(all(s["pass"] for s in report["test_suites"]))
         self.assertFalse(any("--apply" in a for call in self.calls
                              for a in call))
+
+    def test_non_windows_parser_skip_cannot_claim_acceptance(self):
+        with patch.object(G, "powershell_ast",
+                          return_value="SKIPPED_NON_WINDOWS"):
+            report = G.acceptance(
+                self.module, PIN, runner=self.fake_run,
+                git_runner=good_git)
+        self.assertEqual(report["status"], "OFFLINE_ACCEPTANCE_FAILED")
+        self.assertFalse(report["approved_for_production"])
 
     def test_full_regression_only_after_all_synthetic_pass(self):
         report = G.acceptance(

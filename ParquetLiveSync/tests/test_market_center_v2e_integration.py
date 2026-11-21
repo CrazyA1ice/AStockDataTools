@@ -163,6 +163,22 @@ class V2EIntegratedWidgetSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.app.inventory_buttons), 2)
         self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
 
+    def test_dashboard_cards_are_content_height_not_window_height(self):
+        source = inspect.getsource(visual.MarketCenterV2SelectedUI.build_home)
+        phases = source.split('text="本轮四个阶段"', 1)[1].split(
+            'text="本次可信变化"', 1)[0]
+        actions = source.split('text="常用操作 · 仅只读预检"', 1)[1].split(
+            '# A short full-width diagnosis strip', 1)[0]
+        self.assertIn('phases.pack(fill="x")', phases)
+        self.assertIn('matrix.pack(fill="x")', phases)
+        self.assertNotIn('matrix.rowconfigure(row, weight=1)', phases)
+        self.assertIn('sticky="ew"', phases)
+        self.assertIn('actions.pack(fill="x")', actions)
+        self.assertNotIn('actions.pack(fill="both", expand=True)', actions)
+        self.assertIn('center.pack(fill="both", expand=True', source)
+        self.assertIn('issues.pack(fill="x")', source)
+        self.assertEqual(str(self.app.fault_repair_disabled["state"]), "disabled")
+
     def test_home_rewraps_at_narrow_width_without_losing_buttons(self):
         from types import SimpleNamespace
         self.app._resize_home_wrapping(SimpleNamespace(width=800))

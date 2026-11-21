@@ -385,25 +385,28 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         header = ttk.Frame(content)
         header.pack(fill="x", pady=(0, 7))
         ttk.Label(
-            header, text="最近一次运行 · 只展示有证据的结果",
-            style="V2E.Heading.TLabel",
+            header, text="运行概览",
+            style="V2F.SectionHeading.TLabel",
         ).pack(side="left")
         ttk.Label(
-            header, text="运行状态、故障与快捷操作",
+            header, text="最近一次任务 · 仅展示有证据的结果",
             style="Muted.TLabel",
         ).pack(side="right")
 
         # Four key metrics across the top, without separate stacked sections.
         metrics = ttk.Frame(content)
-        metrics.pack(fill="x", pady=(0, 4))
+        metrics.pack(fill="x", pady=(0, 9))
         self.cards = {}
         self.card_widgets = {}
         for label in (
             "已提交最新交易日", "上次任务结果", "当前安全截止", "QMT 最近预检",
         ):
-            box = ttk.LabelFrame(
-                metrics, text=label, style="Card.TLabelframe", padding=(10, 7))
-            box.pack(side="left", fill="both", expand=True, padx=(0, 7))
+            box = ttk.Frame(
+                metrics, style="V2F.Card.TFrame", padding=(15, 11))
+            box.pack(side="left", fill="both", expand=True, padx=(0, 8))
+            ttk.Label(
+                box, text=label, style="V2F.MetricHeading.TLabel"
+            ).pack(anchor="w", pady=(0, 7))
             value = tk.StringVar(value="—")
             self.cards[label] = value
             widget = ttk.Label(
@@ -417,7 +420,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             content, textvariable=self.last_run_details,
             style="Muted.TLabel", wraplength=850,
         )
-        self.home_last_run_view.pack(anchor="w", pady=(0, 8))
+        self.home_last_run_view.pack(anchor="w", pady=(0, 12))
 
         # Combine validation, four phases, change summary and controls into
         # two balanced columns; this replaces four tall full-width sections.
@@ -430,42 +433,63 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         right = ttk.Frame(center)
         right.pack(side="left", fill="both", expand=True, padx=(5, 0))
 
-        validation = ttk.LabelFrame(
-            left, text="三类结果独立判定", padding=(10, 7))
-        validation.pack(fill="x", pady=(0, 7))
-        badges = ttk.Frame(validation)
+        validation = ttk.Frame(
+            left, style="V2F.Card.TFrame", padding=(15, 11))
+        validation.pack(fill="x", pady=(0, 9))
+        ttk.Label(
+            validation, text="三类结果独立判定",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 11))
+        badges = ttk.Frame(validation, style="V2F.Card.TFrame")
         badges.pack(fill="x")
         self.validation_vars = {}
+        self.validation_value_widgets = {}
         for column, (key, title) in enumerate((
             ("execution", "任务执行"), ("data", "数据核验"),
             ("cross", "跨源状态"),
         )):
-            cell = ttk.Frame(badges)
-            cell.grid(row=0, column=column, sticky="ew", padx=(0, 7))
+            cell = ttk.Frame(badges, style="V2F.Card.TFrame")
+            cell.grid(row=0, column=column, sticky="ew", padx=(0, 9))
             badges.columnconfigure(column, weight=1)
-            ttk.Label(cell, text=title, style="Muted.TLabel").pack(anchor="w")
+            ttk.Label(
+                cell, text=title, style="V2F.MetricHeading.TLabel",
+            ).pack(anchor="w", pady=(0, 4))
             value = tk.StringVar(value="UNVERIFIED")
             self.validation_vars[key] = value
-            ttk.Label(cell, textvariable=value,
-                      style="CardValue.TLabel").pack(anchor="w")
+            widget = ttk.Label(
+                cell, textvariable=value, style="CardValue.TLabel")
+            widget.pack(anchor="w")
+            self.validation_value_widgets[key] = widget
 
         # Size stage cards to their status text instead of stretching them
         # vertically across the free dashboard space.
-        phases = ttk.LabelFrame(
-            left, text="本轮四个阶段", padding=(8, 6))
+        phases = ttk.Frame(
+            left, style="V2F.Card.TFrame", padding=(13, 9))
         phases.pack(fill="x")
+        ttk.Label(
+            phases, text="本轮四个阶段",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", padx=2, pady=(0, 8))
         self.stage_labels = {}
         self.stage_widgets = {}
-        matrix = ttk.Frame(phases)
+        matrix = ttk.Frame(phases, style="V2F.Card.TFrame")
         matrix.pack(fill="x")
         for column in (0, 1):
             matrix.columnconfigure(column, weight=1)
         for index, (key, name) in enumerate(STAGES):
-            cell = ttk.LabelFrame(
-                matrix, text=name, padding=(9, 5))
+            cell = tk.Frame(
+                matrix, background=V2F["surface"],
+                highlightbackground=V2F["border"],
+                highlightthickness=1, bd=0, padx=11, pady=8)
             cell.grid(
                 row=index // 2, column=index % 2,
                 sticky="ew", padx=3, pady=3)
+            tk.Label(
+                cell, text=name, background=V2F["surface"],
+                foreground=V2F["secondary"],
+                font=("Microsoft YaHei UI", 9),
+                anchor="w",
+            ).pack(anchor="w", pady=(0, 5))
             value = tk.StringVar(value="未记录")
             self.stage_labels[key] = value
             widget = ttk.Label(
@@ -475,9 +499,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             widget.pack(anchor="w")
             self.stage_widgets[key] = widget
 
-        progress = ttk.LabelFrame(
-            right, text="本次可信变化", padding=(10, 8))
-        progress.pack(fill="x", pady=(0, 7))
+        progress = ttk.Frame(
+            right, style="V2F.Card.TFrame", padding=(15, 12))
+        progress.pack(fill="x", pady=(0, 9))
+        ttk.Label(
+            progress, text="本次可信变化",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 9))
         self.overview_info = tk.StringVar(value="暂无可比证据")
         self.home_progress_view = ttk.Label(
             progress, textvariable=self.overview_info,
@@ -486,12 +514,17 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.home_progress_view.pack(anchor="w")
         self.home_progress_note = ttk.Label(
             progress, text="没有完整前后快照，不展示猜测的增量或覆盖率。",
-            style="Muted.TLabel", wraplength=300)
+            style="V2F.CardNote.TLabel", wraplength=300)
         self.home_progress_note.pack(anchor="w", pady=(4, 0))
 
-        actions = ttk.LabelFrame(
-            right, text="常用操作 · 仅只读预检", padding=(10, 7))
+        actions = ttk.Frame(
+            right, style="V2F.Card.TFrame", padding=(15, 12))
         actions.pack(fill="x")
+        ttk.Label(
+            actions, text="常用操作 · 仅只读预检",
+            style="V2F.CardHeading.TLabel",
+        ).grid(row=0, column=0, columnspan=2,
+               sticky="w", padx=3, pady=(0, 10))
         for column in (0, 1):
             actions.columnconfigure(column, weight=1)
         for index, (label, callback, primary) in enumerate((
@@ -503,27 +536,34 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             ttk.Button(
                 actions, text=label, command=callback,
                 style="Primary.TButton" if primary else "TButton",
-            ).grid(row=index // 2, column=index % 2,
-                   sticky="ew", padx=3, pady=3)
+            ).grid(row=index // 2 + 1, column=index % 2,
+                   sticky="ew", padx=3, pady=4)
         qmt = ttk.Button(
             actions, text="检查 QMT 当前连接（不下载）",
             command=self.start_qmt_live_probe)
-        qmt.grid(row=2, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+        qmt.grid(row=3, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
         self.qmt_probe_buttons.append(qmt)
         inventory = ttk.Button(
             actions, text="核对正式版本与备份范围（只读）",
             command=self.start_finance_inventory)
         inventory.grid(
-            row=3, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
+            row=4, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
         self.inventory_buttons.append(inventory)
 
         # A short full-width diagnosis strip replaces the old tall incident
         # panel. Detailed case rows and original JSON belong in Faults.
-        issues = ttk.LabelFrame(
-            content, text="待处理事项与下一步", padding=(10, 7))
+        alert_rail = tk.Frame(
+            content, bg=V2F["danger"], borderwidth=0, padx=3)
+        alert_rail.pack(fill="x", pady=(3, 0))
+        issues = ttk.Frame(
+            alert_rail, style="V2F.Card.TFrame", padding=(15, 10))
         issues.pack(fill="x")
-        headline = ttk.Frame(issues)
-        headline.pack(fill="x", pady=(0, 3))
+        ttk.Label(
+            issues, text="待处理事项与下一步",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+        headline = ttk.Frame(issues, style="V2F.Card.TFrame")
+        headline.pack(fill="x", pady=(0, 4))
         self.fault_headline = tk.StringVar(value="等待诊断")
         self.fault_explanation = tk.StringVar(value="尚无可用证据")
         self.fault_resume_gate = tk.StringVar(value="安全续跑：尚未核对")
@@ -535,20 +575,20 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.fault_title_view.pack(side="left", fill="x", expand=True)
         self.home_issue_views = [self.fault_title_view]
         self.cards["财务待审"] = tk.StringVar(value="未记录")
-        pending = ttk.Frame(headline)
+        pending = ttk.Frame(headline, style="V2F.Card.TFrame")
         pending.pack(side="right", padx=(12, 0))
         ttk.Label(
-            pending, text="财务待审", style="Muted.TLabel").pack(side="left")
+            pending, text="财务待审", style="V2F.CardNote.TLabel").pack(side="left")
         widget = ttk.Label(
             pending, textvariable=self.cards["财务待审"],
             style="Neutral.CardValue.TLabel")
         widget.pack(side="left", padx=(8, 0))
         self.card_widgets["财务待审"] = widget
         for var, style, gap in (
-            (self.fault_explanation, "Section.TLabel", 2),
-            (self.fault_resume_gate, "Warning.Section.TLabel", 2),
-            (self.qmt_gate_summary, "Muted.TLabel", 2),
-            (self.finance_inventory_status, "Muted.TLabel", 0),
+            (self.fault_explanation, "Section.TLabel", 3),
+            (self.fault_resume_gate, "Warning.Section.TLabel", 3),
+            (self.qmt_gate_summary, "V2F.CardNote.TLabel", 3),
+            (self.finance_inventory_status, "V2F.CardNote.TLabel", 0),
         ):
             view = ttk.Label(
                 issues, textvariable=var, style=style,

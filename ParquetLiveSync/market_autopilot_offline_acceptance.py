@@ -133,11 +133,17 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
         if not result["pass"]:
             break
     if full and len(checks) == len(TESTS) and all(x["pass"] for x in checks):
-        result = execute(
-            [sys.executable, "-B", "-m", "unittest", "discover",
-             "-s", "tests", "-p", "test_market_center*.py", "-q"],
-            module, 600, runner=runner)
-        checks.append({"suite": "FULL_MARKET_CENTER_REGRESSION", **result})
+        for name, pattern in (
+            ("FULL_MARKET_CENTER_REGRESSION", "test_market_center*.py"),
+            ("OPERATOR_DASHBOARD_REGRESSION", "test_market_update_dashboard.py"),
+        ):
+            result = execute(
+                [sys.executable, "-B", "-m", "unittest", "discover",
+                 "-s", "tests", "-p", pattern, "-q"],
+                module, 600, runner=runner)
+            checks.append({"suite": name, **result})
+            if not result["pass"]:
+                break
     all_pass = (len(checks) >= len(TESTS)
                 and all(item["pass"] for item in checks)
                 and powershell == "PASS")

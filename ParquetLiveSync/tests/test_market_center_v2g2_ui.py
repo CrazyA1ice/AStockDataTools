@@ -170,9 +170,16 @@ class V2G2ReviewWidgetTests(unittest.TestCase):
                          "disabled")
 
     def test_original_audit_reader_and_backend_limits_are_unchanged(self):
-        self.assertIs(
-            self.app.run_readonly_audit.__func__,
-            controller.MarketCenterV2.run_readonly_audit)
+        # V2G3 adds a read-only committed-day bound, but must still
+        # delegate actual guarded scans to the existing controller.
+        self.assertIn(
+            "super().run_readonly_audit()",
+            inspect.getsource(
+                UI.MarketCenterV2SelectedUI.run_readonly_audit))
+        self.assertNotIn(
+            "audited_query(",
+            inspect.getsource(
+                UI.MarketCenterV2SelectedUI.run_readonly_audit))
         self.assertEqual(len(self.app.qmt_probe_buttons), 2)
         self.assertEqual(len(self.app.inventory_buttons), 2)
         source = inspect.getsource(UI.MarketCenterV2SelectedUI._poll_audit)

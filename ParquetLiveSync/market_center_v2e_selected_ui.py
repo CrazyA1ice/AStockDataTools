@@ -334,6 +334,11 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                 btn.configure(bg=V2F["sidebar_selected"], fg="white")
             else:
                 btn.configure(bg=V2F["sidebar"], fg="#B9C9DE")
+        # A sidebar click may bypass the four task cards. Keep the footer
+        # tied to the *actual* page, never to a stale prior goal.
+        self.status_line.set(
+            "当前页面：" + name +
+            "  |  只读管理与核验；手动下载和自动修复未开放")
 
     def _scroll_content(self, parent):
         """Only display a page scrollbar when contents really overflow.
@@ -937,24 +942,64 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         right = ttk.LabelFrame(self.fault_split, text="证据、检查点与下一步", padding=9)
         self.fault_split.add(left, weight=3)
         self.fault_split.add(right, weight=2)
-        gates = ttk.LabelFrame(right, text="恢复前置条件 · 只读核对", padding=9)
+        gates = ttk.Frame(right, style="V2F.Card.TFrame", padding=(11, 9))
         gates.pack(fill="x", pady=(0, 9))
         ttk.Label(
-            gates,
-            text="按顺序处理：①查看同次错误和日志  ②按需检查QMT连接"
-                 "  ③核对代码版本与财务备份  ④等待受控恢复入口验收",
-            style="Section.TLabel", wraplength=405,
+            gates, text="恢复前应该做什么？",
+            style="V2F.CardHeading.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+        self.fault_step_labels = []
+        for number, title, explanation in (
+            ("1", "查看错误与同轮日志", "确认失败阶段和最后检查点"),
+            ("2", "按需检查 QMT 当前连接", "仅探测连接，不下载数据"),
+            ("3", "核对代码与财务版本", "核对范围，不代表已备份或批准"),
+            ("4", "等待受控恢复入口", "不重放旧日任务、不清空游标"),
+        ):
+            step = ttk.Frame(gates, style="V2F.Card.TFrame")
+            step.pack(fill="x", pady=(0, 7))
+            ttk.Label(
+                step, text=number + ".",
+                style="V2F.CardHeading.TLabel",
+                width=3,
+            ).pack(side="left", anchor="n")
+            description = ttk.Frame(step, style="V2F.Card.TFrame")
+            description.pack(side="left", fill="x", expand=True)
+            title_view = ttk.Label(
+                description, text=title,
+                style="V2F.CardHeading.TLabel")
+            title_view.pack(anchor="w")
+            ttk.Label(
+                description, text=explanation,
+                style="V2F.CardNote.TLabel", wraplength=350,
+                justify="left",
+            ).pack(anchor="w", pady=(2, 0))
+            self.fault_step_labels.append(title_view)
+
+        self.fault_gate_toggle = ttk.Button(
+            right, text="展开恢复门禁详情（只读）",
+            command=self.toggle_fault_gate_details)
+        self.fault_gate_toggle.pack(anchor="w", pady=(0, 6))
+        self.fault_gate_frame = ttk.Frame(
+            right, style="V2F.Card.TFrame", padding=(9, 7))
+        self.fault_gate_frame.pack(fill="x", pady=(0, 7))
+        self.fault_gate_visible = False
+        ttk.Label(
+            self.fault_gate_frame, textvariable=self.qmt_gate_details,
+            style="Section.TLabel", wraplength=360,
             justify="left",
-        ).pack(anchor="w", pady=(0, 9))
-        ttk.Label(gates, textvariable=self.qmt_gate_details,
-                  style="Section.TLabel", wraplength=405,
-                  justify="left").pack(anchor="w")
-        ttk.Label(gates, textvariable=self.finance_inventory_status,
-                  style="Muted.TLabel", wraplength=405,
-                  justify="left").pack(anchor="w", pady=(5, 0))
-        ttk.Label(gates, textvariable=self.historical_inventory_summary,
-                  style="Muted.TLabel", wraplength=405,
-                  justify="left").pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="w")
+        ttk.Label(
+            self.fault_gate_frame, textvariable=self.finance_inventory_status,
+            style="V2F.CardNote.TLabel", wraplength=360,
+            justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            self.fault_gate_frame,
+            textvariable=self.historical_inventory_summary,
+            style="V2F.CardNote.TLabel", wraplength=360,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+        self.fault_gate_frame.pack_forget()
         cols = ("severity", "stage", "type", "description")
         self.fault_tree = ttk.Treeview(
             left, columns=cols, show="headings", selectmode="browse")
@@ -1019,6 +1064,19 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(self.fault_page,
                   text="故障以本轮回执和检查点为准。连接测试、文件清单均不能解锁写入；20:05 任务不变。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
+
+    def toggle_fault_gate_details(self):
+        """Disclose complete gate notes without running a probe."""
+        self.fault_gate_visible = not self.fault_gate_visible
+        if self.fault_gate_visible:
+            self.fault_gate_frame.pack(
+                fill="x", pady=(0, 7), before=self.fault_technical_toggle)
+            self.fault_gate_toggle.configure(
+                text="收起恢复门禁详情（只读）")
+        else:
+            self.fault_gate_frame.pack_forget()
+            self.fault_gate_toggle.configure(
+                text="展开恢复门禁详情（只读）")
 
     def toggle_fault_technical(self):
         """Evidence stays readable; its raw JSON is collapsed by default."""

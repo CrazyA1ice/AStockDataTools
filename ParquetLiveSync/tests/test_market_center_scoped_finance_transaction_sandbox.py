@@ -39,6 +39,8 @@ class FinanceSandboxTransactionTests(unittest.TestCase):
 
     def test_fault_at_every_phase_never_replays_or_destroys_baseline(self):
         for phase in S.FAIL_POINTS:
+            if phase == "CORRUPT_BACKUP_BEFORE_VERIFY":
+                continue
             with self.subTest(phase=phase):
                 r = S.run_sandbox(failure_at=phase)
                 self.assertTrue(r["sandbox_only"])
@@ -60,6 +62,11 @@ class FinanceSandboxTransactionTests(unittest.TestCase):
                     self.assertEqual(
                         r["recovery_decision"],
                         "QUARANTINE_PENDING_MANUAL_RECOVERY")
+
+    def test_corrupted_backup_fails_closed_instead_of_recovery(self):
+        with self.assertRaisesRegex(
+                S.SandboxRefused, "SYNTHETIC_RECOVERY_INVARIANT_FAILED"):
+            S.run_sandbox(failure_at="CORRUPT_BACKUP_BEFORE_VERIFY")
 
     def test_prepared_crash_has_no_candidate_and_pin_still_original(self):
         r = S.run_sandbox(failure_at="PREPARED")

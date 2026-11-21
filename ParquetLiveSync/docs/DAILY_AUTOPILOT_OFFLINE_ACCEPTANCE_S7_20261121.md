@@ -7,7 +7,7 @@ CLI参数仅为 `--expected-head <固定40位SHA>`、`--explicit-offline-accepta
 - 当前目录名是 `ParquetLiveSync`，父级是Git worktree，其上层目录名是 `work`，`.git` 必须为非符号链接的**文件**（主仓库`.git`目录拒绝）；Git HEAD等于用户固定SHA，而且HEAD处于detached，不允许从可变分支直接跑。
 - 8个S1–S6 Python模块 + 8套对应的合成测试源文件都存在、非链接且体积有界；逐个用 `ast.parse` 做纯语法检查，不产生pyc。
 - 在Windows使用内置 PowerShell Parser AST 验证 `run-scoped-qmt-finance-cache.ps1` 的完整语法，确保旧S4截断条件不会漏过。Windows语法检查未通过、或者在Linux被跳过，都不能返回绿色验收状态。
-- 按固定白名单依次执行8组 `test_market_center_*.py` 纯合成/GUI/沙盒测试；首组失败立即停止并输出限制长度的错误尾部，避免长日志淹没用户。可选 `--full-regression` 在专项全部通过后再运行既有 `test_market_center*.py` 回归（此前 Finance P5单独通过351项，但S1–S6新增测试尚未验收）。
+- 按固定白名单依次执行8组 `test_market_center_*.py` 纯合成/GUI/沙盒测试；首组失败立即停止并输出限制长度的错误尾部，避免长日志淹没用户。可选 `--full-regression` 在专项全部通过后再运行既有 `test_market_center*.py` 回归，以及原操作面板的 `test_market_update_dashboard.py` 回归（此前 Finance P5单独通过351项，但S1–S6新增测试尚未验收）。
 - `PYTHONDONTWRITEBYTECODE=1` + `python -B`，测试夹具可能写OS临时目录，但验收器不读写正式行情数据、财务Parquet/H5、QMT状态、进度账本、任何生产调度。进程返回JSON：明确PASS/FAILED、失败模块、exit、有限日志尾段、实际Windows AST结果、固定HEAD、`approved_for_production=false`。
 
 ## 此阶段不是正式部署

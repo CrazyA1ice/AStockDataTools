@@ -166,3 +166,39 @@ def preview_request(*, mode: str, scope: str, stocks: str,
         "legacy_all_market_resume_is_separate": True,
         "existing_versions_preserved": True,
     }
+
+
+def finance_cache_refresh_scope(plan: dict) -> dict:
+    """Authorize only the bounded QMT vendor-cache operation, never import.
+
+    The actual Windows runner independently rechecks these limits and takes
+    the same named mutex as the production 20:05 runner.
+    """
+    if (not isinstance(plan, dict)
+            or plan.get("status") != "SELECTION_PREVIEW_ONLY"
+            or plan.get("mode") != "增量更新"
+            or plan.get("scope") != "自选股票"
+            or plan.get("modules") != ["财务"]):
+        raise InvalidSimplePlan("仅支持自选股票的财务增量缓存刷新")
+    codes = plan.get("symbols")
+    if (not isinstance(codes, list) or
+            not 1 <= len(codes) <= 5 or
+            any(not isinstance(s, str) for s in codes) or
+            codes != list(dict.fromkeys(codes))):
+        raise InvalidSimplePlan("财务缓存每次仅支持1至5只不同股票")
+    normalized = parse_symbols(",".join(codes))
+    if tuple(codes) != normalized:
+        raise InvalidSimplePlan("股票代码及交易所标识必须规范一致")
+    start, end = _iso(plan.get("start")), _iso(plan.get("end"))
+    if start > end or (date.fromisoformat(end) -
+                       date.fromisoformat(start)).days > 30:
+        raise InvalidSimplePlan("财务缓存公告日期区间不能超过31天")
+    return {
+        "status": "QMT_CACHE_REFRESH_SCOPE_VALIDATED_NOT_EXECUTED",
+        "symbols": list(codes),
+        "start": start, "end": end,
+        "qmt_vendor_cache_can_change_after_explicit_user_confirmation": True,
+        "official_finance_parquet_not_modified": True,
+        "official_finance_progress_not_modified": True,
+        "financial_history_conflicts_not_auto_approved": True,
+    }

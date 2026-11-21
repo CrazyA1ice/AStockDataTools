@@ -101,61 +101,19 @@ try{
         }
         $summary=$readTask.GetAwaiter().GetResult()
         if($check.ExitCode -ne 0){
-            # Child emits only an enumerated reason code, never raw
-            # financial values. Keep it in the existing problem log.
+            # Enumerated reason only, no raw financial record in logs.
+            $reason='PRECOMMIT_REVIEW_FAILED'
             try{
                 $rejected=$summary | ConvertFrom-Json -ErrorAction Stop
-                $reason=[string]$rejected.reason
+                $candidate=[string]$rejected.reason
                 if($rejected.status -eq 'SCOPED_FINANCE_PRECOMMIT_BLOCKED' -and
-                   $reason -cmatch '^[A-Z0-9_]{1,90}
-    }finally{$check.Dispose()}
-    if($summary.Length -lt 10 -or $summary.Length -gt 65536){throw 'PRECOMMIT_REVIEW_RECEIPT_SIZE_INVALID'}
-    try{$report=$summary | ConvertFrom-Json -ErrorAction Stop}
-    catch{throw 'PRECOMMIT_REVIEW_RECEIPT_INVALID'}
-    if($report.status -ne 'SCOPED_FINANCE_NINE_TABLE_PRECOMMIT_READONLY' -or
-       $report.can_commit -ne $false -or
-       $report.official_market_writes -ne 0 -or
-       $report.financial_ledger_writes -ne 0 -or
-       $report.qmt_calls -ne 0 -or
-       $report.symbols_requested -ne $codes.Count){
-        throw 'PRECOMMIT_REVIEW_EVIDENCE_REJECTED'
-    }
-    # Recheck both source files after the child exits; any concurrent
-    # mutation refuses a clean receipt even when its own SHA checks passed.
-    if((Get-FileHash -LiteralPath $ledger -Algorithm SHA256).Hash -ne $ledgerSha -or
-       (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash -ne $digest){
-        throw 'PRECOMMIT_REVIEW_EVIDENCE_CHANGED'
-    }
-    Add-Content -LiteralPath $log -Value @(
-        'SCOPED_FINANCE_PRECOMMIT='+$summary.Trim(),
-        'CANONICAL_PARQUET_COMMIT=NO',
-        'MULTISOURCE_VERIFICATION=NOT_RUN') -Encoding UTF8
-    Write-Host ('SCOPED_FINANCE_HISTORY_REVIEW stocks_with_conflict='+$report.stocks_history_conflict+' missing_cache='+$report.stocks_missing_cache+' new_version_candidates='+$report.stocks_candidate_for_review)
-    $success='SCOPED_FINANCE_CACHE_READY stock_count='+$codes.Count+' bytes='+$size+' sha256='+$digest
-    Add-Content -LiteralPath $log -Value $success -Encoding UTF8
-    Write-Host $success
-    Write-Host 'SCOPED_FINANCE_CANONICAL_PARQUET_UNCHANGED=TRUE'
-    Write-Host 'SCOPED_FINANCE_HISTORY_REPAIR_APPROVED=FALSE'
-}
-catch{
-    if($log){
-        $message=([string]$_.Exception.Message -replace '[\r\n]',' ')
-        Add-Content -LiteralPath $log -Value ('SCOPED_FINANCE_CACHE_FAILED='+$message.Substring(0,[math]::Min($message.Length,220))) -Encoding UTF8 -ErrorAction SilentlyContinue
-    }
-    throw
-}
-finally{
-    if($jobDir -and (Test-Path -LiteralPath $jobDir)){Remove-Item -LiteralPath $jobDir -Recurse -Force}
-    if($held){$mutex.ReleaseMutex()}
-    $mutex.Dispose()
-}
-){
-                    throw ('PRECOMMIT_REVIEW_BLOCKED_'+$reason)
+                   $candidate -cmatch '^[A-Z0-9_]{1,90}$'){
+                    $reason=$candidate
                 }
             }catch{
-                if($_.Exception.Message -like 'PRECOMMIT_REVIEW_BLOCKED_*'){throw}
+                $reason='PRECOMMIT_REVIEW_FAILED'
             }
-            throw ('PRECOMMIT_REVIEW_EXIT_'+$check.ExitCode)
+            throw ('PRECOMMIT_REVIEW_BLOCKED_'+$reason)
         }
     }finally{$check.Dispose()}
     if($summary.Length -lt 10 -or $summary.Length -gt 65536){throw 'PRECOMMIT_REVIEW_RECEIPT_SIZE_INVALID'}

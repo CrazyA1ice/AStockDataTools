@@ -18,6 +18,9 @@ from tkinter import messagebox, ttk
 from market_center_v2_faults import FaultEvidenceBlocked
 from market_center_v2_recovery_inventory import PreflightBlocked
 from market_center_v2_finance_history_scope import inventory_historical_versions
+from market_center_v2g_workflow import (
+    TASKS, task_by_id, recommended_task, workflow_guide,
+)
 
 from market_center_v2_model import (
     HISTORY_POLICIES, MODULES, InvalidPlan, latest_status, source_info,
@@ -218,7 +221,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.historical_inventory_buttons = []
         self.historical_inventory_summary = tk.StringVar(
             value="历史财务版本范围尚未进行只读盘点")
-        self.title("A股数据更新与核验中心 · Market Center V2F")
+        self.workflow_hint = tk.StringVar(
+            value="建议下一步：先查看最近任务状态，再选择一项工作。")
+        self.workflow_tip = tk.StringVar(
+            value=workflow_guide("audit"))
+        self.workflow_current_task = None
+        self.quick_tools_shown = False
+        self.title("A股数据更新与核验中心 · Market Center V2G")
         self.geometry("1350x860")
         self.minsize(1020, 670)
         self._modernize_theme()
@@ -521,33 +530,61 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             right, style="V2F.Card.TFrame", padding=(15, 12))
         actions.pack(fill="x")
         ttk.Label(
-            actions, text="常用操作 · 仅只读预检",
+            actions, text="我要做什么？",
             style="V2F.CardHeading.TLabel",
         ).grid(row=0, column=0, columnspan=2,
-               sticky="w", padx=3, pady=(0, 10))
+               sticky="w", padx=3, pady=(0, 8))
         for column in (0, 1):
             actions.columnconfigure(column, weight=1)
-        for index, (label, callback, primary) in enumerate((
-            ("配置更新", lambda: self.go_action("更新数据"), True),
-            ("数据核验", lambda: self.go_action("数据核验"), False),
-            ("故障详情", self.open_fault_page, False),
-            ("查看日志", lambda: self.navigate(PAGE_MAP["运行日志"]), False),
-        )):
-            ttk.Button(
-                actions, text=label, command=callback,
-                style="Primary.TButton" if primary else "TButton",
-            ).grid(row=index // 2 + 1, column=index % 2,
-                   sticky="ew", padx=3, pady=4)
+        self.task_buttons = {}
+        for index, task in enumerate(TASKS):
+            task_cell = ttk.Frame(
+                actions, style="V2F.Card.TFrame", padding=(7, 4))
+            task_cell.grid(
+                row=index // 2 + 1, column=index % 2,
+                sticky="nsew", padx=2, pady=2)
+            task_button = ttk.Button(
+                task_cell, text=task["title"],
+                style=("Primary.TButton" if task["id"] == "audit"
+                       else "TButton"),
+                command=lambda task_id=task["id"]:
+                    self.open_workflow(task_id))
+            task_button.pack(fill="x")
+            ttk.Label(
+                task_cell, text=task["subtitle"] + " · " +
+                task["availability"],
+                style="V2F.CardNote.TLabel",
+                wraplength=190, justify="center",
+            ).pack(anchor="center", pady=(3, 0))
+            self.task_buttons[task["id"]] = task_button
+        self.workflow_recommendation = ttk.Label(
+            actions, textvariable=self.workflow_hint,
+            style="V2F.CardNote.TLabel", wraplength=420,
+            justify="left")
+        self.workflow_recommendation.grid(
+            row=3, column=0, columnspan=2, sticky="w", padx=5,
+            pady=(8, 1))
+        self.quick_tools_toggle = ttk.Button(
+            actions, text="展开高级只读检查",
+            command=self.toggle_home_tools)
+        self.quick_tools_toggle.grid(
+            row=4, column=0, columnspan=2, sticky="ew", padx=5,
+            pady=(6, 0))
+        self.quick_tools_frame = ttk.Frame(
+            actions, style="V2F.Card.TFrame")
+        self.quick_tools_frame.grid(
+            row=5, column=0, columnspan=2, sticky="ew",
+            padx=5, pady=(5, 0))
+        self.quick_tools_frame.grid_remove()
         qmt = ttk.Button(
-            actions, text="检查 QMT 当前连接（不下载）",
+            self.quick_tools_frame, text="检查QMT连接（不下载）",
             command=self.start_qmt_live_probe)
-        qmt.grid(row=3, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
+        qmt.pack(fill="x", pady=(0, 4))
         self.qmt_probe_buttons.append(qmt)
         inventory = ttk.Button(
-            actions, text="核对正式版本与备份范围（只读）",
+            self.quick_tools_frame, text="核对正式版本与备份范围（只读）",
             command=self.start_finance_inventory)
-        inventory.grid(
-            row=4, column=0, columnspan=2, sticky="ew", padx=3, pady=4)
+        inventory.pack(fill="x")
         self.inventory_buttons.append(inventory)
 
         # A short full-width diagnosis strip replaces the old tall incident
@@ -598,6 +635,33 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             self.home_issue_views.append(view)
         self.home.bind("<Configure>", self._resize_home_wrapping)
 
+    def open_workflow(self, task_id):
+        """Navigate to the right *read-only* capability, never execute."""
+        task_by_id(task_id)  # invalid/forged UI task names fail closed
+        self.workflow_current_task = task_id
+        self.workflow_tip.set(workflow_guide(task_id))
+        if task_id == "update":
+            self.go_action("更新数据")
+        elif task_id == "audit":
+            self.go_action("数据核验")
+        elif task_id == "diagnose":
+            self.open_fault_page()
+        elif task_id == "manage":
+            self.navigate(PAGE_MAP["数据管理"])
+        self.status_line.set(
+            "当前目标：" + task_by_id(task_id)["title"] +
+            "；V2G仅提供预览、只读核验与故障诊断，下载和自动修复未开放")
+
+    def toggle_home_tools(self):
+        """Show advanced diagnostics on demand; never run them on expand."""
+        self.quick_tools_shown = not self.quick_tools_shown
+        if self.quick_tools_shown:
+            self.quick_tools_frame.grid()
+            self.quick_tools_toggle.configure(text="收起高级只读检查")
+        else:
+            self.quick_tools_frame.grid_remove()
+            self.quick_tools_toggle.configure(text="展开高级只读检查")
+
     def _resize_home_wrapping(self, event):
         """Wrap only dashboard prose on narrow windows, never hide an action."""
         available = max(300, event.width - 45)
@@ -616,6 +680,11 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.home_progress_note.configure(wraplength=progress_width)
 
     def build_action(self):
+        ttk.Label(
+            self.action, textvariable=self.workflow_tip,
+            style="V2F.SectionHeading.TLabel",
+            wraplength=1050, justify="left",
+        ).pack(anchor="w", pady=(0, 7))
         ttk.Label(
             self.action, text="同一组日期、股票和数据类型用于更新与核验；切换模式不重置输入。",
             style="Muted.TLabel",
@@ -850,6 +919,13 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.fault_split.add(right, weight=2)
         gates = ttk.LabelFrame(right, text="恢复前置条件 · 只读核对", padding=9)
         gates.pack(fill="x", pady=(0, 9))
+        ttk.Label(
+            gates,
+            text="按顺序处理：①查看同次错误和日志  ②按需检查QMT连接"
+                 "  ③核对代码版本与财务备份  ④等待受控恢复入口验收",
+            style="Section.TLabel", wraplength=405,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 9))
         ttk.Label(gates, textvariable=self.qmt_gate_details,
                   style="Section.TLabel", wraplength=405,
                   justify="left").pack(anchor="w")
@@ -875,8 +951,14 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ys.pack(side="right", fill="y")
         self.fault_tree.bind("<<TreeviewSelect>>", self._select_fault)
         self.fault_case_by_row = {}
+        self.fault_technical_toggle = ttk.Button(
+            right, text="展开原始证据（技术详情）",
+            command=self.toggle_fault_technical)
+        self.fault_technical_toggle.pack(anchor="w", pady=(7, 4))
         evidence = ttk.Frame(right)
         evidence.pack(fill="both", expand=True)
+        self.fault_technical_frame = evidence
+        self.fault_technical_visible = False
         self.fault_detail_text = tk.Text(
             evidence, wrap="word", height=15, font=("Consolas", 9),
             background=COLORS["log_bg"], foreground=COLORS["log_fg"],
@@ -887,6 +969,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         self.fault_detail_text.configure(yscrollcommand=y.set)
         self.fault_detail_text.pack(side="left", fill="both", expand=True)
         y.pack(side="right", fill="y")
+        evidence.pack_forget()
         buttons = ttk.Frame(self.fault_page)
         buttons.pack(fill="x", pady=(10, 0))
         actions_top = ttk.Frame(buttons)
@@ -916,6 +999,18 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
         ttk.Label(self.fault_page,
                   text="故障以本轮回执和检查点为准。连接测试、文件清单均不能解锁写入；20:05 任务不变。",
                   style="Muted.TLabel").pack(anchor="w", pady=(7, 0))
+
+    def toggle_fault_technical(self):
+        """Evidence stays readable; its raw JSON is collapsed by default."""
+        self.fault_technical_visible = not self.fault_technical_visible
+        if self.fault_technical_visible:
+            self.fault_technical_frame.pack(fill="both", expand=True)
+            self.fault_technical_toggle.configure(
+                text="收起原始证据（技术详情）")
+        else:
+            self.fault_technical_frame.pack_forget()
+            self.fault_technical_toggle.configure(
+                text="展开原始证据（技术详情）")
 
     def start_historical_inventory(self):
         """Only the explicit button triggers bounded metadata-only inspection."""
@@ -1188,14 +1283,19 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             "\n状态目录（只读）：" + str(self.state_module))
 
     def refresh_overview(self):
-        # V2D1 owns the bounded read, fault diagnosis and log refresh.
+        # V2D1 owns bounded reads, diagnoses and log refresh.
         super().refresh_overview()
         try:
+            snapshot = latest_status(self.state_module)
+            recommendation = recommended_task(snapshot)
+            self.workflow_hint.set(
+                "建议下一步：" + recommendation["reason"])
             self._refresh_auxiliary(
-                latest_status(self.state_module),
-                source_info(self.state_module),
+                snapshot, source_info(self.state_module),
             )
         except (InvalidPlan, OSError, ValueError) as exc:
+            self.workflow_hint.set(
+                "建议下一步：状态证据不足，可先检查数据或查看本轮日志。")
             self.management_summary.set("状态读取不足：" + str(exc)[:120])
             self.settings_source.set("来源配置不可用；未进行额外读写")
 

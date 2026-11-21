@@ -213,7 +213,9 @@ def _sandbox_case(home: Path, *, failure_at: str | None,
         advance("COMPLETE")
         trip("COMPLETE")
     except SyntheticInterruption:
-        outcome = "SANDBOX_INTERRUPTED_QUARANTINE_REQUIRED"
+        outcome = ("SANDBOX_INTERRUPTED_AFTER_COMPLETE_AUDIT_REQUIRED"
+                   if record["phase"] == "COMPLETE"
+                   else "SANDBOX_INTERRUPTED_QUARANTINE_REQUIRED")
     # Corrupt a private synthetic backup to prove integrity failure blocks
     # recovery and cannot be treated as a completed transaction.
     if failure_at == "CORRUPT_BACKUP_BEFORE_VERIFY":

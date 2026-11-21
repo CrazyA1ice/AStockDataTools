@@ -85,24 +85,56 @@ class AutopilotViewModelTests(unittest.TestCase):
 
 class AutopilotGuiSmokeTests(unittest.TestCase):
     def test_selected_market_center_shows_readonly_auto_health(self):
-        module = Path(TemporaryDirectory().name) / "ParquetLiveSync"
-        # This test may run on a headless Linux test runner. Do not require
-        # platform-specific desktop display availability.
-        try:
-            with patch.object(CENTER, "read_view", return_value=V.presentation(make_report())):
-                root = CENTER.MarketCenterV2SelectedUI(state_module=module)
-        except tk.TclError as exc:
-            if "display" in str(exc).lower() or "couldn't connect" in str(exc).lower():
-                self.skipTest("no GUI display")
-            raise
-        try:
-            root.withdraw()
-            self.assertIn("85", root.autopilot_coverage.get())
-            self.assertIn("未启用", root.autopilot_valuation.get())
-            self.assertEqual(len(root.book.tabs()), 7)
-        finally:
-            root.destroy()
+        # The state-module fixture is a real empty directory, not a cached
+        # home or live financial state. No QMT access occurs in this test.
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            module.mkdir()
+            try:
+                with patch.object(
+                    CENTER, "read_view",
+                    return_value=V.presentation(make_report())
+                ):
+                    root = CENTER.MarketCenterV2SelectedUI(
+                        state_module=module)
+            except tk.TclError as exc:
+                if ("display" in str(exc).lower()
+                        or "couldn't connect" in str(exc).lower()):
+                    self.skipTest("no GUI display")
+                raise
+            try:
+                root.withdraw()
+                self.assertIn("85", root.autopilot_coverage.get())
+                self.assertIn("未启用", root.autopilot_valuation.get())
+                self.assertEqual(len(root.book.tabs()), 7)
+            finally:
+                root.destroy()
 
+
+    def test_operator_dashboard_has_same_health_summary(self):
+        with TemporaryDirectory() as tmp:
+            module = Path(tmp) / "ParquetLiveSync"
+            work = module / "work"
+            work.mkdir(parents=True)
+            try:
+                with patch.object(DASH, "MODULE", module), \
+                     patch.object(DASH, "WORK", work), \
+                     patch.object(DASH, "read_view",
+                                  return_value=V.presentation(make_report())):
+                    root = DASH.UpdaterDashboard()
+            except tk.TclError as exc:
+                if ("display" in str(exc).lower()
+                        or "couldn't connect" in str(exc).lower()):
+                    self.skipTest("no GUI display")
+                raise
+            try:
+                root.withdraw()
+                self.assertIn("日常续扫正常", root.autopilot_status.get())
+                self.assertIn("5201", root.autopilot_coverage.get())
+                self.assertIn("UNVERIFIED", root.autopilot_quality.get())
+                self.assertIn("尚未启用", root.autopilot_valuation.get())
+            finally:
+                root.destroy()
 
 if __name__ == "__main__":
     unittest.main()

@@ -194,18 +194,45 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
                 btn.configure(bg=COLORS["navy"], fg="#DBE9F8")
 
     def _scroll_content(self, parent):
-        canvas = tk.Canvas(parent, background=COLORS["bg"],
-                           highlightthickness=0, borderwidth=0)
-        scroll = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        """Only display a page scrollbar when contents really overflow.
+
+        Data management and settings fit on one page at normal desktop
+        sizes. On smaller windows/high-DPI screens, keep a safety fallback
+        rather than clipping important read-only settings or coverage notes.
+        """
+        canvas = tk.Canvas(
+            parent, background=COLORS["bg"],
+            highlightthickness=0, borderwidth=0)
+        scroll = ttk.Scrollbar(
+            parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        inside = ttk.Frame(canvas, padding=(5, 5, 16, 22))
-        window_id = canvas.create_window((0, 0), window=inside, anchor="nw")
-        inside.bind("<Configure>",
-                    lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>",
-                    lambda e: canvas.itemconfigure(window_id, width=e.width))
+        inside = ttk.Frame(canvas, padding=(5, 5, 12, 10))
+        window_id = canvas.create_window(
+            (0, 0), window=inside, anchor="nw")
+
+        def sync_scrollbar():
+            if not canvas.winfo_exists():
+                return
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            viewport = canvas.winfo_height()
+            if viewport <= 2:
+                return
+            overflow = inside.winfo_reqheight() > viewport + 2
+            visible = scroll.winfo_manager() == "pack"
+            if overflow and not visible:
+                scroll.pack(side="right", fill="y", before=canvas)
+            elif not overflow and visible:
+                scroll.pack_forget()
+                canvas.yview_moveto(0)
+
+        def resize_canvas(event):
+            canvas.itemconfigure(window_id, width=event.width)
+            self.after_idle(sync_scrollbar)
+
+        inside.bind(
+            "<Configure>", lambda _event: self.after_idle(sync_scrollbar))
+        canvas.bind("<Configure>", resize_canvas)
         return inside
 
     def _section(self, parent, title, *, fill="x"):

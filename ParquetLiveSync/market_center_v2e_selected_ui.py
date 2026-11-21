@@ -281,10 +281,11 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             self.card_widgets[label] = widget
 
         self.last_run_details = tk.StringVar(value="等待读取运行回执")
-        ttk.Label(
+        self.home_last_run_view = ttk.Label(
             content, textvariable=self.last_run_details,
-            style="Muted.TLabel", wraplength=1080,
-        ).pack(anchor="w", pady=(0, 8))
+            style="Muted.TLabel", wraplength=850,
+        )
+        self.home_last_run_view.pack(anchor="w", pady=(0, 8))
 
         # Combine validation, four phases, change summary and controls into
         # two balanced columns; this replaces four tall full-width sections.
@@ -344,14 +345,15 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             right, text="本次可信变化", padding=(10, 8))
         progress.pack(fill="x", pady=(0, 7))
         self.overview_info = tk.StringVar(value="暂无可比证据")
-        ttk.Label(
+        self.home_progress_view = ttk.Label(
             progress, textvariable=self.overview_info,
-            style="Section.TLabel", wraplength=430,
-            justify="left").pack(anchor="w")
-        ttk.Label(
+            style="Section.TLabel", wraplength=300,
+            justify="left")
+        self.home_progress_view.pack(anchor="w")
+        self.home_progress_note = ttk.Label(
             progress, text="没有完整前后快照，不展示猜测的增量或覆盖率。",
-            style="Muted.TLabel", wraplength=430,
-        ).pack(anchor="w", pady=(4, 0))
+            style="Muted.TLabel", wraplength=300)
+        self.home_progress_note.pack(anchor="w", pady=(4, 0))
 
         actions = ttk.LabelFrame(
             right, text="常用操作 · 仅只读预检", padding=(10, 7))
@@ -397,6 +399,7 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             font=("Microsoft YaHei UI", 10, "bold"),
             wraplength=790, justify="left")
         self.fault_title_view.pack(side="left", fill="x", expand=True)
+        self.home_issue_views = [self.fault_title_view]
         self.cards["财务待审"] = tk.StringVar(value="未记录")
         pending = ttk.Frame(headline)
         pending.pack(side="right", padx=(12, 0))
@@ -413,10 +416,29 @@ class MarketCenterV2SelectedUI(MarketCenterV2):
             (self.qmt_gate_summary, "Muted.TLabel", 2),
             (self.finance_inventory_status, "Muted.TLabel", 0),
         ):
-            ttk.Label(
+            view = ttk.Label(
                 issues, textvariable=var, style=style,
-                wraplength=1030, justify="left",
-            ).pack(anchor="w", pady=(0, gap))
+                wraplength=640, justify="left")
+            view.pack(anchor="w", pady=(0, gap))
+            self.home_issue_views.append(view)
+        self.home.bind("<Configure>", self._resize_home_wrapping)
+
+    def _resize_home_wrapping(self, event):
+        """Wrap only dashboard prose on narrow windows, never hide an action."""
+        available = max(300, event.width - 45)
+        if abs(available - getattr(self, "_home_wrap_width", 0)) < 9:
+            return
+        self._home_wrap_width = available
+        self.home_last_run_view.configure(wraplength=available)
+        self.fault_title_view.configure(wraplength=max(220, available - 160))
+        for view in self.home_issue_views[1:]:
+            view.configure(wraplength=available)
+        phase_width = max(145, int(available * 0.25) - 25)
+        for view in self.stage_widgets.values():
+            view.configure(wraplength=phase_width)
+        progress_width = max(210, int(available * 0.42) - 25)
+        self.home_progress_view.configure(wraplength=progress_width)
+        self.home_progress_note.configure(wraplength=progress_width)
 
     def build_action(self):
         ttk.Label(

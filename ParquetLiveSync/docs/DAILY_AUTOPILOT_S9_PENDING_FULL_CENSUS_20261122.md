@@ -20,3 +20,14 @@
 S7固定SHA验收入口增加S9模块和测试；预计Python AST20文件，10组专项182次、33个market_center文件533次、原操作面板11次，共726次测试执行（含重复）。**仅是预估，尚未在用户Windows验证S9。**
 下一次请先在全新的detached worktree用固定SHA执行统一验收，成功后在相同worktree只读执行S9：--root D:\stock --workspace D:\ChatGPT\AStockDataTools\ParquetLiveSync\work\qmt_extra --page-size 3 --explicit-readonly。失败时只报告阻断原因，不修复任何正式数据。
 PR #241继续Draft，不合并main、不部署生产、不调用QMT下载、不改正式财务账本/pending/Parquet/H5、不使用GitHub Actions。
+## S9 Windows验收结果与桌面软件内建（2026-11-22）
+
+用户固定提交 d6d8302d0239f99261819a7ec55406e462e48ef2 在Windows实机完成OFFLINE_ACCEPTANCE_PASS：Python AST 20、PowerShell AST PASS、10组专项182项、33个市场中心回归文件533项、原操作面板11项，共726次测试执行（含专项重复）。正式账本仍为85只pending、账本SHA 9327b75fa7920294593dd11bb4221255c3f14410551705a98371c111f6b334fc，无已检查到的事务journal。
+
+全量85只的首个记录冲突表：Capital 42、Top10Holder 33、Top10FlowHolder 5、HolderNum 4。唯一CACHE_DECODE_ERROR为688259.SH，原账本显示QMT provider UTF-8解码两次失败、已有4次尝试。85只PerShare无本地快照；000010.SZ八表有无pin历史版本，而000036.SZ最新多个日期版本的pin元数据已存在。该结果只是本地快照元数据，不是全部历史原始值核验、真实QMT接入或多源验证。
+
+对长期要求用户复制长命令的做法作纠偏：不再把S8/S9诊断只留在独立脚本。三页桌面工具 market_simple_desktop.py 的“数据总览”在正常刷新时直接使用已有财务账本展示pending分类，且不触发QMT网络请求；“异常与日志”页增加“检查财务问题（只读）”按钮，以后台线程调用已验收的S9本地账本/九表目录清点，把全量汇总与优先关注的3只股票变为中文可复制诊断摘要。根目录直接来自受约束的正式财务账本，不要求用户再次输入 D:\stock；只读检查在19:50—20:25既有20:05保护时段拒绝执行。保持原三页结构、现有“刷新财务缓存并检查历史（不入库）”入口，不再添加新独立界面与新的数据库写入机制。
+
+重要发现：qmt_extra_financial_cache_worker.py的DOWNLOAD_TABLES明确排除PerShare，但get_financial_data仍读取E.FIN_TABLES九张表。公开QMT接口文档存在八表与九表不同版本清单，所以85只PerShare全无本地快照可能属于接口表支持/采集机制差异，**不能用85只缺PerShare直接判断85只股票数据损坏**。后续应在用户实际xtquant版本核对支持表清单，再决定是否按可选表处理，不擅自修改当前正式历史或丢弃PerShare。
+
+界面自助诊断只是服务化展示和运营减负，不应误报“自动修好84只历史冲突”。旧不可变Parquet、active pin、正式pending及20:05任务全部保留；对真正的来源修订要先完成精确日期/字段比对再定义允许的安全合并策略，不允许自动覆盖。PR保持Draft，桌面功能未合并/安装之前不能声称生产界面已具备此能力。

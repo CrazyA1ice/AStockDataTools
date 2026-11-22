@@ -87,9 +87,14 @@ def syntax_check(module):
 def execute(args, module, timeout, *, runner=subprocess.run):
     env = dict(os.environ)
     env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONNOUSERSITE="1",
-               PYTHONINSPECT="0", PYTHONPATH=str(module))
+               PYTHONPATH=str(module))
+    # PYTHONINSPECT is a presence/nonempty flag: setting it to the string
+    # "0" ENABLES Python's interactive >>> prompt after unittest exits.
+    # Never inherit a user or parent-shell inspection request in QA children.
+    env.pop("PYTHONINSPECT", None)
+    env.pop("PYTHONSTARTUP", None)
     try:
-        p = runner(args, cwd=str(module), env=env,
+        p = runner(args, cwd=str(module), env=env, stdin=subprocess.DEVNULL,
                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                    timeout=timeout, check=False)
         output = p.stdout or b""

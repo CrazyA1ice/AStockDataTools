@@ -4,7 +4,7 @@ No source download, market write, schedule edit or calendar-day guessing.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from collections import Counter
 from pathlib import Path
 import re
@@ -328,3 +328,29 @@ def finance_issue_report_view(report: dict) -> str:
         "本诊断不会补pin、清理待审记录或提交财务Parquet。"
     )
     return "\n".join(pieces)
+
+
+def finance_decode_retry_target(report: dict) -> str | None:
+    """Choose at most one ledger-confirmed decode failure; no I/O or retries.
+
+    Reuse the complete safety validation applied to the displayed report.
+    This never approves historical revisions or downloads anything.
+    """
+    finance_issue_report_view(report)
+    codes = report.get("cache_decode_error_stocks", [])
+    count = report["pending_by_reason"].get("CACHE_DECODE_ERROR", 0)
+    if (not isinstance(codes, list) or len(codes) != count
+            or len(set(codes)) != len(codes)
+            or any(re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", x) is None
+                   for x in codes)):
+        raise InvalidSimplePlan("缓存解码股票名单与待审账本不一致")
+    return codes[0] if len(codes) == 1 else None
+
+
+def finance_decode_retry_window(*, cutoff: date | None = None) -> tuple[str, str]:
+    """A bounded RECENT vendor-cache refresh window, never full history."""
+    end = cutoff or safe_refresh_limit()
+    if type(end) is not date:
+        raise InvalidSimplePlan("无法确认最近允许的缓存刷新日期")
+    start = end - timedelta(days=30)
+    return start.isoformat(), end.isoformat()

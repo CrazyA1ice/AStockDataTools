@@ -283,6 +283,20 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["tests_run"], 1)
         self.assertIn("AssertionError:", result["output_tail"])
 
+    def test_zero_exit_python_repl_prompt_never_counts_as_clean(self):
+        def runner(*args, **kwargs):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=b"Ran 1 test in 0.01s\nOK\n>>> ")
+        report = G.execute(
+            ["python", "-B", "synthetic.py"], self.module, 10,
+            runner=runner)
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["tests_run"], 1)
+        self.assertEqual(report["error"],
+                         "PYTHON_INTERACTIVE_PROMPT_DETECTED")
+        self.assertIn(">>>", report["output_tail"])
+
     def test_successful_exit_with_tcl_theme_error_is_not_green(self):
         output = (b"Ran 2 tests in 0.05s\nOK\n"
                   b"can't invoke \"event\" command: application has been "

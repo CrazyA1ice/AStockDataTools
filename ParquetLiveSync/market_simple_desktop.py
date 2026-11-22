@@ -7,6 +7,7 @@ explicitly labeled legacy operation behind the original mutex and gates.
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 import os
 import subprocess
 import queue
@@ -25,6 +26,7 @@ from market_simple_ui_model import (
     finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
     finance_decode_retry_target, finance_decode_retry_window,
     finance_qmt_probe_view, extract_qmt_probe_receipt,
+    finance_secondary_pilot_view,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -42,6 +44,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_decode_retry_stock = None
         self._qmt_probe_running = False
         self._qmt_probe_queue = queue.Queue()
+        self._secondary_finance_running = False
+        self._secondary_finance_queue = queue.Queue()
         super().__init__()
         self._resolve_default_session()
 
@@ -233,6 +237,17 @@ class SimpleMarketDashboard(UpdaterDashboard):
             diagnosis, height=5, wrap="word", state="disabled",
             font=("Consolas", 9))
         self.qmt_probe_output.pack(fill="x", pady=(5, 0))
+        external_actions = ttk.Frame(diagnosis)
+        external_actions.pack(fill="x", pady=(6, 1))
+        self.secondary_finance_button = ttk.Button(
+            external_actions, text="近期公告与东财三表对照（只读试验）",
+            command=self.start_secondary_finance_pilot)
+        self.secondary_finance_button.pack(side="left")
+        self.secondary_finance_detail = tk.StringVar(value=(
+            "真实东方财富公告候选与最多3只待审股票的三大报表数值核验；"
+            "需要本机安装akshare，无法证明全市场公告完整。"))
+        ttk.Label(diagnosis, textvariable=self.secondary_finance_detail,
+                  wraplength=980, justify="left").pack(anchor="w")
         stage = ttk.LabelFrame(page, text="最近任务 · 分阶段状态", padding=7)
         stage.pack(fill="x")
         cols = ("execution", "quality", "cross", "log")
@@ -414,6 +429,96 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.qmt_probe_output.delete("1.0", "end")
         self.qmt_probe_output.insert("1.0", summary)
         self.qmt_probe_output.configure(state="disabled")
+
+    def start_secondary_finance_pilot(self):
+        """External leads + verified QMT snapshots, never run a writer."""
+        if (self._secondary_finance_running or self._qmt_probe_running
+                or self._finance_diag_running or self.process is not None):
+            self.secondary_finance_detail.set(
+                "其他任务运行中；外部财务只读检查未启动。")
+            return
+        try:
+            now = datetime.now(SHANGHAI)
+            minute = now.hour * 60 + now.minute
+            if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+                raise InvalidSimplePlan(
+                    "北京时间19:50—20:25为正式更新保护时段")
+            progress = safe_json(
+                WORK / "qmt_extra" / "financial-cache-progress.json")
+            root = finance_root_from_progress(progress)
+            pending = progress.get("pending")
+            if not isinstance(pending, dict):
+                raise InvalidSimplePlan("正式财务待审账本不可用")
+            stocks = sorted(code for code, entry in pending.items()
+                            if isinstance(entry, dict)
+                            and entry.get("reason") == "SOURCE_HISTORY_CONFLICT")
+            if not stocks:
+                raise InvalidSimplePlan("没有待核验的历史来源冲突股票")
+            selected = stocks[:3]
+            known = sorted(pending)[:500]
+            canonical_repo = Path(REVIEW_MAIN_REPO) if REVIEW_MODE else REPO
+            python = canonical_repo / ".venv" / "Scripts" / "python.exe"
+            script = MODULE / "market_finance_secondary.py"
+            if (os.name != "nt" or not (canonical_repo / ".git").is_dir()
+                    or (canonical_repo / ".git").is_symlink()
+                    or not python.is_file() or python.is_symlink()
+                    or not script.is_file() or script.is_symlink()):
+                raise InvalidSimplePlan(
+                    "正式Windows Python或独立财务源组件不可用")
+        except (OSError, ValueError, InvalidSimplePlan, TypeError) as exc:
+            self.secondary_finance_detail.set(
+                "跨源核验未启动：" + str(exc)[:130])
+            return
+        self._secondary_finance_running = True
+        self.secondary_finance_button.configure(state="disabled")
+        self.secondary_finance_detail.set(
+            "正在查询近期公告并比较 " + "、".join(selected) +
+            " 的本地QMT不可变快照与东财三表；不会修改数据。")
+
+        def worker():
+            try:
+                result = subprocess.run(
+                    [str(python), "-u", "-B", str(script),
+                     "--root", str(root),
+                     "--symbols", ",".join(selected),
+                     "--known-symbols", ",".join(known),
+                     "--lookback-days", "7", "--pages", "2",
+                     "--explicit-readonly"],
+                    cwd=str(canonical_repo),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, check=False, timeout=120,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                if (result.returncode != 0 or not isinstance(result.stdout, bytes)
+                        or len(result.stdout) > 131072):
+                    raise ValueError("AKSHARE_UNAVAILABLE_OR_SOURCE_ERROR")
+                prefix = b"FINANCE_EXTERNAL_READONLY="
+                matches = [line[len(prefix):]
+                           for line in result.stdout.splitlines()
+                           if line.startswith(prefix)]
+                if len(matches) != 1:
+                    raise ValueError("EXTERNAL_SOURCE_RECEIPT_MISSING")
+                receipt = json.loads(matches[0].decode("utf-8"))
+                summary = finance_secondary_pilot_view(receipt)
+                self._secondary_finance_queue.put(("ok", summary))
+            except (OSError, ValueError, UnicodeError, TypeError,
+                    subprocess.TimeoutExpired) as exc:
+                self._secondary_finance_queue.put((
+                    "error", "外部核验未完成：" + type(exc).__name__ +
+                    "。请检查akshare依赖和网络接口；没有修改正式数据。"))
+        threading.Thread(target=worker, daemon=True,
+                         name="external-finance-readonly-pilot").start()
+        self.after(250, self._poll_secondary_finance_pilot)
+
+    def _poll_secondary_finance_pilot(self):
+        try:
+            state, summary = self._secondary_finance_queue.get_nowait()
+        except queue.Empty:
+            if self._secondary_finance_running:
+                self.after(250, self._poll_secondary_finance_pilot)
+            return
+        self._secondary_finance_running = False
+        self.secondary_finance_button.configure(state="normal")
+        self.secondary_finance_detail.set(summary)
 
     def prepare_finance_decode_retry(self):
         """Prepare bounded vendor-cache refresh; NEVER launch it automatically."""

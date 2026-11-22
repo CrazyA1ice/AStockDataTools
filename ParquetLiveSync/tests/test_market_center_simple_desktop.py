@@ -291,6 +291,27 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(str(self.app.finance_diag_button["state"]), "normal")
         self.assertFalse(self.app._finance_diag_running)
 
+    def test_missing_real_ledger_blocks_without_running_census(self):
+        import market_scoped_finance_pending_full_census as S9
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value={}), \
+             patch.object(S9, "census") as scan, \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_finance_diagnostic()
+        scan.assert_not_called()
+        self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
+        self.assertFalse(self.app._finance_diag_running)
+
+    def test_repeated_click_while_running_does_not_spawn_new_worker(self):
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            self.app.start_finance_diagnostic()
+            launch.assert_called_once()
+        self.app._finance_diag_queue.put(("error", "Synthetic only"))
+        self.app._poll_finance_diagnostic()
+
     def test_diagnostic_failure_does_not_start_retry_or_approval(self):
         self.app._finance_diag_running = True
         self.app._finance_diag_queue.put(

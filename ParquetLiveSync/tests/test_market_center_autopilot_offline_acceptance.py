@@ -281,6 +281,19 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["tests_run"], 1)
         self.assertIn("AssertionError:", result["output_tail"])
 
+    def test_successful_exit_with_tcl_theme_error_is_not_green(self):
+        output = (b"Ran 2 tests in 0.05s\nOK\n"
+                  b"can't invoke \"event\" command: application has been "
+                  b"destroyed\n(procedure \"ttk::ThemeChanged\")\n")
+        def runner(*args, **kwargs):
+            return SimpleNamespace(returncode=0, stdout=output)
+        report = G.execute(["python", "-B", "test"], self.module, 10,
+                           runner=runner)
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["error"], "TK_THEME_CALLBACK_AFTER_DESTROY")
+        self.assertEqual(report["tests_run"], 2)
+        self.assertIn("ThemeChanged", report["output_tail"])
+
     def test_zero_test_unittest_result_fails_closed(self):
         for output in (b"OK", b"Ran 0 tests in 0.00s\nOK"):
             with self.subTest(output=output):

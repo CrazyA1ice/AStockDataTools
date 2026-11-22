@@ -715,6 +715,7 @@ def main(argv=None) -> int:
     parser.add_argument("--explicit-qmt-cache-read", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--report-key-date-details", action="store_true")
+    parser.add_argument("--capital-announcement-evidence", action="store_true")
     parser.add_argument("--internal-cache-fingerprints", action="store_true")
     parser.add_argument("--stock")
     args = parser.parse_args(argv)
@@ -722,26 +723,32 @@ def main(argv=None) -> int:
         # An offline-only invocation must never enter the QMT cache child,
         # even if a caller combines incompatible CLI flags.
         if (args.preflight_only or not args.stock
+                or (args.capital_announcement_evidence and
+                    not args.report_key_date_details)
                 or (args.report_key_date_details and not (
                     args.explicit_readonly and args.explicit_qmt_cache_read))):
             return 2
         try:
             payload = _child_cache_fingerprints(
-                args.stock, date_details=args.report_key_date_details)
+                args.stock, date_details=args.report_key_date_details,
+                announcement_evidence=args.capital_announcement_evidence)
         except Exception:
             return 3
         print(SENTINEL + E.canonical_json(payload))
         return 0
     if args.preflight_only:
         if (not args.explicit_readonly or args.explicit_qmt_cache_read
-                or args.report_key_date_details):
+                or args.report_key_date_details
+                or args.capital_announcement_evidence):
             print(json.dumps({
                 "status": "FINANCE_P5_OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
                 "qmt_calls": 0, "can_execute": False,
                 "market_file_writes": False,
             }, ensure_ascii=False))
             return 2
-    elif not args.explicit_readonly or not args.explicit_qmt_cache_read:
+    elif (not args.explicit_readonly or not args.explicit_qmt_cache_read
+          or (args.capital_announcement_evidence and
+              not args.report_key_date_details)):
         print(json.dumps({
             "status": "FINANCE_P5_TWO_EXPLICIT_OPTINS_REQUIRED",
             "qmt_calls": 0, "can_execute": False, "market_file_writes": False,
@@ -757,7 +764,8 @@ def main(argv=None) -> int:
         else:
             result = compare(args.state_module, args.market_root,
                              args.expected_progress_sha256,
-                             date_details=args.report_key_date_details)
+                             date_details=args.report_key_date_details,
+                             announcement_evidence=args.capital_announcement_evidence)
     except (CacheCompareBlocked, P2.PendingTriageBlocked,
             P3.SnapshotReviewBlocked, P4.IntegrityBlocked,
             OSError, ValueError) as exc:

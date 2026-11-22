@@ -280,6 +280,57 @@ class CapitalCompareTests(unittest.TestCase):
         self.assertNotIn('"freeFloatCapital": 202', json.dumps(dates))
         self.assertTrue(dates["historical_pending_remains_blocked"])
 
+    def test_capital_change_dates_may_be_off_quarter_end(self):
+        """Capital m_timetag is a change date; off-quarter is not an error."""
+        days = ["2025-08-13", "2025-09-30", "2025-10-23",
+                "2025-12-13", "2025-12-17", "2025-12-31",
+                "2026-03-31", "2026-04-15", "2026-06-12",
+                "2026-06-30", "2026-08-05", "2026-09-18",
+                "2026-09-30"]
+        old = [P._fingerprint({"m_timetag": "2023-09-30",
+                              "m_quarter": "Q3"}, date_details=True)]
+        now = old + [P._fingerprint({"m_timetag": item,
+                                    "m_quarter": "Q3"}, date_details=True)
+                     for item in days]
+        evidence = P._compare(old, now, date_details=True)[
+            "report_key_date_details"]
+        self.assertEqual(evidence["capital_date_role"],
+                         "SHARE_CAPITAL_CHANGE_DATE")
+        self.assertEqual(evidence["capital_announcement_date_field"],
+                         "m_anntime")
+        self.assertFalse(evidence["capital_announcement_dates_verified"])
+        self.assertFalse(evidence["calendar_quarter_ends_required"])
+        self.assertFalse(evidence["change_event_sources_verified"])
+        self.assertFalse(evidence["free_float_capital_alias_normalized"])
+        self.assertEqual(evidence["calendar_only_date_counts"]["current_only"],
+                         {"calendar_quarter_end": 5,
+                          "other_calendar_dates": 8})
+        self.assertFalse(evidence[
+            "official_report_periods_or_filing_dates_certified"])
+
+    def test_capital_free_float_changes_can_have_adjacent_event_dates(self):
+        def item(day, value):
+            return P._fingerprint({"m_timetag": day,
+                                   "m_quarter": "Q4",
+                                   "freeFloatCapital": value},
+                                  date_details=True)
+        old = [item("20261112", 10), item("20261113", 20)]
+        new = [item("20261112", 11), item("20261113", 21)]
+        result = P._compare(old, new, date_details=True)
+        self.assertEqual(result["observed_class"],
+                         "BUSINESS_OR_DATE_FIELD_CHANGED")
+        evidence = result["report_key_date_details"]
+        self.assertEqual(evidence["calendar_only_date_counts"][
+                             "changed_business_fields"],
+                         {"calendar_quarter_end": 0,
+                          "other_calendar_dates": 2})
+        self.assertEqual(
+            [d["report_key_date"] for d in
+             evidence["changed_business_field_key_dates"]],
+            ["2026-11-12", "2026-11-13"])
+        self.assertFalse(evidence["change_event_sources_verified"])
+        self.assertFalse(evidence["historical_pending_remains_blocked"] is False)
+
     def test_date_details_fail_closed_for_ambiguous_or_unbounded_mapping(self):
         def row(day):
             return P._fingerprint({

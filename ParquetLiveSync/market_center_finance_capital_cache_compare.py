@@ -385,7 +385,9 @@ def main(argv=None) -> int:
     parser.add_argument("--stock")
     args = parser.parse_args(argv)
     if args.internal_cache_fingerprints:
-        if not args.stock:
+        # An offline-only invocation must never enter the QMT cache child,
+        # even if a caller combines incompatible CLI flags.
+        if args.preflight_only or not args.stock:
             return 2
         try:
             payload = _child_cache_fingerprints(args.stock)

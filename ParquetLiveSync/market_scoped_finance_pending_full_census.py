@@ -110,7 +110,7 @@ def _revalidate(evidence):
             raise CensusBlocked("FINANCE_FILES_CHANGED_DURING_CENSUS")
 
 
-def census(root: Path, workspace: Path, *, page: int = 1, page_size: int = 12,
+def census(root: Path, workspace: Path, *, page: int = 1, page_size: int = 3,
            now: datetime | None = None) -> dict:
     """Exhaustive over pending LEDGER identities; NOT all market securities."""
     if (type(page) is not int or type(page_size) is not int
@@ -138,11 +138,8 @@ def census(root: Path, workspace: Path, *, page: int = 1, page_size: int = 12,
     if len(pending) > MAX_PENDING:
         raise CensusBlocked("PENDING_LEDGER_SCOPE_OVER_BUDGET")
     finance = P3._root(E.L.storage_root(root))
-    issue_counts = Counter()
     evidence = []
     journals = S8._journal_counts(workspace, [])  # repeated at end too
-    if any(journals.values()):
-        issue_counts["EXISTING_TRANSACTION_JOURNAL"] += sum(journals.values())
     global_files = 0
     global_bytes = 0
     pending_rows = []
@@ -201,6 +198,15 @@ def census(root: Path, workspace: Path, *, page: int = 1, page_size: int = 12,
             or P2._read_ledger(state_file)[1] != ledger_sha):
         raise CensusBlocked("LEDGER_CHANGED_DURING_CENSUS")
     _no_writer_window(datetime.now(E.L.UTC8) if now is None else now)
+    # Put the only decode-error stock first, followed by ledger entries
+    # whose first historical blocker cannot be classified; paginate the
+    # detail rows, but aggregate evidence still covers ALL pending stocks.
+    pending_rows.sort(key=lambda row: (
+        0 if row["reason"] == "CACHE_DECODE_ERROR" else
+        1 if row["first_recorded_conflict_table"] == "UNCLASSIFIED" else
+        2 if row["reason"] == "NO_CACHE" else 3,
+        row["symbol"],
+    ))
     lower = (page - 1) * page_size
     shown = pending_rows[lower:lower + page_size]
     return {
@@ -226,6 +232,7 @@ def census(root: Path, workspace: Path, *, page: int = 1, page_size: int = 12,
         "journal_counts": journals,
         "global_candidate_files_enumerated": global_files,
         "global_snapshot_compressed_bytes_metadata": global_bytes,
+        "page_order": "DECODE_THEN_UNCLASSIFIED_THEN_CODE",
         "page": page,
         "page_size": page_size,
         "total_pages": max(1, (len(pending_rows) + page_size - 1) // page_size),
@@ -248,7 +255,7 @@ def main(argv=None) -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--page", type=int, default=1)
-    parser.add_argument("--page-size", type=int, default=12)
+    parser.add_argument("--page-size", type=int, default=3)
     parser.add_argument("--explicit-readonly", action="store_true")
     args = parser.parse_args(argv)
     if not args.explicit_readonly:

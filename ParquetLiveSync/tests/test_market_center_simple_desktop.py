@@ -360,6 +360,8 @@ class GuiSmokeTests(unittest.TestCase):
             str(self.app.finance_decode_retry_button["state"]), "normal")
         with patch.object(UI.subprocess, "Popen",
                           side_effect=AssertionError("QMT_STARTED")), \
+             patch.object(UI, "safe_json", return_value={
+                 "pending": {"688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}), \
              patch.object(self.app, "run_scoped_finance_cache",
                           side_effect=AssertionError("REFRESH_STARTED")):
             self.app.prepare_finance_decode_retry()
@@ -380,6 +382,24 @@ class GuiSmokeTests(unittest.TestCase):
         self.app.prepare_finance_decode_retry()
         self.assertEqual(self.app.update_scope.get(), original)
         self.assertIn("请先运行只读检查", self.app.finance_diag_status.get())
+
+    def test_resolved_pending_cannot_be_retried_from_stale_diagnostic(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        before = self.app.update_scope.get()
+        with patch.object(UI, "safe_json", return_value={"pending": {}}), \
+             patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("QMT_STARTED")):
+            self.app.prepare_finance_decode_retry()
+        self.assertIsNone(self.app._finance_decode_retry_stock)
+        self.assertEqual(before, self.app.update_scope.get())
+        self.assertIn("待审状态已变化", self.app.finance_diag_status.get())
+
+    def test_stale_invalid_ledger_cannot_prepare_decode_retry(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "safe_json", side_effect=ValueError("bad")):
+            self.app.prepare_finance_decode_retry()
+        self.assertIn("无法核对最新待审账本", self.app.finance_diag_status.get())
+        self.assertEqual(self.app.update_scope.get(), "全市场")
 
     def test_preparation_is_blocked_if_existing_update_process_running(self):
         self.app._finance_decode_retry_stock = "688259.SH"

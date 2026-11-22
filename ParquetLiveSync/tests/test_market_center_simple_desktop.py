@@ -284,6 +284,51 @@ class SimpleModelTests(unittest.TestCase):
         self.assertEqual(M.extract_finance_secondary_receipt(valid, 0),
                          {"status": "TEST"})
 
+    def test_timeout_phase_uses_only_trusted_stage_markers(self):
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"\xff log\nFINANCE_EXTERNAL_STAGE=SCOPED_NOTICES\n"),
+            "近期单股公告查询阶段")
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"FINANCE_EXTERNAL_STAGE=SCOPED_NOTICES\n"
+            b"FINANCE_EXTERNAL_STAGE=THREE_STATEMENTS\n"),
+            "东方财富三大报表历史查询阶段")
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"FINANCE_EXTERNAL_STAGE=untrusted\n"), "阶段不明")
+        self.assertEqual(M.finance_secondary_timeout_stage(None), "阶段不明")
+
+    def test_one_stock_sample_is_not_reported_as_three_stock_agreement(self):
+        result = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_NOT_COMPLETE",
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [
+                {"symbol": "000010.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000036.SZ",
+                 "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                 "fields_compared": 2, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "crosscheck_stocks_not_attempted": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False,
+        }
+        view = M.finance_secondary_pilot_view(result)
+        self.assertIn("非全市场", view)
+        self.assertIn("最多实际比较1只", view)
+        self.assertIn("未运行财报对照", view)
+        self.assertIn("不代表两源一致", view)
+        self.assertIn("仍须继续QMT轮转兜底", view)
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",

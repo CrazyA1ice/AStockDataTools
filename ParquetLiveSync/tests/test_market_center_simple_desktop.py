@@ -318,6 +318,8 @@ class SimpleModelTests(unittest.TestCase):
             "discovery": {
                 "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
                 "status": "SCOPED_PENDING_LEADS_NOT_COMPLETE",
+                "source_requests_attempted": 2,
+                "failed_categories": [],
                 "unique_event_leads": 0,
                 "feed_complete_for_date_range": False,
                 "can_schedule_download": False,

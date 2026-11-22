@@ -533,13 +533,18 @@ def finance_secondary_pilot_view(report: dict) -> str:
         if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code):
             raise InvalidSimplePlan("东财核验股票格式异常")
         compared = entry.get("fields_compared", 0)
+        inconclusive = entry.get("fields_inconclusive", 0)
         different = entry.get("value_differences", 0)
-        if (type(compared) is not int or type(different) is not int
-                or not 0 <= different <= compared <= 200):
+        if (type(compared) is not int or type(inconclusive) is not int
+                or type(different) is not int
+                or not 0 <= different <= compared
+                or not 0 <= inconclusive
+                or compared + inconclusive > 200):
             raise InvalidSimplePlan("东财比对字段计数无效")
         lines.append(
-            "%s：已比对 %d 个报告期字段，数值差异 %d；状态%s。" %
-            (code, compared, different, str(entry.get("status", ""))[:60]))
+            "%s：有效对比 %d 个报告期字段，无法对比 %d 个，数值差异 %d；状态%s。" %
+            (code, compared, inconclusive, different,
+             str(entry.get("status", ""))[:60]))
     lines.append(
         "只读试验：仅核验三大报表少量字段，未验证公告原文、修订版及完整九表。"
         "不会自动下载、覆盖旧版、清除pending或修改20:05任务。")

@@ -71,6 +71,14 @@ class FakeAk:
         return FakeFrame(self.cash)
 
 
+def synthetic_stock_root(folder):
+    """Mimic the eight-period directory contract using only temporary paths."""
+    root = Path(folder)
+    for period in S.E.L.PERIODS:
+        (root / "AllCycleAStockData" / period).mkdir(parents=True, exist_ok=True)
+    return root
+
+
 class FinanceSecondaryTests(TestCase):
     def test_recent_financial_and_correction_candidates_have_stable_identity(self):
         ak = FakeAk()
@@ -163,7 +171,7 @@ class FinanceSecondaryTests(TestCase):
                           return_value="2026-11-21"), \
              patch.object(S.E, "_financial_snapshot_rows",
                           side_effect=lambda _x, _c, table, _d: qmt[table]):
-            r = S.crosscheck_saved(Path(folder), "000010.SZ", ak)
+            r = S.crosscheck_saved(synthetic_stock_root(folder), "000010.SZ", ak)
         self.assertEqual(r["fields_compared"], 6)
         self.assertEqual(r["fields_inconclusive"], 0)
         self.assertEqual(r["fields_attempted"], 6)
@@ -211,10 +219,15 @@ class FinanceSecondaryTests(TestCase):
         self.assertEqual(result["fields_comparable"], 0)
         self.assertEqual(result["comparison_count"], 0)
 
+    def test_crosscheck_rejects_missing_real_layout_instead_of_bypassing_guard(self):
+        with TemporaryDirectory() as folder, \
+             self.assertRaisesRegex(ValueError, "AllCycleAStockData"):
+            S.crosscheck_saved(Path(folder), "000010.SZ", FakeAk())
+
     def test_missing_qmt_snapshot_does_not_mean_provider_missing(self):
         with TemporaryDirectory() as folder, \
              patch.object(S.I, "_latest_snapshot_day", return_value=None):
-            r = S.crosscheck_saved(Path(folder), "000010.SZ", FakeAk())
+            r = S.crosscheck_saved(synthetic_stock_root(folder), "000010.SZ", FakeAk())
         self.assertTrue(all(t["status"] == "NO_LOCAL_QMT_SNAPSHOT"
                             for t in r["tables"]))
         self.assertEqual(r["fields_compared"], 0)
@@ -230,7 +243,7 @@ class FinanceSecondaryTests(TestCase):
                           return_value="2026-11-21"), \
              patch.object(S.E, "_financial_snapshot_rows",
                           return_value=rows):
-            r = S.crosscheck_saved(Path(folder), "000010.SZ", ak)
+            r = S.crosscheck_saved(synthetic_stock_root(folder), "000010.SZ", ak)
         self.assertIn("EXTERNAL_SOURCE_ERROR",
                       [t["status"] for t in r["tables"]])
         self.assertFalse(r["can_commit"])

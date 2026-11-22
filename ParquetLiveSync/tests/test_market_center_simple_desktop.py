@@ -554,6 +554,62 @@ class SimpleModelTests(unittest.TestCase):
         with self.assertRaises(M.InvalidSimplePlan):
             M.finance_secondary_pilot_view(report)
 
+    def test_capital_first_blocker_summary_is_ledger_only_not_report_date_proof(self):
+        triage = {
+            "status": "FINANCE_PENDING_LEDGER_READONLY_FIRST_BLOCKER_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "pending_total": 85, "conflict_total": 84,
+            "first_blocking_table_counts": [
+                {"table": "Capital", "count": 42},
+                {"table": "Top10Holder", "count": 33},
+                {"table": "Top10FlowHolder", "count": 5},
+                {"table": "HolderNum", "count": 4}],
+            "all_nine_tables_checked": False,
+            "pending_repair_approved": False,
+            "market_file_writes": False, "qmt_calls": 0}
+        snapshot = {
+            "status": "FINANCE_PENDING_SNAPSHOT_METADATA_READONLY_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "capital_proof_rejection_counts": [
+                {"proof_class": "REPORT_KEYS_ADDED_OR_REMOVED", "count": 36},
+                {"proof_class": "BUSINESS_OR_DATE_FIELD_CHANGED", "count": 6}],
+            "capital_proof_rejections_grouped": 42,
+            "samples": [{"stock": "000010.SZ", "first_blocking_table": "Capital",
+                         "immutable_snapshot_candidates": 3,
+                         "active_pin_metadata": 1,
+                         "content_sha256_verified": False,
+                         "financial_business_values_read": False}],
+            "sample_count": 1, "only_first_blocking_table_inspected": True,
+            "financial_payloads_read": False,
+            "historical_business_fields_compared": False,
+            "immutable_snapshot_content_verified": False,
+            "source_authenticity_certified": False,
+            "all_nine_tables_checked": False,
+            "can_repair": False, "can_execute": False,
+            "can_download": False, "market_file_writes": False,
+            "qmt_calls": 0}
+        view = M.finance_capital_first_blocker_view(triage, snapshot)
+        self.assertIn("Capital为首张冲突表42只", view)
+        self.assertIn("报告期键集合增删36", view)
+        self.assertIn("业务或日期字段变化6", view)
+        self.assertIn("只抽样1只", view)
+        self.assertIn("候选文件3份", view)
+        self.assertIn("历史冲突具体报告期未定位", view)
+        self.assertIn("未调用QMT或东方财富", view)
+        self.assertNotIn("2026-09-30", view)
+        snapshot["progress_sha256"] = "b" * 64
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+        snapshot["progress_sha256"] = "a" * 64
+        snapshot["can_repair"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+        snapshot["can_repair"] = False
+        snapshot["capital_proof_rejection_counts"][0]["proof_class"] = (
+            "REPORT_KEYS_ADDED_OR_REMOVED private path")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
@@ -816,6 +872,73 @@ class GuiSmokeTests(unittest.TestCase):
             raise
         self.app.withdraw()
         self.addCleanup(self.app.destroy)
+
+    def test_capital_classification_button_uses_only_p2_p3_no_qmt(self):
+        from datetime import datetime, timedelta, timezone
+        repo = Path(self.temp.name)
+        market = repo / "stock" / "AllCycleAStockData"
+        market.mkdir(parents=True)
+        progress = {"root": str(market / "qmt_extra")}
+        ledger = {"status":
+            "FINANCE_PENDING_LEDGER_READONLY_FIRST_BLOCKER_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "pending_total": 1, "conflict_total": 1,
+            "first_blocking_table_counts": [{"table": "Capital", "count": 1}],
+            "all_nine_tables_checked": False,
+            "pending_repair_approved": False,
+            "qmt_calls": 0, "market_file_writes": False}
+        metadata = {
+            "status": "FINANCE_PENDING_SNAPSHOT_METADATA_READONLY_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "capital_proof_rejection_counts": [
+                {"proof_class": "REPORT_KEYS_ADDED_OR_REMOVED", "count": 1}],
+            "capital_proof_rejections_grouped": 1,
+            "sample_count": 0, "samples": [],
+            "only_first_blocking_table_inspected": True,
+            "financial_payloads_read": False,
+            "historical_business_fields_compared": False,
+            "immutable_snapshot_content_verified": False,
+            "source_authenticity_certified": False,
+            "all_nine_tables_checked": False,
+            "can_repair": False, "can_execute": False,
+            "can_download": False, "market_file_writes": False,
+            "qmt_calls": 0}
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "REPO", repo), \
+             patch.object(UI, "REVIEW_MODE", False), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.P2, "summarize_pending",
+                          return_value=ledger) as p2, \
+             patch.object(UI.P3, "review",
+                          return_value=metadata) as p3, \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("NO_SUBPROCESS")), \
+             patch.object(UI.threading, "Thread") as launch, \
+             patch.object(UI, "datetime") as fake_now:
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 21, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_capital_first_blocker_review()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_capital_first_blocker_review()
+            p2.assert_called_once_with(repo / "ParquetLiveSync")
+            p3.assert_called_once_with(
+                repo / "ParquetLiveSync", market)
+        self.assertIn("Capital为首张冲突表1只",
+                      self.app.capital_review_detail.get())
+        self.assertIn("未调用QMT或东方财富",
+                      self.app.capital_review_detail.get())
+        self.assertFalse(self.app._capital_review_running)
+
+    def test_capital_classification_blocks_if_external_probe_is_running(self):
+        self.app._secondary_finance_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_capital_first_blocker_review()
+            launch.assert_not_called()
+        self.assertIn("其他财务任务仍在运行",
+                      self.app.capital_review_detail.get())
+        self.app._secondary_finance_running = False
 
     def test_only_three_tabs_and_legacy_runner_is_separate(self):
         self.assertEqual(len(self.app.tabs.tabs()), 3)

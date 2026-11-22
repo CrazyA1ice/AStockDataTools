@@ -110,6 +110,37 @@ class SimpleModelTests(unittest.TestCase):
                 with self.assertRaises(M.InvalidSimplePlan):
                     M.finance_issue_report_view(fake)
 
+    def test_verified_single_decode_error_can_prepare_only_one_stock(self):
+        self.assertEqual(
+            M.finance_decode_retry_target(sample_finance_census()),
+            "688259.SH")
+        empty = sample_finance_census()
+        empty["pending_by_reason"]["CACHE_DECODE_ERROR"] = 0
+        empty["pending_by_reason"]["SOURCE_HISTORY_CONFLICT"] = 2
+        empty["cache_decode_error_stocks"] = []
+        self.assertIsNone(M.finance_decode_retry_target(empty))
+
+    def test_decode_target_list_must_match_pending_and_stock_format(self):
+        for codes in ([], ["not-a-stock"], ["688259.SH", "688259.SH"]):
+            report = sample_finance_census()
+            report["cache_decode_error_stocks"] = codes
+            with self.subTest(codes=codes), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.finance_decode_retry_target(report)
+
+    def test_cache_refresh_window_is_only_recent_31_days(self):
+        start, end = M.finance_decode_retry_window(cutoff=date(2026, 11, 20))
+        self.assertEqual((start, end), ("2026-10-21", "2026-11-20"))
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_decode_retry_window(cutoff="2026-11-20")
+
+    def test_one_decode_target_disabled_when_multiple_stocks_fail(self):
+        report = sample_finance_census()
+        report["pending_by_reason"]["CACHE_DECODE_ERROR"] = 2
+        report["pending_by_reason"]["SOURCE_HISTORY_CONFLICT"] = 0
+        report["cache_decode_error_stocks"] = ["688259.SH", "688622.SH"]
+        self.assertIsNone(M.finance_decode_retry_target(report))
+
     def test_committed_date_is_selected_as_fallback(self):
         ledger = {"periods": {"1min": {"2026-11": {
             "days": ["2026-11-19", "2026-11-20"]}}}}
@@ -309,16 +340,64 @@ class GuiSmokeTests(unittest.TestCase):
             self.app.start_finance_diagnostic()
             self.app.start_finance_diagnostic()
             launch.assert_called_once()
-        self.app._finance_diag_queue.put(("error", "Synthetic only"))
+        self.app._finance_diag_queue.put(("error", "Synthetic only", None))
         self.app._poll_finance_diagnostic()
 
     def test_diagnostic_failure_does_not_start_retry_or_approval(self):
         self.app._finance_diag_running = True
         self.app._finance_diag_queue.put(
-            ("error", "检查未完成：RESERVED_2005_NO_FINANCE_INVENTORY"))
+            ("error", "检查未完成：RESERVED_2005_NO_FINANCE_INVENTORY", None))
         self.app._poll_finance_diagnostic()
         self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
         self.assertFalse(self.app._finance_diag_running)
+
+    def test_decode_retry_button_opens_scoped_form_without_running_qmt(self):
+        self.app._finance_diag_queue.put((
+            "ok", M.finance_issue_report_view(sample_finance_census()),
+            "688259.SH"))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(
+            str(self.app.finance_decode_retry_button["state"]), "normal")
+        with patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("QMT_STARTED")), \
+             patch.object(self.app, "run_scoped_finance_cache",
+                          side_effect=AssertionError("REFRESH_STARTED")):
+            self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.tabs.index(self.app.tabs.select()), 1)
+        self.assertEqual(self.app.stock_input.get("1.0", "end-1c"),
+                         "688259.SH")
+        self.assertEqual(self.app.update_scope.get(), "自选股票")
+        self.assertEqual(self.app.update_mode.get(), "增量更新")
+        self.assertEqual([name for name in M.MODULES
+                          if self.app.module_vars[name].get()], ["财务"])
+        self.assertEqual(str(self.app.selected_run_button["state"]),
+                         "normal")
+        self.assertIn("请先检查日期", self.app.finance_diag_status.get())
+        self.assertIn("不是全历史验证", self.app.date_source.get())
+
+    def test_preparation_without_verified_target_does_not_change_scope(self):
+        original = self.app.update_scope.get()
+        self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.update_scope.get(), original)
+        self.assertIn("请先运行只读检查", self.app.finance_diag_status.get())
+
+    def test_preparation_is_blocked_if_existing_update_process_running(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        self.app.process = SimpleNamespace(poll=lambda: None)
+        previous = self.app.update_scope.get()
+        self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.update_scope.get(), previous)
+        self.assertIn("已有任务运行", self.app.finance_diag_status.get())
+        self.app.process = None
+
+    def test_failed_diagnostic_cannot_leave_decode_retry_enabled(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        self.app._finance_diag_running = True
+        self.app._finance_diag_queue.put(("error", "blocked", None))
+        self.app._poll_finance_diagnostic()
+        self.assertIsNone(self.app._finance_decode_retry_stock)
+        self.assertEqual(
+            str(self.app.finance_decode_retry_button["state"]), "disabled")
 
     def test_date_start_and_end_auto_fill_identically(self):
         self.app._apply_default_day("2026-11-20", "QMT交易日历")

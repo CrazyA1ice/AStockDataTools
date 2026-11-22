@@ -207,7 +207,7 @@ def main(argv=None):
     if args.probe_readonly:
         if (args.output is not None or args.mode is not None
                 or args.start or args.end
-                or not E.re.fullmatch(r"d{6}.(?:SH|SZ|BJ)", args.symbols)):
+                or not E.re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", args.symbols)):
             parser.error("readonly probe requires exactly one stock and no write options")
         # Block QMT API access during the daily writer's protected window.
         local = datetime.now(E.L.UTC8)

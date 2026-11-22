@@ -253,6 +253,22 @@ class SimpleModelTests(unittest.TestCase):
                 M.extract_qmt_probe_receipt(raw)
 
 
+    def test_external_finance_chinese_json_survives_gbk_pipe_as_ascii(self):
+        # Simulates ASCII-escaped child output under a Windows cp936 pipe.
+        receipt = {"status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+                   "公告标题": "2026年第三季度报告更正公告"}
+        escaped = json.dumps(receipt, ensure_ascii=True,
+                             separators=(",", ":")).encode("cp936")
+        raw = b"\xff legacy provider log\nFINANCE_EXTERNAL_READONLY=" + escaped + b"\n"
+        got = M.extract_finance_secondary_receipt(raw, 0)
+        self.assertEqual(got["公告标题"], receipt["公告标题"])
+        # A raw cp936 success receipt must still fail closed; do not
+        # weaken UTF-8 validation to accept untrusted vendor output.
+        legacy = json.dumps(receipt, ensure_ascii=False).encode("cp936")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b"FINANCE_EXTERNAL_READONLY=" + legacy + b"\n", 0)
+
     def test_external_finance_tagged_error_distinguishes_missing_dependency(self):
         payload = (b"\xff GBK vendor startup log\n" +
                    b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'

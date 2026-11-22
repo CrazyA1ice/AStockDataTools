@@ -215,6 +215,131 @@ class CapitalCompareTests(unittest.TestCase):
             old.assert_not_called()
             cache.assert_not_called()
 
+    def test_p5_opt_in_date_labels_keep_unchanged_sha_key_identity(self):
+        row = {"m_timetag": "20240930", "m_quarter": "Q3",
+               "freeFloatCapital": 123456.78}
+        old = P._fingerprint(row)
+        decorated = P._fingerprint(row, date_details=True)
+        self.assertEqual(decorated["key_sha256"], old["key_sha256"])
+        self.assertEqual(decorated["field_sha256"], old["field_sha256"])
+        self.assertEqual(decorated["report_key_date"], "2024-09-30")
+        self.assertNotIn("report_key_date", old)
+        self.assertNotIn("123456.78", json.dumps(decorated))
+        self.assertEqual(P._report_key_date(1609459200000), "2021-01-01")
+        self.assertEqual(P._report_key_date("20240930120000"), "2024-09-30")
+        for untrusted in ("20260230", "20240930 extra", "X", "0"):
+            with self.assertRaises(P.CacheCompareBlocked):
+                P._report_key_date(untrusted)
+
+    def test_opt_in_locates_thirteen_cache_only_key_dates_not_quarter_noise(self):
+        def row(key, quarter="Q3", cap=100):
+            return P._fingerprint(
+                {"m_timetag": key, "m_quarter": quarter,
+                 "freeFloatCapital": cap}, date_details=True)
+        old = [row("20200930")]
+        added = [f"{year}0630" for year in range(2000, 2013)]
+        fresh = [row("20200930", quarter="Q4")] + [row(day) for day in added]
+        before = P._compare(old, fresh)
+        report = P._compare(old, fresh, date_details=True)
+        self.assertEqual(report["cached_keys_absent_from_previous"], 13)
+        self.assertEqual(report["m_quarter_changed_matching_report_keys"], 1)
+        self.assertEqual(report["observed_class"], before["observed_class"])
+        self.assertEqual(report["changed_non_quarter_field_counts"],
+                         before["changed_non_quarter_field_counts"])
+        self.assertNotIn("report_key_date_details", before)
+        evidence = report["report_key_date_details"]
+        self.assertEqual(evidence["current_only_key_dates"],
+                         [f"{year}-06-30" for year in range(2000, 2013)])
+        self.assertEqual(evidence["previous_only_key_dates"], [])
+        self.assertEqual(evidence["changed_business_field_key_dates"], [])
+        self.assertTrue(evidence["m_quarter_date_labels_omitted"])
+        self.assertFalse(evidence["official_report_periods_or_filing_dates_certified"])
+        self.assertNotIn("freeFloatCapital", json.dumps(evidence))
+
+    def test_opt_in_locates_two_business_key_dates_without_financial_values(self):
+        def row(day, cap, quarter="Q3"):
+            return P._fingerprint({
+                "m_timetag": day, "m_quarter": quarter,
+                "freeFloatCapital": cap}, date_details=True)
+        old = [row("20230930", 100), row("20231231", 200),
+               row("20240331", 300)]
+        fresh = [row("20230930", 101, "Q4"), row("20231231", 202),
+                 row("20240331", 300)]
+        report = P._compare(old, fresh, date_details=True)
+        self.assertEqual(report["observed_class"],
+                         "BUSINESS_OR_DATE_FIELD_CHANGED")
+        self.assertEqual(report["changed_non_quarter_field_counts"],
+                         [{"field": "freeFloatCapital", "report_keys": 2}])
+        dates = report["report_key_date_details"]
+        self.assertEqual(dates["changed_business_field_key_dates"], [
+            {"report_key_date": "2023-09-30", "fields": ["freeFloatCapital"]},
+            {"report_key_date": "2023-12-31", "fields": ["freeFloatCapital"]},
+        ])
+        self.assertNotIn("101", json.dumps(dates))
+        self.assertNotIn("202", json.dumps(dates))
+        self.assertTrue(dates["historical_pending_remains_blocked"])
+
+    def test_date_details_fail_closed_for_ambiguous_or_unbounded_mapping(self):
+        def row(day):
+            return P._fingerprint({
+                "m_timetag": day, "m_quarter": "Q1",
+                "freeFloatCapital": 1}, date_details=True)
+        with self.assertRaisesRegex(
+                P.CacheCompareBlocked, "ambiguous_qmt_key_date_mapping"):
+            P._compare([row("20240930"), row("2024-09-30")],
+                       [row("20240930")], date_details=True)
+        too_many = [row(f"{year}0630") for year in range(1980, 2013)]
+        with self.assertRaisesRegex(
+                P.CacheCompareBlocked, "report_key_date_detail_budget_exceeded"):
+            P._compare([], too_many, date_details=True)
+        tampered = row("20240930")
+        del tampered["report_key_date"]
+        with self.assertRaisesRegex(
+                P.CacheCompareBlocked, "missing_verified_qmt_key_date"):
+            P._compare([], [tampered], date_details=True)
+
+    def test_internal_date_receipt_validates_dates_and_never_reads_source(self):
+        record = P._fingerprint({
+            "m_timetag": "20240930", "m_quarter": "Q3",
+            "freeFloatCapital": 987654}, date_details=True)
+        payload = {"format": "qmt_capital_cache_fingerprints_v1",
+                   "stock": "000001.SZ", "table": "Capital", "row_count": 1,
+                   "records": [record]}
+        def simulate(*args, **kwargs):
+            self.assertIn("--report-key-date-details", args[0])
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(P.SENTINEL + json.dumps(payload)).encode("utf-8"))
+        res = P._run_child("000001.SZ", runner=simulate, date_details=True)
+        self.assertEqual(res["records"][0]["report_key_date"], "2024-09-30")
+        record["report_key_date"] = "2024-02-30"
+        with self.assertRaises(P.CacheCompareBlocked):
+            P._run_child("000001.SZ", runner=simulate, date_details=True)
+
+    def test_cli_date_details_require_separate_explicit_cache_read(self):
+        sha = "a" * 64
+        args = ["--state-module", "/synthetic",
+                "--market-root", "/synthetic",
+                "--expected-progress-sha256", sha,
+                "--report-key-date-details"]
+        mock = {"status": "SYNTHETIC_ONLY", "can_repair": False}
+        with patch.object(P, "preflight") as offline, \
+             patch.object(P, "compare", return_value=mock) as online:
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(P.main(args), 2)
+            self.assertIn("TWO_EXPLICIT_OPTINS_REQUIRED", output.getvalue())
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(P.main(args + [
+                    "--preflight-only", "--explicit-readonly"]), 2)
+            self.assertIn("OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
+                          output.getvalue())
+            offline.assert_not_called()
+            online.assert_not_called()
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(P.main(args + [
+                    "--explicit-readonly", "--explicit-qmt-cache-read"]), 0)
+            self.assertTrue(online.call_args.kwargs["date_details"])
+
     def test_default_cli_never_imports_or_calls_qmt(self):
         with patch.object(P, "compare") as compare:
             with redirect_stdout(io.StringIO()) as capture:

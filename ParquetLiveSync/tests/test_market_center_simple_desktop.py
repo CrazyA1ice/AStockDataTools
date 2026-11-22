@@ -59,6 +59,28 @@ def sample_finance_census():
     }
 
 
+def sample_qmt_table_probe():
+    names = ("Balance", "Income", "CashFlow", "Capital",
+             "Top10FlowHolder", "Top10Holder", "HolderNum",
+             "PershareIndex", "PerShare")
+    values = []
+    for name in names:
+        bad = name == "PerShare"
+        values.append({
+            "table": name,
+            "role": "OPTIONAL_UNCONFIRMED" if bad else "DOCUMENTED_CORE",
+            "status": "UTF8_DECODE_ERROR" if bad else "ROWS_IN_LOCAL_CACHE",
+            "cached_rows": None if bad else 3,
+        })
+    return {
+        "status": "QMT_FINANCE_TABLE_READONLY_PROBE_REQUIRES_REVIEW",
+        "symbol": "688259.SH", "tables_checked": 9, "tables": values,
+        "qmt_get_financial_data_calls": 9, "qmt_download_calls": 0,
+        "can_apply": False, "can_commit": False,
+        "empty_cache_proves_provider_empty": False,
+    }
+
+
 class SimpleModelTests(unittest.TestCase):
     def test_finance_pending_exposes_reasons_not_just_count(self):
         brief = M.finance_pending_brief({
@@ -109,6 +131,37 @@ class SimpleModelTests(unittest.TestCase):
             with self.subTest(fake=fake.get("status")):
                 with self.assertRaises(M.InvalidSimplePlan):
                     M.finance_issue_report_view(fake)
+
+    def test_qmt_readonly_probe_shows_separate_pershare_decode_failure(self):
+        result = M.finance_qmt_probe_view(
+            sample_qmt_table_probe(), "688259.SH")
+        self.assertIn("688259.SH", result)
+        self.assertIn("Balance：缓存有记录（3行）", result)
+        self.assertIn("PerShare：UTF-8解码失败", result)
+        self.assertIn("支持情况未确认", result)
+        self.assertIn("不自动修复", result)
+
+    def test_qmt_probe_refuses_forged_download_or_wrong_count(self):
+        for change in (
+            {"qmt_download_calls": 1},
+            {"can_commit": True},
+            {"tables_checked": 8},
+            {"symbol": "600000.SH"},
+        ):
+            with self.subTest(change=change):
+                r = {**sample_qmt_table_probe(), **change}
+                with self.assertRaises(M.InvalidSimplePlan):
+                    M.finance_qmt_probe_view(r, "688259.SH")
+
+    def test_qmt_probe_rejects_duplicate_tables_or_claimed_source_emptiness(self):
+        r = sample_qmt_table_probe()
+        r["tables"][8]["table"] = "Balance"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
+        r = sample_qmt_table_probe()
+        r["empty_cache_proves_provider_empty"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
 
     def test_verified_single_decode_error_can_prepare_only_one_stock(self):
         self.assertEqual(
@@ -350,6 +403,71 @@ class GuiSmokeTests(unittest.TestCase):
         self.app._poll_finance_diagnostic()
         self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
         self.assertFalse(self.app._finance_diag_running)
+
+    def test_qmt_probe_button_requires_verified_pending_decode(self):
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "disabled")
+        self.app._finance_diag_queue.put((
+            "ok", M.finance_issue_report_view(sample_finance_census()),
+            "688259.SH"))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "normal")
+        self.app._finance_diag_queue.put(("error", "blocked", None))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "disabled")
+
+    def test_qmt_probe_worker_is_read_only_and_shows_utf8_table(self):
+        from datetime import datetime, timezone, timedelta
+        repo = Path(self.temp.name)
+        (repo / ".git").mkdir(exist_ok=True)
+        python = repo / ".venv" / "Scripts" / "python.exe"
+        python.parent.mkdir(parents=True)
+        python.write_text("synthetic-fixture", encoding="utf-8")
+        script = self.module / "qmt_extra_financial_cache_worker.py"
+        script.write_text("synthetic-fixture", encoding="utf-8")
+        receipt = (
+            "QMT_FINANCE_TABLE_READONLY_PROBE=" +
+            json.dumps(sample_qmt_table_probe()) + "\n").encode("utf-8")
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "REPO", repo), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value={
+                 "pending": {"688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}), \
+             patch.object(UI, "datetime") as fake_clock, \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI.subprocess, "run",
+                          return_value=SimpleNamespace(
+                              returncode=0, stdout=receipt)) as exec_read, \
+             patch.object(UI.threading, "Thread") as launch:
+            fake_clock.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_qmt_finance_table_probe()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_qmt_finance_table_probe()
+            args = exec_read.call_args.args[0]
+            self.assertIn("--probe-readonly", args)
+            self.assertNotIn("--mode", args)
+            self.assertNotIn("--output", args)
+            self.assertNotIn("download", " ".join(args))
+            self.assertEqual(exec_read.call_args.kwargs["timeout"], 45)
+            self.assertEqual(exec_read.call_args.kwargs["stdin"],
+                             UI.subprocess.DEVNULL)
+        self.assertIn("PerShare：UTF-8解码失败",
+                      self.app.qmt_probe_detail.get())
+        self.assertFalse(self.app._qmt_probe_running)
+
+    def test_qmt_probe_blocks_stale_pending_without_subprocess(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "safe_json", return_value={"pending": {}}), \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("QMT_CALLED")):
+            self.app.start_qmt_finance_table_probe()
+        self.assertIn("已阻断", self.app.qmt_probe_detail.get())
 
     def test_decode_retry_button_opens_scoped_form_without_running_qmt(self):
         self.app._finance_diag_queue.put((

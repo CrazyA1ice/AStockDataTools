@@ -197,8 +197,9 @@ def _run_child(code: str, timeout_seconds: int = 25,
     if date_details:
         for record in payload["records"]:
             try:
-                if (date.fromisoformat(record["report_key_date"]).isoformat()
-                        != record["report_key_date"]):
+                parsed = date.fromisoformat(record["report_key_date"])
+                if (parsed.isoformat() != record["report_key_date"]
+                        or not 1980 <= parsed.year <= 2100):
                     raise ValueError("noncanonical date")
             except ValueError as exc:
                 raise CacheCompareBlocked(
@@ -287,7 +288,8 @@ def _locate_report_key_dates(old: list[dict], fresh: list[dict],
                     not re.fullmatch(r"\d{4}-\d{2}-\d{2}", label)):
                 raise CacheCompareBlocked("missing_verified_qmt_key_date")
             try:
-                if date.fromisoformat(label).isoformat() != label:
+                parsed = date.fromisoformat(label)
+                if parsed.isoformat() != label or not 1980 <= parsed.year <= 2100:
                     raise ValueError("noncanonical")
             except ValueError as exc:
                 raise CacheCompareBlocked("invalid_qmt_key_date") from exc
@@ -311,6 +313,8 @@ def _locate_report_key_dates(old: list[dict], fresh: list[dict],
     added = sorted(fresh_dates[k] for k in fresh_keys - old_keys)
     changed, field_totals = [], Counter()
     for key in old_keys & fresh_keys:
+        if old_dates[key] != fresh_dates[key]:
+            raise CacheCompareBlocked("mismatched_common_key_date")
         variants = previous[key]
         def business(fields):
             return {name: value for name, value in fields.items()

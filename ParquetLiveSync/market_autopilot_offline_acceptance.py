@@ -92,8 +92,23 @@ def execute(args, module, timeout, *, runner=subprocess.run):
                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                    timeout=timeout, check=False)
         output = p.stdout or b""
-        return {"pass": p.returncode == 0, "exit": p.returncode,
-                "output_tail": output.decode("utf-8", "replace")[-1800:]}
+        message = output.decode("utf-8", "replace")
+        # Never flood a PowerShell console with hundreds of successful case
+        # names: the user needs the actual failed suite, not repeated verbose
+        # output. Keep failure and timeout evidence independently.
+        summaries = re.findall(r"\\bRan ([0-9]+) tests?(?: in ([0-9.]+)s)?",
+                               message)
+        count, seconds = summaries[-1] if summaries else (None, None)
+        result = {
+            "pass": p.returncode == 0,
+            "exit": p.returncode,
+            "tests_run": int(count) if count is not None else None,
+            "elapsed_seconds": float(seconds) if seconds else None,
+        }
+        if p.returncode != 0:
+            result["error"] = "TEST_OR_COMMAND_EXIT_NONZERO"
+            result["output_tail"] = message[-3500:]
+        return result
     except subprocess.TimeoutExpired as exc:
         # unittest -v writes test names BEFORE running their bodies. Keep
         # the partial child output so a hang can be localized rather than

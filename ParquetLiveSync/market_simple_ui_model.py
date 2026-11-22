@@ -481,3 +481,58 @@ def extract_qmt_probe_receipt(output: bytes) -> dict:
     if not isinstance(payload, dict):
         raise InvalidSimplePlan("QMT逐表回执必须是JSON对象")
     return payload
+
+
+def finance_secondary_pilot_view(report: dict) -> str:
+    """Summarize external announcement leads and three-statement cross-checks."""
+    if (not isinstance(report, dict)
+            or report.get("status") != "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY"
+            or report.get("can_apply") is not False
+            or report.get("can_commit") is not False
+            or report.get("changed_pending") is not False
+            or report.get("changed_20_05_task") is not False
+            or report.get("event_candidates_to_download") != []
+            or report.get("source_discovery_not_complete") is not True):
+        raise InvalidSimplePlan("跨源财务回执非只读或身份不匹配")
+    lead = report.get("discovery")
+    stocks = report.get("crosschecks")
+    if (not isinstance(lead, dict)
+            or lead.get("feed_complete_for_date_range") is not False
+            or lead.get("can_schedule_download") is not False
+            or not isinstance(stocks, list) or len(stocks) > 3):
+        raise InvalidSimplePlan("跨源发现结果不可信或范围过大")
+    n = lead.get("unique_event_leads", 0)
+    if type(n) is not int or not 0 <= n <= 4500:
+        raise InvalidSimplePlan("公告候选计数超出范围")
+    lines = [
+        "东方财富近期公告候选 %d 条（有限页、非全市场完整事件流）。" % n,
+        "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
+        str(lead.get("status", "UNKNOWN"))[:70],
+    ]
+    picks = lead.get("candidate_symbols_in_known_scope", [])
+    if not isinstance(picks, list) or len(picks) > 500:
+        raise InvalidSimplePlan("外部股票候选数量异常")
+    if picks:
+        lines.append("待审股票中出现公告线索：" + "、".join(picks[:8]))
+    else:
+        lines.append("当前待审范围未匹配公告线索；仍须继续QMT轮转兜底。")
+    for entry in stocks:
+        if (not isinstance(entry, dict) or not isinstance(entry.get("symbol"), str)
+                or entry.get("can_commit") is not False
+                or entry.get("can_clear_pending") is not False):
+            raise InvalidSimplePlan("东财比对股票回执不可信")
+        code = entry["symbol"]
+        if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code):
+            raise InvalidSimplePlan("东财核验股票格式异常")
+        compared = entry.get("fields_compared", 0)
+        different = entry.get("value_differences", 0)
+        if (type(compared) is not int or type(different) is not int
+                or not 0 <= different <= compared <= 200):
+            raise InvalidSimplePlan("东财比对字段计数无效")
+        lines.append(
+            "%s：已比对 %d 个报告期字段，数值差异 %d；状态%s。" %
+            (code, compared, different, str(entry.get("status", ""))[:60]))
+    lines.append(
+        "只读试验：仅核验三大报表少量字段，未验证公告原文、修订版及完整九表。"
+        "不会自动下载、覆盖旧版、清除pending或修改20:05任务。")
+    return "\n".join(lines)

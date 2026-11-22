@@ -140,7 +140,8 @@ def _run_child(code: str, timeout_seconds: int = 25,
     cmd = [sys.executable, "-u", "-B", str(Path(__file__).resolve()),
            "--internal-cache-fingerprints", "--stock", code]
     if date_details:
-        cmd.append("--report-key-dates-only")
+        cmd.extend(["--report-key-date-details", "--explicit-readonly",
+                    "--explicit-qmt-cache-read"])
     try:
         completed = runner(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -543,7 +544,9 @@ def main(argv=None) -> int:
     if args.internal_cache_fingerprints:
         # An offline-only invocation must never enter the QMT cache child,
         # even if a caller combines incompatible CLI flags.
-        if args.preflight_only or not args.stock:
+        if (args.preflight_only or not args.stock
+                or (args.report_key_date_details and not (
+                    args.explicit_readonly and args.explicit_qmt_cache_read))):
             return 2
         try:
             payload = _child_cache_fingerprints(

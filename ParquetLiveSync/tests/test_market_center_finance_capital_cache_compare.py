@@ -331,6 +331,72 @@ class CapitalCompareTests(unittest.TestCase):
             self.assertEqual(code, 2)
             source.assert_not_called()
 
+    def test_parent_compares_two_opt_in_date_samples_once_each(self):
+        sha = "a" * 64
+        def row(day, cap):
+            return P._fingerprint({
+                "m_timetag": day, "m_quarter": "Q3",
+                "freeFloatCapital": cap}, date_details=True)
+        details = {"snapshot_candidates_verified": 1,
+                   "historical_selected_dates": 1,
+                   "selected_history_variants": 1,
+                   "active_pins_structurally_present": 1,
+                   "history_fingerprint_locally_verified": True}
+        histories = [
+            ({"stock": "000010.SZ", "proof_class": P.PROOF_TYPES[0],
+              "pending_asof": "2026-11-19", "attempts": 6},
+             [row("20230930", 100)], details),
+            ({"stock": "000055.SZ", "proof_class": P.PROOF_TYPES[1],
+              "pending_asof": "2026-11-19", "attempts": 4},
+             [row("20231231", 200)], details)]
+        fresh = {
+            "000010.SZ": [row("20230930", 100), row("20240331", 100)],
+            "000055.SZ": [row("20231231", 201)]}
+        called = []
+        def local_cache_only(code, *, date_details=False):
+            called.append((code, date_details))
+            return {"records": fresh[code]}
+        with patch.object(P, "_prepare_verified_histories",
+                          return_value=(sha, histories)) as prepared, \
+             patch.object(P.P2, "summarize_pending",
+                          return_value={"progress_sha256": sha}):
+            result = P.compare("/synthetic", "/synthetic", sha,
+                               read_cache=local_cache_only, date_details=True)
+        self.assertEqual(prepared.call_args.kwargs["date_details"], True)
+        self.assertEqual(called, [("000010.SZ", True), ("000055.SZ", True)])
+        self.assertEqual(result["qmt_cache_calls"], 2)
+        self.assertEqual(result["download_calls"], 0)
+        self.assertFalse(result["can_execute"])
+        self.assertFalse(result["can_repair"])
+        self.assertFalse(result["market_file_writes"])
+        self.assertEqual(
+            result["samples"][0]["report_key_date_details"][
+                "current_only_key_dates"], ["2024-03-31"])
+        self.assertEqual(
+            result["samples"][1]["report_key_date_details"][
+                "changed_business_field_key_dates"],
+            [{"report_key_date": "2023-12-31",
+              "fields": ["freeFloatCapital"]}])
+
+    def test_date_details_discarded_if_ledger_changes_after_qmt_read(self):
+        sha = "a" * 64
+        rows = [P._fingerprint(
+            {"m_timetag": "20240930", "m_quarter": "Q3",
+             "freeFloatCapital": 10}, date_details=True)]
+        histories = [
+            ({"stock": "000010.SZ", "proof_class": P.PROOF_TYPES[0],
+              "pending_asof": "2026-11-19", "attempts": 1},
+             rows, {"history_fingerprint_locally_verified": True})]
+        with patch.object(P, "_prepare_verified_histories",
+                          return_value=(sha, histories)), \
+             patch.object(P.P2, "summarize_pending",
+                          return_value={"progress_sha256": "b" * 64}):
+            with self.assertRaisesRegex(
+                    P.CacheCompareBlocked, "financial_progress_changed_during_qmt"):
+                P.compare("/synthetic", "/synthetic", sha,
+                          read_cache=lambda code, *, date_details: {
+                              "records": rows}, date_details=True)
+
     def test_cli_date_details_require_separate_explicit_cache_read(self):
         sha = "a" * 64
         args = ["--state-module", "/synthetic",

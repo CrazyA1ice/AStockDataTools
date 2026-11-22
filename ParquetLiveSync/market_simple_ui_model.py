@@ -5,6 +5,7 @@ No source download, market write, schedule edit or calendar-day guessing.
 from __future__ import annotations
 
 from datetime import date
+from collections import Counter
 from pathlib import Path
 import re
 
@@ -202,3 +203,107 @@ def finance_cache_refresh_scope(plan: dict) -> dict:
         "official_finance_progress_not_modified": True,
         "financial_history_conflicts_not_auto_approved": True,
     }
+
+
+def finance_pending_brief(progress: dict) -> str:
+    """Tiny refresh-safe summary from the ledger already read by the GUI."""
+    if not isinstance(progress, dict) or not isinstance(progress.get("pending"), dict):
+        return "财务待审：账本不可用，不能推断为零；可在异常与日志页检查。"
+    pending = progress["pending"]
+    counts = Counter()
+    for item in pending.values():
+        if not isinstance(item, dict) or not isinstance(item.get("reason"), str):
+            return "财务待审：记录格式待核实；不要继续正式财务入库。"
+        counts[item["reason"]] += 1
+    if not pending:
+        return "财务待审：账本内暂无待审记录（不代表财务历史已跨源核验）。"
+    known = {"SOURCE_HISTORY_CONFLICT", "CACHE_DECODE_ERROR", "NO_CACHE"}
+    extra = sum(n for reason, n in counts.items() if reason not in known)
+    return (
+        "财务待审 %d 只：历史差异 %d、缓存解码 %d、无缓存 %d、其他 %d。"
+        "可点“检查财务问题（只读）”查看原因；不会覆盖旧历史。"
+        % (len(pending), counts["SOURCE_HISTORY_CONFLICT"],
+           counts["CACHE_DECODE_ERROR"], counts["NO_CACHE"], extra)
+    )
+
+
+def finance_root_from_progress(progress: dict) -> Path:
+    """Derive the stock root; never guess D:\\stock or auto-create folders."""
+    if not isinstance(progress, dict) or not isinstance(progress.get("root"), str):
+        raise InvalidSimplePlan("正式财务账本未提供数据根目录")
+    extra = Path(progress["root"])
+    if (not extra.is_absolute() or extra.name.lower() != "qmt_extra"
+            or extra.parent.name.lower() != "allcycleastockdata"):
+        raise InvalidSimplePlan("账本的数据根目录格式不符合预期，已拒绝检查")
+    return extra.parent.parent
+
+
+def finance_issue_report_view(report: dict) -> str:
+    """Plain Chinese operator guidance, never a repair or commit approval."""
+    if (not isinstance(report, dict)
+            or report.get("status") !=
+               "S9_FULL_PENDING_METADATA_CENSUS_READONLY_NOT_SOURCE_CERTIFIED"
+            or report.get("can_commit") is not False
+            or report.get("can_apply") is not False
+            or report.get("all_historical_versions_verified") is not False
+            or report.get("qmt_calls") != 0):
+        raise InvalidSimplePlan("财务诊断回执身份不匹配，不能展示为安全结果")
+    total = report.get("ledger_pending_total")
+    reasons = report.get("pending_by_reason")
+    first = report.get("first_recorded_conflict_table_counts")
+    missing = report.get("per_share_without_local_snapshots")
+    rows = report.get("rows_on_page")
+    if (type(total) is not int or total < 0
+            or not isinstance(reasons, dict)
+            or any(type(v) is not int or v < 0 for v in reasons.values())
+            or sum(reasons.values()) != total
+            or not isinstance(first, dict)
+            or any(type(v) is not int or v < 0 for v in first.values())
+            or type(missing) is not int or not 0 <= missing <= total
+            or not isinstance(rows, list) or len(rows) > 20):
+        raise InvalidSimplePlan("财务诊断计数或明细格式异常")
+    kinds = ("Capital", "Top10Holder", "Top10FlowHolder",
+             "HolderNum", "UNCLASSIFIED")
+    pieces = [
+        "已核对账本待审 %d 只（仅本地目录元数据，未连接QMT来源）。" % total,
+        "历史差异 %d；缓存解码 %d；无缓存 %d。" % (
+            reasons.get("SOURCE_HISTORY_CONFLICT", 0),
+            reasons.get("CACHE_DECODE_ERROR", 0),
+            reasons.get("NO_CACHE", 0)),
+        "已记录的首个历史冲突表：" +
+        ("，".join("%s %d" % (name, first[name])
+                  for name in kinds if first.get(name)) or "暂无") +
+        "（不是全部差异表）。",
+        "PerShare 无本地快照 %d/%d；不能据此判断QMT来源为空。" %
+        (missing, total),
+    ]
+    decode = report.get("cache_decode_error_stocks", [])
+    if not isinstance(decode, list) or any(not isinstance(x, str) for x in decode):
+        raise InvalidSimplePlan("缓存解码明细格式异常")
+    if decode:
+        pieces.append("缓存解码待查股票：" + "、".join(decode[:8]) + "。")
+    problems = report.get("journal_counts", {})
+    if not isinstance(problems, dict) or any(
+            type(v) is not int or v < 0 for v in problems.values()):
+        raise InvalidSimplePlan("事务日志计数格式异常")
+    pieces.append("既有事务日志：%d 条；有记录需单独核对，不能自动重放。" %
+                  sum(problems.values()))
+    for row in rows[:3]:
+        if not isinstance(row, dict) or not isinstance(row.get("nine_table_states"), dict):
+            raise InvalidSimplePlan("财务诊断股票明细格式异常")
+        code = str(row.get("symbol", "?"))
+        category = str(row.get("reason", "?"))
+        table = row.get("first_recorded_conflict_table") or "未明确"
+        states = row["nine_table_states"]
+        missing_tables = [name for name, value in states.items() if value == "M"]
+        unpinned_tables = [name for name, value in states.items()
+                           if value in ("U", "R", "A")]
+        pieces.append(
+            "%s：%s；首阻断表%s；无快照[%s]；待固定版本[%s]。" %
+            (code, category, table, "、".join(missing_tables) or "无",
+             "、".join(unpinned_tables) or "无"))
+    pieces.append(
+        "建议：先查看解码错误与历史差异原因；已保存的旧版本保留。"
+        "该功能不会补pin、清理待审记录或提交财务Parquet。"
+    )
+    return "\n".join(pieces)

@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import importlib
+import inspect
 import json
 from pathlib import Path
 import re
@@ -114,13 +115,31 @@ def discover_recent(ak, *, observed_on: date, days=7, pages=2,
     scanned = 0
     latest = None
     failed_categories = []
-    for category in KIND:
+    notice_fn = getattr(ak, "stock_notice_report", None)
+    if not callable(notice_fn):
+        raise SecondarySourceBlocked("AKSHARE_NOTICE_API_MISSING")
+    params = inspect.signature(notice_fn).parameters
+    # Modern AKShare is date-scoped; old versions used recent_page.
+    date_scoped = "date" in params and "symbol" in params
+    if date_scoped:
+        if days > 7:
+            raise SecondarySourceBlocked("DATE_NOTICE_API_MAX_SEVEN_DAYS")
+        queries = [(category, (observed_on - timedelta(days=offset)).strftime(
+                     "%Y%m%d"))
+                   for offset in range(days) for category in KIND]
+    elif "report_type" in params and "recent_page" in params:
+        queries = [(category, None) for category in KIND]
+    else:
+        raise SecondarySourceBlocked("UNRECOGNIZED_AKSHARE_NOTICE_SIGNATURE")
+    for category, query_date in queries:
         try:
-            frame = ak.stock_notice_report(
-                report_type=category, recent_page=str(pages))
+            frame = (notice_fn(symbol=category, date=query_date)
+                     if date_scoped else
+                     notice_fn(report_type=category, recent_page=str(pages)))
             records = _dataframe_records(frame, cap=1500)
         except Exception as exc:
             failed_categories.append({"category": category,
+                                      "date": query_date,
                                       "error_type": type(exc).__name__})
             continue
         scanned += len(records)
@@ -160,7 +179,10 @@ def discover_recent(ak, *, observed_on: date, days=7, pages=2,
         "failed_categories": failed_categories,
         "from_date": cutoff, "through_date": observed_on.isoformat(),
         "latest_listed_date": latest,
-        "categories_requested": list(KIND), "pages_per_category": pages,
+        "categories_requested": list(KIND),
+        "query_strategy": ("MODERN_BY_DATE" if date_scoped else "LEGACY_PAGES"),
+        "source_requests_attempted": len(queries),
+        "pages_per_category": pages if not date_scoped else None,
         "rows_scanned": scanned, "unique_event_leads": len(events),
         "unresolved_identity_leads": sum(e["symbol"] is None for e in events),
         "candidate_symbols_in_known_scope": candidates,

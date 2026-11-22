@@ -121,6 +121,12 @@ def execute(args, module, timeout, *, runner=subprocess.run):
             result["pass"] = False
             result["error"] = "TK_THEME_CALLBACK_AFTER_DESTROY"
             result["output_tail"] = message[-3500:]
+        elif re.search(r"(?m)^>>> ", message):
+            # An unexpected Python REPL prompt is never a clean unittest
+            # result, even when a closed stdin makes the child exit zero.
+            result["pass"] = False
+            result["error"] = "PYTHON_INTERACTIVE_PROMPT_DETECTED"
+            result["output_tail"] = message[-3500:]
         return result
     except subprocess.TimeoutExpired as exc:
         # unittest -v writes test names BEFORE running their bodies. Keep

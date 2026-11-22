@@ -53,8 +53,15 @@ def _day(value):
     if value is None:
         return None
     token = str(value).strip()
+    if re.fullmatch(r"\d{14}", token):
+        token = token[:8]
     if re.fullmatch(r"\d{8}", token):
         token = token[:4] + "-" + token[4:6] + "-" + token[6:]
+    elif re.fullmatch(r"\d{13}", token):
+        try:
+            return datetime.fromtimestamp(int(token) / 1000, CST).date().isoformat()
+        except (OverflowError, ValueError, OSError):
+            return None
     elif len(token) >= 10:
         token = token[:10]
     try:
@@ -282,15 +289,28 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
             "qmt_api_calls": 0, "qmt_download_calls": 0}
 
 
-def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2):
+def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
+          known_symbols=None):
     """One bounded real-source call path for event discovery and small comparison."""
     if not isinstance(symbols, list) or not 1 <= len(symbols) <= 3:
         raise SecondarySourceBlocked("PILOT_LIMIT_THREE_SYMBOLS")
     if len(set(symbols)) != len(symbols):
         raise SecondarySourceBlocked("DUPLICATE_PILOT_SYMBOL")
-    discovery = discover_recent(
-        ak, observed_on=observed_on, days=days, pages=pages,
-        known_symbols=symbols)
+    if known_symbols is None:
+        known_symbols = symbols
+    try:
+        discovery = discover_recent(
+            ak, observed_on=observed_on, days=days, pages=pages,
+            known_symbols=known_symbols)
+    except Exception as exc:
+        # Failure is NOT an empty announcement feed. It must never suppress
+        # the existing QMT all-market rotation or indicate 'no new reports'.
+        discovery = {"source": SOURCE,
+                     "status": "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE",
+                     "error_type": type(exc).__name__,
+                     "feed_complete_for_date_range": False,
+                     "empty_means_no_financial_updates": False,
+                     "can_schedule_download": False, "can_commit": False}
     comparisons = [
         crosscheck_saved(root, code, ak)
         for code in symbols

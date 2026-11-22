@@ -458,8 +458,11 @@ class SimpleMarketDashboard(UpdaterDashboard):
         if not self._finance_diag_text:
             self.finance_diag_status.set("尚无诊断摘要，请先点击“检查财务问题（只读）”。")
             return
+        text = self._finance_diag_text
+        if self.qmt_probe_detail.get():
+            text += "\n\n" + self.qmt_probe_detail.get()
         self.clipboard_clear()
-        self.clipboard_append(self._finance_diag_text)
+        self.clipboard_append(text)
         self.finance_diag_status.set(
             "诊断摘要已复制；无需再提供数百项测试的完整输出。")
 

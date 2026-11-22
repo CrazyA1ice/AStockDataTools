@@ -223,6 +223,14 @@ class LocalFinanceReadinessTests(unittest.TestCase):
                 P.PreflightBlocked, "CANONICAL_WORKSPACE"):
             P.inspect(self.root, Path(self.tmp.name))
 
+    def test_detached_worktree_metadata_file_is_not_canonical(self):
+        git = self.workspace.parent.parent.parent / ".git"
+        git.rmdir()
+        git.write_text("gitdir: synthetic-review-only", encoding="utf-8")
+        with self.assertRaisesRegex(
+                P.PreflightBlocked, "CANONICAL_WORKSPACE"):
+            self.inspect(symbols=STOCK)
+
     def test_finance_ledger_changed_during_read_is_refused(self):
         original = P.REVIEW._hash_file
         observed = [0]

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +30,7 @@ MAX_SNAPSHOT_FILES = 8
 MAX_TOTAL_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_CACHE_ROWS = 2000
 MAX_FIELDS = 128
+MAX_DATE_DETAILS = 32
 MAX_CHILD_STDOUT_BYTES = 3 * 1024 * 1024
 FIELD = re.compile(r"[A-Za-z0-9_]{1,96}")
 SENTINEL = "FINANCE_P5_CACHED_FINGERPRINTS="
@@ -42,7 +44,43 @@ def _digest(value) -> str:
     return sha256(E.canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _fingerprint(row: dict) -> dict:
+def _report_key_date(value) -> str:
+    """Strict QMT m_timetag date label; not a certified financial filing date."""
+    try:
+        value = json.loads(E.canonical_json(value))
+        if type(value) is bool or type(value) not in (str, int, float):
+            raise ValueError("unsupported QMT key date type")
+        if type(value) is float:
+            if not math.isfinite(value) or not value.is_integer():
+                raise ValueError("fractional QMT key date")
+            value = int(value)
+        token = str(value).strip()
+        if re.fullmatch(r"\d{8}", token):
+            day = datetime.strptime(token, "%Y%m%d").date()
+        elif re.fullmatch(r"\d{14}", token):
+            day = datetime.strptime(token, "%Y%m%d%H%M%S").date()
+        elif re.fullmatch(r"\d{13}", token):
+            day = datetime.fromtimestamp(int(token) / 1000, CN).date()
+        elif re.fullmatch(r"\d{10}", token):
+            day = datetime.fromtimestamp(int(token), CN).date()
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
+            day = date.fromisoformat(token)
+        elif re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+                r"(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?", token):
+            stamp = datetime.fromisoformat(token.replace("Z", "+00:00"))
+            day = (stamp.astimezone(CN).date()
+                   if stamp.tzinfo is not None else stamp.date())
+        else:
+            raise ValueError("unknown QMT report-key encoding")
+        if not 1980 <= day.year <= 2100:
+            raise ValueError("QMT report-key date outside bounded range")
+        return day.isoformat()
+    except (ValueError, OverflowError, OSError) as exc:
+        raise CacheCompareBlocked("qmt_report_key_date_unverifiable") from exc
+
+
+def _fingerprint(row: dict, *, date_details=False) -> dict:
     if type(row) is not dict or len(row) > MAX_FIELDS + 1:
         raise CacheCompareBlocked("cache_record_field_budget")
     if ("m_timetag" not in row or row["m_timetag"] is None
@@ -56,10 +94,14 @@ def _fingerprint(row: dict) -> dict:
         if type(key) is not str or FIELD.fullmatch(key) is None:
             raise CacheCompareBlocked("unexpected_capital_field_name")
         fields[key] = _digest(value)
-    return {"key_sha256": _digest(row["m_timetag"]), "field_sha256": fields}
+    result = {"key_sha256": _digest(row["m_timetag"]),
+              "field_sha256": fields}
+    if date_details:
+        result["report_key_date"] = _report_key_date(row["m_timetag"])
+    return result
 
 
-def _child_cache_fingerprints(code: str) -> dict:
+def _child_cache_fingerprints(code: str, *, date_details=False) -> dict:
     if type(code) is not str or P2.STOCK.fullmatch(code) is None:
         raise CacheCompareBlocked("invalid_child_symbol")
     from xtquant import xtdata
@@ -80,16 +122,18 @@ def _child_cache_fingerprints(code: str) -> dict:
         "stock": code,
         "table": "Capital",
         "row_count": len(records),
-        "records": [_fingerprint(row) for row in records],
+        "records": [_fingerprint(row, date_details=date_details) for row in records],
     }
 
 
 def _run_child(code: str, timeout_seconds: int = 25,
-               runner=subprocess.run) -> dict:
+               runner=subprocess.run, *, date_details=False) -> dict:
     if type(timeout_seconds) is not int or not 5 <= timeout_seconds <= 30:
         raise CacheCompareBlocked("invalid_cache_child_timeout")
     cmd = [sys.executable, "-u", "-B", str(Path(__file__).resolve()),
            "--internal-cache-fingerprints", "--stock", code]
+    if date_details:
+        cmd.append("--report-key-dates-only")
     try:
         completed = runner(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -122,12 +166,18 @@ def _run_child(code: str, timeout_seconds: int = 25,
         raise CacheCompareBlocked("qmt_cache_fingerprint_envelope_invalid")
     for record in payload["records"]:
         if (type(record) is not dict
-                or set(record) != {"key_sha256", "field_sha256"}
+                or set(record) != ({"key_sha256", "field_sha256",
+                                   "report_key_date"} if date_details else
+                                   {"key_sha256", "field_sha256"})
                 or type(record["key_sha256"]) is not str
                 or len(record["key_sha256"]) != 64
                 or type(record["field_sha256"]) is not dict
                 or not 1 <= len(record["field_sha256"]) <= MAX_FIELDS
-                or "m_timetag" not in record["field_sha256"]):
+                or "m_timetag" not in record["field_sha256"]
+                or (date_details and
+                    (type(record["report_key_date"]) is not str or
+                     re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                  record["report_key_date"]) is None))):
             raise CacheCompareBlocked("qmt_cache_fingerprint_record_invalid")
         if (any(type(k) is not str or FIELD.fullmatch(k) is None
                 or type(v) is not str or len(v) != 64
@@ -136,6 +186,15 @@ def _run_child(code: str, timeout_seconds: int = 25,
                 or re.fullmatch(r"[0-9a-f]{64}",
                                 record["key_sha256"]) is None):
             raise CacheCompareBlocked("qmt_cache_fingerprint_digest_invalid")
+    if date_details:
+        for record in payload["records"]:
+            try:
+                if (date.fromisoformat(record["report_key_date"]).isoformat()
+                        != record["report_key_date"]):
+                    raise ValueError("noncanonical date")
+            except ValueError as exc:
+                raise CacheCompareBlocked(
+                    "qmt_cache_report_key_date_invalid") from exc
     return payload
 
 

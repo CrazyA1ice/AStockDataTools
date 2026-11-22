@@ -16,3 +16,17 @@ Finance P4于2026-11-21用户Windows固定SHA `029632080b3bd3a85e4476edcfae81805
 
 ## 验收
 新11项纯合成测试；此前P4已实机通过340项，因此预计匹配 `test_market_center*.py` 的全量是351项。**本P5尚未现场Windows验收、没有调用真实QMT、没有读取真实财务缓存**。请先固定提交离线回归后，再自行判断是否显式进行一次只读cache-read。PR保留Draft。
+
+## P5 离线预检门禁（2026-11-22 新增）
+
+在发起任何QMT本地缓存读取之前，支持同一个 `market_center_finance_capital_cache_compare.py` 的 `--preflight-only --explicit-readonly` 模式（**不能**同时传 `--explicit-qmt-cache-read`）。此模式复用与真正compare完全相同的 P3账本SHA/P4旧快照内容校验/Capital两类首阻断股票选择与8文件/8MiB预算，但**不启动独立QMT子进程、不读取当前缓存**。若没有两种证明类别各一只合格样本、旧快照缺失或当前账本SHA与预先锁定值不同，立即拒绝。
+
+成功回执仅展示两只股票代码、两类记录证明类别、旧快照版本/候选数与防护标志；并严格声明 `qmt_cache_calls=0`、`download_calls=0`、`current_qmt_cache_compared=false`、`actual_conflict_report_dates_located=false`、`can_repair=false`。这一预检不会证明当前QMT缓存和旧历史一致，也不意味着两只样本覆盖了其余全部Capital冲突。
+
+**运行示例（命令中的SHA必须来自当前正式P2账本审计，不能使用文档中2026-11-21旧SHA）：**
+
+```powershell
+& "D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe" "D:\ChatGPT\AStockDataTools\work\gui-quickcheck-review\ParquetLiveSync\market_center_finance_capital_cache_compare.py" --state-module "D:\ChatGPT\AStockDataTools\ParquetLiveSync" --market-root "<实际AllCycleAStockData绝对路径>" --expected-progress-sha256 "<当前完整64位账本SHA>" --preflight-only --explicit-readonly
+```
+
+预检成功后，真实QMT本地缓存比对必须由操作者另外显式指定 `--explicit-readonly --explicit-qmt-cache-read`，并重新通过全部旧快照/账本SHA校验；新预检**不会自动启动**真实QMT读取。原始财务值不出终端，不创建修复/回滚授权。

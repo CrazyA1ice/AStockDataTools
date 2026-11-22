@@ -389,8 +389,16 @@ def finance_qmt_probe_view(report: dict, expected_stock: str) -> str:
         "INVALID_PROVIDER_RESPONSE": "返回格式异常",
         "SOURCE_API_ERROR": "接口异常",
     }
+    version = report.get("installed_xtquant_version", "UNKNOWN")
+    if (not isinstance(version, str)
+            or re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}", version)
+               is None):
+        raise InvalidSimplePlan("QMT本地软件版本字段异常")
     lines = ["%s · QMT本地财务逐表只读检查（最多9次读取，无下载）"
-             % expected_stock]
+             % expected_stock,
+             "本地安装 xtquant 版本：%s（版本号不能证明具体接口可用）。" %
+             version]
+    statuses = []
     for table, item in zip(tables, report["tables"]):
         if (not isinstance(item, dict)
                 or item.get("table") != table
@@ -407,12 +415,42 @@ def finance_qmt_probe_view(report: dict, expected_stock: str) -> str:
                     ("ROWS_IN_LOCAL_CACHE", "EMPTY_OR_NOT_CACHED")
                     and count is not None)):
             raise InvalidSimplePlan("QMT逐表回执记录数无效")
+        statuses.append(item["status"])
         label = messages[item["status"]]
         if item["status"] == "ROWS_IN_LOCAL_CACHE":
             label += "（%d行）" % count
         if table == "PerShare":
             label += "；此表跨QMT版本支持情况未确认"
         lines.append("%s：%s" % (table, label))
+    core = statuses[:-1]
+    optional = statuses[-1]
+    core_failures = [table for table, status in zip(tables[:-1], core)
+                     if status not in
+                     ("ROWS_IN_LOCAL_CACHE", "EMPTY_OR_NOT_CACHED")]
+    if core_failures:
+        lines.append(
+            "诊断结论：核心八表中需要排查 %s；不能仅归因于PerShare。"
+            "建议先检查这些表的QMT接口或缓存。" %
+            "、".join(core_failures))
+    elif all(status == "ROWS_IN_LOCAL_CACHE" for status in core):
+        if optional in ("UTF8_DECODE_ERROR", "TABLE_NOT_RETURNED",
+                        "SOURCE_API_ERROR", "INVALID_PROVIDER_RESPONSE"):
+            lines.append(
+                "诊断结论：核心八表逐表均能读取缓存；仅PerShare"
+                "单表存在异常，优先排查该可选表的版本兼容或缓存。"
+                "仍不能证明九表组合请求的根因。")
+        else:
+            lines.append(
+                "诊断结论：核心八表逐表均可读取。若原九表批量读取"
+                "仍失败，需检查组合调用；不能认定历史冲突已解决。")
+    elif all(status == "EMPTY_OR_NOT_CACHED" for status in core):
+        lines.append(
+            "诊断结论：核心八表的本地缓存均为空或尚未采集，"
+            "不能判定供应商源数据不存在。")
+    else:
+        lines.append(
+            "诊断结论：部分核心表本地缓存为空或未采集，"
+            "先确认实际采集范围，不要直接覆盖历史。")
     lines.append(
         "注意：本地缓存为空不能证明数据源无数据。逐表检查不验证数值、"
         "不自动修复解码问题、不清理pending，也不提交财务Parquet。")

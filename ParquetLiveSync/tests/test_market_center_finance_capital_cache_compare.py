@@ -308,6 +308,8 @@ class CapitalCompareTests(unittest.TestCase):
                    "records": [record]}
         def simulate(*args, **kwargs):
             self.assertIn("--report-key-date-details", args[0])
+            self.assertIn("--explicit-readonly", args[0])
+            self.assertIn("--explicit-qmt-cache-read", args[0])
             return SimpleNamespace(
                 returncode=0,
                 stdout=(P.SENTINEL + json.dumps(payload)).encode("utf-8"))
@@ -316,6 +318,18 @@ class CapitalCompareTests(unittest.TestCase):
         record["report_key_date"] = "2024-02-30"
         with self.assertRaises(P.CacheCompareBlocked):
             P._run_child("000001.SZ", runner=simulate, date_details=True)
+
+    def test_internal_date_mode_requires_same_two_opt_ins(self):
+        for extra in ([], ["--explicit-readonly"],
+                      ["--explicit-qmt-cache-read"]):
+            with patch.object(P, "_child_cache_fingerprints") as source, \
+                 redirect_stdout(io.StringIO()):
+                code = P.main([
+                    "--internal-cache-fingerprints",
+                    "--report-key-date-details", "--stock", "000001.SZ"
+                ] + extra)
+            self.assertEqual(code, 2)
+            source.assert_not_called()
 
     def test_cli_date_details_require_separate_explicit_cache_read(self):
         sha = "a" * 64

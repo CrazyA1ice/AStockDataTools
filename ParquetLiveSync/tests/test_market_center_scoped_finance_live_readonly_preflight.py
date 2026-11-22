@@ -166,6 +166,28 @@ class LocalFinanceReadinessTests(unittest.TestCase):
         self.assertEqual(r["pending_total"], 3)
         self.assertEqual(r["pending_by_reason"], {"NO_CACHE": 3})
 
+    def test_journal_creation_during_inventory_is_detected(self):
+        created = self.workspace / "scoped-finance-transaction-journals"
+        original = P._latest_table
+        once = [False]
+        def mutate(extra, code, table, evidence):
+            if not once[0]:
+                once[0] = True
+                created.mkdir()
+                (created / (OTHER + ".json")).write_text(
+                    '{"phase":"PREPARED"}', encoding="utf-8")
+            return original(extra, code, table, evidence)
+        with patch.object(P, "_latest_table", side_effect=mutate):
+            with self.assertRaisesRegex(
+                    P.PreflightBlocked, "FINANCIAL_DIRECTORY_CHANGED"):
+                self.inspect(symbols=STOCK)
+
+    def test_future_dated_snapshot_is_refused(self):
+        self.add_snapshot(day="2099-01-01")
+        with self.assertRaisesRegex(
+                P.PreflightBlocked, "FUTURE_FINANCIAL_SNAPSHOT_DAY"):
+            self.inspect(symbols=STOCK)
+
     def test_invalid_scope_and_large_sample_rejected(self):
         for kwargs in (
             {"symbols": "000002.SZ,000001.SZ"},

@@ -502,10 +502,10 @@ def finance_secondary_pilot_view(report: dict) -> str:
             or not isinstance(stocks, list) or len(stocks) > 3):
         raise InvalidSimplePlan("跨源发现结果不可信或范围过大")
     n = lead.get("unique_event_leads", 0)
-    if type(n) is not int or not 0 <= n <= 4500:
+    if type(n) is not int or not 0 <= n <= 31500:
         raise InvalidSimplePlan("公告候选计数超出范围")
     lines = [
-        "东方财富近期公告候选 %d 条（有限页、非全市场完整事件流）。" % n,
+        "东方财富近期公告候选 %d 条（限页/限日期、非完整公告流）。" % n,
         "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
         str(lead.get("status", "UNKNOWN"))[:70],
     ]

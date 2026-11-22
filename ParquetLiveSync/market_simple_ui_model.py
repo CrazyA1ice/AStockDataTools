@@ -274,7 +274,8 @@ def finance_issue_report_view(report: dict) -> str:
         ("，".join("%s %d" % (name, first[name])
                   for name in kinds if first.get(name)) or "暂无") +
         "（不是全部差异表）。",
-        "PerShare 无本地快照 %d/%d；不能据此判断QMT来源为空。" %
+        "PerShare 无本地快照 %d/%d；当前QMT增量下载名单未包含此表，"
+        "需核对客户端版本支持情况；不能据此判断QMT来源为空或历史损坏。" %
         (missing, total),
     ]
     states = report.get("nine_table_local_state_counts", [])

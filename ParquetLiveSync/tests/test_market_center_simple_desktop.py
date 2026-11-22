@@ -789,6 +789,14 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("本地待审：85只", clip)
         self.assertIn("PerShare UTF-8解码失败", clip)
 
+    def test_copy_diagnostic_includes_external_financial_evidence(self):
+        self.app._finance_diag_text = "QMT待审85只"
+        self.app.secondary_finance_detail.set(
+            "东财三表对照：000055.SZ归母净利润不一致")
+        self.app.copy_finance_diagnostic()
+        self.assertIn(
+            "归母净利润不一致", self.app.clipboard_get())
+
     def test_qmt_probe_blocks_stale_pending_without_subprocess(self):
         self.app._finance_decode_retry_stock = "688259.SH"
         with patch.object(UI, "safe_json", return_value={"pending": {}}), \

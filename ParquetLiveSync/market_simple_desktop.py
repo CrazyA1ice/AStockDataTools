@@ -482,7 +482,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
                      "--root", str(root),
                      "--symbols", ",".join(selected),
                      "--known-symbols", ",".join(known),
-                     "--lookback-days", "7", "--pages", "2",
+                     "--lookback-days", "3", "--pages", "2",
                      "--explicit-readonly"],
                     cwd=str(canonical_repo),
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

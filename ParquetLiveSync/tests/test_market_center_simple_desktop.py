@@ -91,11 +91,35 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
         ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
         self.assertIn("market_simple_desktop.py", ps)
         self.assertNotIn("gui_simple.py", ps)
-        self.assertNotIn("-m unittest", ps)
+        self.assertIn("if ($QuickCheck) {", ps)
+        normal_start = ps.split(
+            "# Only this branch launches the GUI.", 1)[1]
+        self.assertNotIn("-m unittest", normal_start)
+        self.assertIn("    return\n}\n# Only this branch", ps)
         self.assertNotIn("H5ParquetReconciler", ps)
         self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
         self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
         self.assertIn("& $python -u -B $entry", ps)
+
+    def test_opt_in_quickcheck_is_focused_and_never_starts_gui(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        check = ps.split("if ($QuickCheck) {", 1)[1].split(
+            "# Only this branch launches the GUI.", 1)[0]
+        self.assertIn("test_market_center_simple_desktop.py", check)
+        self.assertIn("test_qmt_extra_data.py", check)
+        self.assertIn("-k table_probe", check)
+        self.assertIn("-k valid_probe_cli", check)
+        self.assertNotIn("-p 'test_*.py'", check)
+        self.assertNotIn("& $python -u -B $entry", check)
+        self.assertIn("QUICK_GUI_CHECK_PASS", check)
+        self.assertIn("SetEnvironmentVariable('PYTHONPATH'", check)
+
+    def test_quickcheck_can_use_existing_main_checkout_python(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("[string]$PythonPath = ''", ps)
+        self.assertIn("if ($PythonPath)", ps)
+        self.assertIn("Test-Path -LiteralPath $python -PathType Leaf", ps)
+        self.assertNotIn("scheduled-afternoon-update.ps1", ps)
 
     def test_cmd_launcher_is_same_gui_without_python_repl_hang(self):
         cmd = (UI.MODULE / "start-market-update-dashboard.cmd").read_text(

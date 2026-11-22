@@ -15,7 +15,7 @@ Finance P4于2026-11-21用户Windows固定SHA `029632080b3bd3a85e4476edcfae81805
 本P5为现场用户主动触发，绝不自动部署或运行于20:05。全部输出标记 `download_calls=0`、`can_repair=false`、`market_file_writes=false`、`source_authenticity_certified=false`。
 
 ## 验收
-新11项纯合成测试；此前P4已实机通过340项，因此预计匹配 `test_market_center*.py` 的全量是351项。**本P5尚未现场Windows验收、没有调用真实QMT、没有读取真实财务缓存**。请先固定提交离线回归后，再自行判断是否显式进行一次只读cache-read。PR保留Draft。
+2026-11-22用户Windows已完成原P5 **15/15项专项模拟测试PASS**，离线预检两类样本成功；随后经双显式授权读取了 `000010.SZ` 与 `000055.SZ` 两次QMT已有Capital缓存，报告键差异13个及 `freeFloatCapital` 变化2个键，未下载/写入/清pending。这仅为抽样本地缓存证据，不能认证历史源头。当前新增报告键日期模式及其扩展专项模拟测试**尚未Windows复验**，需在该模式成功返回后才报告日期。PR保留Draft。
 
 ## P5 离线预检门禁（2026-11-22 新增）
 

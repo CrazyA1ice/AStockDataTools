@@ -192,6 +192,7 @@ class LocalFinanceReadinessTests(unittest.TestCase):
         for kwargs in (
             {"symbols": "000002.SZ,000001.SZ"},
             {"symbols": "bad"},
+            {"symbols": ""},
             {"sample_count": 6},
             {"sample_count": 0},
         ):

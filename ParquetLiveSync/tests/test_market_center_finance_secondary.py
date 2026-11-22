@@ -80,6 +80,46 @@ def synthetic_stock_root(folder):
 
 
 class FinanceSecondaryTests(TestCase):
+
+    def test_explicit_readonly_startup_reports_missing_akshare_without_traceback(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+        exc = ModuleNotFoundError("synthetic only")
+        exc.name = "akshare"
+        output = io.StringIO()
+        with patch.object(S.importlib, "import_module", side_effect=exc), \
+             redirect_stdout(output):
+            exit_code = S.main([
+                "--root", "C:/synthetic-only", "--symbols", "000010.SZ",
+                "--explicit-readonly"])
+        self.assertEqual(exit_code, 2)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("FINANCE_EXTERNAL_READONLY_ERROR="))
+        report = json.loads(lines[0].split("=", 1)[1])
+        self.assertEqual(report["status"], "AKSHARE_NOT_INSTALLED")
+        self.assertFalse(report["can_apply"])
+        self.assertFalse(report["can_commit"])
+        self.assertNotIn("synthetic-only", output.getvalue())
+
+    def test_explicit_readonly_startup_reports_missing_dependency(self):
+        import io
+        import json
+        from contextlib import redirect_stdout
+        exc = ModuleNotFoundError("synthetic dependency")
+        exc.name = "some_transitive_dependency"
+        output = io.StringIO()
+        with patch.object(S.importlib, "import_module", side_effect=exc), \
+             redirect_stdout(output):
+            exit_code = S.main([
+                "--root", "C:/synthetic-only", "--symbols", "000010.SZ",
+                "--explicit-readonly"])
+        self.assertEqual(exit_code, 2)
+        result = json.loads(output.getvalue().split("=", 1)[1])
+        self.assertEqual(result["status"], "AKSHARE_DEPENDENCY_MISSING")
+        self.assertFalse(result["can_commit"])
+
     def test_recent_financial_and_correction_candidates_have_stable_identity(self):
         ak = FakeAk()
         d = S.discover_recent(

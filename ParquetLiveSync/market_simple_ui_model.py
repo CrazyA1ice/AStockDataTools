@@ -603,7 +603,7 @@ def finance_secondary_pilot_view(report: dict) -> str:
             code = failure.get("symbol")
             kind = failure.get("error_type")
             if (not isinstance(code, str)
-                    or not re.fullmatch(r"\\d{6}\\.(?:SH|SZ|BJ)", code)
+                    or not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
                     or code not in stocks_in_scope or code in seen_failed
                     or not isinstance(kind, str)
                     or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,60}", kind)):

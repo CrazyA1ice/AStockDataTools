@@ -18,3 +18,11 @@ S7新增12项纯合成验收器测试；原预计458项命名回归，加上本�
 
 ## 一次性验收的使用方式
 在完成代码检查并确定固定Git SHA后，由维护者在 `D:\ChatGPT\AStockDataTools\work\autopilot-s7-review` 创建detached工作树，调用其 `ParquetLiveSync\market_autopilot_offline_acceptance.py`，传入与该工作树HEAD相同的**固定SHA**。可附带 `--full-regression`，一个入口同时完成Python AST、PowerShell AST、8组专项合成测试及完整回归。任何失败均阻止下一步正式入库和上线。
+## S7.1（2026-11-22）首次Windows验收的超时修复
+用户在固定 SHA `b4606bc398f9123161fdd85f0ebef463dfd7ea83` 的 detached worktree 中执行一次性验收：Git HEAD匹配、Python AST 16/16、PowerShell AST PASS，**第一组 `test_market_center_autopilot_shadow.py` 在180秒超时**，没有进入其他套件。此结果只能证明旧子进程挂起/超时，**不能证明任意测试失败或生产市场数据损坏**；旧验收器在 `subprocess.TimeoutExpired` 时丢弃了部分 stdout/stderr，所以无法进一步定位。
+
+修复：8个已核实包含 `if __name__ == '__main__': unittest.main()` 的专项测试文件，改为 `python -u -B <绝对测试文件> -v` 直接执行，避免额外 `unittest discover` 扫描；`-u -v` 让具体测试方法名在运行前输出到合并日志。首组纯合成S1改为45秒硬超时，其他含GUI/真实Parquet沙盒组保持180秒。即使超时也保留最多4000字符的子进程输出尾段与 `timeout_phase`（`STARTUP_OR_IMPORT`或`TEST_IN_PROGRESS_OR_TEARDOWN`），而非返回空白报错。依旧首组失败即停、保持 `approved_for_production=false`，不会跳过或改成PASS。
+
+新增4项纯合成验收器测试覆盖：直接逐文件verbose调用、超时部分输出保留、无输出识别为启动/导入卡住、首组超时立即停止其余套件。既有固定SHA和detached审核检查、Windows PowerShell AST、可选完整市场中心+原操作面板回归保持不变。**这是提高诊断准确度的修复，不代表已经查清用户Windows上挂起的最终原因，更不代表S1—S6已通过**。
+
+重新验收必须使用新的固定 SHA 和全新 detached worktree 目录（例如 `work/autopilot-s7r-review`），不修改旧 `work/autopilot-s7-review` 或正式主仓库；不执行任何真实QMT下载或生产入库。若首组再次超时，请查看 JSON 的 `timeout_phase` 和 `output_tail`，一次性定位具体停点，不再重复盲目加大超时。

@@ -58,7 +58,12 @@ def _snapshot_signature(directory: Path, pattern, *, pins: bool):
             raise CensusBlocked("NONREGULAR_FINANCE_CANDIDATE")
         if pins and not 0 < stat.st_size <= P3.MAX_PIN_BYTES:
             raise CensusBlocked("FINANCE_PIN_READ_BUDGET")
-        digest = sha256(path.read_bytes()).hexdigest() if pins else None
+        digest = None
+        if pins:
+            raw = path.read_bytes()
+            if not 0 < len(raw) <= P3.MAX_PIN_BYTES:
+                raise CensusBlocked("FINANCE_PIN_CHANGED_OR_READ_BUDGET")
+            digest = sha256(raw).hexdigest()
         result.append((path.name, stat.st_size, stat.st_mtime_ns, digest))
     return tuple(sorted(result))
 

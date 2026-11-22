@@ -45,7 +45,7 @@ def _digest(value) -> str:
 
 
 def _report_key_date(value) -> str:
-    """Strict QMT m_timetag date label; not a certified financial filing date."""
+    """Strict Capital change-date label, NOT a quarterly filing period."""
     try:
         value = json.loads(E.canonical_json(value))
         if type(value) is bool or type(value) not in (str, int, float):
@@ -276,9 +276,17 @@ def _old_verified_fingerprints(finance: Path, extra: Path,
              "history_fingerprint_locally_verified": True})
 
 
+def _calendar_bucket(date_text: str) -> str:
+    """Calendar annotation only: Capital may change outside quarter ends."""
+    d = date.fromisoformat(date_text)
+    return ("CALENDAR_QUARTER_END"
+            if (d.month, d.day) in ((3, 31), (6, 30), (9, 30), (12, 31))
+            else "OTHER_CALENDAR_DATE")
+
+
 def _locate_report_key_dates(old: list[dict], fresh: list[dict],
                              outcome: dict) -> dict:
-    """Expose bounded QMT m_timetag date labels and changed field NAMES only."""
+    """Expose Capital change-date labels and field NAMES, not filing dates."""
     def dates(rows):
         by_key, by_day = {}, {}
         for row in rows:
@@ -343,8 +351,29 @@ def _locate_report_key_dates(old: list[dict], fresh: list[dict],
         raise CacheCompareBlocked("qmt_key_dates_not_aligned_with_p5_counts")
     if len(removed) + len(added) + len(changed) > MAX_DATE_DETAILS:
         raise CacheCompareBlocked("report_key_date_detail_budget_exceeded")
+    def calendar_counts(labels):
+        return {
+            "calendar_quarter_end": sum(
+                _calendar_bucket(label) == "CALENDAR_QUARTER_END"
+                for label in labels),
+            "other_calendar_dates": sum(
+                _calendar_bucket(label) == "OTHER_CALENDAR_DATE"
+                for label in labels),
+        }
     return {
         "source_key": "QMT_CAPITAL_M_TIMETAG",
+        "capital_date_role": "SHARE_CAPITAL_CHANGE_DATE",
+        "capital_announcement_date_field": "m_anntime",
+        "capital_announcement_dates_verified": False,
+        "calendar_quarter_ends_required": False,
+        "change_event_sources_verified": False,
+        "free_float_capital_alias_normalized": False,
+        "calendar_only_date_counts": {
+            "previous_only": calendar_counts(removed),
+            "current_only": calendar_counts(added),
+            "changed_business_fields": calendar_counts(
+                [item["report_key_date"] for item in changed]),
+        },
         "date_labels_from_existing_local_cache": True,
         "official_report_periods_or_filing_dates_certified": False,
         "previous_only_key_dates": removed,

@@ -89,6 +89,42 @@ def synthetic_stock_root(folder):
 
 class FinanceSecondaryTests(TestCase):
 
+    def test_success_receipt_chinese_is_utf8_json_even_with_gbk_stdout(self):
+        """The real Windows pipe may encode print() in cp936, not UTF-8."""
+        import io
+        import json
+        from contextlib import redirect_stdout
+        raw = io.BytesIO()
+        redirected = io.TextIOWrapper(raw, encoding="cp936", write_through=True)
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {"events_sample": [
+                {"公告标题": "2026年第三季度报告更正公告", "公告类型": "财务报告"}]},
+            "can_apply": False, "can_commit": False,
+        }
+        try:
+            with patch.object(S.importlib, "import_module",
+                              return_value=FakeAk()), \
+                 patch.object(S, "pilot", return_value=report), \
+                 redirect_stdout(redirected):
+                exit_code = S.main([
+                    "--root", "C:/synthetic-only", "--symbols", "000010.SZ",
+                    "--explicit-readonly"])
+            redirected.flush()
+            output = raw.getvalue()
+        finally:
+            redirected.detach()
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(output.isascii())
+        prefix = b"FINANCE_EXTERNAL_READONLY="
+        tagged = [line[len(prefix):] for line in output.splitlines()
+                  if line.startswith(prefix)]
+        self.assertEqual(len(tagged), 1)
+        decoded = json.loads(tagged[0].decode("utf-8", errors="strict"))
+        self.assertEqual(decoded["discovery"]["events_sample"][0]["公告标题"],
+                         "2026年第三季度报告更正公告")
+        self.assertFalse(decoded["can_commit"])
+
     def test_explicit_readonly_startup_reports_missing_akshare_without_traceback(self):
         import io
         import json

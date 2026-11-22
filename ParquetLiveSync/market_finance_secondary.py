@@ -381,6 +381,14 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
             "changed_pending": False, "changed_20_05_task": False}
 
 
+def _blocked_readonly_pilot(reason):
+    """Emit only a bounded code; never print private paths or source records."""
+    print("FINANCE_EXTERNAL_READONLY_ERROR=" + json.dumps({
+        "status": reason, "can_apply": False, "can_commit": False,
+    }, separators=(",", ":")))
+    return 2
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
@@ -402,10 +410,20 @@ def main(argv=None):
             not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
             for code in known) or len(set(known)) != len(known)):
         parser.error("Invalid known-stock identities (max 500)")
-    ak = importlib.import_module("akshare")
-    result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
-                   days=args.lookback_days, pages=args.pages,
-                   known_symbols=known)
+    try:
+        ak = importlib.import_module("akshare")
+    except ModuleNotFoundError as exc:
+        return _blocked_readonly_pilot(
+            "AKSHARE_NOT_INSTALLED" if exc.name == "akshare"
+            else "AKSHARE_DEPENDENCY_MISSING")
+    except Exception:
+        return _blocked_readonly_pilot("AKSHARE_IMPORT_FAILED")
+    try:
+        result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
+                       days=args.lookback_days, pages=args.pages,
+                       known_symbols=known)
+    except Exception:
+        return _blocked_readonly_pilot("READONLY_PILOT_ABORTED")
     print("FINANCE_EXTERNAL_READONLY=" +
           json.dumps(result, ensure_ascii=False, default=str,
                      separators=(",", ":"), allow_nan=False))

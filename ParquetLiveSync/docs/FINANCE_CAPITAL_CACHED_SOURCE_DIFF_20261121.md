@@ -55,3 +55,21 @@ Windows现场应先运行P5专项模拟测试，再用固定Git HEAD、固定当
 P5现有`report_key_date_details`字段名为兼容历史回执而保留，新增**纯日历分类元数据**：`capital_date_role=SHARE_CAPITAL_CHANGE_DATE`、`capital_announcement_date_field=m_anntime`、`capital_announcement_dates_verified=false`、`calendar_quarter_ends_required=false`、`change_event_sources_verified=false`、`free_float_capital_alias_normalized=false`、`calendar_only_date_counts`。仅按日期标签划分季末/非季末，不影响历史SHA指纹、原始差异分类和冻结pending；对`freeFloatCapital`和`free_float_capital`不自动视作一致或覆盖旧值。新增两项模拟测试核验13键5/8日历分类、相邻日期2个自由流通股本差异，确保不触发自动修复。
 
 **下一环节**：先只读审阅与这些日期有关的`m_anntime`（仅日期及字段是否存在）及公开股本变动证据；在有明确披露依据前不调用东方财富三表、不补历史金额、不更新QMT源头、不放行pending。新的日历分类代码**尚未在用户Windows运行**，不能将旧回执误称为已包含新字段。
+
+## P5 Capital m_anntime 限定证据预检（2026-11-22，新增待 Windows 验收）
+
+在用户 Windows **26/26专项模拟测试PASS**、真实 P5 日期定位已取得两只股票的13+2个异常Capital变动键后，下一阶段仅聚焦这些异常键对应的 **`m_anntime`（QMT记录的公告日期字段）是否存在及日期标签**，不能直接假定其代表被监管平台认可的真实公告。
+
+通过同一个 `market_center_finance_capital_cache_compare.py` 新增的**单独显式开关** `--capital-announcement-evidence`，必须**同时**提供 `--report-key-date-details --explicit-readonly --explicit-qmt-cache-read` 与当前正式待审账本固定完整SHA。该模式原有 P3/P4 旧快照/账本SHA验证及两只第一阻断Capital样本抽取逻辑完全保留，最多两只每只一次 `xtdata.get_financial_data(..., ["Capital"], report_type="report_time")` **本地现有缓存读**。没有下载接口、没有东方财富三表查询，没有市场文件、日志或财务pending写入；北京时间19:50–20:25继续禁止运行。
+
+父进程使用原先完整规范哈希比较确定差异日期：仅对 **旧版本独有、缓存独有、共同日期但非m_quarter字段不同** 的记录输出 `capital_announcement_evidence.entries`（沿用原最多32个差异日期预算，不截断；不显示其余正常Capital记录/116个m_quarter差异日期）。单项含 `capital_change_date`、`difference_reason`、`historical_m_anntime`、`cached_m_anntime`，其中两个公告字段状态只允许：
+
+- `FIELD_ABSENT`：源行根本没有 `m_anntime` 字段；
+- `EMPTY_OR_ZERO`：字段存在但为零、空或null；
+- `UNPARSEABLE`：字段存在但不能严格解码为受支持日期标签；
+- `PARSED_DATE`：有经严格解码的 `YYYY-MM-DD` **本地日期标签**（并不是实际公告的独立真实性证明）；
+- `RECORD_NOT_IN_THIS_VERSION`：此股本变动键在相应旧/新版本内不存在。
+
+返回值**不包含**旧值、新值、股本金额、原始日期字段/完整QMT行，不因 `m_anntime` 存在就推断公司披露真实性或证明哪个历史版本正确。所有日期状态、可选日期标签和字段名均需结构/范围校验，异常直接阻断；日期相同/不同也不自动解决股本冲突。输出 `official_announcements_checked=false`、`availability_is_not_disclosure_proof=true`、`can_certify_or_repair=false`、`market_file_writes=false`、`can_repair=false`、`source_authenticity_certified=false`；原 SHA 和冲突结论不变，pending保持冻结。
+
+此阶段新增6个纯模拟专项测试（原26项→**预期32项**），包括状态解码、异常键范围/无原值输出、伪造子进程回执拒绝、仅两次本地缓存读取、用户/内部模式双显式授权与离线预检拒绝混用。**新提交的 Windows 测试和本机 `m_anntime` 状态尚未运行，不能据此声称已经取得公告日期**。正式QMT或交易所原始公告不属于这一步；待本地状态经用户验收后，再针对确有公告日期线索的两只异常样本查证监管/交易所原始公告而非再全市场财报核对。

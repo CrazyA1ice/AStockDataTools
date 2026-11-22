@@ -33,3 +33,14 @@ S2：P1–P5工具合并审查后，加入幂等告警状态/错误指纹去重�
 S3：引入有证据的公告事件候选发现 + 受控单写锁计划 + 轮换兜底，先影子基准后小流量正式切换。
 S4：一页今日状态+最近异常+估值覆盖质量，不要求手动运行测试。
 所有阶段只有一套正式任务，Windows无Actions，用户可随时关闭新功能回退既有20:05调度。
+
+## 已开发：真实东方财富公告候选 + QMT与东财三表交叉核验（2026-11-22）
+
+**功能状态：真实接口实现已入Draft，但未在用户Windows联网实测、未接入20:05正式下载决策。**本次是从仅有规划向可手动真实采样前进，不得将其表述为“公告驱动自动更新已经上线”。在 `market_finance_secondary.py` 集中实现：
+
+- **公告候选发现**：依赖可选安装的 `akshare`，用东方财富 `stock_notice_report` 获取财务报告、信息变更与持股变动公告。兼容目前AKShare按 `symbol=公告类别,date=YYYYMMDD` 查询的现代接口，以及旧 `report_type/recent_page` 接口；由真实Python函数签名选择，未知签名保守阻断。现代模式最多7天×3类别；原三页GUI的首次试运行限定最近3天、最多2页（旧接口）、最多9次按日公告请求。分类更正/修订候选、提取原始公告日和标题，使用SHA指纹去重；因为列表缺官方不可变公告ID、有限页和源可能漏项，`feed_complete_for_date_range=false`、`can_schedule_download=false`，没有结果也**不能**认为市场无新财报。数据源失效标记部分失败，绝不主动停止正常全市场轮转。
+- **独立三表对照**：对最多3只既有 `SOURCE_HISTORY_CONFLICT` 待审股票，用老代码 `E._financial_snapshot_rows` 只读验证已保存 QMT 不可变Parquet快照及active pin。东方财富 `stock_balance_sheet_by_report_em` / `stock_profit_sheet_by_report_em` / `stock_cash_flow_sheet_by_report_em` 每股票各读一次，按最多4个共同报告期对照6对官方文档中口径相近字段：`Balance.tot_assets↔TOTAL_ASSETS`、`Balance.tot_liab↔TOTAL_LIABILITIES`、`Balance.total_equity↔TOTAL_EQUITY`、`Income.revenue↔TOTAL_OPERATE_INCOME`、`Income.net_profit_excl_min_int_inc↔PARENT_NETPROFIT`、`CashFlow.net_cash_flows_oper_act↔NETCASH_OPERATE`。小范围金额浮点容差另标NEAR，不冒充严格一致；缺列、重复版本、多对多、来源异常均标为未认证，不强制归并版本或覆盖正式财务。
+- **已接入原GUI**：「异常与日志」新增「近期公告与东财三表对照（只读试验）」。只在人工点击后进行：读取主仓库真实财务账本确定股票与根目录，后台120秒隔离子进程，最多3只来源历史冲突股票，既不调用QMT下载、也不写Parquet/H5、pins、pending、20:05任务。使用原主仓库虚拟环境，需要事先具备 `akshare`；不自动安装新包。只输出有限摘要及真实报告期字段差异，不给出入库授权。旧三页功能不变。
+- **本次验证范围**：新增专门13项合成测试，另在原桌面测试中增加4项，用于公告API新旧签名、候选身份、错误源不视作空、报告期日期编码、六字段数值、历史修订歧义、缺本地快照、来源API异常、GUI范围/超时/身份及无下载防误操作。原 `run-gui.ps1 -QuickCheck` 显式加入此测试文件，但正常GUI启动不跑测试。尚无用户实机联网结果，不能据此声称命中率、API稳定性或耗时降低。
+
+**下一业务门槛**：先实际抽样确认公告候选覆盖（尤其更正公告、退市、京市）、源接口的实时可用性、对照金额单位/合并报表口径与报告版本，量化候选召回率和真实 QMT 下载时长；通过后才允许将候选优先级接入唯一20:05写锁任务。现有全市场轮转和QMT不可变历史保护始终保留兜底。巨潮/交易所原公告PDF可为重大争议提供最终证据，但本次还未实现原PDF自动采集或证据裁决。

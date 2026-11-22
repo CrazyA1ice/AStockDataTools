@@ -413,7 +413,7 @@ class SimpleModelTests(unittest.TestCase):
             "crosscheck_sample_limit": 1,
             "discovery_seconds": 2,
             "crosscheck_seconds": 3,
-            "total_seconds": 4,
+            "total_seconds": 2,
             "event_candidates_to_download": [],
             "source_discovery_not_complete": True,
             "can_apply": False, "can_commit": False,

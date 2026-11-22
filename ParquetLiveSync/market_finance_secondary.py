@@ -261,9 +261,14 @@ def compare_rows(table, qmt_records, eastmoney_records, *, max_periods=4):
                 "eastmoney_value_yuan": str(rhs) if rhs is not None else None,
             })
     counts = Counter(row["status"] for row in comparison)
+    comparable = sum(counts[k] for k in
+                     ("EXACT_MATCH", "NEAR_WITHIN_TOLERANCE", "VALUE_DIFFERENCE"))
+    inconclusive = counts["NOT_COMPARABLE_OR_REVISION_AMBIGUOUS"]
     return {"table": table, "report_dates_in_both": len(periods),
             "qmt_report_dates_seen": len(q), "eastmoney_report_dates_seen": len(e),
             "comparison_count": len(comparison),
+            "fields_comparable": comparable,
+            "fields_inconclusive": inconclusive,
             "status_counts": dict(counts),
             "comparisons": comparison,
             "source_version_certified": False,
@@ -299,7 +304,11 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
         try:
             e = _dataframe_records(fn(symbol=code[-2:] + code[:6]))
             result = compare_rows(table, q, e, max_periods=max_periods)
-            result["status"] = "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION"
+            result["status"] = (
+                "NO_COMMON_REPORT_PERIOD" if not result["report_dates_in_both"]
+                else "FIELDS_NOT_COMPARABLE_OR_REVISIONS"
+                if not result["fields_comparable"]
+                else "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION")
             result["qmt_snapshot_asof"] = asof
         except SecondarySourceBlocked:
             raise
@@ -307,12 +316,16 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
             result = {"table": table, "status": "EXTERNAL_SOURCE_ERROR",
                       "can_resolve_historical_pending": False}
         tables.append(result)
-    compared = sum(x.get("comparison_count", 0) for x in tables)
+    compared = sum(x.get("fields_comparable", 0) for x in tables)
+    inconclusive = sum(x.get("fields_inconclusive", 0) for x in tables)
+    attempted = sum(x.get("comparison_count", 0) for x in tables)
     differences = sum(x.get("status_counts", {}).get("VALUE_DIFFERENCE", 0)
                       for x in tables)
     return {"symbol": code, "source": SOURCE,
             "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
             "tables": tables, "fields_compared": compared,
+            "fields_inconclusive": inconclusive,
+            "fields_attempted": attempted,
             "value_differences": differences,
             "qmt_snapshot_pins_unchanged": True,
             "complete_nine_table_verification": False,

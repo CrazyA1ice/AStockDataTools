@@ -50,7 +50,9 @@ def _canonical_workspace(workspace: Path):
 def _selected_symbols(raw: str | None, state: dict, limit: int):
     if type(limit) is not int or not 1 <= limit <= MAX_SAMPLES:
         raise PreflightBlocked("SAMPLE_COUNT_OUT_OF_BOUNDS")
-    if raw:
+    if raw is not None:
+        if not raw:
+            raise PreflightBlocked("EMPTY_EXPLICIT_STOCK_SCOPE")
         codes = raw.split(",")
         if (not 1 <= len(codes) <= MAX_SAMPLES
                 or codes != sorted(set(codes))):

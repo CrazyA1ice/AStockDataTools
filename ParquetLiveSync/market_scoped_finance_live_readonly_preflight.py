@@ -1,14 +1,14 @@
 """S8 real-environment LOCAL read-only finance inventory and safety preflight.
 
 Uses the canonical checkout ledger plus an explicitly selected stock data root.
-No xtquant imports, downloads, snapshot writes, ledger writes, locks, or approval.
+No provider API imports, downloads, snapshot writes, ledger writes or approval.
 Verifies only the latest *selected* snapshot of each of nine finance tables:
 NOT an all-history audit or certificate of source authenticity.
 """
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 import argparse
 import json
 from pathlib import Path
@@ -87,13 +87,15 @@ def _files(directory: Path, pattern: re.Pattern):
     return tuple(sorted(items))
 
 
-def _journal_counts(workspace: Path):
+def _journal_counts(workspace: Path, evidence: list):
     counts = {}
+    journal_pattern = re.compile(r"[0-9]{6}\.(?:SH|SZ|BJ)\.json\Z")
     for directory_name in (
             "scoped-finance-transaction-journals",
             "capital-recovery-journal"):
         directory = workspace / directory_name
-        names = _files(directory, re.compile(r"[0-9]{6}\.(?:SH|SZ|BJ)\.json\Z"))
+        names = _files(directory, journal_pattern)
+        evidence.append((directory, journal_pattern, names))
         counts[directory_name] = len(names)
     return counts
 
@@ -120,10 +122,13 @@ def _latest_table(extra: Path, code: str, table: str, evidence: list):
     except ValueError as exc:
         raise PreflightBlocked("SNAPSHOT_FILENAME_DATE_INVALID") from exc
     latest = observed_dates[-1]
+    if date.fromisoformat(latest) > datetime.now(E.L.UTC8).date():
+        raise PreflightBlocked("FUTURE_FINANCIAL_SNAPSHOT_DAY")
     candidate = E._financial_snapshot_file(extra, code, table, latest)
     if candidate is None:
         raise PreflightBlocked("LATEST_SNAPSHOT_UNRESOLVED")
-    E._verify_financial_snapshot_file(extra, code, table, latest, candidate)
+    selected_table = E._verify_financial_snapshot_file(
+        extra, code, table, latest, candidate)
     pin = E._financial_active_path(extra, code, table, latest)
     _safe(pin)
     pinned = pin.exists()
@@ -137,7 +142,7 @@ def _latest_table(extra: Path, code: str, table: str, evidence: list):
         "state": ("LATEST_PIN_AND_SNAPSHOT_VERIFIED" if pinned
                   else "LEGACY_LATEST_UNPINNED_REQUIRES_REVIEW"),
         "latest_snapshot_day": latest,
-        "latest_selected_rows": E._read_closed_parquet(candidate).num_rows,
+        "latest_selected_rows": selected_table.num_rows,
         "snapshot_files": len(snapshots),
         "active_pin_files": len(pins),
         "older_snapshot_dates_unverified": len(observed_dates) - 1,
@@ -168,7 +173,8 @@ def inspect(root: Path, workspace: Path, *, symbols: str | None = None,
     progress_sha = REVIEW._hash_file(progress, REVIEW.MAX_LEDGER_BYTES)
     state = I._state(extra, workspace)
     codes = _selected_symbols(symbols, state, sample_count)
-    journal_counts = _journal_counts(workspace)
+    evidence = []
+    journal_counts = _journal_counts(workspace, evidence)
     issues = []
     if any(journal_counts.values()):
         issues.append("EXISTING_TRANSACTION_JOURNAL_NEEDS_MANUAL_REVIEW")
@@ -177,7 +183,6 @@ def inspect(root: Path, workspace: Path, *, symbols: str | None = None,
     if not codes:
         issues.append("NO_FINANCIAL_SAMPLE_IDENTITIES")
     stocks = []
-    evidence = []
     for code in codes:
         table_reports = []
         for table in E.FIN_TABLES:

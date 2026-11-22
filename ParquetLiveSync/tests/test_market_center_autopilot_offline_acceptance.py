@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import io
 import json
+import os
 import subprocess
+import sys
 import unittest
 
 import market_autopilot_offline_acceptance as G
@@ -293,6 +295,43 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.assertEqual(report["error"], "TK_THEME_CALLBACK_AFTER_DESTROY")
         self.assertEqual(report["tests_run"], 2)
         self.assertIn("ThemeChanged", report["output_tail"])
+
+    def test_child_env_removes_inspect_even_if_shell_has_zero_string(self):
+        observed = {}
+        def fake_process(args, **kwargs):
+            observed.update(kwargs)
+            return SimpleNamespace(
+                returncode=0, stdout=b"Ran 1 test in 0.001s\nOK\n")
+        with patch.dict(os.environ, {
+            "PYTHONINSPECT": "0", "PYTHONSTARTUP": "unsafe-startup.py"
+        }):
+            result = G.execute(
+                ["python", "-B", "synthetic.py"], self.module, 5,
+                runner=fake_process)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["tests_run"], 1)
+        self.assertNotIn("PYTHONINSPECT", observed["env"])
+        self.assertNotIn("PYTHONSTARTUP", observed["env"])
+        self.assertEqual(observed["stdin"], subprocess.DEVNULL)
+        self.assertEqual(observed["env"]["PYTHONDONTWRITEBYTECODE"], "1")
+
+    def test_real_unittest_discover_exits_with_inherited_inspect_flag(self):
+        # Exercise the exact subprocess launch mechanism that used to print
+        # >>> and hang for 90s after the individual tests had already passed.
+        fixture = self.module / "tests" / "test_market_center_repl_probe.py"
+        fixture.write_text(
+            "import unittest\n"
+            "class Probe(unittest.TestCase):\n"
+            "    def test_one(self): self.assertTrue(True)\n",
+            encoding="utf-8")
+        with patch.dict(os.environ, {"PYTHONINSPECT": "0"}):
+            result = G.execute([
+                sys.executable, "-u", "-B", "-m", "unittest", "discover",
+                "-s", "tests", "-p", fixture.name, "-v",
+            ], self.module, 15)
+        self.assertTrue(result["pass"], result)
+        self.assertEqual(result["tests_run"], 1)
+        self.assertNotIn("output_tail", result)
 
     def test_zero_test_unittest_result_fails_closed(self):
         for output in (b"OK", b"Ran 0 tests in 0.00s\nOK"):

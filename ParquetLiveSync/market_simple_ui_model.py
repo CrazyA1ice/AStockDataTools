@@ -529,6 +529,20 @@ def extract_finance_secondary_receipt(output: bytes, returncode: int) -> dict:
     return result
 
 
+def finance_secondary_timeout_stage(output: bytes | None) -> str:
+    """Explain only known pre-timeout phases; never display child logs."""
+    if not isinstance(output, bytes) or len(output) > 131072:
+        return "阶段不明"
+    tag = b"FINANCE_EXTERNAL_STAGE="
+    phases = [line[len(tag):] for line in output.splitlines()
+              if line.startswith(tag)]
+    if phases and phases[-1] == b"THREE_STATEMENTS":
+        return "东方财富三大报表历史查询阶段"
+    if phases and phases[-1] == b"SCOPED_NOTICES":
+        return "近期单股公告查询阶段"
+    return "阶段不明"
+
+
 def finance_secondary_pilot_view(report: dict) -> str:
     """Summarize external announcement leads and three-statement cross-checks."""
     if (not isinstance(report, dict)
@@ -538,7 +552,8 @@ def finance_secondary_pilot_view(report: dict) -> str:
             or report.get("changed_pending") is not False
             or report.get("changed_20_05_task") is not False
             or report.get("event_candidates_to_download") != []
-            or report.get("source_discovery_not_complete") is not True):
+            or report.get("source_discovery_not_complete") is not True
+            or report.get("crosscheck_sample_limit") not in (None, 1)):
         raise InvalidSimplePlan("跨源财务回执非只读或身份不匹配")
     lead = report.get("discovery")
     stocks = report.get("crosschecks")
@@ -556,7 +571,9 @@ def finance_secondary_pilot_view(report: dict) -> str:
                                or not 0 <= timing <= 3600):
         raise InvalidSimplePlan("外部财务来源耗时统计异常")
     lines = [
-        "东方财富近期公告候选 %d 条（限页/限日期、非完整公告流）。" % n,
+        ("东方财富待审股票抽样公告 %d 条（最多3只、非全市场）。" % n
+         if lead.get("scope") == "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY"
+         else "东方财富近期公告候选 %d 条（非完整公告流）。" % n),
         "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
         str(lead.get("status", "UNKNOWN"))[:70],
     ]
@@ -569,7 +586,9 @@ def finance_secondary_pilot_view(report: dict) -> str:
     if picks:
         lines.append("待审股票中出现公告线索：" + "、".join(picks[:8]))
     else:
-        lines.append("当前待审范围未匹配公告线索；仍须继续QMT轮转兜底。")
+        lines.append("本轮已查询样本未匹配公告线索；仍须继续QMT轮转兜底。")
+    if report.get("crosscheck_sample_limit") == 1:
+        lines.append("性能保护：本轮最多实际比较1只股票三大报表，其余未执行。")
     for entry in stocks:
         if (not isinstance(entry, dict) or not isinstance(entry.get("symbol"), str)
                 or entry.get("can_commit") is not False
@@ -578,6 +597,9 @@ def finance_secondary_pilot_view(report: dict) -> str:
         code = entry["symbol"]
         if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code):
             raise InvalidSimplePlan("东财核验股票格式异常")
+        if entry.get("status") == "NOT_RUN_ONE_STOCK_PILOT_BUDGET":
+            lines.append(code + "：因首次试验请求预算未运行财报对照，不代表两源一致。")
+            continue
         compared = entry.get("fields_compared", 0)
         inconclusive = entry.get("fields_inconclusive", 0)
         different = entry.get("value_differences", 0)

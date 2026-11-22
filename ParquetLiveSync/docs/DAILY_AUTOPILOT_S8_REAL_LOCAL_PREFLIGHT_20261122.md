@@ -8,7 +8,7 @@ S8新增：
 - `market_scoped_finance_live_readonly_preflight.py`：仅接受明确的绝对 `--root` 与真实主仓库下 `ParquetLiveSync/work/qmt_extra` 目录。主仓库必须有 `.git` 目录，防止把detached测试工作树内的临时账本当成生产数据。
 - 严格读取 `financial-cache-progress.json`，核验正式 `qmt_extra` 数据根的身份，读取前后校验账本SHA256且要求账本大小不超过2MiB，路径链不能含符号链接。
 - 默认从账本 `pending` 按代码排序最多抽查3只股票；无待审时退回 `daily_cursor`，都没有时只输出无样本需复核。可以用 `--symbols 000001.SZ,000002.SZ` 显式指定 **1–5只股票、必须排序去重**，`--sample-count` 限1–5。
-- 对每只样本扫描财务**九表**的快照文件名和active pin文件名、阻断残留 `.qmt-part` / 非法名称 / 符号链接 / 可疑同日版本；验证每张表**最新日期当前选中的Parquet**的Arrow schema、行身份、内容地址、pin SHA，并在报告结束时再次校验上述文件与目录清单未变化。
+- 对每只样本扫描财务**九表**的快照文件名和active pin文件名（最新快照限64MiB、active pin限256KiB）、阻断残留 `.qmt-part` / 非法名称 / 符号链接 / 可疑同日版本；验证每张表**最新日期当前选中的Parquet**的Arrow schema、行身份、内容地址、pin SHA，并在报告结束时再次校验上述文件与目录清单未变化。
 - 检查 `scoped-finance-transaction-journals` 与旧Capital试点的 `capital-recovery-journal` 是否有任何日志文件；无论状态如何，只要存在就提示 `EXISTING_TRANSACTION_JOURNAL_NEEDS_MANUAL_REVIEW`，避免未经人工确认便重用半成品事务。两目录清单在结束时也再次核验。
 - 报告已待审股票数量及原因分布、抽样股票与九表最新快照的状态；**不输出财务原始行内容**，也不做任何人工审批。即使完全无异常，`status`也始终是 `S8_REAL_ENVIRONMENT_READONLY_REVIEW_REQUIRED`，`can_apply=false`、`can_commit=false`、`qmt_live_connection_checked=false`、`all_historical_versions_verified=false`、`multisource_verified=false`。
 
@@ -16,9 +16,9 @@ S8新增：
 
 ## 开发与测试
 
-新增 `test_market_center_scoped_finance_live_readonly_preflight.py` **19项合成/临时真实Parquet快照测试**：本地账本身份、pending排序抽样、九表检测、主动pin及遗留未pin、旧版本未全检标识、恶意文件残留、孤儿pin、pin篡改、事务日志阻断、运行时日志突变、未来日期、账本SHA变化、无输入授权、禁止apply、无真实写入API等。合成测试仅写OS私有临时目录。
+新增 `test_market_center_scoped_finance_live_readonly_preflight.py` **21项合成/临时真实Parquet快照测试**：本地账本身份、pending排序抽样、九表检测、主动pin及遗留未pin、旧版本未全检标识、恶意文件残留、孤儿pin、pin篡改、事务日志阻断、运行时日志突变、未来日期、账本SHA变化、无输入授权、禁止apply、无真实写入API等。合成测试仅写OS私有临时目录。
 
-S7统一验收白名单同步注册S8模块+测试，新版预计Python AST **18个文件**、专项 **153项测试**、市场中心32个测试文件约**504项**、操作面板11项，预估实际累计 **668次执行**（专项测试在全回归中重复），但**这些是目标量，不是新提交的Windows实测结果**。最后的正式验收证据仍是S7旧SHA `0f5a072737f7afe23e4370db4babe27ec4fbadf7` 的630次PASS。
+S7统一验收白名单同步注册S8模块+测试，新版预计Python AST **18个文件**、专项 **155项测试**、市场中心32个测试文件约**506项**、操作面板11项，预估实际累计 **672次执行**（专项测试在全回归中重复），但**这些是目标量，不是新提交的Windows实测结果**。最后的正式验收证据仍是S7旧SHA `0f5a072737f7afe23e4370db4babe27ec4fbadf7` 的630次PASS。
 
 ## 实机只读预检（需先通过本次新增离线测试）
 

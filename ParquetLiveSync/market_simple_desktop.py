@@ -27,6 +27,7 @@ from market_simple_ui_model import (
     finance_decode_retry_target, finance_decode_retry_window,
     finance_qmt_probe_view, extract_qmt_probe_receipt,
     finance_secondary_pilot_view, extract_finance_secondary_receipt,
+    finance_secondary_timeout_stage,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -496,8 +497,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._secondary_finance_running = True
         self.secondary_finance_button.configure(state="disabled")
         self.secondary_finance_detail.set(
-            "正在查询近期公告并比较 " + "、".join(selected) +
-            " 的本地QMT不可变快照与东财三表；不会修改数据。")
+            "正在查询 " + "、".join(selected) +
+            " 近3日个股公告；为避免超时，最多只对1只股票做东财三表比较。"
+            "不会修改数据。")
 
         def worker():
             try:
@@ -516,10 +518,11 @@ class SimpleMarketDashboard(UpdaterDashboard):
                     result.stdout, result.returncode)
                 summary = finance_secondary_pilot_view(receipt)
                 self._secondary_finance_queue.put(("ok", summary))
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as exc:
                 self._secondary_finance_queue.put((
-                    "error", "外部核验超过120秒，已停止本轮子进程；"
-                    "公告接口可能较慢或分页较多；没有修改正式数据。"))
+                    "error", "外部核验超过120秒，已停止本轮子进程；超时位置：" +
+                    finance_secondary_timeout_stage(exc.stdout) +
+                    "。没有修改正式数据。"))
             except InvalidSimplePlan as exc:
                 self._secondary_finance_queue.put((
                     "error", "外部核验未完成：" + str(exc)[:150] +

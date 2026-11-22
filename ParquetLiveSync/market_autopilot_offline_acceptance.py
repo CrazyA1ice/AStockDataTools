@@ -130,6 +130,18 @@ def execute(args, module, timeout, *, runner=subprocess.run):
                 "error": type(exc).__name__, "output_tail": ""}
 
 
+
+def require_unittest_result(result):
+    """A zero-exit Python process that discovered zero tests is not a pass."""
+    if result["pass"] and not (
+            isinstance(result.get("tests_run"), int)
+            and result["tests_run"] > 0):
+        return {**result, "pass": False,
+                "error": "UNITTEST_NO_TESTS_EXECUTED",
+                "output_tail": "unittest did not report any executed tests"}
+    return result
+
+
 def powershell_ast(module, *, runner=subprocess.run):
     script = module / POWER_SHELL
     if not script.is_file() or script.is_symlink():
@@ -162,9 +174,9 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
         # provides real-time case names in a timeout's partial stderr.
         # The pure S1 shadow suite should finish quickly: cap it at 45s.
         suite_timeout = 45 if name == TESTS[0] else 180
-        result = execute(
+        result = require_unittest_result(execute(
             [sys.executable, "-u", "-B", str(module / "tests" / name), "-v"],
-            module, suite_timeout, runner=runner)
+            module, suite_timeout, runner=runner))
         checks.append({"suite": name, **result})
         if not result["pass"]:
             break
@@ -173,10 +185,10 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
             ("FULL_MARKET_CENTER_REGRESSION", "test_market_center*.py"),
             ("OPERATOR_DASHBOARD_REGRESSION", "test_market_update_dashboard.py"),
         ):
-            result = execute(
+            result = require_unittest_result(execute(
                 [sys.executable, "-B", "-m", "unittest", "discover",
                  "-s", "tests", "-p", pattern, "-q"],
-                module, 600, runner=runner)
+                module, 600, runner=runner))
             checks.append({"suite": name, **result})
             if not result["pass"]:
                 break

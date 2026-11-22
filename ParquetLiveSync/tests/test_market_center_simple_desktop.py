@@ -263,7 +263,8 @@ class SimpleModelTests(unittest.TestCase):
                 "candidate_symbols_in_known_scope": ["000010.SZ"]},
             "crosschecks": [
                 {"symbol": "000010.SZ", "status": "READONLY",
-                 "fields_compared": 3, "value_differences": 1,
+                 "fields_compared": 3, "fields_inconclusive": 2,
+                 "value_differences": 1,
                  "can_commit": False, "can_clear_pending": False}],
             "event_candidates_to_download": [],
             "source_discovery_not_complete": True,
@@ -271,6 +272,8 @@ class SimpleModelTests(unittest.TestCase):
             "changed_pending": False, "changed_20_05_task": False}
         view = M.finance_secondary_pilot_view(r)
         self.assertIn("数值差异 1", view)
+        self.assertIn("有效对比 3", view)
+        self.assertIn("无法对比 2", view)
         self.assertIn("不会自动下载", view)
         r["discovery"]["can_schedule_download"] = True
         with self.assertRaises(M.InvalidSimplePlan):

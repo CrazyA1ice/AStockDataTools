@@ -288,7 +288,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         try:
             state, detail = self._finance_diag_queue.get_nowait()
         except queue.Empty:
-            self.after(250, self._poll_finance_diagnostic)
+            if self._finance_diag_running:
+                self.after(250, self._poll_finance_diagnostic)
             return
         self._finance_diag_running = False
         self.finance_diag_button.configure(state="normal")

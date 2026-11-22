@@ -105,7 +105,6 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
         self.assertNotIn("unittest", cmd)
         self.assertIn('set "PYTHONINSPECT="', cmd)
         self.assertIn('set "PYTHONSTARTUP="', cmd)
-        self.assertIn('" %~dp0', cmd.replace('" %~dp0', '" %~dp0')) if False else None
         self.assertIn(" -u -B ", cmd)
 
 

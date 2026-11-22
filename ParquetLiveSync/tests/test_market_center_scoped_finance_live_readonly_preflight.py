@@ -126,6 +126,24 @@ class LocalFinanceReadinessTests(unittest.TestCase):
                 P.PreflightBlocked, "UNEXPECTED_FINANCIAL_FILE"):
             self.inspect(symbols=STOCK)
 
+    def test_large_selected_parquet_refused_before_reader(self):
+        self.add_snapshot()
+        with patch.object(P, "MAX_SNAPSHOT_BYTES", 8), \
+             patch.object(P.E, "_financial_snapshot_file") as reader:
+            with self.assertRaisesRegex(
+                    P.PreflightBlocked, "LATEST_SNAPSHOT_SIZE_LIMIT"):
+                self.inspect(symbols=STOCK)
+        reader.assert_not_called()
+
+    def test_large_active_pin_refused_before_reader(self):
+        self.add_snapshot()
+        with patch.object(P, "MAX_ACTIVE_PIN_BYTES", 8), \
+             patch.object(P.E, "_financial_snapshot_file") as reader:
+            with self.assertRaisesRegex(
+                    P.PreflightBlocked, "LATEST_ACTIVE_PIN_SIZE_LIMIT"):
+                self.inspect(symbols=STOCK)
+        reader.assert_not_called()
+
     def test_orphan_active_pin_refused(self):
         self.add_snapshot()
         for p in (self.extra / "financial" / "Capital" / STOCK /

@@ -31,7 +31,7 @@ Finance P4于2026-11-21用户Windows固定SHA `029632080b3bd3a85e4476edcfae81805
 
 预检成功后，真实QMT本地缓存比对必须由操作者另外显式指定 `--explicit-readonly --explicit-qmt-cache-read`，并重新通过全部旧快照/账本SHA校验；新预检**不会自动启动**真实QMT读取。原始财务值不出终端，不创建修复/回滚授权。
 
-## P5 报告键日期定位（2026-11-22 新增，待实机验收）
+## P5 股本变动日期键定位（2026-11-22 实机已验收）
 
 用户的真实 P5 缓存读取已重现两类Capital冲突：`000010.SZ` 现有缓存比原快照多 **13个报告键**（另116个共同键 `m_quarter` 指纹变动）；`000055.SZ` 共同的173个键中，**2个键**的 `freeFloatCapital` 指纹变动。旧比较只输出这些差异的计数和字段名称，无法直接回答是哪几个日期。
 
@@ -42,3 +42,16 @@ Finance P4于2026-11-21用户Windows固定SHA `029632080b3bd3a85e4476edcfae81805
 **证据性质：** 返回的是本地QMT `m_timetag` 对应的日期标签，**不是已经认证的法定财报报告期或公告日期**；不提供任意财务原值、数额、完整持仓或未经限制的历史明细。无论本轮结果如何，`source_authenticity_certified=false`、`can_repair=false`、`market_file_writes=false`、pending不变、20:05任务不变。仅对之前的2只试点股票复核，不代表全体45只Capital首阻断记录。
 
 Windows现场应先运行P5专项模拟测试，再用固定Git HEAD、固定当前账本SHA调用相同脚本并显式添加 `--report-key-date-details`；实际日期尚未取得，不能将预期13个日期/2个日期当成已经实测的值。
+
+## Capital 日期语义核对及最小防误用改动（2026-11-22）
+
+用户在本机固定 `60e5d32dda65779917ee0f22deeb18cde3e798a3`、财务账本 SHA `344aebeacecdaab7113b65e36fbd09932b96b7fababbc0dcadface8d28c9c7b7` 的 P5 日期模式验收：**24/24项测试 PASS**，离线预检成功，QMT已有 Capital 缓存只读2次、下载0、写文件0、未解除pending。
+
+- `000010.SZ`：新增13个 `m_timetag` 日期键：2025-08-13、2025-09-30、2025-10-23、2025-12-13、2025-12-17、2025-12-31、2026-03-31、2026-04-15、2026-06-12、2026-06-30、2026-08-05、2026-09-18、2026-09-30。**5个是日历季度末，8个不是**。另有116个共同键的`m_quarter`变化，原非季度字段值对比0差异。
+- `000055.SZ`：`2026-11-12`、`2026-11-13` 两个变化日期上的 `freeFloatCapital` 哈希值与历史快照不一致，两个日期都是非季度末。现有记录不能证明历史版与现时版谁正确。
+
+复核迅投 QMT 股本表字段说明：在 **Capital/CapitalStructure** 表内，`m_timetag` 表示**股本变动日期**，`m_anntime` 才表示**公告日期**；`freeFloatCapital` 是旧版本**自由流通股本**字段名称，较新版本可能称 `free_float_capital`。官方参考：[迅投知识库·行情函数](https://dict.thinktrader.net/innerApi/data_function.html)（CAPITALSTRUCTURE 字段表）。Capital变动日期可能不在季度末，**不能因其不是季末就断定数据错误**。QMT本地日期键也不是第三方证实的事件生效日或公告日，必须等待对应公司公告/交易所股本变动证据。
+
+P5现有`report_key_date_details`字段名为兼容历史回执而保留，新增**纯日历分类元数据**：`capital_date_role=SHARE_CAPITAL_CHANGE_DATE`、`capital_announcement_date_field=m_anntime`、`capital_announcement_dates_verified=false`、`calendar_quarter_ends_required=false`、`change_event_sources_verified=false`、`free_float_capital_alias_normalized=false`、`calendar_only_date_counts`。仅按日期标签划分季末/非季末，不影响历史SHA指纹、原始差异分类和冻结pending；对`freeFloatCapital`和`free_float_capital`不自动视作一致或覆盖旧值。新增两项模拟测试核验13键5/8日历分类、相邻日期2个自由流通股本差异，确保不触发自动修复。
+
+**下一环节**：先只读审阅与这些日期有关的`m_anntime`（仅日期及字段是否存在）及公开股本变动证据；在有明确披露依据前不调用东方财富三表、不补历史金额、不更新QMT源头、不放行pending。新的日历分类代码**尚未在用户Windows运行**，不能将旧回执误称为已包含新字段。

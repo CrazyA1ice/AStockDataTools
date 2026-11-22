@@ -252,6 +252,30 @@ class SimpleModelTests(unittest.TestCase):
                  self.assertRaises(M.InvalidSimplePlan):
                 M.extract_qmt_probe_receipt(raw)
 
+    def test_external_finance_view_rejects_automatic_download_approval(self):
+        r = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "unique_event_leads": 2,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": ["000010.SZ"]},
+            "crosschecks": [
+                {"symbol": "000010.SZ", "status": "READONLY",
+                 "fields_compared": 3, "value_differences": 1,
+                 "can_commit": False, "can_clear_pending": False}],
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(r)
+        self.assertIn("数值差异 1", view)
+        self.assertIn("不会自动下载", view)
+        r["discovery"]["can_schedule_download"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(r)
+
     def test_qmt_readonly_probe_shows_separate_pershare_decode_failure(self):
         result = M.finance_qmt_probe_view(
             sample_qmt_table_probe(), "688259.SH")

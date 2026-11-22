@@ -483,6 +483,52 @@ def extract_qmt_probe_receipt(output: bytes) -> dict:
     return payload
 
 
+def extract_finance_secondary_receipt(output: bytes, returncode: int) -> dict:
+    """Treat external stdout as untrusted; decode only one tagged UTF-8 object.
+
+    Child errors contain approved codes only. No arbitrary stderr, QMT logs
+    or financial source values are shown as diagnostic instructions.
+    """
+    if (not isinstance(output, bytes) or len(output) > 131072
+            or type(returncode) is not int):
+        raise InvalidSimplePlan("跨源进程输出异常或超过安全长度")
+    success = b"FINANCE_EXTERNAL_READONLY="
+    blocked = b"FINANCE_EXTERNAL_READONLY_ERROR="
+    ok = [row[len(success):] for row in output.splitlines()
+          if row.startswith(success)]
+    err = [row[len(blocked):] for row in output.splitlines()
+           if row.startswith(blocked)]
+    if returncode != 0:
+        if len(err) == 1 and not ok:
+            try:
+                result = json.loads(err[0].decode("utf-8", errors="strict"))
+            except (UnicodeError, json.JSONDecodeError) as exc:
+                raise InvalidSimplePlan("跨源错误回执编码或格式非法") from exc
+            messages = {
+                "AKSHARE_NOT_INSTALLED": "正式Python环境未安装akshare；只读检查未启动",
+                "AKSHARE_DEPENDENCY_MISSING": "akshare依赖模块缺失；需要检查正式Python环境",
+                "AKSHARE_IMPORT_FAILED": "akshare导入失败；需要检查安装版本及依赖",
+                "READONLY_PILOT_ABORTED": "跨源只读试验异常中止；未取得完整结果",
+            }
+            if (not isinstance(result, dict)
+                    or result.get("can_apply") is not False
+                    or result.get("can_commit") is not False
+                    or result.get("status") not in messages):
+                raise InvalidSimplePlan("跨源错误回执身份非法")
+            raise InvalidSimplePlan(messages[result["status"]])
+        raise InvalidSimplePlan(
+            "外部子进程异常退出且没有可信错误回执；检查虚拟环境依赖和运行条件")
+    if len(ok) != 1 or err:
+        raise InvalidSimplePlan("未收到唯一可信的跨源只读结果")
+    try:
+        result = json.loads(ok[0].decode("utf-8", errors="strict"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise InvalidSimplePlan("跨源结果JSON回执编码或格式非法") from exc
+    if not isinstance(result, dict):
+        raise InvalidSimplePlan("跨源结果必须是JSON对象")
+    return result
+
+
 def finance_secondary_pilot_view(report: dict) -> str:
     """Summarize external announcement leads and three-statement cross-checks."""
     if (not isinstance(report, dict)

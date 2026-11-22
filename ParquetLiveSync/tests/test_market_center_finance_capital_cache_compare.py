@@ -275,8 +275,8 @@ class CapitalCompareTests(unittest.TestCase):
             {"report_key_date": "2023-09-30", "fields": ["freeFloatCapital"]},
             {"report_key_date": "2023-12-31", "fields": ["freeFloatCapital"]},
         ])
-        self.assertNotIn("101", json.dumps(dates))
-        self.assertNotIn("202", json.dumps(dates))
+        self.assertNotIn('"freeFloatCapital": 101', json.dumps(dates))
+        self.assertNotIn('"freeFloatCapital": 202', json.dumps(dates))
         self.assertTrue(dates["historical_pending_remains_blocked"])
 
     def test_date_details_fail_closed_for_ambiguous_or_unbounded_mapping(self):

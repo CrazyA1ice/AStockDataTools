@@ -580,6 +580,48 @@ def finance_secondary_pilot_view(report: dict) -> str:
     if timing is not None:
         lines.append("本轮外部财务试验总耗时 %.1f 秒（非更新速度改善证明）。" %
                      timing)
+    if lead.get("scope") == "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY":
+        attempted = lead.get("source_requests_attempted")
+        failures = lead.get("failed_categories")
+        if (type(attempted) is not int or not 1 <= attempted <= 3
+                or not isinstance(failures, list)
+                or len(failures) > attempted):
+            raise InvalidSimplePlan("公告抽样请求计数或失败明细无效")
+        seen_failed = set()
+        failed_briefs = []
+        stocks_in_scope = {
+            entry.get("symbol") for entry in stocks if isinstance(entry, dict)}
+        for failure in failures:
+            if not isinstance(failure, dict):
+                raise InvalidSimplePlan("公告请求失败条目无效")
+            code = failure.get("symbol")
+            kind = failure.get("error_type")
+            if (not isinstance(code, str)
+                    or not re.fullmatch(r"\\d{6}\\.(?:SH|SZ|BJ)", code)
+                    or code not in stocks_in_scope or code in seen_failed
+                    or not isinstance(kind, str)
+                    or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,60}", kind)):
+                raise InvalidSimplePlan("公告失败股票或错误类型不可信")
+            seen_failed.add(code)
+            failed_briefs.append(code + "（" + kind + "）")
+        lines.append("公告抽样查询完成 %d/%d 只；%d只失败。" %
+                     (attempted - len(failures), attempted, len(failures)))
+        if failed_briefs:
+            lines.append("失败的个股请求：" + "、".join(failed_briefs) +
+                         "。失败股票的公告结果不可用于判断有无新增财报。")
+    discovery = report.get("discovery_seconds")
+    crosscheck = report.get("crosscheck_seconds")
+    if discovery is not None or crosscheck is not None:
+        if (not isinstance(discovery, (int, float)) or isinstance(discovery, bool)
+                or not 0 <= discovery <= 3600
+                or not isinstance(crosscheck, (int, float))
+                or isinstance(crosscheck, bool)
+                or not 0 <= crosscheck <= 3600):
+            raise InvalidSimplePlan("跨源分阶段耗时无效")
+        if timing is not None and abs(discovery + crosscheck - timing) > 1.0:
+            raise InvalidSimplePlan("跨源分阶段耗时与总计不一致")
+        lines.append("分阶段耗时：个股公告 %.1f 秒；三表对照及本地快照 %.1f 秒。"
+                     % (discovery, crosscheck))
     picks = lead.get("candidate_symbols_in_known_scope", [])
     if not isinstance(picks, list) or len(picks) > 500:
         raise InvalidSimplePlan("外部股票候选数量异常")

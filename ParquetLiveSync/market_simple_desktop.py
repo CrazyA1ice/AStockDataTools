@@ -21,6 +21,7 @@ from market_update_dashboard import (
 from market_simple_ui_model import (
     MODULES, PERIODS, EXTRAS, InvalidSimplePlan, coverage_rows,
     initial_date, preview_request, finance_cache_refresh_scope,
+    finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -32,6 +33,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._default_date = ""
         self._coverage_snapshot = None
         self._calendar_receipts = queue.Queue()
+        self._finance_diag_queue = queue.Queue()
+        self._finance_diag_running = False
+        self._finance_diag_text = ""
         super().__init__()
         self._resolve_default_session()
 
@@ -63,10 +67,14 @@ class SimpleMarketDashboard(UpdaterDashboard):
 
     def _build_overview(self, page):
         for variable in (
-            self.autopilot_status, self.last_run, self.autopilot_quality,
+            self.autopilot_status, self.last_run, self.finance,
+            self.autopilot_quality,
         ):
             ttk.Label(page, textvariable=variable, justify="left",
                       wraplength=1020).pack(anchor="w", pady=2)
+        self.finance_attention = tk.StringVar(value="财务待审：读取账本中")
+        ttk.Label(page, textvariable=self.finance_attention, justify="left",
+                  wraplength=1020).pack(anchor="w", pady=3)
         ttk.Label(
             page,
             text="数据范围来自已提交日期索引；未验证的缺口和多源结果均明确标注。",
@@ -95,6 +103,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         ttk.Label(page, textvariable=self.coverage_detail,
                   wraplength=1030, justify="left").pack(
                       anchor="w", pady=(8, 4))
+        ttk.Button(page, text="检查财务问题（只读）",
+                   command=self.show_finance_issues).pack(anchor="e", pady=(2, 0))
         ttk.Button(page, text="查看对应错误与日志",
                    command=lambda: self.tabs.select(2)).pack(
                        anchor="e")
@@ -183,6 +193,26 @@ class SimpleMarketDashboard(UpdaterDashboard):
     def _build_logs(self, page):
         ttk.Label(page, textvariable=self.info,
                   wraplength=1000).pack(anchor="w", pady=(0, 6))
+        diagnosis = ttk.LabelFrame(
+            page, text="财务待审 · 内置只读检查", padding=7)
+        diagnosis.pack(fill="x", pady=(0, 6))
+        actions = ttk.Frame(diagnosis)
+        actions.pack(fill="x")
+        self.finance_diag_button = ttk.Button(
+            actions, text="检查财务问题（只读）",
+            command=self.start_finance_diagnostic)
+        self.finance_diag_button.pack(side="left")
+        ttk.Button(actions, text="复制诊断摘要",
+                   command=self.copy_finance_diagnostic).pack(
+                       side="left", padx=8)
+        self.finance_diag_status = tk.StringVar(
+            value="点击检查后，后台清点全部待审股票的九表本地元数据；不会下载或改写数据。")
+        ttk.Label(diagnosis, textvariable=self.finance_diag_status,
+                  justify="left", wraplength=980).pack(
+                      anchor="w", pady=(5, 2))
+        self.finance_diag_detail = tk.StringVar(value="")
+        ttk.Label(diagnosis, textvariable=self.finance_diag_detail,
+                  justify="left", wraplength=980).pack(anchor="w")
         stage = ttk.LabelFrame(page, text="最近任务 · 分阶段状态", padding=7)
         stage.pack(fill="x")
         cols = ("execution", "quality", "cross", "log")
@@ -217,6 +247,68 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.output.configure(yscrollcommand=y.set)
         self.output.pack(side="left", fill="both", expand=True)
         y.pack(side="right", fill="y")
+
+    def show_finance_issues(self):
+        self.tabs.select(2)
+        self.start_finance_diagnostic()
+
+    def start_finance_diagnostic(self):
+        """One-click local metadata check, isolated from the daily QMT writer."""
+        if self._finance_diag_running:
+            return
+        self._finance_diag_running = True
+        self.finance_diag_status.set(
+            "后台检查中：不连接QMT、不下载、不写入正式财务数据。")
+        self.finance_diag_button.configure(state="disabled")
+
+        def worker():
+            try:
+                progress = safe_json(
+                    WORK / "qmt_extra" / "financial-cache-progress.json")
+                root = finance_root_from_progress(progress)
+                from market_scoped_finance_pending_full_census import census
+                report = census(root, WORK / "qmt_extra",
+                                page=1, page_size=3)
+                detail = finance_issue_report_view(report)
+                self._finance_diag_queue.put(("ok", detail))
+            except Exception as exc:
+                # Show a bounded diagnostic, never auto-retry or auto-repair.
+                message = str(exc)[:120]
+                if "RESERVED_2005" in message:
+                    message = "北京时间19:50—20:25为正式更新保护时段，请之后再检查"
+                self._finance_diag_queue.put(
+                    ("error", "检查未完成：" + message +
+                     "。原有财务数据和待审记录未由本功能修改。"))
+
+        threading.Thread(target=worker, daemon=True,
+                         name="readonly-finance-issue-check").start()
+        self.after(250, self._poll_finance_diagnostic)
+
+    def _poll_finance_diagnostic(self):
+        try:
+            state, detail = self._finance_diag_queue.get_nowait()
+        except queue.Empty:
+            self.after(250, self._poll_finance_diagnostic)
+            return
+        self._finance_diag_running = False
+        self.finance_diag_button.configure(state="normal")
+        self._finance_diag_text = detail
+        if state == "ok":
+            self.finance_diag_status.set(
+                "已检查：全体待审股票的本地九表元数据。来源冲突仍待复核，未获入库授权。")
+        else:
+            self.finance_diag_status.set("只读检查被阻断：没有执行任何修复")
+        self.finance_diag_detail.set(detail)
+
+    def copy_finance_diagnostic(self):
+        """Copy a short, actionable receipt; no files are written."""
+        if not self._finance_diag_text:
+            self.finance_diag_status.set("尚无诊断摘要，请先点击“检查财务问题（只读）”。")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(self._finance_diag_text)
+        self.finance_diag_status.set(
+            "诊断摘要已复制；无需再提供数百项测试的完整输出。")
 
     def _scoped_button_state(self, *_):
         enabled = (self.update_mode.get() == "增量更新"
@@ -371,6 +463,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
             receipt = safe_json(WORK / "last-afternoon-unified.json")
             progress = safe_json(WORK / "qmt_extra" /
                                  "financial-cache-progress.json")
+            self.finance_attention.set(finance_pending_brief(progress))
             rows = coverage_rows(ledger, receipt, progress)
             frozen = tuple(tuple(r[k] for k in
                                  ("name", "begin", "end", "updated",
@@ -394,6 +487,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
         except (ValueError, OSError, TypeError) as exc:
             self.coverage_detail.set("覆盖索引读取失败：" +
                                      type(exc).__name__)
+            self.finance_attention.set("财务待审：账本读取未核实，不能认定无异常")
             self._coverage_snapshot = None
 
     def refresh(self):

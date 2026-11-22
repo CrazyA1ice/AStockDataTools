@@ -164,6 +164,37 @@ class SimpleModelTests(unittest.TestCase):
         with self.assertRaises(M.InvalidSimplePlan):
             M.finance_qmt_probe_view(r, "688259.SH")
 
+    def test_qmt_probe_distinguishes_optional_pershare_from_core(self):
+        r = sample_qmt_table_probe()
+        r["installed_xtquant_version"] = "250807.1.2"
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("250807.1.2", view)
+        self.assertIn("仅PerShare单表存在异常", view)
+        self.assertIn("仍不能证明九表组合请求的根因", view)
+
+    def test_qmt_probe_reports_core_failure_without_blame_on_pershare(self):
+        r = sample_qmt_table_probe()
+        r["tables"][0]["status"] = "UTF8_DECODE_ERROR"
+        r["tables"][0]["cached_rows"] = None
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("核心八表中需要排查 Balance", view)
+        self.assertIn("不能仅归因于PerShare", view)
+
+    def test_qmt_probe_all_empty_is_not_claimed_source_empty(self):
+        r = sample_qmt_table_probe()
+        for item in r["tables"]:
+            item["status"] = "EMPTY_OR_NOT_CACHED"
+            item["cached_rows"] = 0
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("核心八表的本地缓存均为空或尚未采集", view)
+        self.assertIn("不能判定供应商源数据不存在", view)
+
+    def test_qmt_probe_version_must_not_contain_control_characters(self):
+        r = sample_qmt_table_probe()
+        r["installed_xtquant_version"] = "1.2\nINJECTED_APPROVAL"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
+
     def test_verified_single_decode_error_can_prepare_only_one_stock(self):
         self.assertEqual(
             M.finance_decode_retry_target(sample_finance_census()),

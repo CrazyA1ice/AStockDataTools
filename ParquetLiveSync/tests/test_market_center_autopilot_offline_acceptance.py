@@ -53,6 +53,10 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.calls.append(tuple(arguments))
         return SimpleNamespace(returncode=0, stdout=b"Ran 1 test\nOK")
 
+    def test_powershell_fixture_matches_the_parser_target(self):
+        self.assertEqual(G.POWER_SHELL, "run-scoped-qmt-finance-cache.ps1")
+        self.assertTrue((self.module / G.POWER_SHELL).is_file())
+
     def test_standalone_ast_parses_only_known_sources(self):
         self.assertEqual(G.syntax_check(self.module),
                          len(G.MODULES) + len(G.TESTS))

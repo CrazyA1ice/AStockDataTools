@@ -199,6 +199,32 @@ class OfflineAcceptanceTests(unittest.TestCase):
                         "--apply", "--root", "D:/stock"])
         run.assert_not_called()
 
+    def test_long_success_receipt_is_compact_with_exact_test_count(self):
+        output = (b"test_case (Suite) ... ok\n" * 700 +
+                  b"\nRan 470 tests in 13.125s\n\nOK\n")
+        def runner(*args, **kwargs):
+            return SimpleNamespace(returncode=0, stdout=output)
+        result = G.execute(["python", "-B", "test"], self.module, 20,
+                           runner=runner)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["tests_run"], 470)
+        self.assertEqual(result["elapsed_seconds"], 13.125)
+        self.assertNotIn("output_tail", result)
+        self.assertLess(len(json.dumps(result)), 250)
+
+    def test_failed_suite_keeps_error_and_displays_test_count(self):
+        output = (b"Traceback (most recent call last):\n"
+                  b"AssertionError: intentional fixture mismatch\n"
+                  b"Ran 1 test in 0.01s\nFAILED (failures=1)\n")
+        def runner(*args, **kwargs):
+            return SimpleNamespace(returncode=1, stdout=output)
+        result = G.execute(["python", "-B", "test"], self.module, 20,
+                           runner=runner)
+        self.assertFalse(result["pass"])
+        self.assertEqual(result["exit"], 1)
+        self.assertEqual(result["tests_run"], 1)
+        self.assertIn("AssertionError:", result["output_tail"])
+
     def test_suite_output_is_bounded_and_no_file_is_persisted(self):
         giant = b"x" * 3000
         def noisy(*args, **kw):
@@ -206,7 +232,7 @@ class OfflineAcceptanceTests(unittest.TestCase):
         outcome = G.execute(["python", "-B", "fake"], self.module, 10,
                             runner=noisy)
         self.assertTrue(outcome["pass"])
-        self.assertEqual(len(outcome["output_tail"]), 1800)
+        self.assertNotIn("output_tail", outcome)
         self.assertFalse((self.module / "acceptance.json").exists())
 
 

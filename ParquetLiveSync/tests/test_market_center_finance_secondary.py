@@ -302,6 +302,94 @@ class FinanceSecondaryTests(TestCase):
         self.assertEqual(d["unique_event_leads"], 1)
         self.assertEqual(d["candidate_symbols_in_known_scope"], ["000010.SZ"])
 
+    def test_first_blocker_is_only_classified_pending_table(self):
+        def pending(table, reason="SOURCE_HISTORY_CONFLICT"):
+            return {"reason": reason,
+                    "detail": ("SOURCE_HISTORY_CONFLICT 000010.SZ table=" +
+                               table + " removed_or_revised=2")}
+        self.assertEqual(S.first_blocker_table_from_pending(
+            "000010.SZ", pending("Income")), "Income")
+        for table in ("Capital", "PerShare", "HolderNum", "UNCLASSIFIED"):
+            self.assertIsNone(S.first_blocker_table_from_pending(
+                "000010.SZ", pending(table)))
+        self.assertIsNone(S.first_blocker_table_from_pending(
+            "000010.SZ", pending("Income", reason="NO_CACHE")))
+        self.assertIsNone(S.first_blocker_table_from_pending(
+            "000010.SZ", {"reason": "SOURCE_HISTORY_CONFLICT",
+                          "detail": "SOURCE_HISTORY_CONFLICT 999999.SZ "
+                                    "table=Balance removed_or_revised=1"}))
+
+    def test_first_blocker_only_calls_one_statement_not_all_three(self):
+        ak = FakeAk()
+        q = {"m_timetag": "20260930", "revenue": 1200,
+             "net_profit_excl_min_int_inc": 110}
+        with TemporaryDirectory() as folder, \
+             patch.object(S.I, "_latest_snapshot_day",
+                          return_value="2026-11-21"), \
+             patch.object(S.E, "_financial_snapshot_rows", return_value=[q]):
+            result = S.crosscheck_saved(
+                synthetic_stock_root(folder), "000010.SZ", ak,
+                table_filter=("Income",))
+        self.assertEqual(ak.calls, [("income", "SZ000010")])
+        self.assertEqual(result["first_blocker_table"], "Income")
+        self.assertTrue(result["other_finance_tables_not_checked"])
+        self.assertEqual([x["table"] for x in result["table_timings"]],
+                         ["Income"])
+        self.assertEqual(result["fields_compared"], 2)
+        self.assertEqual(result["value_differences"], 0)
+        self.assertFalse(result["can_clear_pending"])
+        for bad in ((), ("Income", "Balance"), ("Capital",)):
+            with self.assertRaises(S.SecondarySourceBlocked):
+                S.crosscheck_saved(Path(folder), "000010.SZ", ak,
+                                  table_filter=bad)
+
+    def test_focused_pilot_has_no_announcement_api_calls_and_stays_readonly(self):
+        ak = FakeAk()
+        def no_notice(**kwargs):
+            raise AssertionError("NO_ANNOUNCEMENT_REQUESTS")
+        ak.stock_individual_notice_report = no_notice
+        with TemporaryDirectory() as folder, \
+             patch.object(S.I, "_latest_snapshot_day", return_value=None):
+            report = S.pilot_first_blocker(
+                synthetic_stock_root(folder), "000010.SZ", "Balance", ak)
+        self.assertEqual(ak.calls, [])
+        self.assertEqual(report["discovery"]["source_requests_attempted"], 0)
+        self.assertEqual(report["discovery"]["scope"],
+                         "QMT_FIRST_BLOCKER_TABLE_ONLY")
+        self.assertFalse(report["all_history_conflict_tables_identified"])
+        self.assertFalse(report["exact_conflict_report_dates_proven"])
+        self.assertEqual(len(report["crosschecks"][0]["tables"]), 1)
+        self.assertEqual(report["crosschecks"][0]["first_blocker_table"],
+                         "Balance")
+        self.assertFalse(report["can_apply"])
+        self.assertFalse(report["can_commit"])
+        self.assertFalse(report["changed_pending"])
+        with self.assertRaises(S.SecondarySourceBlocked):
+            S.pilot_first_blocker(Path(folder), "000010.SZ", "Capital", ak)
+
+    def test_canonical_pending_verification_rejects_ledger_changed(self):
+        from hashlib import sha256
+        with TemporaryDirectory() as folder:
+            root = synthetic_stock_root(folder)
+            ledger = root / "synthetic-progress.json"
+            ledger.write_bytes(b"synthetic")
+            state = {"pending": {
+                "000010.SZ": {
+                    "reason": "SOURCE_HISTORY_CONFLICT",
+                    "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                              "table=Balance removed_or_revised=1"}}}
+            with patch.object(S.P2, "_trusted_path", return_value=ledger), \
+                 patch.object(S.P2, "_read_ledger",
+                              return_value=(state, sha256(b"synthetic").hexdigest())), \
+                 patch.object(S.I, "_state", return_value=state):
+                self.assertEqual(S._verify_pending_first_blocker(
+                    root, "000010.SZ"), "Balance")
+                with self.assertRaises(S.SecondarySourceBlocked):
+                    S._verify_pending_first_blocker(root, "000011.SZ")
+                ledger.write_bytes(b"changed")
+                with self.assertRaises(S.SecondarySourceBlocked):
+                    S._verify_pending_first_blocker(root, "000010.SZ")
+
     def test_total_assets_net_profit_and_cash_flow_values_compare(self):
         ak = FakeAk()
         qmt = {

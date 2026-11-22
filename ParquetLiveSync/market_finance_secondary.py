@@ -334,32 +334,149 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
             "qmt_api_calls": 0, "qmt_download_calls": 0}
 
 
+
+def discover_pending_sample(ak, *, observed_on: date, symbols, days=3):
+    """One short individual-stock announcement query per pending sample.
+
+    NOT a complete feed: this avoids AKShare's full-market, all-page loop.
+    """
+    if (type(observed_on) is not date or not 1 <= days <= 7
+            or type(symbols) is not list or not 1 <= len(symbols) <= 3
+            or len(set(symbols)) != len(symbols)
+            or any(not isinstance(code, str)
+                   or not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
+                   for code in symbols)):
+        raise SecondarySourceBlocked("INVALID_PENDING_SAMPLE_SCOPE")
+    method = getattr(ak, "stock_individual_notice_report", None)
+    if not callable(method):
+        raise SecondarySourceBlocked("AKSHARE_INDIVIDUAL_NOTICE_API_UNAVAILABLE")
+    cutoff = observed_on - timedelta(days=days - 1)
+    scanned, seen, failed = 0, {}, []
+    latest = None
+    for code in symbols:
+        try:
+            records = _dataframe_records(method(
+                symbol=code[:6], indicator="全部",
+                start_date=cutoff.strftime("%Y%m%d"),
+                end_date=observed_on.strftime("%Y%m%d")), cap=250)
+        except Exception as exc:
+            failed.append({"symbol": code, "error_type": type(exc).__name__})
+            continue
+        scanned += len(records)
+        for row in records:
+            date_text = _day(row.get("公告日期"))
+            title = row.get("公告标题")
+            if (_code_six(row.get("代码")) != code[:6] or not date_text
+                    or not cutoff.isoformat() <= date_text <= observed_on.isoformat()
+                    or not isinstance(title, str) or not title.strip()):
+                continue
+            title = title.strip()[:180]
+            category = row.get("公告类型")
+            category = category.strip()[:50] if isinstance(category, str) else "未分类"
+            fp = _fingerprint(code[:6], title, date_text, category)
+            seen[fp] = {
+                "event_fingerprint": fp[:20], "symbol": code,
+                "code6": code[:6], "identity": "LOCAL_STOCK_ID_CONFIRMED",
+                "date": date_text, "category": category,
+                "kind": "CORRECTION_CANDIDATE" if any(
+                    word in title for word in ("更正", "修订", "补充", "差错", "追溯调整"))
+                    else "ANNOUNCEMENT_CANDIDATE", "title": title}
+            latest = max(latest or date_text, date_text)
+    events = sorted(seen.values(),
+                    key=lambda row: (row["date"], row["event_fingerprint"]),
+                    reverse=True)
+    return {
+        "source": SOURCE, "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+        "status": "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR" if failed
+                  else "SCOPED_PENDING_LEADS_NOT_COMPLETE",
+        "failed_categories": failed,
+        "from_date": cutoff.isoformat(), "through_date": observed_on.isoformat(),
+        "latest_listed_date": latest,
+        "categories_requested": ["全部（单股范围）"],
+        "query_strategy": "INDIVIDUAL_BY_DATE_RANGE",
+        "source_requests_attempted": len(symbols),
+        "pending_stocks_queried": len(symbols),
+        "rows_scanned": scanned, "unique_event_leads": len(events),
+        "unresolved_identity_leads": 0,
+        "candidate_symbols_in_known_scope": sorted({e["symbol"] for e in events}),
+        "events_sample": events[:20],
+        "official_announcement_ids_verified": False,
+        "feed_complete_for_date_range": False,
+        "full_market_coverage_checked": False,
+        "empty_means_no_financial_updates": False,
+        "can_schedule_download": False, "can_commit": False,
+    }
+
+
+def _best_pinned_crosscheck_stock(root, symbols):
+    """Metadata only chooses one sample; full SHA verification occurs later."""
+    try:
+        root = Path(root)
+        if not root.is_absolute() or root.is_symlink():
+            return symbols[0]
+        E._path_check(root)
+        extra = E._storage(root)
+    except (OSError, ValueError):
+        return symbols[0]
+    scores = {}
+    for code in symbols:
+        points = 0
+        for table in TABLES:
+            try:
+                day = I._latest_snapshot_day(extra, code, table)
+                if day:
+                    pin = E._financial_active_path(extra, code, table, day)
+                    E._path_check(pin)
+                    if pin.is_file() and not pin.is_symlink():
+                        points += 1
+            except (OSError, ValueError):
+                continue
+        scores[code] = points
+    return sorted(symbols, key=lambda code: (-scores[code], code))[0]
+
+
 def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
-          known_symbols=None):
-    """One bounded real-source call path for event discovery and small comparison."""
+          known_symbols=None, progress=None):
+    """Only three pending announcement queries and ONE statement comparison."""
     if not isinstance(symbols, list) or not 1 <= len(symbols) <= 3:
         raise SecondarySourceBlocked("PILOT_LIMIT_THREE_SYMBOLS")
     if len(set(symbols)) != len(symbols):
         raise SecondarySourceBlocked("DUPLICATE_PILOT_SYMBOL")
     if known_symbols is None:
         known_symbols = symbols
+    if not set(symbols).issubset(set(known_symbols)) or not 1 <= days <= 7:
+        raise SecondarySourceBlocked("INVALID_PENDING_PILOT_SCOPE")
     tick = monotonic()
+    if progress is not None:
+        progress("SCOPED_NOTICES")
     try:
-        discovery = discover_recent(
-            ak, observed_on=observed_on, days=days, pages=pages,
-            known_symbols=known_symbols)
+        discovery = discover_pending_sample(
+            ak, observed_on=observed_on, symbols=symbols, days=days)
     except Exception as exc:
-        # Failure is NOT an empty announcement feed. It must never suppress
-        # the existing QMT all-market rotation or indicate 'no new reports'.
-        discovery = {"source": SOURCE,
-                     "status": "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE",
-                     "error_type": type(exc).__name__,
-                     "feed_complete_for_date_range": False,
-                     "empty_means_no_financial_updates": False,
-                     "can_schedule_download": False, "can_commit": False}
+        discovery = {
+            "source": SOURCE,
+            "status": "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE",
+            "error_type": type(exc).__name__,
+            "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+            "feed_complete_for_date_range": False,
+            "full_market_coverage_checked": False,
+            "empty_means_no_financial_updates": False,
+            "can_schedule_download": False, "can_commit": False}
     discovery_seconds = round(monotonic() - tick, 3)
+    chosen = _best_pinned_crosscheck_stock(root, symbols)
     comparisons = []
     for code in symbols:
+        if code != chosen:
+            comparisons.append({
+                "symbol": code, "source": SOURCE,
+                "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                "fields_compared": 0, "fields_inconclusive": 0,
+                "value_differences": 0,
+                "can_commit": False, "can_clear_pending": False,
+                "qmt_api_calls": 0, "qmt_download_calls": 0})
+            continue
+        if progress is not None:
+            progress("THREE_STATEMENTS")
         try:
             comparisons.append(crosscheck_saved(root, code, ak))
         except Exception as exc:
@@ -375,6 +492,8 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
             "crosscheck_seconds": round(max(0, total_seconds - discovery_seconds), 3),
             "total_seconds": total_seconds,
             "discovery": discovery, "crosschecks": comparisons,
+            "crosscheck_sample_limit": 1,
+            "crosscheck_stocks_not_attempted": len(symbols) - 1,
             "event_candidates_to_download": [],
             "source_discovery_not_complete": True,
             "can_apply": False, "can_commit": False,
@@ -421,7 +540,9 @@ def main(argv=None):
     try:
         result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
                        days=args.lookback_days, pages=args.pages,
-                       known_symbols=known)
+                       known_symbols=known,
+                       progress=lambda phase: print(
+                           'FINANCE_EXTERNAL_STAGE=' + phase, flush=True))
     except Exception:
         return _blocked_readonly_pilot("READONLY_PILOT_ABORTED")
     print("FINANCE_EXTERNAL_READONLY=" +

@@ -35,6 +35,11 @@ a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1
 
+**无需部署即可查看真实账本的只读试运行**：新版GUI先在固定 SHA 的 detached Git worktree 打开，不复制或覆盖主仓库文件。使用已存在的主仓库 `.venv` Python 和新的 `-ReviewMainRepo` 参数，只在窗口内读取正式主仓库 `ParquetLiveSync/work` 下的账本、日志、历史待审记录；主仓库中的 `.git` 必须是目录，试运行工作树中的 `.git` 必须是文件。程序标题显式显示「只读试运行」。
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File <固定SHA独立工作树>\ParquetLiveSync\run-gui.ps1 -ReviewMainRepo D:\ChatGPT\AStockDataTools -PythonPath D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe
+
+试运行模式下的「按既有游标继续更新」「刷新财务缓存并检查历史」和解码异常的刷新引导均禁用，代码入口也拒绝调用写入程序；不会自动查询QMT日历。可先点击「检查财务问题（只读）」查看真实待审，随后如确认存在单只解码错误，可手动点击「检查QMT九表（只读）」从真实客户端读取最多九张表的缓存状态，**不下载/入库，不可据此宣称历史来源认证**。此模式不要求切换主仓库分支、不修改20:05任务，也不把 detached 工作树的空 `work` 误当成正式账本；若校验不通过则拒绝启动。关闭窗口即退出试运行，原正式界面不受影响。
 **首次更新后的可选自检**：若需要对某一固定提交进行验收，可运行原启动器的 `-QuickCheck`，它仅执行原三页界面合成测试和QMT九表模拟接口测试，完成后直接退出，不打开GUI、不连接真实QMT、不执行生产任务。普通启动不加开关时**完全不会运行测试**。如果在独立的Git worktree验收，可添加 `-PythonPath D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe` 复用现有Python环境；这不把隔离工作树的假数据当成主仓库正式账本，也不自动部署任何代码。
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1 -QuickCheck

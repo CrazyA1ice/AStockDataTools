@@ -84,6 +84,9 @@ def _table(finance: Path, code: str, table: str, evidence: list):
     if n_snapshot != len(snap_sig) or n_pins != len(pin_sig):
         raise CensusBlocked("TABLE_METADATA_CHANGED_DURING_READ")
     dates = {name[:10] for name, *_ in snap_sig}
+    current_day = datetime.now(E.L.UTC8).date()
+    if any(datetime.fromisoformat(day).date() > current_day for day in dates):
+        raise CensusBlocked("FUTURE_FINANCIAL_SNAPSHOT_DATE")
     pinned_days = {name[:10] for name, *_ in pin_sig}
     if not pinned_days <= dates:
         raise CensusBlocked("ACTIVE_PIN_WITHOUT_MATCHING_DATE")

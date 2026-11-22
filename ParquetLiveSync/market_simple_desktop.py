@@ -324,6 +324,21 @@ class SimpleMarketDashboard(UpdaterDashboard):
         if self.process is not None:
             self.finance_diag_status.set("已有任务运行，暂不能准备新的QMT缓存刷新。")
             return
+        try:
+            progress = safe_json(
+                WORK / "qmt_extra" / "financial-cache-progress.json")
+            pending = progress.get("pending", {})
+            item = pending.get(code) if isinstance(pending, dict) else None
+            if not isinstance(item, dict) or item.get("reason") != "CACHE_DECODE_ERROR":
+                self._finance_decode_retry_stock = None
+                self.finance_decode_retry_button.configure(state="disabled")
+                self.finance_diag_status.set(
+                    "解码异常的待审状态已变化；请重新点击只读检查。")
+                return
+        except (OSError, ValueError, TypeError):
+            self.finance_diag_status.set(
+                "无法核对最新待审账本；未准备QMT缓存刷新。")
+            return
         start, end = finance_decode_retry_window()
         self.update_mode.set("增量更新")
         self.update_scope.set("自选股票")

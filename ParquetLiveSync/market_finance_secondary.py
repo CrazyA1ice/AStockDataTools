@@ -1,0 +1,330 @@
+#!/usr/bin/env python3
+"""Real external financial-announcement candidates + QMT snapshot cross-check.
+
+Read-only pilot. Eastmoney via AKShare is an independent *aggregator*, not
+proof of an exchange filing. An incomplete recent-pages listing MUST NOT be
+used to skip the existing QMT safety rotation. No official market writes.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+import hashlib
+import importlib
+import json
+from pathlib import Path
+import re
+
+import qmt_extra_data as E
+import qmt_extra_financial_cache_import as I
+
+SOURCE = "EASTMONEY_VIA_AKSHARE"
+KIND = ("财务报告", "信息变更", "持股变动")
+TABLES = {
+    "Balance": ("stock_balance_sheet_by_report_em",
+                (("tot_assets", "TOTAL_ASSETS"),
+                 ("tot_liab", "TOTAL_LIABILITIES"),
+                 ("total_equity", "TOTAL_EQUITY"))),
+    "Income": ("stock_profit_sheet_by_report_em",
+               (("revenue", "TOTAL_OPERATE_INCOME"),
+                ("net_profit_excl_min_int_inc", "PARENT_NETPROFIT"))),
+    "CashFlow": ("stock_cash_flow_sheet_by_report_em",
+                 (("net_cash_flows_oper_act", "NETCASH_OPERATE"),)),
+}
+CST = timezone(timedelta(hours=8))
+
+
+class SecondarySourceBlocked(ValueError):
+    pass
+
+
+def _day(value):
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)) and 10**11 <= value <= 4.2 * 10**12:
+        try:
+            return datetime.fromtimestamp(value / 1000, CST).date().isoformat()
+        except (OverflowError, ValueError, OSError):
+            return None
+    if value is None:
+        return None
+    token = str(value).strip()
+    if re.fullmatch(r"\d{8}", token):
+        token = token[:4] + "-" + token[4:6] + "-" + token[6:]
+    elif len(token) >= 10:
+        token = token[:10]
+    try:
+        return date.fromisoformat(token).isoformat()
+    except ValueError:
+        return None
+
+
+def _dataframe_records(frame, *, cap=1500):
+    if not hasattr(frame, "to_dict") or not hasattr(frame, "index"):
+        raise SecondarySourceBlocked("EXTERNAL_DATAFRAME_SCHEMA_UNKNOWN")
+    if len(frame.index) > cap:
+        raise SecondarySourceBlocked("EXTERNAL_RESPONSE_BUDGET_EXCEEDED")
+    records = frame.to_dict(orient="records")
+    if not isinstance(records, list) or any(not isinstance(r, dict)
+                                           for r in records):
+        raise SecondarySourceBlocked("EXTERNAL_RECORDS_MALFORMED")
+    return records
+
+
+def _code_six(value):
+    raw = str(value).strip()
+    return raw if re.fullmatch(r"\d{6}", raw) else None
+
+
+def _fingerprint(code, title, day, category):
+    return hashlib.sha256(
+        json.dumps([code, title, day, category], ensure_ascii=False,
+                   separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def discover_recent(ak, *, observed_on: date, days=7, pages=2,
+                    known_symbols=()):
+    """Discover RECENT candidates, never assert feed completeness.
+
+    AKShare's stock_notice_report is a bounded recent-page listing and
+    supplies no verified permanent announcement ID, so events are leads only.
+    Exact exchange suffix is resolved only against caller-supplied local codes.
+    """
+    if type(observed_on) is not date or not 1 <= days <= 30 or not 1 <= pages <= 3:
+        raise SecondarySourceBlocked("INVALID_DISCOVERY_WINDOW")
+    codes = defaultdict(set)
+    for symbol in known_symbols:
+        if not isinstance(symbol, str) or not re.fullmatch(
+                r"\d{6}\.(?:SH|SZ|BJ)", symbol):
+            raise SecondarySourceBlocked("INVALID_KNOWN_STOCK_IDENTITY")
+        codes[symbol[:6]].add(symbol)
+    cutoff = (observed_on - timedelta(days=days - 1)).isoformat()
+    seen = {}
+    scanned = 0
+    latest = None
+    for category in KIND:
+        frame = ak.stock_notice_report(
+            report_type=category, recent_page=str(pages))
+        records = _dataframe_records(frame, cap=1500)
+        scanned += len(records)
+        for item in records:
+            published = _day(item.get("公告日期"))
+            code = _code_six(item.get("代码"))
+            title = item.get("公告标题")
+            if not published or not code or not isinstance(title, str):
+                continue
+            title = title.strip()[:180]
+            if not title or published > observed_on.isoformat():
+                continue
+            latest = max(latest or published, published)
+            if published < cutoff:
+                continue
+            resolved = codes.get(code, set())
+            symbol = next(iter(resolved)) if len(resolved) == 1 else None
+            identity = "LOCAL_STOCK_ID_CONFIRMED" if symbol else "UNRESOLVED"
+            kind = ("CORRECTION_CANDIDATE"
+                    if any(word in title for word in
+                           ("更正", "修订", "补充", "差错", "追溯调整"))
+                    else "ANNOUNCEMENT_CANDIDATE")
+            fp = _fingerprint(code, title, published, category)
+            seen[fp] = {"event_fingerprint": fp[:20],
+                        "symbol": symbol, "code6": code,
+                        "identity": identity, "date": published,
+                        "category": category, "kind": kind,
+                        "title": title}
+    events = sorted(seen.values(),
+                    key=lambda row: (row["date"], row["event_fingerprint"]),
+                    reverse=True)
+    candidates = sorted({e["symbol"] for e in events if e["symbol"]})
+    return {
+        "source": SOURCE, "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+        "from_date": cutoff, "through_date": observed_on.isoformat(),
+        "latest_listed_date": latest,
+        "categories_requested": list(KIND), "pages_per_category": pages,
+        "rows_scanned": scanned, "unique_event_leads": len(events),
+        "unresolved_identity_leads": sum(e["symbol"] is None for e in events),
+        "candidate_symbols_in_known_scope": candidates,
+        "events_sample": events[:20],
+        "official_announcement_ids_verified": False,
+        "feed_complete_for_date_range": False,
+        "empty_means_no_financial_updates": False,
+        "can_schedule_download": False, "can_commit": False,
+    }
+
+
+def _amount(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        v = Decimal(str(value).replace(",", "").strip())
+        return v if v.is_finite() else None
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _rows_by_period(rows, *, qmt):
+    result = defaultdict(list)
+    for row in rows:
+        day = _day(row.get("m_timetag" if qmt else "REPORT_DATE"))
+        if day is None and not qmt:
+            day = _day(row.get("报告日期"))
+        if day is not None:
+            result[day].append(row)
+    return result
+
+
+def _unanimous_value(rows, field):
+    values = {_amount(r.get(field)) for r in rows}
+    if not rows or None in values or len(values) != 1:
+        return None
+    return next(iter(values))
+
+
+def compare_rows(table, qmt_records, eastmoney_records, *, max_periods=4):
+    """Match report-end dates and narrowly documented numeric field pairs.
+
+    Skip unavailable/ambiguous variants instead of choosing an arbitrary
+    revised record. Differences are evidence for review, not commit approval.
+    """
+    if table not in TABLES or not 1 <= max_periods <= 8:
+        raise SecondarySourceBlocked("INVALID_COMPARISON_TABLE")
+    if (not isinstance(qmt_records, list)
+            or not isinstance(eastmoney_records, list)
+            or len(qmt_records) > 100000 or len(eastmoney_records) > 1500):
+        raise SecondarySourceBlocked("COMPARISON_INPUT_TOO_LARGE")
+    if any(not isinstance(x, dict) for x in qmt_records + eastmoney_records):
+        raise SecondarySourceBlocked("COMPARISON_ROW_MALFORMED")
+    q = _rows_by_period(qmt_records, qmt=True)
+    e = _rows_by_period(eastmoney_records, qmt=False)
+    periods = sorted(set(q) & set(e), reverse=True)[:max_periods]
+    comparison = []
+    for day in periods:
+        for qname, ename in TABLES[table][1]:
+            lhs = _unanimous_value(q[day], qname)
+            rhs = _unanimous_value(e[day], ename)
+            if lhs is None or rhs is None:
+                status = "NOT_COMPARABLE_OR_REVISION_AMBIGUOUS"
+            else:
+                absolute = abs(lhs - rhs)
+                status = ("EXACT_MATCH" if absolute == 0 else
+                          "NEAR_WITHIN_TOLERANCE" if
+                          absolute <= max(Decimal("1"), max(abs(lhs), abs(rhs)) *
+                                          Decimal("0.000000001")) else
+                          "VALUE_DIFFERENCE")
+            comparison.append({
+                "report_date": day, "qmt_field": qname,
+                "eastmoney_field": ename, "status": status,
+                "qmt_value_yuan": str(lhs) if lhs is not None else None,
+                "eastmoney_value_yuan": str(rhs) if rhs is not None else None,
+            })
+    counts = Counter(row["status"] for row in comparison)
+    return {"table": table, "report_dates_in_both": len(periods),
+            "qmt_report_dates_seen": len(q), "eastmoney_report_dates_seen": len(e),
+            "comparison_count": len(comparison),
+            "status_counts": dict(counts),
+            "comparisons": comparison,
+            "source_version_certified": False,
+            "notice_date_pit_aligned": False,
+            "can_resolve_historical_pending": False}
+
+
+def crosscheck_saved(root, code, ak, *, max_periods=4):
+    """Compare verified immutable QMT snapshots, never mutate their active pins."""
+    if not isinstance(code, str) or not re.fullmatch(
+            r"\d{6}\.(?:SH|SZ|BJ)", code):
+        raise SecondarySourceBlocked("INVALID_FINANCE_SYMBOL")
+    root = Path(root)
+    if not root.is_absolute() or root.is_symlink():
+        raise SecondarySourceBlocked("INVALID_READONLY_STOCK_ROOT")
+    E._path_check(root)
+    extra = E._storage(root)
+    tables = []
+    for table, (method_name, _) in TABLES.items():
+        asof = I._latest_snapshot_day(extra, code, table)
+        if asof is None:
+            tables.append({"table": table, "status": "NO_LOCAL_QMT_SNAPSHOT",
+                           "can_resolve_historical_pending": False})
+            continue
+        q = E._financial_snapshot_rows(extra, code, table, asof)
+        if not q:
+            raise SecondarySourceBlocked("LOCAL_SNAPSHOT_UNVERIFIED_" + table)
+        fn = getattr(ak, method_name, None)
+        if not callable(fn):
+            tables.append({"table": table, "status": "EXTERNAL_METHOD_UNAVAILABLE",
+                           "can_resolve_historical_pending": False})
+            continue
+        try:
+            e = _dataframe_records(fn(symbol=code[-2:] + code[:6]))
+            result = compare_rows(table, q, e, max_periods=max_periods)
+            result["status"] = "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION"
+            result["qmt_snapshot_asof"] = asof
+        except SecondarySourceBlocked:
+            raise
+        except Exception:
+            result = {"table": table, "status": "EXTERNAL_SOURCE_ERROR",
+                      "can_resolve_historical_pending": False}
+        tables.append(result)
+    compared = sum(x.get("comparison_count", 0) for x in tables)
+    differences = sum(x.get("status_counts", {}).get("VALUE_DIFFERENCE", 0)
+                      for x in tables)
+    return {"symbol": code, "source": SOURCE,
+            "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+            "tables": tables, "fields_compared": compared,
+            "value_differences": differences,
+            "qmt_snapshot_pins_unchanged": True,
+            "complete_nine_table_verification": False,
+            "pit_announcement_time_certified": False,
+            "can_commit": False, "can_clear_pending": False,
+            "qmt_api_calls": 0, "qmt_download_calls": 0}
+
+
+def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2):
+    """One bounded real-source call path for event discovery and small comparison."""
+    if not isinstance(symbols, list) or not 1 <= len(symbols) <= 3:
+        raise SecondarySourceBlocked("PILOT_LIMIT_THREE_SYMBOLS")
+    if len(set(symbols)) != len(symbols):
+        raise SecondarySourceBlocked("DUPLICATE_PILOT_SYMBOL")
+    discovery = discover_recent(
+        ak, observed_on=observed_on, days=days, pages=pages,
+        known_symbols=symbols)
+    comparisons = [
+        crosscheck_saved(root, code, ak)
+        for code in symbols
+    ]
+    return {"status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": discovery, "crosschecks": comparisons,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--symbols", required=True)
+    parser.add_argument("--lookback-days", type=int, default=7)
+    parser.add_argument("--pages", type=int, default=2)
+    parser.add_argument("--explicit-readonly", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.explicit_readonly:
+        parser.error("External financial-source pilot requires --explicit-readonly")
+    codes = [part.strip() for part in args.symbols.split(",")]
+    if any(not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
+           for code in codes):
+        parser.error("Invalid explicit stock IDs")
+    ak = importlib.import_module("akshare")
+    result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
+                   days=args.lookback_days, pages=args.pages)
+    print("FINANCE_EXTERNAL_READONLY=" +
+          json.dumps(result, ensure_ascii=False, default=str,
+                     separators=(",", ":"), allow_nan=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

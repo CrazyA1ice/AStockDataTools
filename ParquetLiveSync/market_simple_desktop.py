@@ -25,7 +25,7 @@ from market_simple_ui_model import (
     initial_date, preview_request, finance_cache_refresh_scope,
     finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
     finance_decode_retry_target, finance_decode_retry_window,
-    finance_qmt_probe_view,
+    finance_qmt_probe_view, extract_qmt_probe_receipt,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -386,14 +386,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
                 if (result.returncode != 0 or not isinstance(result.stdout, bytes)
                         or len(result.stdout) > 16384):
                     raise ValueError("QMT未连接、检查超时之外的异常或输出过大")
-                lines = result.stdout.decode("utf-8", errors="strict").splitlines()
-                marker = "QMT_FINANCE_TABLE_READONLY_PROBE="
-                receipts = [line[len(marker):] for line in lines
-                            if line.startswith(marker)]
-                if len(receipts) != 1:
-                    raise ValueError("未收到唯一可信的QMT逐表回执")
-                view = finance_qmt_probe_view(
-                    json.loads(receipts[0]), code)
+                # QMT may print GBK console logs; only the tagged JSON is UTF-8.
+                receipt = extract_qmt_probe_receipt(result.stdout)
+                view = finance_qmt_probe_view(receipt, code)
                 self._qmt_probe_queue.put(("ok", view))
             except (OSError, ValueError, UnicodeError, TypeError,
                     subprocess.TimeoutExpired) as exc:

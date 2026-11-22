@@ -17,6 +17,7 @@ import inspect
 import json
 from pathlib import Path
 import re
+from time import monotonic
 
 import qmt_extra_data as E
 import qmt_extra_financial_cache_import as I
@@ -329,6 +330,7 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
         raise SecondarySourceBlocked("DUPLICATE_PILOT_SYMBOL")
     if known_symbols is None:
         known_symbols = symbols
+    tick = monotonic()
     try:
         discovery = discover_recent(
             ak, observed_on=observed_on, days=days, pages=pages,
@@ -342,6 +344,7 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
                      "feed_complete_for_date_range": False,
                      "empty_means_no_financial_updates": False,
                      "can_schedule_download": False, "can_commit": False}
+    discovery_seconds = round(monotonic() - tick, 3)
     comparisons = []
     for code in symbols:
         try:
@@ -353,7 +356,11 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
                 "error_type": type(exc).__name__,
                 "can_commit": False, "can_clear_pending": False,
                 "qmt_api_calls": 0, "qmt_download_calls": 0})
+    total_seconds = round(monotonic() - tick, 3)
     return {"status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery_seconds": discovery_seconds,
+            "crosscheck_seconds": round(max(0, total_seconds - discovery_seconds), 3),
+            "total_seconds": total_seconds,
             "discovery": discovery, "crosschecks": comparisons,
             "event_candidates_to_download": [],
             "source_discovery_not_complete": True,

@@ -345,6 +345,88 @@ class SimpleModelTests(unittest.TestCase):
         self.assertIn("不代表两源一致", view)
         self.assertIn("仍须继续QMT轮转兜底", view)
 
+    def test_real_scoped_finance_receipt_explains_failed_stock_and_time(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR",
+                "source_requests_attempted": 3,
+                "failed_categories": [
+                    {"symbol": "000036.SZ", "error_type": "TimeoutError"}],
+                "unique_event_leads": 4,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": ["000010.SZ", "000055.SZ"]},
+            "crosschecks": [
+                {"symbol": "000010.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000036.SZ",
+                 "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                 "fields_compared": 24, "fields_inconclusive": 0,
+                 "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000055.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "discovery_seconds": 65.1,
+            "crosscheck_seconds": 26.9,
+            "total_seconds": 92.0,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("公告抽样查询完成 2/3", view)
+        self.assertIn("000036.SZ（TimeoutError）", view)
+        self.assertIn("个股公告 65.1 秒", view)
+        self.assertIn("三表对照及本地快照 26.9 秒", view)
+        self.assertIn("有效对比 24 个", view)
+        self.assertIn("不代表两源一致", view)
+        self.assertIn("不会自动下载", view)
+        report["discovery"]["failed_categories"][0]["error_type"] = (
+            "TimeoutError private/path")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
+    def test_scoped_finance_rejects_spoofed_failure_or_time(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR",
+                "source_requests_attempted": 1,
+                "failed_categories": [
+                    {"symbol": "688000.SH", "error_type": "OSError"}],
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "discovery_seconds": 2,
+            "crosscheck_seconds": 3,
+            "total_seconds": 4,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["discovery"]["failed_categories"][0]["symbol"] = "000010.SZ"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["total_seconds"] = 5
+        self.assertIn("公告抽样查询完成 0/1",
+                      M.finance_secondary_pilot_view(report))
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",

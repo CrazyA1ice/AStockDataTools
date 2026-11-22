@@ -47,6 +47,8 @@ class OfflineAcceptanceTests(unittest.TestCase):
                 "SAFETY_TEST_FIXTURE = True\n", encoding="utf-8")
         (self.module / G.POWER_SHELL).write_text(
             "# synthetic fixture only", encoding="utf-8")
+        (self.module / "tests" / "test_market_update_dashboard.py").write_text(
+            "DASHBOARD_TEST_FIXTURE = True\n", encoding="utf-8")
         self.calls = []
 
     def fake_run(self, arguments, **kwargs):
@@ -163,13 +165,67 @@ class OfflineAcceptanceTests(unittest.TestCase):
         report = G.acceptance(
             self.module, PIN, full=True,
             runner=self.fake_run, git_runner=good_git)
-        self.assertEqual(len(report["test_suites"]), 10)
         self.assertEqual(
-            report["test_suites"][-2]["suite"],
-            "FULL_MARKET_CENTER_REGRESSION")
-        self.assertEqual(
-            report["test_suites"][-1]["suite"],
-            "OPERATOR_DASHBOARD_REGRESSION")
+            len(report["test_suites"]),
+            len(G.TESTS) + len(G.regression_files(self.module)) + 1)
+        names = [x["suite"] for x in report["test_suites"]]
+        self.assertEqual(names[:len(G.TESTS)], list(G.TESTS))
+        self.assertEqual(names[len(G.TESTS):-1],
+                         list(G.regression_files(self.module)))
+        self.assertEqual(names[-1], "OPERATOR_DASHBOARD_REGRESSION")
+        self.assertNotIn("FULL_MARKET_CENTER_REGRESSION", names)
+
+    def test_full_regression_matches_every_file_in_review_tree(self):
+        extra = self.module / "tests" / "test_market_center_legacy_tk.py"
+        extra.write_text("LEGACY_GUI_FIXTURE = True\n", encoding="utf-8")
+        expected = sorted([*G.TESTS, extra.name])
+        self.assertEqual(G.regression_files(self.module), tuple(expected))
+        result = G.acceptance(self.module, PIN, full=True,
+                              runner=self.fake_run, git_runner=good_git)
+        self.assertEqual(result["status"], "OFFLINE_ACCEPTANCE_PASS")
+        stages = result["test_suites"][len(G.TESTS):-1]
+        self.assertEqual([x["suite"] for x in stages], expected)
+        self.assertTrue(all(x["tests_run"] == 1 for x in stages))
+        commands = self.calls[len(G.TESTS):-1]
+        self.assertEqual(len(commands), len(expected))
+        self.assertTrue(all("discover" in cmd and "-p" in cmd and
+                            "test_market_center*.py" not in cmd
+                            for cmd in commands))
+
+    def test_exact_file_failure_stops_before_other_regression_modules(self):
+        failed = "test_market_center_autopilot_ui.py"
+        def file_runner(args, **kwargs):
+            self.calls.append(tuple(args))
+            if "discover" in args and failed in args:
+                return SimpleNamespace(
+                    returncode=1, stdout=b"Ran 2 tests in 0.01s\nFAILED")
+            return SimpleNamespace(returncode=0,
+                                   stdout=b"Ran 1 test in 0.01s\nOK")
+        result = G.acceptance(
+            self.module, PIN, full=True,
+            runner=file_runner, git_runner=good_git)
+        self.assertEqual(result["status"], "OFFLINE_ACCEPTANCE_FAILED")
+        last = result["test_suites"][-1]
+        self.assertEqual(last["suite"], failed)
+        self.assertEqual(last["tests_run"], 2)
+        self.assertIn("FAILED", last["output_tail"])
+        self.assertFalse(any("test_market_update_dashboard.py" in cmd
+                             for cmd in self.calls))
+
+    def test_zero_case_regression_file_cannot_green_full_gate(self):
+        target = "test_market_center_autopilot_ui.py"
+        def empty_runner(args, **kwargs):
+            if "discover" in args and target in args:
+                return SimpleNamespace(returncode=0,
+                                       stdout=b"Ran 0 tests in 0.00s\nOK")
+            return SimpleNamespace(returncode=0,
+                                   stdout=b"Ran 1 test in 0.00s\nOK")
+        result = G.acceptance(self.module, PIN, full=True,
+                              runner=empty_runner, git_runner=good_git)
+        self.assertEqual(result["status"], "OFFLINE_ACCEPTANCE_FAILED")
+        self.assertEqual(result["test_suites"][-1]["suite"], target)
+        self.assertEqual(result["test_suites"][-1]["error"],
+                         "UNITTEST_NO_TESTS_EXECUTED")
 
     def test_failed_suite_stops_before_running_remaining_cases(self):
         def fail_second(arguments, **kwargs):

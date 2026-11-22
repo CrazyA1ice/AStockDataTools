@@ -26,6 +26,25 @@ def sample_finance_census():
             "SOURCE_HISTORY_CONFLICT": 1, "CACHE_DECODE_ERROR": 1},
         "first_recorded_conflict_table_counts": {"Capital": 1},
         "per_share_without_local_snapshots": 2,
+        "nine_table_local_state_counts": [
+            {"table": "PerShare", "state": "M", "count": 2},
+            {"table": "Capital", "state": "M", "count": 1},
+            {"table": "Capital", "state": "U", "count": 1},
+            {"table": "Balance", "state": "M", "count": 1},
+            {"table": "Balance", "state": "P", "count": 1},
+            {"table": "Income", "state": "M", "count": 1},
+            {"table": "Income", "state": "P", "count": 1},
+            {"table": "CashFlow", "state": "M", "count": 1},
+            {"table": "CashFlow", "state": "P", "count": 1},
+            {"table": "Top10FlowHolder", "state": "M", "count": 1},
+            {"table": "Top10FlowHolder", "state": "P", "count": 1},
+            {"table": "Top10Holder", "state": "M", "count": 1},
+            {"table": "Top10Holder", "state": "P", "count": 1},
+            {"table": "HolderNum", "state": "M", "count": 1},
+            {"table": "HolderNum", "state": "P", "count": 1},
+            {"table": "PershareIndex", "state": "M", "count": 1},
+            {"table": "PershareIndex", "state": "P", "count": 1},
+        ],
         "cache_decode_error_stocks": ["688259.SH"],
         "journal_counts": {"capital-recovery-journal": 0,
                            "scoped-finance-transaction-journals": 0},
@@ -76,6 +95,7 @@ class SimpleModelTests(unittest.TestCase):
         self.assertIn("待审 2 只", text)
         self.assertIn("688259.SH", text)
         self.assertIn("PerShare 无本地快照 2/2", text)
+        self.assertIn("无快照10、未pin1", text)
         self.assertIn("不能据此判断QMT来源为空", text)
         self.assertIn("不会补pin", text)
 

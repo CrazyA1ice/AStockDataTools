@@ -25,6 +25,7 @@ MODULES = (
     "market_scoped_finance_transaction_intent.py",
     "market_scoped_finance_transaction_sandbox.py",
     "market_scoped_finance_live_readonly_preflight.py",
+    "market_scoped_finance_pending_full_census.py",
 )
 TESTS = (
     "test_market_center_autopilot_shadow.py",
@@ -36,6 +37,7 @@ TESTS = (
     "test_market_center_scoped_finance_transaction_sandbox.py",
     "test_market_center_autopilot_offline_acceptance.py",
     "test_market_center_scoped_finance_live_readonly_preflight.py",
+    "test_market_center_scoped_finance_pending_full_census.py",
 )
 POWER_SHELL = "run-scoped-qmt-finance-cache.ps1"
 

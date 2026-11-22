@@ -17,7 +17,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from market_update_dashboard import (
-    MODULE, REPO, WORK, SHANGHAI, UpdaterDashboard, safe_json, safe_refresh_limit,
+    MODULE, REPO, WORK, SHANGHAI, REVIEW_MODE, REVIEW_MAIN_REPO,
+    UpdaterDashboard, safe_json, safe_refresh_limit,
 )
 from market_simple_ui_model import (
     MODULES, PERIODS, EXTRAS, InvalidSimplePlan, coverage_rows,
@@ -54,7 +55,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         header = ttk.Frame(body)
         header.pack(fill="x", pady=(0, 8))
         ttk.Label(
-            header, text="A股数据管理中心",
+            header, text=("A股数据管理中心 · 只读试运行"
+                          if REVIEW_MODE else "A股数据管理中心"),
             font=("Microsoft YaHei UI", 17, "bold"),
         ).pack(side="left")
         ttk.Button(header, text="刷新", command=self.refresh).pack(side="right")
@@ -328,7 +330,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_decode_retry_stock = target if state == "ok" else None
         self.finance_decode_retry_button.configure(
             state="normal" if self._finance_decode_retry_stock
-            and self.process is None else "disabled")
+            and self.process is None and not REVIEW_MODE else "disabled")
         self.qmt_table_probe_button.configure(
             state="normal" if self._finance_decode_retry_stock
             and self.process is None and not self._qmt_probe_running
@@ -357,13 +359,14 @@ class SimpleMarketDashboard(UpdaterDashboard):
                     or not isinstance(pending.get(code), dict)
                     or pending[code].get("reason") != "CACHE_DECODE_ERROR"):
                 raise InvalidSimplePlan("待审状态已变化，请重新运行本地只读检查")
-            python = REPO / ".venv" / "Scripts" / "python.exe"
+            qmt_repo = Path(REVIEW_MAIN_REPO) if REVIEW_MODE else REPO
+            python = qmt_repo / ".venv" / "Scripts" / "python.exe"
             worker_file = MODULE / "qmt_extra_financial_cache_worker.py"
-            if (os.name != "nt" or not (REPO / ".git").is_dir()
-                    or (REPO / ".git").is_symlink()
+            if (os.name != "nt" or not (qmt_repo / ".git").is_dir()
+                    or (qmt_repo / ".git").is_symlink()
                     or not python.is_file() or python.is_symlink()
                     or not worker_file.is_file() or worker_file.is_symlink()):
-                raise InvalidSimplePlan("只允许正式Windows仓库执行QMT九表只读检查")
+                raise InvalidSimplePlan("正式Windows环境或QMT只读检查组件不可用")
         except (InvalidSimplePlan, OSError, ValueError, TypeError) as exc:
             self.qmt_probe_detail.set("QMT逐表检查已阻断：" + str(exc)[:120])
             return
@@ -376,7 +379,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
                 result = subprocess.run(
                     [str(python), "-u", "-B", str(worker_file),
                      "--symbols", code, "--probe-readonly"],
-                    cwd=str(REPO), stdin=subprocess.DEVNULL,
+                    cwd=str(qmt_repo), stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     check=False, timeout=45,
                     creationflags=subprocess.CREATE_NO_WINDOW)
@@ -420,6 +423,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
 
     def prepare_finance_decode_retry(self):
         """Prepare bounded vendor-cache refresh; NEVER launch it automatically."""
+        if REVIEW_MODE:
+            self.finance_diag_status.set("只读试运行禁止QMT缓存刷新；正式数据未修改。")
+            return
         code = self._finance_decode_retry_stock
         if not code:
             self.finance_diag_status.set(
@@ -477,7 +483,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
         if hasattr(self, "finance_decode_retry_button"):
             self.finance_decode_retry_button.configure(
                 state="normal" if self._finance_decode_retry_stock
-                and self.process is None else "disabled")
+                and self.process is None and not REVIEW_MODE else "disabled")
         if hasattr(self, "qmt_table_probe_button"):
             self.qmt_table_probe_button.configure(
                 state="normal" if self._finance_decode_retry_stock
@@ -487,12 +493,15 @@ class SimpleMarketDashboard(UpdaterDashboard):
                    and self.update_scope.get() == "自选股票"
                    and [name for name in MODULES if
                         self.module_vars[name].get()] == ["财务"]
-                   and self.process is None)
+                   and self.process is None and not REVIEW_MODE)
         self.selected_run_button.configure(
             state="normal" if enabled else "disabled")
 
     def run_scoped_finance_cache(self):
         """Explicit QMT local-cache update; no canonical Parquet import."""
+        if REVIEW_MODE:
+            messagebox.showwarning("只读试运行", "试运行不允许刷新QMT缓存或写入任何财务数据。")
+            return
         if self.process is not None:
             messagebox.showwarning("已有任务运行", "请先等待当前任务结束")
             return
@@ -574,6 +583,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             fallback, source = "", "已提交交易日不可用"
         self._apply_default_day(fallback, source)
         limit = safe_refresh_limit()
+        if REVIEW_MODE:
+            self.date_source.set(
+                self.date_source.get() + "；只读试运行未自动连接QMT日历")
+            return
         def worker():
             try:
                 result = query_calendar(limit)
@@ -665,8 +678,16 @@ class SimpleMarketDashboard(UpdaterDashboard):
     def refresh(self):
         # Inherit all legacy safety checks, stage receipts and bounded log tail.
         super().refresh()
+        if REVIEW_MODE:
+            self.run_button.configure(state="disabled")
         self._scoped_button_state()
         self._refresh_coverage()
+
+    def manual_update(self):
+        if REVIEW_MODE:
+            messagebox.showwarning("只读试运行", "试运行不允许启动正式行情更新。")
+            return
+        return super().manual_update()
 
 
 def main():

@@ -266,7 +266,84 @@ def _old_verified_fingerprints(finance: Path, extra: Path,
              "history_fingerprint_locally_verified": True})
 
 
-def _compare(old: list[dict], fresh: list[dict]) -> dict:
+def _locate_report_key_dates(old: list[dict], fresh: list[dict],
+                             outcome: dict) -> dict:
+    """Expose bounded QMT m_timetag date labels and changed field NAMES only."""
+    def dates(rows):
+        by_key, by_day = {}, {}
+        for row in rows:
+            key = row["key_sha256"]
+            label = row.get("report_key_date")
+            if (type(label) is not str or
+                    not re.fullmatch(r"\d{4}-\d{2}-\d{2}", label)):
+                raise CacheCompareBlocked("missing_verified_qmt_key_date")
+            try:
+                if date.fromisoformat(label).isoformat() != label:
+                    raise ValueError("noncanonical")
+            except ValueError as exc:
+                raise CacheCompareBlocked("invalid_qmt_key_date") from exc
+            if ((key in by_key and by_key[key] != label) or
+                    (label in by_day and by_day[label] != key)):
+                raise CacheCompareBlocked("ambiguous_qmt_key_date_mapping")
+            by_key[key], by_day[label] = label, key
+        return by_key
+
+    old_dates, fresh_dates = dates(old), dates(fresh)
+    previous, current = {}, {}
+    for row in old:
+        previous.setdefault(row["key_sha256"], []).append(row["field_sha256"])
+    for row in fresh:
+        key = row["key_sha256"]
+        if key in current:
+            raise CacheCompareBlocked("duplicate_cached_report_key")
+        current[key] = row["field_sha256"]
+    old_keys, fresh_keys = set(previous), set(current)
+    removed = sorted(old_dates[k] for k in old_keys - fresh_keys)
+    added = sorted(fresh_dates[k] for k in fresh_keys - old_keys)
+    changed, field_totals = [], Counter()
+    for key in old_keys & fresh_keys:
+        variants = previous[key]
+        def business(fields):
+            return {name: value for name, value in fields.items()
+                    if name != "m_quarter"}
+        stable = {json.dumps(business(fields), sort_keys=True)
+                  for fields in variants}
+        if len(stable) != 1:
+            raise CacheCompareBlocked("ambiguous_historical_business_key_dates")
+        before, after = business(variants[0]), business(current[key])
+        names = sorted(name for name in before.keys() | after.keys()
+                       if before.get(name) != after.get(name))
+        if names:
+            if old_dates[key] != fresh_dates[key]:
+                raise CacheCompareBlocked("mismatched_common_key_date")
+            for name in names:
+                if FIELD.fullmatch(name) is None or name == "m_timetag":
+                    raise CacheCompareBlocked("unsafe_date_detail_field")
+                field_totals[name] += 1
+            changed.append({"report_key_date": old_dates[key], "fields": names})
+    changed.sort(key=lambda x: x["report_key_date"])
+    expected = {entry["field"]: entry["report_keys"]
+                for entry in outcome["changed_non_quarter_field_counts"]}
+    if (len(removed) != outcome["previous_keys_missing_from_cache"]
+            or len(added) != outcome["cached_keys_absent_from_previous"]
+            or field_totals != Counter(expected)):
+        raise CacheCompareBlocked("qmt_key_dates_not_aligned_with_p5_counts")
+    if len(removed) + len(added) + len(changed) > MAX_DATE_DETAILS:
+        raise CacheCompareBlocked("report_key_date_detail_budget_exceeded")
+    return {
+        "source_key": "QMT_CAPITAL_M_TIMETAG",
+        "date_labels_from_existing_local_cache": True,
+        "official_report_periods_or_filing_dates_certified": False,
+        "previous_only_key_dates": removed,
+        "current_only_key_dates": added,
+        "changed_business_field_key_dates": changed,
+        "m_quarter_date_labels_omitted": True,
+        "historical_pending_remains_blocked": True,
+        "financial_original_values_emitted": False,
+    }
+
+
+def _compare(old: list[dict], fresh: list[dict], *, date_details=False) -> dict:
     previous = {}
     current = {}
     for row in old:
@@ -308,7 +385,7 @@ def _compare(old: list[dict], fresh: list[dict]) -> dict:
         verdict = "M_QUARTER_ONLY_CANDIDATE_NOT_APPROVED"
     else:
         verdict = "NO_DIFFERENCE_OBSERVED_IN_CURRENT_CACHE"
-    return {
+    result = {
         "previous_report_keys": len(old_keys),
         "cached_report_keys": len(fresh_keys),
         "previous_keys_missing_from_cache": len(old_keys - fresh_keys),
@@ -323,6 +400,10 @@ def _compare(old: list[dict], fresh: list[dict]) -> dict:
         "observed_class": verdict,
         "current_cache_only_not_provider_certified": True,
     }
+    if date_details:
+        result["report_key_date_details"] = _locate_report_key_dates(
+            old, fresh, result)
+    return result
 
 
 def _prepare_verified_histories(state_module: Path | str,

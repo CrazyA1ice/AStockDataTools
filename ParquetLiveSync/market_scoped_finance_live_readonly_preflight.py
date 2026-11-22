@@ -21,6 +21,8 @@ import qmt_extra_financial_cache_import as I
 
 MAX_SAMPLES = 5
 MAX_FILES_PER_DIRECTORY = 4096
+MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
+MAX_ACTIVE_PIN_BYTES = 256 * 1024
 FILE_NAME = re.compile(r"\d{4}-\d{2}-\d{2}-[0-9a-f]{16}\.parquet\Z")
 PIN_NAME = re.compile(r"\d{4}-\d{2}-\d{2}\.json\Z")
 
@@ -126,6 +128,16 @@ def _latest_table(extra: Path, code: str, table: str, evidence: list):
     latest = observed_dates[-1]
     if date.fromisoformat(latest) > datetime.now(E.L.UTC8).date():
         raise PreflightBlocked("FUTURE_FINANCIAL_SNAPSHOT_DAY")
+    # Bound I/O BEFORE the active-pointer reader hashes the selected file.
+    for name in snapshots:
+        if name.startswith(latest + "-"):
+            nbytes = (snap_dir / name).stat().st_size
+            if not 0 < nbytes <= MAX_SNAPSHOT_BYTES:
+                raise PreflightBlocked("LATEST_SNAPSHOT_SIZE_LIMIT")
+    pin = E._financial_active_path(extra, code, table, latest)
+    _safe(pin)
+    if pin.exists() and not 0 < pin.stat().st_size <= MAX_ACTIVE_PIN_BYTES:
+        raise PreflightBlocked("LATEST_ACTIVE_PIN_SIZE_LIMIT")
     candidate = E._financial_snapshot_file(extra, code, table, latest)
     if candidate is None:
         raise PreflightBlocked("LATEST_SNAPSHOT_UNRESOLVED")

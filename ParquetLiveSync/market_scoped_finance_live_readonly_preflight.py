@@ -43,7 +43,8 @@ def _canonical_workspace(workspace: Path):
             or workspace.parent.name != "work"
             or workspace.parent.parent.name != "ParquetLiveSync"
             or not workspace.is_dir()
-            or not (workspace.parent.parent.parent / ".git").is_dir()):
+            or not (workspace.parent.parent.parent / ".git").is_dir()
+            or (workspace.parent.parent.parent / ".git").is_symlink()):
         raise PreflightBlocked("CANONICAL_WORKSPACE_IN_MAIN_CHECKOUT_REQUIRED")
     _safe(workspace)
     return workspace

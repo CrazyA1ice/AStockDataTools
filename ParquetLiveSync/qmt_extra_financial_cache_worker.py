@@ -8,6 +8,7 @@ Never writes official Parquet or any cursor/ledger itself.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import os
 import sys
 from pathlib import Path
@@ -123,15 +124,98 @@ def collect(xt, symbols, output, *, mode="cache", start="", end="",
         "missing": len(missing)}))
 
 
+def probe_tables_readonly(xt, code, *, now=None):
+    """Check each of the nine QMT table names without downloading or writing.
+
+    Separate calls distinguish an unsupported optional PerShare table from a
+    failing required table. This does NOT authenticate rows or source history.
+    """
+    if E.valid_code(code) != code:
+        raise ValueError("Invalid probe stock code")
+    local = now or datetime.now(E.L.UTC8)
+    if local.tzinfo is None or local.utcoffset() is None:
+        raise ValueError("Probe requires a timezone-aware clock")
+    local = local.astimezone(E.L.UTC8)
+    minute = local.hour * 60 + local.minute
+    if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+        raise ValueError("QMT_FINANCE_PROBE_RESERVED_2005_WINDOW")
+    results = []
+    for table in E.FIN_TABLES:
+        kind = "OPTIONAL_UNCONFIRMED" if table == "PerShare" else "DOCUMENTED_CORE"
+        try:
+            data = _qmt_provider_call(
+                xt.get_financial_data, [code], [table],
+                start_time="", end_time="", report_type="report_time")
+            if not isinstance(data, dict) or set(data) - {code}:
+                raise ValueError("Invalid QMT financial probe envelope")
+            tables = data.get(code)
+            if tables is None:
+                status, count = "SYMBOL_NOT_RETURNED", None
+            elif not isinstance(tables, dict) or set(tables) - {table}:
+                raise ValueError("Invalid QMT financial probe table set")
+            elif table not in tables:
+                status, count = "TABLE_NOT_RETURNED", None
+            elif tables[table] is None:
+                status, count = "EMPTY_OR_NOT_CACHED", 0
+            else:
+                frame = tables[table]
+                if not hasattr(frame, "index"):
+                    raise ValueError("QMT finance table index missing")
+                count = len(frame.index)
+                if type(count) is not int or not 0 <= count <= 100000:
+                    raise ValueError("QMT finance table row count invalid")
+                status = "ROWS_IN_LOCAL_CACHE" if count else "EMPTY_OR_NOT_CACHED"
+        except UnicodeDecodeError:
+            status, count = "UTF8_DECODE_ERROR", None
+        except QMTCacheProviderDisconnected:
+            status, count = "QMT_CLIENT_UNAVAILABLE", None
+        except (ValueError, TypeError, KeyError, AttributeError):
+            status, count = "INVALID_PROVIDER_RESPONSE", None
+        except Exception:
+            # No tracebacks or source-content bytes in the operator report.
+            status, count = "SOURCE_API_ERROR", None
+        results.append({"table": table, "role": kind,
+                        "status": status, "cached_rows": count})
+    return {
+        "status": "QMT_FINANCE_TABLE_READONLY_PROBE_REQUIRES_REVIEW",
+        "symbol": code, "tables_checked": len(results), "tables": results,
+        "per_share_optional_support_proven": False,
+        "empty_cache_proves_provider_empty": False,
+        "historical_consistency_verified": False,
+        "qmt_get_financial_data_calls": len(results),
+        "qmt_download_calls": 0, "can_download": False,
+        "can_apply": False, "can_commit": False,
+        "official_finance_writes": 0,
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbols", required=True,
                         help="Comma-separated QMT stock codes, max 20")
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--mode", choices=("cache", "daily"), required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--mode", choices=("cache", "daily"))
+    parser.add_argument("--probe-readonly", action="store_true")
     parser.add_argument("--start", default="")
     parser.add_argument("--end", default="")
     args = parser.parse_args(argv)
+    if args.probe_readonly:
+        if (args.output is not None or args.mode is not None
+                or args.start or args.end
+                or not E.re.fullmatch(r"d{6}.(?:SH|SZ|BJ)", args.symbols)):
+            parser.error("readonly probe requires exactly one stock and no write options")
+        # Block QMT API access during the daily writer's protected window.
+        local = datetime.now(E.L.UTC8)
+        if 19 * 60 + 50 <= local.hour * 60 + local.minute < 20 * 60 + 25:
+            print("QMT_FINANCE_PROBE_BLOCKED=RESERVED_2005_WINDOW", flush=True)
+            return 2
+        from xtquant import xtdata
+        print("QMT_FINANCE_TABLE_READONLY_PROBE=" +
+              E.canonical_json(probe_tables_readonly(xtdata, args.symbols)),
+              flush=True)
+        return 0
+    if args.output is None or args.mode is None:
+        parser.error("normal worker requires --output and --mode")
     from xtquant import xtdata
     try:
         collect(xtdata, args.symbols.split(","), args.output, mode=args.mode,

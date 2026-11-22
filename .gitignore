@@ -19,6 +19,7 @@ h5-private-candidates/
 
 # Virtual environments, Python caches and local editors.
 .venv/
+.venv-akshare/
 venv/
 __pycache__/
 *.pyc

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 MODULES = (
     "market_daily_autopilot_shadow.py",
@@ -162,6 +163,29 @@ def powershell_ast(module, *, runner=subprocess.run):
     return "PASS"
 
 
+def regression_files(module):
+    """Enumerate every matching regression file, strictly under review tree.
+
+    Never replace the complete regression with a cherry-picked subset.
+    Separate Python interpreters prevent Tk root/theme state from crossing
+    otherwise unrelated unittest modules.
+    """
+    folder = Path(module) / "tests"
+    if not folder.is_dir() or folder.is_symlink():
+        raise OfflineBlocked("REGRESSION_TEST_FOLDER_MISSING_OR_LINKED")
+    paths = sorted(folder.glob("test_market_center*.py"))
+    if not 8 <= len(paths) <= 150:
+        raise OfflineBlocked("REGRESSION_FILE_COUNT_OUT_OF_BOUNDS")
+    names = tuple(p.name for p in paths)
+    if len(set(names)) != len(names) or not set(TESTS).issubset(names):
+        raise OfflineBlocked("REGRESSION_REQUIRED_TEST_FILE_MISSING")
+    for file in paths:
+        if (not file.is_file() or file.is_symlink()
+                or not 0 < file.stat().st_size <= 1_000_000):
+            raise OfflineBlocked("REGRESSION_FILE_INVALID_" + file.name)
+    return names
+
+
 def acceptance(module, head, *, full=False, runner=subprocess.run,
                git_runner=subprocess.run):
     review_identity(module, head, runner=git_runner)
@@ -181,17 +205,48 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
         if not result["pass"]:
             break
     if full and len(checks) == len(TESTS) and all(x["pass"] for x in checks):
-        for name, pattern in (
-            ("FULL_MARKET_CENTER_REGRESSION", "test_market_center*.py"),
-            ("OPERATOR_DASHBOARD_REGRESSION", "test_market_update_dashboard.py"),
-        ):
+        # One test module per process, including legacy GUI tests lacking a
+        # __main__ entry point. A single discover process for all 31 files
+        # can leak Tk theme callbacks across destroyed Tk roots.
+        complete = regression_files(module)
+        remaining_seconds = 600
+        started = time.monotonic()
+        for name in complete:
+            remaining_seconds = 600 - int(time.monotonic() - started)
+            if remaining_seconds <= 0:
+                checks.append({
+                    "suite": name, "pass": False, "exit": None,
+                    "error": "FULL_REGRESSION_TOTAL_BUDGET_EXCEEDED",
+                    "output_tail": "Full regression exceeded 600 seconds",
+                })
+                break
             result = require_unittest_result(execute(
-                [sys.executable, "-B", "-m", "unittest", "discover",
-                 "-s", "tests", "-p", pattern, "-q"],
-                module, 600, runner=runner))
+                [sys.executable, "-u", "-B", "-m", "unittest",
+                 "discover", "-s", "tests", "-p", name, "-v"],
+                module, min(90, remaining_seconds), runner=runner))
             checks.append({"suite": name, **result})
             if not result["pass"]:
                 break
+        else:
+            operator = module / "tests" / "test_market_update_dashboard.py"
+            if (not operator.is_file() or operator.is_symlink()
+                    or not 0 < operator.stat().st_size <= 1_000_000):
+                raise OfflineBlocked("OPERATOR_DASHBOARD_TEST_MISSING")
+            remaining_seconds = 600 - int(time.monotonic() - started)
+            if remaining_seconds <= 0:
+                checks.append({
+                    "suite": "OPERATOR_DASHBOARD_REGRESSION",
+                    "pass": False, "exit": None,
+                    "error": "FULL_REGRESSION_TOTAL_BUDGET_EXCEEDED",
+                })
+            else:
+                result = require_unittest_result(execute(
+                    [sys.executable, "-u", "-B", "-m", "unittest",
+                     "discover", "-s", "tests",
+                     "-p", "test_market_update_dashboard.py", "-v"],
+                    module, min(90, remaining_seconds), runner=runner))
+                checks.append({
+                    "suite": "OPERATOR_DASHBOARD_REGRESSION", **result})
     all_pass = (len(checks) >= len(TESTS)
                 and all(item["pass"] for item in checks)
                 and powershell == "PASS")

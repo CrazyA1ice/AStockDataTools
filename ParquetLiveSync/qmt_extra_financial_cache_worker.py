@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from importlib import metadata
 import os
 import sys
 from pathlib import Path
@@ -194,6 +195,18 @@ def probe_tables_readonly(xt, code, *, now=None):
     }
 
 
+def _installed_xtquant_version():
+    """Read local package metadata only; never infer feature availability."""
+    try:
+        value = metadata.version("xtquant")
+    except metadata.PackageNotFoundError:
+        return "UNKNOWN"
+    if not isinstance(value, str) or not E.re.fullmatch(
+            r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}", value):
+        return "UNKNOWN"
+    return value
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbols", required=True,
@@ -215,9 +228,10 @@ def main(argv=None):
             print("QMT_FINANCE_PROBE_BLOCKED=RESERVED_2005_WINDOW", flush=True)
             return 2
         from xtquant import xtdata
+        result = probe_tables_readonly(xtdata, args.symbols)
+        result["installed_xtquant_version"] = _installed_xtquant_version()
         print("QMT_FINANCE_TABLE_READONLY_PROBE=" +
-              E.canonical_json(probe_tables_readonly(xtdata, args.symbols)),
-              flush=True)
+              E.canonical_json(result), flush=True)
         return 0
     if args.output is None or args.mode is None:
         parser.error("normal worker requires --output and --mode")

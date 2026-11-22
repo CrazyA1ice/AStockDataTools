@@ -78,6 +78,8 @@ def sample_qmt_table_probe():
         "qmt_get_financial_data_calls": 9, "qmt_download_calls": 0,
         "can_apply": False, "can_commit": False,
         "can_download": False, "official_finance_writes": 0,
+        "per_share_optional_support_proven": False,
+        "historical_consistency_verified": False,
         "empty_cache_proves_provider_empty": False,
     }
 
@@ -188,6 +190,15 @@ class SimpleModelTests(unittest.TestCase):
         view = M.finance_qmt_probe_view(r, "688259.SH")
         self.assertIn("核心八表的本地缓存均为空或尚未采集", view)
         self.assertIn("不能判定供应商源数据不存在", view)
+
+    def test_qmt_probe_rejects_false_history_or_optional_certification(self):
+        for claimed in ("historical_consistency_verified",
+                        "per_share_optional_support_proven"):
+            r = sample_qmt_table_probe()
+            r[claimed] = True
+            with self.subTest(claimed=claimed), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.finance_qmt_probe_view(r, "688259.SH")
 
     def test_qmt_probe_version_must_not_contain_control_characters(self):
         r = sample_qmt_table_probe()

@@ -536,6 +536,8 @@ def finance_secondary_timeout_stage(output: bytes | None) -> str:
     tag = b"FINANCE_EXTERNAL_STAGE="
     phases = [line[len(tag):] for line in output.splitlines()
               if line.startswith(tag)]
+    if phases and phases[-1] == b"FIRST_BLOCKER_TABLE":
+        return "QMT待审首张冲突报表的外部查询阶段"
     if phases and phases[-1] == b"THREE_STATEMENTS":
         return "东方财富三大报表历史查询阶段"
     if phases and phases[-1] == b"SCOPED_NOTICES":
@@ -562,6 +564,18 @@ def finance_secondary_pilot_view(report: dict) -> str:
             or lead.get("can_schedule_download") is not False
             or not isinstance(stocks, list) or len(stocks) > 3):
         raise InvalidSimplePlan("跨源发现结果不可信或范围过大")
+    focused = lead.get("scope") == "QMT_FIRST_BLOCKER_TABLE_ONLY"
+    if focused and (
+            report.get("first_blocker_scope_only") is not True
+            or report.get("all_history_conflict_tables_identified") is not False
+            or report.get("exact_conflict_report_dates_proven") is not False
+            or len(stocks) != 1
+            or lead.get("status") != "NOT_RUN_HISTORICAL_CONFLICT_REVIEW"
+            or lead.get("source_requests_attempted") != 0
+            or lead.get("failed_categories") != []
+            or lead.get("unique_event_leads") != 0
+            or lead.get("full_market_coverage_checked") is not False):
+        raise InvalidSimplePlan("定向财务核验回执范围或安全状态非法")
     n = lead.get("unique_event_leads", 0)
     if type(n) is not int or not 0 <= n <= 31500:
         raise InvalidSimplePlan("公告候选计数超出范围")
@@ -570,13 +584,20 @@ def finance_secondary_pilot_view(report: dict) -> str:
                                or isinstance(timing, bool)
                                or not 0 <= timing <= 3600):
         raise InvalidSimplePlan("外部财务来源耗时统计异常")
-    lines = [
-        ("东方财富待审股票抽样公告 %d 条（最多3只、非全市场）。" % n
-         if lead.get("scope") == "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY"
-         else "东方财富近期公告候选 %d 条（非完整公告流）。" % n),
-        "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
-        str(lead.get("status", "UNKNOWN"))[:70],
-    ]
+    if focused:
+        lines = [
+            "QMT历史冲突定向核验：仅检查正式待审账本指向的第一张报表。",
+            "本轮未执行近期公告查询，不代表没有新增财务数据；"
+            "其他报表及精确冲突报告期尚未核实。",
+        ]
+    else:
+        lines = [
+            ("东方财富待审股票抽样公告 %d 条（最多3只、非全市场）。" % n
+             if lead.get("scope") == "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY"
+             else "东方财富近期公告候选 %d 条（非完整公告流）。" % n),
+            "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
+            str(lead.get("status", "UNKNOWN"))[:70],
+        ]
     if timing is not None:
         lines.append("本轮外部财务试验总耗时 %.1f 秒（非更新速度改善证明）。" %
                      timing)
@@ -630,17 +651,27 @@ def finance_secondary_pilot_view(report: dict) -> str:
             raise InvalidSimplePlan("跨源分阶段耗时无效")
         if timing is not None and abs(discovery + crosscheck - timing) > 1.0:
             raise InvalidSimplePlan("跨源分阶段耗时与总计不一致")
-        lines.append("分阶段耗时：个股公告 %.1f 秒；三表对照及本地快照 %.1f 秒。"
-                     % (discovery, crosscheck))
+        if focused:
+            lines.append("分阶段耗时：首张冲突表及本地快照 %.1f 秒；公告未查询。"
+                         % crosscheck)
+        else:
+            lines.append("分阶段耗时：个股公告 %.1f 秒；三表对照及本地快照 %.1f 秒。"
+                         % (discovery, crosscheck))
     picks = lead.get("candidate_symbols_in_known_scope", [])
     if not isinstance(picks, list) or len(picks) > 500:
         raise InvalidSimplePlan("外部股票候选数量异常")
-    if picks:
+    if focused:
+        if picks:
+            raise InvalidSimplePlan("历史冲突定向核验不得携带公告候选")
+        lines.append("QMT本地完整性检查与日常轮转继续执行；本次不会解除待审。")
+    elif picks:
         lines.append("待审股票中出现公告线索：" + "、".join(picks[:8]))
     else:
         lines.append("本轮已查询样本未匹配公告线索；仍须继续QMT轮转兜底。")
     if report.get("crosscheck_sample_limit") == 1:
-        lines.append("性能保护：本轮最多实际比较1只股票三大报表，其余未执行。")
+        lines.append("性能保护：本轮最多实际比较1只QMT待审股票的首张冲突报表。"
+                     if focused else
+                     "性能保护：本轮最多实际比较1只股票三大报表，其余未执行。")
     for entry in stocks:
         if (not isinstance(entry, dict) or not isinstance(entry.get("symbol"), str)
                 or entry.get("can_commit") is not False
@@ -652,6 +683,16 @@ def finance_secondary_pilot_view(report: dict) -> str:
         if entry.get("status") == "NOT_RUN_ONE_STOCK_PILOT_BUDGET":
             lines.append(code + "：因首次试验请求预算未运行财报对照，不代表两源一致。")
             continue
+        if focused:
+            target = entry.get("first_blocker_table")
+            if (target not in ("Balance", "Income", "CashFlow")
+                    or entry.get("other_finance_tables_not_checked") is not True
+                    or not isinstance(entry.get("tables"), list)
+                    or len(entry["tables"]) != 1
+                    or entry["tables"][0].get("table") != target):
+                raise InvalidSimplePlan("第一冲突报表身份或范围不可信")
+            lines.append(code + "：账本首张冲突表 " + target +
+                         "；非全部九表，冲突报告期未精准定位。")
         compared = entry.get("fields_compared", 0)
         inconclusive = entry.get("fields_inconclusive", 0)
         different = entry.get("value_differences", 0)
@@ -667,7 +708,8 @@ def finance_secondary_pilot_view(report: dict) -> str:
              str(entry.get("status", ""))[:60]))
         breakdown = entry.get("table_timings")
         if breakdown is not None:
-            expected = ("Balance", "Income", "CashFlow")
+            expected = ((entry["first_blocker_table"],) if focused
+                        else ("Balance", "Income", "CashFlow"))
             status_labels = {
                 "NO_LOCAL_QMT_SNAPSHOT": "本地快照缺失",
                 "EXTERNAL_METHOD_UNAVAILABLE": "外部方法不可用",
@@ -676,7 +718,7 @@ def finance_secondary_pilot_view(report: dict) -> str:
                 "FIELDS_NOT_COMPARABLE_OR_REVISIONS": "字段/修订版无法比较",
                 "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION": "抽样对照完成（未认证）",
             }
-            if not isinstance(breakdown, list) or len(breakdown) != 3:
+            if not isinstance(breakdown, list) or len(breakdown) != len(expected):
                 raise InvalidSimplePlan("逐表耗时回执缺失或超出范围")
             for expected_table, timer in zip(expected, breakdown):
                 if (not isinstance(timer, dict)
@@ -696,6 +738,9 @@ def finance_secondary_pilot_view(report: dict) -> str:
                     "  %s：本地快照 %.2f秒，东财接口 %.2f秒，字段比较 %.2f秒；%s。"
                     % (expected_table, *seconds, status_labels[timer["status"]]))
     lines.append(
+        "只读试验：只核验第一张冲突报表少量字段，未确定冲突精确报告期或修订原文。"
+        "不会自动下载、覆盖旧版、清除pending或修改20:05任务。"
+        if focused else
         "只读试验：仅核验三大报表少量字段，未验证公告原文、修订版及完整九表。"
         "不会自动下载、覆盖旧版、清除pending或修改20:05任务。")
     return "\n".join(lines)

@@ -30,6 +30,7 @@ from market_simple_ui_model import (
     finance_secondary_timeout_stage,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
+import market_center_finance_pending_triage as P2
 
 
 def secondary_finance_python(canonical_repo: Path) -> Path:
@@ -266,12 +267,12 @@ class SimpleMarketDashboard(UpdaterDashboard):
         external_actions = ttk.Frame(diagnosis)
         external_actions.pack(fill="x", pady=(6, 1))
         self.secondary_finance_button = ttk.Button(
-            external_actions, text="近期公告与东财三表对照（只读试验）",
+            external_actions, text="QMT异常首张报表核验（只读）",
             command=self.start_secondary_finance_pilot)
         self.secondary_finance_button.pack(side="left")
         self.secondary_finance_detail = tk.StringVar(value=(
-            "真实东方财富公告候选与最多3只待审股票的三大报表数值核验；"
-            "需要本机安装akshare，无法证明全市场公告完整。"))
+            "只核验QMT账本已标记的第一张异常报表（Balance/Income/CashFlow）；"
+            "不抓全市场公告，不修改历史冲突或正式数据。"))
         ttk.Label(diagnosis, textvariable=self.secondary_finance_detail,
                   wraplength=980, justify="left").pack(anchor="w")
         stage = ttk.LabelFrame(page, text="最近任务 · 分阶段状态", padding=7)
@@ -475,12 +476,23 @@ class SimpleMarketDashboard(UpdaterDashboard):
             pending = progress.get("pending")
             if not isinstance(pending, dict):
                 raise InvalidSimplePlan("正式财务待审账本不可用")
-            stocks = sorted(code for code, entry in pending.items()
-                            if isinstance(entry, dict)
-                            and entry.get("reason") == "SOURCE_HISTORY_CONFLICT")
-            if not stocks:
+            conflicts = sorted(
+                (code, P2._parse_first_conflict(
+                    code, entry.get("detail"))[0])
+                for code, entry in pending.items()
+                if isinstance(entry, dict)
+                and entry.get("reason") == "SOURCE_HISTORY_CONFLICT")
+            if not conflicts:
                 raise InvalidSimplePlan("没有待核验的历史来源冲突股票")
-            selected = stocks[:3]
+            # Ledger only names the FIRST blocker. Capital and other nine-table
+            # blockers do not justify requesting any of the three EM statements.
+            eligible = [(code, table) for code, table in conflicts
+                        if table in ("Balance", "Income", "CashFlow")]
+            if not eligible:
+                raise InvalidSimplePlan(
+                    "待审账本未发现可由东财三表对应的首张冲突表；"
+                    "Capital等异常保留QMT专项处理，不做无关外部查询")
+            selected, first_table = [eligible[0][0]], eligible[0][1]
             known = sorted(pending)[:500]
             canonical_repo = Path(REVIEW_MAIN_REPO) if REVIEW_MODE else REPO
             python = secondary_finance_python(canonical_repo)
@@ -497,9 +509,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._secondary_finance_running = True
         self.secondary_finance_button.configure(state="disabled")
         self.secondary_finance_detail.set(
-            "正在查询 " + "、".join(selected) +
-            " 近3日个股公告；为避免超时，最多只对1只股票做东财三表比较。"
-            "不会修改数据。")
+            "只读核验QMT待审 " + selected[0] +
+            " 首张冲突表 " + first_table +
+            "；跳过公告与无关报表。报告期尚未精确定位，不会修改数据。")
 
         def worker():
             try:
@@ -508,7 +520,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
                      "--root", str(root),
                      "--symbols", ",".join(selected),
                      "--known-symbols", ",".join(known),
-                     "--lookback-days", "3", "--pages", "2",
+                     "--pending-first-blocker-only",
                      "--explicit-readonly"],
                     cwd=str(canonical_repo),
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

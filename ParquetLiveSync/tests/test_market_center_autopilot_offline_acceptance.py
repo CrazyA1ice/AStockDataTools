@@ -176,7 +176,7 @@ class OfflineAcceptanceTests(unittest.TestCase):
             self.calls.append(tuple(arguments))
             if len(self.calls) == 2:
                 return SimpleNamespace(returncode=1, stdout=b"FAIL")
-            return SimpleNamespace(returncode=0, stdout=b"OK")
+            return SimpleNamespace(returncode=0, stdout=b"Ran 1 test\nOK")
         result = G.acceptance(
             self.module, PIN, full=True,
             runner=fail_second, git_runner=good_git)
@@ -224,6 +224,18 @@ class OfflineAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["exit"], 1)
         self.assertEqual(result["tests_run"], 1)
         self.assertIn("AssertionError:", result["output_tail"])
+
+    def test_zero_test_unittest_result_fails_closed(self):
+        for output in (b"OK", b"Ran 0 tests in 0.00s\nOK"):
+            with self.subTest(output=output):
+                def runner(*args, **kwargs):
+                    return SimpleNamespace(returncode=0, stdout=output)
+                raw = G.execute(["python", "-B", "test"], self.module, 10,
+                                runner=runner)
+                result = G.require_unittest_result(raw)
+                self.assertFalse(result["pass"])
+                self.assertEqual(result["error"],
+                                 "UNITTEST_NO_TESTS_EXECUTED")
 
     def test_suite_output_is_bounded_and_no_file_is_persisted(self):
         giant = b"x" * 3000

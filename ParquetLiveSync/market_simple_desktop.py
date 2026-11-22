@@ -27,10 +27,11 @@ from market_simple_ui_model import (
     finance_decode_retry_target, finance_decode_retry_window,
     finance_qmt_probe_view, extract_qmt_probe_receipt,
     finance_secondary_pilot_view, extract_finance_secondary_receipt,
-    finance_secondary_timeout_stage,
+    finance_secondary_timeout_stage, finance_capital_first_blocker_view,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 import market_center_finance_pending_triage as P2
+import market_center_finance_pending_snapshot_review as P3
 
 
 def secondary_finance_python(canonical_repo: Path) -> Path:
@@ -73,6 +74,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._qmt_probe_queue = queue.Queue()
         self._secondary_finance_running = False
         self._secondary_finance_queue = queue.Queue()
+        self._capital_review_running = False
+        self._capital_review_queue = queue.Queue()
         super().__init__()
         self._resolve_default_session()
 
@@ -270,6 +273,15 @@ class SimpleMarketDashboard(UpdaterDashboard):
             external_actions, text="QMT异常首张报表核验（只读）",
             command=self.start_secondary_finance_pilot)
         self.secondary_finance_button.pack(side="left")
+        self.capital_review_button = ttk.Button(
+            external_actions, text="Capital首阻断分类（只读）",
+            command=self.start_capital_first_blocker_review)
+        self.capital_review_button.pack(side="left", padx=8)
+        self.capital_review_detail = tk.StringVar(value=(
+            "只读取正式QMT待审账本及Capital历史快照文件元数据；"
+            "不连接QMT，不查东方财富，不定位实际冲突报告期。"))
+        ttk.Label(diagnosis, textvariable=self.capital_review_detail,
+                  wraplength=980, justify="left").pack(anchor="w")
         self.secondary_finance_detail = tk.StringVar(value=(
             "只核验QMT账本已标记的第一张异常报表（Balance/Income/CashFlow）；"
             "不抓全市场公告，不修改历史冲突或正式数据。"))
@@ -456,6 +468,69 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.qmt_probe_output.delete("1.0", "end")
         self.qmt_probe_output.insert("1.0", summary)
         self.qmt_probe_output.configure(state="disabled")
+
+    def start_capital_first_blocker_review(self):
+        """Only P2/P3 ledger and filename metadata, never cache or source API."""
+        if self._capital_review_running:
+            return
+        if (self._finance_diag_running or self._secondary_finance_running
+                or self._qmt_probe_running or self.process is not None):
+            self.capital_review_detail.set(
+                "其他财务任务仍在运行；Capital只读分类未启动。")
+            return
+        try:
+            now = datetime.now(SHANGHAI)
+            minute = now.hour * 60 + now.minute
+            if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+                raise InvalidSimplePlan("北京时间19:50—20:25保护正式20:05任务")
+            progress = safe_json(
+                WORK / "qmt_extra" / "financial-cache-progress.json")
+            root = finance_root_from_progress(progress)
+            repo = Path(REVIEW_MAIN_REPO) if REVIEW_MODE else REPO
+            state_module = repo / "ParquetLiveSync"
+            market_root = root / "AllCycleAStockData"
+            if (not repo.is_absolute() or repo.is_symlink()
+                    or not state_module.is_dir()
+                    or state_module.is_symlink()
+                    or not market_root.is_dir()
+                    or market_root.is_symlink()):
+                raise InvalidSimplePlan("正式只读账本或Capital快照目录不可用")
+        except (OSError, ValueError, TypeError, InvalidSimplePlan) as exc:
+            self.capital_review_detail.set(
+                "Capital分类未启动：" + str(exc)[:120])
+            return
+        self._capital_review_running = True
+        self.capital_review_button.configure(state="disabled")
+        self.capital_review_detail.set(
+            "正在核对正式待审账本与Capital历史快照元数据；"
+            "不读取任何财务数值，不发外部请求。")
+
+        def worker():
+            try:
+                first = P2.summarize_pending(state_module)
+                metadata = P3.review(state_module, market_root)
+                # Both summaries must refer to the same immutable ledger.
+                summary = finance_capital_first_blocker_view(first, metadata)
+                self._capital_review_queue.put(("ok", summary))
+            except Exception as exc:
+                # Do not disclose raw ledger, filenames or financial values.
+                self._capital_review_queue.put((
+                    "error", "Capital分类未完成：" + type(exc).__name__ +
+                    "；只读审计已停止，正式数据与待审账本未修改。"))
+        threading.Thread(target=worker, daemon=True,
+                         name="readonly-capital-first-blocker").start()
+        self.after(250, self._poll_capital_first_blocker_review)
+
+    def _poll_capital_first_blocker_review(self):
+        try:
+            state, detail = self._capital_review_queue.get_nowait()
+        except queue.Empty:
+            if self._capital_review_running:
+                self.after(250, self._poll_capital_first_blocker_review)
+            return
+        self._capital_review_running = False
+        self.capital_review_button.configure(state="normal")
+        self.capital_review_detail.set(detail)
 
     def start_secondary_finance_pilot(self):
         """External leads + verified QMT snapshots, never run a writer."""

@@ -16,7 +16,80 @@ import market_simple_desktop as UI
 import market_update_dashboard as OLD
 
 
+def sample_finance_census():
+    return {
+        "status": "S9_FULL_PENDING_METADATA_CENSUS_READONLY_NOT_SOURCE_CERTIFIED",
+        "can_apply": False, "can_commit": False,
+        "all_historical_versions_verified": False, "qmt_calls": 0,
+        "ledger_pending_total": 2,
+        "pending_by_reason": {
+            "SOURCE_HISTORY_CONFLICT": 1, "CACHE_DECODE_ERROR": 1},
+        "first_recorded_conflict_table_counts": {"Capital": 1},
+        "per_share_without_local_snapshots": 2,
+        "cache_decode_error_stocks": ["688259.SH"],
+        "journal_counts": {"capital-recovery-journal": 0,
+                           "scoped-finance-transaction-journals": 0},
+        "rows_on_page": [
+            {"symbol": "688259.SH", "reason": "CACHE_DECODE_ERROR",
+             "nine_table_states": {"PerShare": "M"},
+             "first_recorded_conflict_table": None},
+            {"symbol": "000010.SZ", "reason": "SOURCE_HISTORY_CONFLICT",
+             "nine_table_states": {"PerShare": "M", "Capital": "U"},
+             "first_recorded_conflict_table": "Capital"},
+        ],
+    }
+
+
 class SimpleModelTests(unittest.TestCase):
+    def test_finance_pending_exposes_reasons_not_just_count(self):
+        brief = M.finance_pending_brief({
+            "pending": {
+                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"},
+            }})
+        self.assertIn("待审 2 只", brief)
+        self.assertIn("历史差异 1", brief)
+        self.assertIn("缓存解码 1", brief)
+        self.assertIn("不会覆盖旧历史", brief)
+
+    def test_missing_or_malformed_finance_ledger_not_green(self):
+        self.assertIn("账本不可用", M.finance_pending_brief({}))
+        self.assertIn("格式待核实", M.finance_pending_brief(
+            {"pending": {"000010.SZ": "bad"}}))
+        self.assertIn("不代表财务历史已跨源核验",
+                      M.finance_pending_brief({"pending": {}}))
+
+    def test_finance_diagnostic_binds_root_from_existing_ledger(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            extra = root / "AllCycleAStockData" / "qmt_extra"
+            self.assertEqual(M.finance_root_from_progress(
+                {"root": str(extra)}), root)
+            for invalid in ({}, {"root": str(root)},
+                            {"root": "relative/qmt_extra"}):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises(M.InvalidSimplePlan):
+                        M.finance_root_from_progress(invalid)
+
+    def test_finance_diagnostic_chinese_view_is_not_repair_approval(self):
+        text = M.finance_issue_report_view(sample_finance_census())
+        self.assertIn("待审 2 只", text)
+        self.assertIn("688259.SH", text)
+        self.assertIn("PerShare 无本地快照 2/2", text)
+        self.assertIn("不能据此判断QMT来源为空", text)
+        self.assertIn("不会补pin", text)
+
+    def test_finance_diagnostic_rejects_forged_green_or_bad_counts(self):
+        for fake in (
+            {**sample_finance_census(), "can_commit": True},
+            {**sample_finance_census(), "qmt_calls": 1},
+            {**sample_finance_census(), "ledger_pending_total": 4},
+            {**sample_finance_census(), "status": "UNKNOWN"},
+        ):
+            with self.subTest(fake=fake.get("status")):
+                with self.assertRaises(M.InvalidSimplePlan):
+                    M.finance_issue_report_view(fake)
+
     def test_committed_date_is_selected_as_fallback(self):
         ledger = {"periods": {"1min": {"2026-11": {
             "days": ["2026-11-19", "2026-11-20"]}}}}
@@ -158,6 +231,53 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(self.app.tabs.tab(2, "text"), "异常与日志")
         self.assertEqual(str(self.app.selected_run_button["state"]), "disabled")
         self.assertIn("既有游标", self.app.run_button["text"])
+
+    def test_finance_readonly_button_is_on_existing_logs_tab(self):
+        self.assertEqual(self.app.finance_diag_button["text"],
+                         "检查财务问题（只读）")
+        self.assertEqual(len(self.app.tabs.tabs()), 3)
+
+    def test_finance_pending_is_visible_automatically_on_overview(self):
+        progress = self.work / "qmt_extra" / "financial-cache-progress.json"
+        progress.parent.mkdir(parents=True, exist_ok=True)
+        progress.write_text(json.dumps({
+            "pending": {
+                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}),
+            encoding="utf-8")
+        with patch.object(UI, "WORK", self.work):
+            self.app._refresh_coverage()
+        self.assertIn("待审 2 只", self.app.finance_attention.get())
+        self.assertIn("缓存解码 1", self.app.finance_attention.get())
+
+    def test_finance_diagnostic_worker_uses_census_not_qmt_or_writer(self):
+        import market_scoped_finance_pending_full_census as S9
+        root = Path(self.temp.name) / "stock"
+        progress = {"root": str(root / "AllCycleAStockData" / "qmt_extra")}
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(S9, "census",
+                          return_value=sample_finance_census()) as scan, \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            self.assertEqual(str(self.app.finance_diag_button["state"]),
+                             "disabled")
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_finance_diagnostic()
+            scan.assert_called_once_with(root, self.work / "qmt_extra",
+                                         page=1, page_size=3)
+        self.assertIn("688259.SH", self.app.finance_diag_detail.get())
+        self.assertEqual(str(self.app.finance_diag_button["state"]), "normal")
+        self.assertFalse(self.app._finance_diag_running)
+
+    def test_diagnostic_failure_does_not_start_retry_or_approval(self):
+        self.app._finance_diag_running = True
+        self.app._finance_diag_queue.put(
+            ("error", "检查未完成：RESERVED_2005_NO_FINANCE_INVENTORY"))
+        self.app._poll_finance_diagnostic()
+        self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
+        self.assertFalse(self.app._finance_diag_running)
 
     def test_date_start_and_end_auto_fill_identically(self):
         self.app._apply_default_day("2026-11-20", "QMT交易日历")

@@ -26,7 +26,7 @@ from market_simple_ui_model import (
     finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
     finance_decode_retry_target, finance_decode_retry_window,
     finance_qmt_probe_view, extract_qmt_probe_receipt,
-    finance_secondary_pilot_view,
+    finance_secondary_pilot_view, extract_finance_secondary_receipt,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -488,23 +488,22 @@ class SimpleMarketDashboard(UpdaterDashboard):
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL, check=False, timeout=120,
                     creationflags=subprocess.CREATE_NO_WINDOW)
-                if (result.returncode != 0 or not isinstance(result.stdout, bytes)
-                        or len(result.stdout) > 131072):
-                    raise ValueError("AKSHARE_UNAVAILABLE_OR_SOURCE_ERROR")
-                prefix = b"FINANCE_EXTERNAL_READONLY="
-                matches = [line[len(prefix):]
-                           for line in result.stdout.splitlines()
-                           if line.startswith(prefix)]
-                if len(matches) != 1:
-                    raise ValueError("EXTERNAL_SOURCE_RECEIPT_MISSING")
-                receipt = json.loads(matches[0].decode("utf-8"))
+                receipt = extract_finance_secondary_receipt(
+                    result.stdout, result.returncode)
                 summary = finance_secondary_pilot_view(receipt)
                 self._secondary_finance_queue.put(("ok", summary))
-            except (OSError, ValueError, UnicodeError, TypeError,
-                    subprocess.TimeoutExpired) as exc:
+            except subprocess.TimeoutExpired:
+                self._secondary_finance_queue.put((
+                    "error", "外部核验超过120秒，已停止本轮子进程；"
+                    "公告接口可能较慢或分页较多；没有修改正式数据。"))
+            except InvalidSimplePlan as exc:
+                self._secondary_finance_queue.put((
+                    "error", "外部核验未完成：" + str(exc)[:150] +
+                    "；没有修改正式数据。"))
+            except (OSError, ValueError, UnicodeError, TypeError) as exc:
                 self._secondary_finance_queue.put((
                     "error", "外部核验未完成：" + type(exc).__name__ +
-                    "。请检查akshare依赖和网络接口；没有修改正式数据。"))
+                    "（未取得可信结果）；没有修改正式数据。"))
         threading.Thread(target=worker, daemon=True,
                          name="external-finance-readonly-pilot").start()
         self.after(250, self._poll_secondary_finance_pilot)

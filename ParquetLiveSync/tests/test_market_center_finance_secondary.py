@@ -165,6 +165,8 @@ class FinanceSecondaryTests(TestCase):
                           side_effect=lambda _x, _c, table, _d: qmt[table]):
             r = S.crosscheck_saved(Path(folder), "000010.SZ", ak)
         self.assertEqual(r["fields_compared"], 6)
+        self.assertEqual(r["fields_inconclusive"], 0)
+        self.assertEqual(r["fields_attempted"], 6)
         self.assertEqual(r["value_differences"], 0)
         self.assertEqual([t["report_dates_in_both"] for t in r["tables"]],
                          [1, 1, 1])
@@ -189,6 +191,25 @@ class FinanceSecondaryTests(TestCase):
         )
         self.assertIn(
             "NOT_COMPARABLE_OR_REVISION_AMBIGUOUS", r["status_counts"])
+        self.assertEqual(r["fields_comparable"], 0)
+        self.assertGreater(r["fields_inconclusive"], 0)
+
+    def test_missing_external_columns_are_not_reported_as_agreement(self):
+        result = S.compare_rows(
+            "Balance", [{"m_timetag": "20260930", "tot_assets": 123}],
+            [{"REPORT_DATE": "2026-09-30"}])
+        self.assertEqual(result["comparison_count"], 3)
+        self.assertEqual(result["fields_comparable"], 0)
+        self.assertEqual(result["fields_inconclusive"], 3)
+        self.assertNotIn("EXACT_MATCH", result["status_counts"])
+
+    def test_no_common_report_date_is_not_a_clean_comparison(self):
+        result = S.compare_rows(
+            "Balance", [{"m_timetag": "20260930", "tot_assets": 123}],
+            [{"REPORT_DATE": "2026-06-30", "TOTAL_ASSETS": 123}])
+        self.assertEqual(result["report_dates_in_both"], 0)
+        self.assertEqual(result["fields_comparable"], 0)
+        self.assertEqual(result["comparison_count"], 0)
 
     def test_missing_qmt_snapshot_does_not_mean_provider_missing(self):
         with TemporaryDirectory() as folder, \

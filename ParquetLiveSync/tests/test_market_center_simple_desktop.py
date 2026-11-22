@@ -252,6 +252,38 @@ class SimpleModelTests(unittest.TestCase):
                  self.assertRaises(M.InvalidSimplePlan):
                 M.extract_qmt_probe_receipt(raw)
 
+
+    def test_external_finance_tagged_error_distinguishes_missing_dependency(self):
+        payload = (b"\xff GBK vendor startup log\n" +
+                   b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                   b'"can_apply":false,"can_commit":false}\n')
+        with self.assertRaisesRegex(M.InvalidSimplePlan, "未安装akshare"):
+            M.extract_finance_secondary_receipt(payload, 2)
+        self.assertNotIn(b"ValueError", payload)
+
+    def test_external_finance_exit_and_receipt_are_fail_closed(self):
+        valid = (b'FINANCE_EXTERNAL_READONLY={"status":"TEST"}\n')
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(valid, 2)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                b'"can_apply":true,"can_commit":false}\n', 2)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                b'"can_apply":false,"can_commit":false}\n', 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                valid + valid, 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                valid + b'FINANCE_EXTERNAL_READONLY_ERROR={}\n', 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(b'just stdout\n', 0)
+        self.assertEqual(M.extract_finance_secondary_receipt(valid, 0),
+                         {"status": "TEST"})
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",

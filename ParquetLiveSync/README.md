@@ -39,7 +39,7 @@ a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1 -QuickCheck
 
-也可以直接双击 `ParquetLiveSync\start-market-update-dashboard.cmd`。这两个入口现在指向**同一个** `market_simple_desktop.py`：仅显示「数据总览」「下载 / 更新」「异常与日志」。不再在每次打开软件前执行数百项模拟测试，也不因旧日线研究数据集的清单不存在而拒绝打开三页界面。启动时只检查项目既有 `.venv\Scripts\python.exe` 与 GUI 主文件是否存在，并清除可能造成退出后 `>>>` 挂住的继承 Python 交互变量。
+也可以直接双击 `ParquetLiveSync\start-market-update-dashboard.cmd`。CMD 会调用上述同一份 `run-gui.ps1`，再由它启动**唯一的** `market_simple_desktop.py`，两个入口不再各自维护一套启动规则：仅显示「数据总览」「下载 / 更新」「异常与日志」。不再在每次打开软件前执行数百项模拟测试，也不因旧日线研究数据集的清单不存在而拒绝打开三页界面。启动时只检查项目既有 `.venv\Scripts\python.exe` 与 GUI 主文件是否存在，并清除可能造成退出后 `>>>` 挂住的继承 Python 交互变量。
 
 「数据总览」读取已有账本，显示各周期覆盖和财务待审数量；「异常与日志」可手动运行本地财务九表元数据检查，定位单股解码异常，并可进一步启动**仅只读**的 QMT 九表接口定位。诊断会给出中文结论并可复制，既不自动修复历史数据，也不批准正式财务入库。「下载 / 更新」仍保留既有带确认的执行入口；自选股票与日期的完整写入尚未开放，预览不等于下载。打开 GUI 本身不会安装定时任务、下载数据、写Parquet/H5或清除pending。
 

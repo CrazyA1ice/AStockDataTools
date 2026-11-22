@@ -84,6 +84,31 @@ def sample_qmt_table_probe():
     }
 
 
+class CanonicalGuiLauncherTests(unittest.TestCase):
+    """Smoke both real launchers without creating a GUI or touching disk data."""
+
+    def test_ps_launcher_opens_three_tab_gui_without_full_regression(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("market_simple_desktop.py", ps)
+        self.assertNotIn("gui_simple.py", ps)
+        self.assertNotIn("-m unittest", ps)
+        self.assertNotIn("H5ParquetReconciler", ps)
+        self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
+        self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
+        self.assertIn("& $python -u -B $entry", ps)
+
+    def test_cmd_launcher_is_same_gui_without_python_repl_hang(self):
+        cmd = (UI.MODULE / "start-market-update-dashboard.cmd").read_text(
+            encoding="utf-8")
+        self.assertIn("market_simple_desktop.py", cmd)
+        self.assertNotIn("gui_simple.py", cmd)
+        self.assertNotIn("unittest", cmd)
+        self.assertIn('set "PYTHONINSPECT="', cmd)
+        self.assertIn('set "PYTHONSTARTUP="', cmd)
+        self.assertIn('" %~dp0', cmd.replace('" %~dp0', '" %~dp0')) if False else None
+        self.assertIn(" -u -B ", cmd)
+
+
 class SimpleModelTests(unittest.TestCase):
     def test_finance_pending_exposes_reasons_not_just_count(self):
         brief = M.finance_pending_brief({

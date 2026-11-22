@@ -393,6 +393,30 @@ class SimpleModelTests(unittest.TestCase):
         with self.assertRaises(M.InvalidSimplePlan):
             M.finance_secondary_pilot_view(report)
 
+    def test_no_notice_api_is_explicitly_incomplete_not_zero_updates(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE",
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("公告接口整体不可用", view)
+        self.assertIn("不能根据空结果排除新增财报", view)
+        report["discovery"]["status"] = "SCOPED_PENDING_LEADS_NOT_COMPLETE"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
     def test_scoped_finance_rejects_spoofed_failure_or_time(self):
         report = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",

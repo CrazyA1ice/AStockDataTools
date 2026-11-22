@@ -109,6 +109,13 @@ def execute(args, module, timeout, *, runner=subprocess.run):
         if p.returncode != 0:
             result["error"] = "TEST_OR_COMMAND_EXIT_NONZERO"
             result["output_tail"] = message[-3500:]
+        elif ('ttk::ThemeChanged' in message
+              and 'application has been destroyed' in message):
+            # Tcl asynchronous callback exceptions do not necessarily set
+            # Python's process exit code; do not report false GUI health.
+            result["pass"] = False
+            result["error"] = "TK_THEME_CALLBACK_AFTER_DESTROY"
+            result["output_tail"] = message[-3500:]
         return result
     except subprocess.TimeoutExpired as exc:
         # unittest -v writes test names BEFORE running their bodies. Keep

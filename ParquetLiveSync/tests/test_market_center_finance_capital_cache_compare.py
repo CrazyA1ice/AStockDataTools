@@ -103,6 +103,109 @@ class CapitalCompareTests(unittest.TestCase):
         with self.assertRaisesRegex(P.CacheCompareBlocked, "timed_out"):
             P._run_child("000001.SZ", runner=late)
 
+    def test_offline_preflight_selects_two_classes_without_cache_or_values(self):
+        from datetime import datetime, timedelta, timezone
+        sha = "a" * 64
+        stocks = ("000001.SZ", "000002.SZ")
+        kinds = P.PROOF_TYPES
+        ledger = {"pending": {
+            code: {"reason": "SOURCE_HISTORY_CONFLICT",
+                   "asof": "2026-11-22", "attempts": 1,
+                   "detail": "SOURCE_HISTORY_CONFLICT " + code +
+                   " table=Capital scoped_m_quarter_proof=" + kind}
+            for code, kind in zip(stocks, kinds)}}
+        details = {"snapshot_candidates_verified": 1,
+                   "historical_selected_dates": 1,
+                   "selected_history_variants": 3,
+                   "active_pins_structurally_present": 1,
+                   "history_fingerprint_locally_verified": True}
+        now = datetime(2026, 11, 22, 21, 0,
+                       tzinfo=timezone(timedelta(hours=8)))
+        with TemporaryDirectory() as tmp:
+            state = Path(tmp) / "ParquetLiveSync"
+            market = Path(tmp) / "AllCycleAStockData"
+            with (patch.object(P.P3, "review", return_value={
+                        "progress_sha256": sha,
+                        "samples": [{"stock": stocks[0]}]}),
+                  patch.object(P.P2, "_trusted_path",
+                               return_value=state / "financial-progress.json"),
+                  patch.object(P.P2, "_read_ledger",
+                               return_value=(ledger, sha)),
+                  patch.object(P.P3, "_root", return_value=market / "qmt_extra" /
+                               "financial"),
+                  patch.object(P, "_old_verified_fingerprints",
+                               return_value=([fp("old", 1)], details)) as history,
+                  patch.object(P.P2, "summarize_pending",
+                               return_value={"progress_sha256": sha}),
+                  patch.object(P, "_run_child",
+                               side_effect=AssertionError("NO_QMT_READ")) as cache):
+                report = P.preflight(state, market, sha, now=now)
+        cache.assert_not_called()
+        self.assertEqual(history.call_count, 2)
+        self.assertEqual(report["sample_count"], 2)
+        self.assertEqual([x["stock"] for x in report["samples"]],
+                         list(stocks))
+        self.assertEqual([x["pending_proof_class"] for x in report["samples"]],
+                         list(kinds))
+        self.assertEqual(report["qmt_cache_calls"], 0)
+        self.assertEqual(report["download_calls"], 0)
+        self.assertFalse(report["current_qmt_cache_compared"])
+        self.assertFalse(report["actual_conflict_report_dates_located"])
+        self.assertFalse(report["can_execute"])
+        self.assertFalse(report["can_repair"])
+        self.assertFalse(report["market_file_writes"])
+        self.assertNotIn("field_sha256", json.dumps(report))
+
+    def test_preflight_requires_explicit_readonly_and_rejects_cache_flag(self):
+        sha = "a" * 64
+        args = ["--state-module", "/synthetic",
+                "--market-root", "/synthetic",
+                "--expected-progress-sha256", sha,
+                "--preflight-only"]
+        report = {"status":
+                  "FINANCE_P5_CAPITAL_TWO_STOCK_OFFLINE_PREFLIGHT_NOT_CERTIFIED",
+                  "qmt_cache_calls": 0, "can_execute": False}
+        with (patch.object(P, "preflight", return_value=report) as offline,
+              patch.object(P, "compare") as online):
+            for flags in (args, args + ["--explicit-readonly",
+                                       "--explicit-qmt-cache-read"]):
+                with redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(P.main(flags), 2)
+                self.assertIn("OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
+                              output.getvalue())
+            offline.assert_not_called()
+            online.assert_not_called()
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(
+                    P.main(args + ["--explicit-readonly"]), 0)
+            self.assertIn(report["status"], output.getvalue())
+            offline.assert_called_once()
+            online.assert_not_called()
+
+    def test_preflight_missing_proof_class_never_reads_current_cache(self):
+        sha = "b" * 64
+        stock = "000001.SZ"
+        ledger = {"pending": {
+            stock: {"reason": "SOURCE_HISTORY_CONFLICT",
+                    "asof": "2026-11-22", "attempts": 1,
+                    "detail": "SOURCE_HISTORY_CONFLICT " + stock +
+                              " table=Capital scoped_m_quarter_proof=" +
+                              P.PROOF_TYPES[0]}}}
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 11, 22, 21, 0,
+                       tzinfo=timezone(timedelta(hours=8)))
+        with (patch.object(P.P3, "review", return_value={
+                  "progress_sha256": sha, "samples": []}),
+              patch.object(P.P2, "_trusted_path", return_value=Path("/synthetic")),
+              patch.object(P.P2, "_read_ledger", return_value=(ledger, sha)),
+              patch.object(P, "_old_verified_fingerprints") as old,
+              patch.object(P, "_run_child") as cache):
+            with self.assertRaisesRegex(P.CacheCompareBlocked,
+                                        "missing_required_capital_proof_class"):
+                P.preflight("/synthetic", "/synthetic", sha, now=now)
+            old.assert_not_called()
+            cache.assert_not_called()
+
     def test_default_cli_never_imports_or_calls_qmt(self):
         with patch.object(P, "compare") as compare:
             with redirect_stdout(io.StringIO()) as capture:

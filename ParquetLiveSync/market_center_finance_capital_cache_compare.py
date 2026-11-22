@@ -87,7 +87,45 @@ def _report_key_date(value) -> str:
         raise CacheCompareBlocked("qmt_report_key_date_unverifiable") from exc
 
 
-def _fingerprint(row: dict, *, date_details=False) -> dict:
+def _announcement_label(row: dict) -> dict:
+    """Bounded local m_anntime availability only; never disclose raw values."""
+    if "m_anntime" not in row:
+        return {"status": "FIELD_ABSENT"}
+    value = row["m_anntime"]
+    if value is None or str(value).strip() in ("", "0", "0.0"):
+        return {"status": "EMPTY_OR_ZERO"}
+    try:
+        day = _report_key_date(value)
+    except CacheCompareBlocked:
+        return {"status": "UNPARSEABLE"}
+    return {"status": "PARSED_DATE", "date": day}
+
+
+def _validate_announcement_label(label: dict, field_sha: dict) -> None:
+    if type(label) is not dict or label.get("status") not in (
+            "FIELD_ABSENT", "EMPTY_OR_ZERO", "UNPARSEABLE", "PARSED_DATE"):
+        raise CacheCompareBlocked("invalid_capital_announcement_label")
+    status = label["status"]
+    if ((status == "PARSED_DATE" and set(label) != {"status", "date"})
+            or (status != "PARSED_DATE" and set(label) != {"status"})
+            or ((status == "FIELD_ABSENT") !=
+                ("m_anntime" not in field_sha))):
+        raise CacheCompareBlocked("capital_announcement_presence_mismatch")
+    if status == "PARSED_DATE":
+        day = label["date"]
+        if (type(day) is not str or
+                re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) is None):
+            raise CacheCompareBlocked("invalid_capital_announcement_day")
+        try:
+            d = date.fromisoformat(day)
+            if d.isoformat() != day or not 1980 <= d.year <= 2100:
+                raise ValueError("noncanonical date")
+        except ValueError as exc:
+            raise CacheCompareBlocked("invalid_capital_announcement_day") from exc
+
+
+def _fingerprint(row: dict, *, date_details=False,
+                 announcement_evidence=False) -> dict:
     if type(row) is not dict or len(row) > MAX_FIELDS + 1:
         raise CacheCompareBlocked("cache_record_field_budget")
     if ("m_timetag" not in row or row["m_timetag"] is None
@@ -103,12 +141,17 @@ def _fingerprint(row: dict, *, date_details=False) -> dict:
         fields[key] = _digest(value)
     result = {"key_sha256": _digest(row["m_timetag"]),
               "field_sha256": fields}
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
     if date_details:
         result["report_key_date"] = _report_key_date(row["m_timetag"])
+    if announcement_evidence:
+        result["announcement_label"] = _announcement_label(row)
     return result
 
 
-def _child_cache_fingerprints(code: str, *, date_details=False) -> dict:
+def _child_cache_fingerprints(code: str, *, date_details=False,
+                              announcement_evidence=False) -> dict:
     if type(code) is not str or P2.STOCK.fullmatch(code) is None:
         raise CacheCompareBlocked("invalid_child_symbol")
     from xtquant import xtdata
@@ -129,19 +172,26 @@ def _child_cache_fingerprints(code: str, *, date_details=False) -> dict:
         "stock": code,
         "table": "Capital",
         "row_count": len(records),
-        "records": [_fingerprint(row, date_details=date_details) for row in records],
+        "records": [_fingerprint(row, date_details=date_details,
+                                 announcement_evidence=announcement_evidence)
+                    for row in records],
     }
 
 
 def _run_child(code: str, timeout_seconds: int = 25,
-               runner=subprocess.run, *, date_details=False) -> dict:
+               runner=subprocess.run, *, date_details=False,
+               announcement_evidence=False) -> dict:
     if type(timeout_seconds) is not int or not 5 <= timeout_seconds <= 30:
         raise CacheCompareBlocked("invalid_cache_child_timeout")
     cmd = [sys.executable, "-u", "-B", str(Path(__file__).resolve()),
            "--internal-cache-fingerprints", "--stock", code]
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
     if date_details:
         cmd.extend(["--report-key-date-details", "--explicit-readonly",
                     "--explicit-qmt-cache-read"])
+    if announcement_evidence:
+        cmd.append("--capital-announcement-evidence")
     try:
         completed = runner(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -175,8 +225,11 @@ def _run_child(code: str, timeout_seconds: int = 25,
     for record in payload["records"]:
         if (type(record) is not dict
                 or set(record) != ({"key_sha256", "field_sha256",
-                                   "report_key_date"} if date_details else
-                                   {"key_sha256", "field_sha256"})
+                                   "report_key_date",
+                                   "announcement_label"} if announcement_evidence
+                                  else {"key_sha256", "field_sha256",
+                                        "report_key_date"} if date_details else
+                                       {"key_sha256", "field_sha256"})
                 or type(record["key_sha256"]) is not str
                 or len(record["key_sha256"]) != 64
                 or type(record["field_sha256"]) is not dict
@@ -194,6 +247,10 @@ def _run_child(code: str, timeout_seconds: int = 25,
                 or re.fullmatch(r"[0-9a-f]{64}",
                                 record["key_sha256"]) is None):
             raise CacheCompareBlocked("qmt_cache_fingerprint_digest_invalid")
+    if announcement_evidence:
+        for record in payload["records"]:
+            _validate_announcement_label(record["announcement_label"],
+                                         record["field_sha256"])
     if date_details:
         for record in payload["records"]:
             try:

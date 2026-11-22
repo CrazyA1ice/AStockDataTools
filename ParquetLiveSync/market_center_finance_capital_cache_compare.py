@@ -225,7 +225,7 @@ def _pick_two(ledger: dict, p3_sample_codes: set[str]) -> list[dict]:
 
 
 def _old_verified_fingerprints(finance: Path, extra: Path,
-                               item: dict) -> tuple[list[dict], dict]:
+                               item: dict, *, date_details=False) -> tuple[list[dict], dict]:
     code = item["stock"]
     if type(code) is not str or P2.STOCK.fullmatch(code) is None:
         raise CacheCompareBlocked("invalid_history_stock")
@@ -258,7 +258,8 @@ def _old_verified_fingerprints(finance: Path, extra: Path,
         raise CacheCompareBlocked("unbounded_historical_capital_union")
     if any(multiplicity != 1 for multiplicity in merged.values()):
         raise CacheCompareBlocked("duplicate_historical_raw_records")
-    return ([_fingerprint(json.loads(record)) for record in merged],
+    return ([_fingerprint(json.loads(record), date_details=date_details)
+             for record in merged],
             {"snapshot_candidates_verified": len(files),
              "historical_selected_dates": len(by_day),
              "selected_history_variants": len(merged),
@@ -408,7 +409,8 @@ def _compare(old: list[dict], fresh: list[dict], *, date_details=False) -> dict:
 
 def _prepare_verified_histories(state_module: Path | str,
                                 market_root: Path | str, expected_sha: str, *,
-                                now: datetime | None = None):
+                                now: datetime | None = None,
+                                date_details=False):
     """Verify canonical ledger plus two old Capital snapshot unions, NO QMT."""
     if type(expected_sha) is not str or re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha) is None:
         raise CacheCompareBlocked("explicit_financial_ledger_sha_required")
@@ -432,7 +434,8 @@ def _prepare_verified_histories(state_module: Path | str,
     histories = []
     total = 0
     for item in first:
-        fingerprints, details = _old_verified_fingerprints(finance, extra, item)
+        fingerprints, details = _old_verified_fingerprints(
+            finance, extra, item, date_details=date_details)
         total += details["snapshot_candidates_verified"]
         if total > MAX_SNAPSHOT_FILES:
             raise CacheCompareBlocked("two_stock_history_file_budget")
@@ -475,13 +478,16 @@ def preflight(state_module: Path | str, market_root: Path | str,
 
 def compare(state_module: Path | str, market_root: Path | str,
             expected_sha: str, *, now: datetime | None = None,
-            read_cache=_run_child) -> dict:
+            read_cache=_run_child, date_details=False) -> dict:
     expected_sha, histories = _prepare_verified_histories(
-        state_module, market_root, expected_sha, now=now)
+        state_module, market_root, expected_sha, now=now,
+        date_details=date_details)
     results = []
     for item, fingerprints, details in histories:
-        fresh = read_cache(item["stock"])
-        outcome = _compare(fingerprints, fresh["records"])
+        fresh = (read_cache(item["stock"], date_details=True)
+                 if date_details else read_cache(item["stock"]))
+        outcome = _compare(fingerprints, fresh["records"],
+                           date_details=date_details)
         if P2.summarize_pending(state_module)["progress_sha256"] != expected_sha:
             raise CacheCompareBlocked("financial_progress_changed_during_qmt")
         results.append({
@@ -499,6 +505,8 @@ def compare(state_module: Path | str, market_root: Path | str,
         "samples": results,
         "only_capital_first_blockers": True,
         "fresh_qmt_cache_read_only": True,
+        "report_key_dates_explicitly_requested": bool(date_details),
+        "official_report_periods_certified": False,
         "qmt_cache_calls": len(results),
         "download_calls": 0,
         "temp_files_created": 0,
@@ -521,6 +529,7 @@ def main(argv=None) -> int:
     parser.add_argument("--explicit-readonly", action="store_true")
     parser.add_argument("--explicit-qmt-cache-read", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--report-key-date-details", action="store_true")
     parser.add_argument("--internal-cache-fingerprints", action="store_true")
     parser.add_argument("--stock")
     args = parser.parse_args(argv)
@@ -530,13 +539,15 @@ def main(argv=None) -> int:
         if args.preflight_only or not args.stock:
             return 2
         try:
-            payload = _child_cache_fingerprints(args.stock)
+            payload = _child_cache_fingerprints(
+                args.stock, date_details=args.report_key_date_details)
         except Exception:
             return 3
         print(SENTINEL + E.canonical_json(payload))
         return 0
     if args.preflight_only:
-        if not args.explicit_readonly or args.explicit_qmt_cache_read:
+        if (not args.explicit_readonly or args.explicit_qmt_cache_read
+                or args.report_key_date_details):
             print(json.dumps({
                 "status": "FINANCE_P5_OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
                 "qmt_calls": 0, "can_execute": False,
@@ -558,7 +569,8 @@ def main(argv=None) -> int:
                                args.expected_progress_sha256)
         else:
             result = compare(args.state_module, args.market_root,
-                             args.expected_progress_sha256)
+                             args.expected_progress_sha256,
+                             date_details=args.report_key_date_details)
     except (CacheCompareBlocked, P2.PendingTriageBlocked,
             P3.SnapshotReviewBlocked, P4.IntegrityBlocked,
             OSError, ValueError) as exc:

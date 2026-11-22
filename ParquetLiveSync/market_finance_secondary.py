@@ -545,8 +545,12 @@ def main(argv=None):
                            'FINANCE_EXTERNAL_STAGE=' + phase, flush=True))
     except Exception:
         return _blocked_readonly_pilot("READONLY_PILOT_ABORTED")
+    # Windows redirected stdout can use GBK/CP936. The GUI requires UTF-8.
+    # ASCII-escape all non-ASCII report data, preserving Chinese in JSON while
+    # making the receipt byte-identical under UTF-8 and legacy code pages.
+    # Do not relax the GUI's strict UTF-8 / unique-tag trust boundary.
     print("FINANCE_EXTERNAL_READONLY=" +
-          json.dumps(result, ensure_ascii=False, default=str,
+          json.dumps(result, ensure_ascii=True, default=str,
                      separators=(",", ":"), allow_nan=False))
     return 0
 

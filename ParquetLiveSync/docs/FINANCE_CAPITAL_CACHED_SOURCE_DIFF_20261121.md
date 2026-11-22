@@ -30,3 +30,15 @@ Finance P4于2026-11-21用户Windows固定SHA `029632080b3bd3a85e4476edcfae81805
 ```
 
 预检成功后，真实QMT本地缓存比对必须由操作者另外显式指定 `--explicit-readonly --explicit-qmt-cache-read`，并重新通过全部旧快照/账本SHA校验；新预检**不会自动启动**真实QMT读取。原始财务值不出终端，不创建修复/回滚授权。
+
+## P5 报告键日期定位（2026-11-22 新增，待实机验收）
+
+用户的真实 P5 缓存读取已重现两类Capital冲突：`000010.SZ` 现有缓存比原快照多 **13个报告键**（另116个共同键 `m_quarter` 指纹变动）；`000055.SZ` 共同的173个键中，**2个键**的 `freeFloatCapital` 指纹变动。旧比较只输出这些差异的计数和字段名称，无法直接回答是哪几个日期。
+
+新增明确的可选开关 `--report-key-date-details`。它**仍须同时**指定 `--explicit-readonly --explicit-qmt-cache-read` 与当前账本的完整SHA；禁止与 `--preflight-only` 混用。对既有QMT缓存读取的数量仍为每只一次（至多2只），同样有25秒子进程默认超时、P3/P4旧快照验证与账本SHA前后复核。正常 P5 不传此开关时，报告键指纹与输出计数维持原逻辑。
+
+日期标签从与原SHA256哈希**同一个** `m_timetag` 字段解析，不替换或重新定义报告键。仅接受明确的YYYYMMDD、YYYYMMDDHHMMSS、规范ISO日期/时间或可严格转换的Unix毫秒时间戳；错误、不明确、多键映射同一天、历史修订歧义均拒绝日期明细，绝不猜测。日期预算 **最多32个差异键**，超限不截断；仅输出旧版独有/当前缓存独有的报告键日期、共同键中发生变化的**非m_quarter字段名称及日期**。大量 `m_quarter` 差异仍仅保留原计数，不列出116个日期标签。
+
+**证据性质：** 返回的是本地QMT `m_timetag` 对应的日期标签，**不是已经认证的法定财报报告期或公告日期**；不提供任意财务原值、数额、完整持仓或未经限制的历史明细。无论本轮结果如何，`source_authenticity_certified=false`、`can_repair=false`、`market_file_writes=false`、pending不变、20:05任务不变。仅对之前的2只试点股票复核，不代表全体45只Capital首阻断记录。
+
+Windows现场应先运行P5专项模拟测试，再用固定Git HEAD、固定当前账本SHA调用相同脚本并显式添加 `--report-key-date-details`；实际日期尚未取得，不能将预期13个日期/2个日期当成已经实测的值。

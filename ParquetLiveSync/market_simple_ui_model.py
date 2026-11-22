@@ -373,6 +373,8 @@ def finance_qmt_probe_view(report: dict, expected_stock: str) -> str:
             or report.get("qmt_download_calls") != 0
             or report.get("can_apply") is not False
             or report.get("can_commit") is not False
+            or report.get("can_download") is not False
+            or report.get("official_finance_writes") != 0
             or report.get("empty_cache_proves_provider_empty") is not False
             or not isinstance(report.get("tables"), list)
             or len(report["tables"]) != len(tables)):

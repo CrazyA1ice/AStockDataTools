@@ -404,6 +404,10 @@ class FinanceSecondaryTests(TestCase):
             r = S.crosscheck_saved(synthetic_stock_root(folder), "000010.SZ", ak)
         self.assertIn("EXTERNAL_SOURCE_ERROR",
                       [t["status"] for t in r["tables"]])
+        self.assertEqual(r["table_timings"][1]["table"], "Income")
+        self.assertEqual(r["table_timings"][1]["status"],
+                         "EXTERNAL_SOURCE_ERROR")
+        self.assertGreaterEqual(r["table_timings"][1]["eastmoney_seconds"], 0)
         self.assertFalse(r["can_commit"])
 
     def test_pilot_only_returns_candidates_not_approved_downloads(self):

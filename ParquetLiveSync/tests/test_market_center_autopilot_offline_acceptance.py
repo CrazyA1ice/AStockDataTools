@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import io
 import json
+import subprocess
 import unittest
 
 import market_autopilot_offline_acceptance as G
@@ -102,6 +103,56 @@ class OfflineAcceptanceTests(unittest.TestCase):
                 self.module, PIN, runner=self.fake_run,
                 git_runner=good_git)
         self.assertEqual(report["status"], "OFFLINE_ACCEPTANCE_FAILED")
+        self.assertFalse(report["approved_for_production"])
+
+    def test_first_suite_direct_verbose_launch_avoids_discovery(self):
+        report = G.acceptance(
+            self.module, PIN, runner=self.fake_run, git_runner=good_git)
+        self.assertEqual(report["status"], "OFFLINE_ACCEPTANCE_PASS")
+        arguments = self.calls[0]
+        self.assertIn("-u", arguments)
+        self.assertIn("-B", arguments)
+        self.assertIn("-v", arguments)
+        self.assertIn("test_market_center_autopilot_shadow.py",
+                      " ".join(arguments))
+        self.assertNotIn("discover", arguments)
+
+    def test_timeout_retains_partial_verbose_case_name(self):
+        def hung(args, **kwargs):
+            raise subprocess.TimeoutExpired(
+                args, kwargs["timeout"],
+                output=b"test_health_case (HealthTests) ... ")
+        evidence = G.execute(
+            ["python", "-B", "synthetic.py"], self.module, 45, runner=hung)
+        self.assertFalse(evidence["pass"])
+        self.assertEqual(evidence["error"], "TimeoutExpired")
+        self.assertEqual(evidence["timeout_seconds"], 45)
+        self.assertEqual(evidence["timeout_phase"],
+                         "TEST_IN_PROGRESS_OR_TEARDOWN")
+        self.assertIn("test_health_case", evidence["output_tail"])
+
+    def test_timeout_without_output_reports_startup_or_import(self):
+        def no_output(args, **kwargs):
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        evidence = G.execute(
+            ["python", "-B", "synthetic.py"], self.module, 30,
+            runner=no_output)
+        self.assertFalse(evidence["pass"])
+        self.assertEqual(evidence["timeout_phase"], "STARTUP_OR_IMPORT")
+        self.assertEqual(evidence["output_tail"], "")
+
+    def test_first_suite_timeout_stops_other_suites(self):
+        def hung(args, **kwargs):
+            self.calls.append(tuple(args))
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"],
+                                            output=b"test_one ... ")
+        report = G.acceptance(
+            self.module, PIN, full=True,
+            runner=hung, git_runner=good_git)
+        self.assertEqual(report["status"], "OFFLINE_ACCEPTANCE_FAILED")
+        self.assertEqual(len(report["test_suites"]), 1)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(report["test_suites"][0]["timeout_seconds"], 45)
         self.assertFalse(report["approved_for_production"])
 
     def test_full_regression_only_after_all_synthetic_pass(self):

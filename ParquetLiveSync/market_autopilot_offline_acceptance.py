@@ -96,7 +96,7 @@ def execute(args, module, timeout, *, runner=subprocess.run):
         # Never flood a PowerShell console with hundreds of successful case
         # names: the user needs the actual failed suite, not repeated verbose
         # output. Keep failure and timeout evidence independently.
-        summaries = re.findall(r"\\bRan ([0-9]+) tests?(?: in ([0-9.]+)s)?",
+        summaries = re.findall(r"\bRan ([0-9]+) tests?(?: in ([0-9.]+)s)?",
                                message)
         count, seconds = summaries[-1] if summaries else (None, None)
         result = {

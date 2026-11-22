@@ -453,6 +453,56 @@ class SimpleModelTests(unittest.TestCase):
         self.assertIn("公告抽样查询完成 0/1",
                       M.finance_secondary_pilot_view(report))
 
+    def test_individual_three_table_timings_shown_without_source_values(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "fields_compared": 3, "fields_inconclusive": 0,
+                "value_differences": 0,
+                "can_commit": False, "can_clear_pending": False,
+                "table_timings": [
+                    {"table": "Balance",
+                     "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                     "local_seconds": 0.15, "eastmoney_seconds": 12.25,
+                     "comparison_seconds": 0.05},
+                    {"table": "Income",
+                     "status": "EXTERNAL_SOURCE_ERROR",
+                     "local_seconds": 0.10, "eastmoney_seconds": 8.5,
+                     "comparison_seconds": 0.0},
+                    {"table": "CashFlow", "status": "NO_LOCAL_QMT_SNAPSHOT",
+                     "local_seconds": 0.02, "eastmoney_seconds": 0.0,
+                     "comparison_seconds": 0.0}]}],
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("Balance：本地快照 0.15秒，东财接口 12.25秒", view)
+        self.assertIn("Income：本地快照 0.10秒，东财接口 8.50秒", view)
+        self.assertIn("外部来源异常", view)
+        self.assertIn("CashFlow：本地快照 0.02秒", view)
+        self.assertNotIn("2026年第三季度报告", view)
+        report["crosschecks"][0]["table_timings"][0]["table"] = "Other"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["table_timings"][0]["table"] = "Balance"
+        report["crosschecks"][0]["table_timings"][0]["eastmoney_seconds"] = -1
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["table_timings"][0]["eastmoney_seconds"] = 12.25
+        report["crosschecks"][0]["table_timings"][1]["status"] = (
+            "EXTERNAL_SOURCE_ERROR private-account")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",

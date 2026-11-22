@@ -77,6 +77,7 @@ def sample_qmt_table_probe():
         "symbol": "688259.SH", "tables_checked": 9, "tables": values,
         "qmt_get_financial_data_calls": 9, "qmt_download_calls": 0,
         "can_apply": False, "can_commit": False,
+        "can_download": False, "official_finance_writes": 0,
         "empty_cache_proves_provider_empty": False,
     }
 

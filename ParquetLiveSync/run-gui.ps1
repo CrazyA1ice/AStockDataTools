@@ -1,15 +1,22 @@
-# Windows UI, runs ONLY offline synthetic tests before opening.
-$ErrorActionPreference='Stop'
+# Canonical Windows launcher for the established three-tab data manager.
+# No test suite on every open, no scheduled-task installation or data writes.
+$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$module=Split-Path -Parent $PSCommandPath
-$repo=Split-Path -Parent $module
-$python=Join-Path $repo '.venv\Scripts\python.exe'
-if(-not (Test-Path -LiteralPath $python -PathType Leaf)){throw "Missing repo Python .venv. Existing AStockDataTools virtualenv must provide pyarrow."}
-$base=Join-Path $repo 'H5ParquetReconciler\work\unified_parquet\datasets\eight_cycle_asof_20261013_a4987bba0ce3a1f6\manifest.json'
-if(-not (Test-Path -LiteralPath $base -PathType Leaf)){throw "Required already accepted 2026-10-13 eight-period Parquet dataset manifest missing"}
-Write-Host '===== OFFLINE TDX AND FIVE-PERIOD PUBLIC MINUTE SOURCE TESTS ====='
-& $python -B -m unittest discover -s (Join-Path $module 'tests') -p 'test_*.py' -q
-if($LASTEXITCODE -ne 0){throw 'ParquetLiveSync offline regression failed; GUI will not start'}
-Write-Host '===== OPEN NEW A-STOCK-DATA PARQUET GUI ====='
-& $python -B (Join-Path $module 'gui_simple.py')
-if($LASTEXITCODE -ne 0){throw 'ParquetLiveSync GUI exited with nonzero status'}
+$module = Split-Path -Parent $PSCommandPath
+$repo = Split-Path -Parent $module
+$python = Join-Path $repo '.venv\Scripts\python.exe'
+$entry = Join-Path $module 'market_simple_desktop.py'
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+    throw 'Python virtual environment missing: .venv\Scripts\python.exe'
+}
+if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
+    throw 'Three-tab market data manager entry missing'
+}
+# PYTHONINSPECT=0 still enables the interactive >>> prompt in Python.
+# Keep the GUI lifecycle noninteractive even if the parent shell inherited it.
+Remove-Item Env:PYTHONINSPECT -ErrorAction SilentlyContinue
+Remove-Item Env:PYTHONSTARTUP -ErrorAction SilentlyContinue
+& $python -u -B $entry
+if ($LASTEXITCODE -ne 0) {
+    throw ('Three-tab market data manager exited with code ' + $LASTEXITCODE)
+}

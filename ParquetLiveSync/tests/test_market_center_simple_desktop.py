@@ -503,6 +503,57 @@ class SimpleModelTests(unittest.TestCase):
         with self.assertRaises(M.InvalidSimplePlan):
             M.finance_secondary_pilot_view(report)
 
+    def test_single_first_blocker_view_never_claims_all_tables_or_history(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "QMT_FIRST_BLOCKER_TABLE_ONLY",
+                "status": "NOT_RUN_HISTORICAL_CONFLICT_REVIEW",
+                "unique_event_leads": 0, "source_requests_attempted": 0,
+                "failed_categories": [], "candidate_symbols_in_known_scope": [],
+                "full_market_coverage_checked": False,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False},
+            "crosschecks": [{
+                "symbol": "000036.SZ",
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "first_blocker_table": "Income",
+                "other_finance_tables_not_checked": True,
+                "fields_compared": 8, "fields_inconclusive": 0,
+                "value_differences": 0,
+                "tables": [{"table": "Income"}],
+                "table_timings": [{
+                    "table": "Income",
+                    "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                    "local_seconds": 0.03, "eastmoney_seconds": 25.5,
+                    "comparison_seconds": 0.0}],
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "first_blocker_scope_only": True,
+            "all_history_conflict_tables_identified": False,
+            "exact_conflict_report_dates_proven": False,
+            "total_seconds": 25.53,
+            "discovery_seconds": 0.0,
+            "crosscheck_seconds": 25.53,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        msg = M.finance_secondary_pilot_view(report)
+        self.assertIn("首张冲突表 Income", msg)
+        self.assertIn("本轮未执行近期公告查询", msg)
+        self.assertIn("冲突报告期未精准定位", msg)
+        self.assertIn("不会解除待审", msg)
+        self.assertIn("东财接口 25.50秒", msg)
+        self.assertIn("不会自动下载", msg)
+        report["crosschecks"][0]["first_blocker_table"] = "Capital"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["first_blocker_table"] = "Income"
+        report["exact_conflict_report_dates_proven"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
     def test_external_finance_view_rejects_automatic_download_approval(self):
         r = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
@@ -927,27 +978,51 @@ class GuiSmokeTests(unittest.TestCase):
         progress = {
             "root": str(root / "AllCycleAStockData" / "qmt_extra"),
             "pending": {
-                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
-                "000036.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "000010.SZ": {
+                    "reason": "SOURCE_HISTORY_CONFLICT",
+                    "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                              "table=Balance removed_or_revised=2"},
+                "000036.SZ": {
+                    "reason": "SOURCE_HISTORY_CONFLICT",
+                    "detail": "SOURCE_HISTORY_CONFLICT 000036.SZ "
+                              "table=Capital removed_or_revised=3"},
                 "688259.SH": {"reason": "CACHE_DECODE_ERROR"},
             }}
         evidence = {
             "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
             "discovery": {
-                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "source": "EASTMONEY_VIA_AKSHARE",
+                "scope": "QMT_FIRST_BLOCKER_TABLE_ONLY",
+                "status": "NOT_RUN_HISTORICAL_CONFLICT_REVIEW",
+                "source_requests_attempted": 0,
+                "failed_categories": [],
+                "unique_event_leads": 0,
+                "full_market_coverage_checked": False,
                 "feed_complete_for_date_range": False,
                 "can_schedule_download": False,
-                "unique_event_leads": 1,
-                "candidate_symbols_in_known_scope": ["000010.SZ"],
+                "candidate_symbols_in_known_scope": [],
             },
-            "crosschecks": [
-                {"symbol": "000010.SZ", "fields_compared": 2,
-                 "value_differences": 1, "status": "REVIEW",
-                 "can_commit": False, "can_clear_pending": False},
-                {"symbol": "000036.SZ", "fields_compared": 0,
-                 "value_differences": 0, "status": "REVIEW",
-                 "can_commit": False, "can_clear_pending": False},
-            ],
+            "crosschecks": [{
+                "symbol": "000010.SZ", "fields_compared": 2,
+                "value_differences": 1,
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "first_blocker_table": "Balance",
+                "other_finance_tables_not_checked": True,
+                "tables": [{"table": "Balance"}],
+                "table_timings": [{
+                    "table": "Balance",
+                    "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                    "local_seconds": 0.05, "eastmoney_seconds": 12.0,
+                    "comparison_seconds": 0.0}],
+                "can_commit": False, "can_clear_pending": False,
+            }],
+            "first_blocker_scope_only": True,
+            "all_history_conflict_tables_identified": False,
+            "exact_conflict_report_dates_proven": False,
+            "crosscheck_sample_limit": 1,
+            "discovery_seconds": 0.0,
+            "crosscheck_seconds": 12.05,
+            "total_seconds": 12.05,
             "event_candidates_to_download": [],
             "source_discovery_not_complete": True,
             "can_apply": False, "can_commit": False,
@@ -978,12 +1053,66 @@ class GuiSmokeTests(unittest.TestCase):
             self.assertIn("--explicit-readonly", args)
             self.assertIn("--known-symbols", args)
             self.assertIn("--symbols", args)
+            self.assertIn("--pending-first-blocker-only", args)
+            self.assertEqual(args[args.index("--symbols") + 1], "000010.SZ")
             self.assertEqual(run.call_args.kwargs["timeout"], 120)
             self.assertEqual(run.call_args.kwargs["stdin"],
                              UI.subprocess.DEVNULL)
             self.assertNotIn("download", " ".join(args).lower())
         self.assertIn("数值差异 1", self.app.secondary_finance_detail.get())
         self.assertFalse(self.app._secondary_finance_running)
+
+    def test_secondary_only_capital_or_unclassified_pending_does_not_call_provider(self):
+        progress = {"root": str(Path(self.temp.name) / "stock" /
+                                "AllCycleAStockData" / "qmt_extra"),
+                    "pending": {
+                        "000010.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                                      "table=Capital removed_or_revised=1"},
+                        "000036.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "unexpected-unclassified"},
+                        "688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}
+        with patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_secondary_finance_pilot()
+            launch.assert_not_called()
+        self.assertIn("未发现可由东财三表对应", self.app.secondary_finance_detail.get())
+
+    def test_secondary_selects_eligible_first_blocker_not_first_capital(self):
+        progress = {"root": str(Path(self.temp.name) / "stock" /
+                                "AllCycleAStockData" / "qmt_extra"),
+                    "pending": {
+                        "000010.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                                      "table=Capital removed_or_revised=1"},
+                        "000036.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000036.SZ "
+                                      "table=Income removed_or_revised=1"}}}
+        # Only test the guarded selection; no actual network or worker.
+        with patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.threading, "Thread") as launch, \
+             patch.object(UI, "secondary_finance_python",
+                          return_value=Path(self.temp.name) / "python.exe"), \
+             patch.object(UI, "REPO", Path(self.temp.name)), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI, "datetime") as fake_now:
+            from datetime import datetime, timedelta, timezone
+            (Path(self.temp.name) / ".git").mkdir(exist_ok=True)
+            (self.module / "market_finance_secondary.py").write_text(
+                "synthetic", encoding="utf-8")
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_secondary_finance_pilot()
+            launch.assert_called_once()
+            self.assertIn("000036.SZ 首张冲突表 Income",
+                          self.app.secondary_finance_detail.get())
+        self.app._secondary_finance_running = False
 
     def test_secondary_source_never_starts_without_valid_pending(self):
         with patch.object(UI, "safe_json", return_value={}), \

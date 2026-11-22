@@ -121,15 +121,20 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
         self.assertIn("Test-Path -LiteralPath $python -PathType Leaf", ps)
         self.assertNotIn("scheduled-afternoon-update.ps1", ps)
 
-    def test_cmd_launcher_is_same_gui_without_python_repl_hang(self):
+    def test_cmd_launcher_delegates_to_the_canonical_ps_gui(self):
         cmd = (UI.MODULE / "start-market-update-dashboard.cmd").read_text(
             encoding="utf-8")
-        self.assertIn("market_simple_desktop.py", cmd)
+        self.assertIn(
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File '
+            '"%~dp0run-gui.ps1"', cmd)
+        self.assertNotIn("market_simple_desktop.py", cmd)
         self.assertNotIn("gui_simple.py", cmd)
+        self.assertNotIn("python.exe", cmd)
         self.assertNotIn("unittest", cmd)
-        self.assertIn('set "PYTHONINSPECT="', cmd)
-        self.assertIn('set "PYTHONSTARTUP="', cmd)
-        self.assertIn(" -u -B ", cmd)
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
+        self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
+        self.assertIn("& $python -u -B $entry", ps)
 
 
 class SimpleModelTests(unittest.TestCase):

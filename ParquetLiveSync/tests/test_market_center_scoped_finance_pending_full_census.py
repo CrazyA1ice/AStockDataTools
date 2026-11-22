@@ -160,6 +160,45 @@ class PendingCensusTests(unittest.TestCase):
         self.assertEqual(report["rows_on_page"][0]["nine_table_states"]["Capital"],
                          "A")
 
+    def test_per_share_local_snapshot_and_pin_are_counted_not_suppressed(self):
+        self.state["pending"] = {STOCK: conflict(STOCK)}
+        self.save()
+        self.add(table="PerShare", pin=True)
+        r = self.inspect()
+        self.assertEqual(r["per_share_without_local_snapshots"], 0)
+        self.assertEqual(r["rows_on_page"][0]["nine_table_states"]["PerShare"],
+                         "P")
+        self.assertFalse(r["per_share_qmt_source_empty_proven"])
+
+    def test_future_dated_snapshot_metadata_is_refused(self):
+        self.state["pending"] = {STOCK: conflict(STOCK)}
+        self.save()
+        self.add(day="2099-01-01")
+        with self.assertRaisesRegex(
+                C.CensusBlocked, "FUTURE_FINANCIAL_SNAPSHOT_DATE"):
+            self.inspect()
+
+    def test_pin_rewritten_during_scan_is_refused(self):
+        self.state["pending"] = {STOCK: conflict(STOCK)}
+        self.save()
+        self.add(pin=True)
+        original = C._table
+        written = [False]
+        def mutate(finance, code, table, evidence):
+            record = original(finance, code, table, evidence)
+            if table == "Capital" and not written[0]:
+                written[0] = True
+                pin = (self.finance / "Capital" / STOCK / "active" /
+                       (DAY + ".json"))
+                obj = json.loads(pin.read_text(encoding="utf-8"))
+                obj["sha256"] = "1" * 64
+                pin.write_text(json.dumps(obj), encoding="utf-8")
+            return record
+        with patch.object(C, "_table", side_effect=mutate):
+            with self.assertRaisesRegex(
+                    C.CensusBlocked, "FINANCE_FILES_CHANGED_DURING_CENSUS"):
+                self.inspect()
+
     def test_pin_reference_to_missing_local_candidate_is_blocked(self):
         self.state["pending"] = {STOCK: conflict(STOCK)}
         self.save()

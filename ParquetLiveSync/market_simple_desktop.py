@@ -31,6 +31,31 @@ from market_simple_ui_model import (
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
 
+def secondary_finance_python(canonical_repo: Path) -> Path:
+    """Only the external financial pilot may use the optional isolated Python.
+
+    The production QMT runner, the nine-table QMT probe and the GUI itself
+    continue to use the canonical existing .venv. Never resolve an arbitrary
+    interpreter path from external receipts, user text or source listings.
+    """
+    if not canonical_repo.is_absolute() or canonical_repo.is_symlink():
+        raise InvalidSimplePlan("正式仓库目录无效")
+    isolated = canonical_repo / ".venv-akshare"
+    if isolated.exists() or isolated.is_symlink():
+        if not isolated.is_dir() or isolated.is_symlink():
+            raise InvalidSimplePlan("独立AKShare环境无效，不会回退到正式QMT Python")
+        python = isolated / "Scripts" / "python.exe"
+        if (not python.is_file() or python.is_symlink()
+                or python.parent.is_symlink()):
+            raise InvalidSimplePlan("独立AKShare环境不完整，请先完成安装")
+        return python
+    python = canonical_repo / ".venv" / "Scripts" / "python.exe"
+    if (not python.is_file() or python.is_symlink()
+            or python.parent.is_symlink()):
+        raise InvalidSimplePlan("正式QMT Python不可用")
+    return python
+
+
 class SimpleMarketDashboard(UpdaterDashboard):
     """One entry, three tabs, no duplicated diagnostic wizard."""
 
@@ -457,11 +482,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             selected = stocks[:3]
             known = sorted(pending)[:500]
             canonical_repo = Path(REVIEW_MAIN_REPO) if REVIEW_MODE else REPO
-            python = canonical_repo / ".venv" / "Scripts" / "python.exe"
+            python = secondary_finance_python(canonical_repo)
             script = MODULE / "market_finance_secondary.py"
             if (os.name != "nt" or not (canonical_repo / ".git").is_dir()
                     or (canonical_repo / ".git").is_symlink()
-                    or not python.is_file() or python.is_symlink()
                     or not script.is_file() or script.is_symlink()):
                 raise InvalidSimplePlan(
                     "正式Windows Python或独立财务源组件不可用")

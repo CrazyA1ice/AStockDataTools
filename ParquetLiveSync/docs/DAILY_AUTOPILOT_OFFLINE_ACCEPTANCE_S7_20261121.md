@@ -54,3 +54,16 @@ S7新增12项纯合成验收器测试；原预计458项命名回归，加上本�
 新增4项验收器自身合成测试（含零退出码但Tk回调报错也拒绝绿灯）：完整回归包含新增的历史Tk模块、逐文件独立执行；指定失败文件准确定位且不运行之后的文件；`Ran 0 tests` 不能误判为PASS。原S7验收器20项变为24项（专项总数预期由127提升到131，但**须以真实Windows回归为准**）。
 
 安全门禁不变：固定SHA detached工作树，原生Windows PowerShell AST、无真实QMT下载、无生产Parquet/H5写入。此次只修改统一验收器、自测及说明文档；代码仅做静态比对，未在本次会话中获得新Windows运行回执。尚不能宣称完整回归通过，也不能开启正式入库。
+
+
+## S7.5（2026-11-22）：600秒与90秒超时的最终交互提示符根因
+
+用户在固定SHA `0dede27d2411db1202f05caf6655b7e8b67ca5c1` 的Windows detached工作树完成8组专项测试，**131/131项PASS**（15+9+19+9+17+22+16+24），Python AST 16/16、PowerShell AST PASS。完整回归改为逐文件隔离运行后，首个文件 `test_market_center_autopilot_offline_acceptance.py` **24项在2.681秒内全部OK**，但测试进程随后输出 `>>> ` 并停在90秒超时；原操作面板回归未运行。
+
+经复核发现根因不在 Tkinter 或QMT，而在S7验收器自身的`execute()`将`PYTHONINSPECT="0"`放进所有子进程环境。**Python 的PYTHONINSPECT环境变量是设置即启用交互检查模式（非空字符串"0"也算启用），使`python -m unittest discover`完成后进入REPL，并从继承的控制台stdin等待用户输入。**这解释了为什么文本中已包含 `Ran 24 tests ... OK`，却仍有尾随 `>>> ` 并被验收器超时终止。
+
+S7.5修正：移除子进程环境中的`PYTHONINSPECT`（包括父环境继承的同名变量），同时移除`PYTHONSTARTUP`；所有验证子进程强制`stdin=subprocess.DEVNULL`，避免未来出现无人值守REPL等待。即使Python子进程退出码0且有有效unittest测试计数，只要输出中出现独立行首`>>> `交互提示符，也判定`PYTHON_INTERACTIVE_PROMPT_DETECTED`并保留诊断，不能绿灯。固定Git SHA、Windows AST、测试集合、逐文件回归的90秒单文件/600秒总预算、以及`approved_for_production=false`门禁均不变。
+
+S7验收器自测从24增加至**27项**，新增：继承环境`PYTHONINSPECT="0"`及`PYTHONSTARTUP`时子进程仍清除它们并禁用stdin；真实独立`python -m unittest discover`合成用例不因继承检查环境卡住；退出码0但输出`>>> `的回执也不得PASS。预计8组专项合计**134项**，但当前仅有旧SHA的131项真实Windows PASS，新SHA尚未在用户Windows重验。
+
+本轮只修改S7验收器、其合成测试和此文档；**没有修改**正式20:05调度、财务导入器、QMT缓存更新、Parquet/H5、真实股票历史、数据更新GUI，仍保持Draft、不部署、不开启正式财务入库。

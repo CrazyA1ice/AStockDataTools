@@ -92,13 +92,13 @@ class OfflineAcceptanceTests(unittest.TestCase):
                          git_runner=good_git)
         self.assertEqual(self.calls, [])
 
-    def test_eight_synthetic_suites_pass_without_full_regression(self):
+    def test_all_scoped_synthetic_suites_pass_without_full_regression(self):
         report = G.acceptance(
             self.module, PIN, runner=self.fake_run, git_runner=good_git)
         self.assertEqual(report["status"], "OFFLINE_ACCEPTANCE_PASS")
-        self.assertEqual(report["python_ast_files"], 16)
+        self.assertEqual(report["python_ast_files"], len(G.MODULES) + len(G.TESTS))
         self.assertFalse(report["approved_for_production"])
-        self.assertEqual(len(report["test_suites"]), 8)
+        self.assertEqual(len(report["test_suites"]), len(G.TESTS))
         self.assertFalse(report["full_regression_requested"])
         self.assertTrue(all(s["pass"] for s in report["test_suites"]))
         self.assertFalse(any("--apply" in a for call in self.calls

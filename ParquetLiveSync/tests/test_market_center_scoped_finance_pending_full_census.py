@@ -6,11 +6,10 @@ the census never opens or certifies Parquet content or QMT source records.
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-from zoneinfo import ZoneInfo
 import io
 import json
 import unittest
@@ -25,7 +24,7 @@ DECODE = "000055.SZ"
 DAY = "2026-11-17"
 OLDER = "2026-11-16"
 FAKE = "0123456789abcdef"
-CLOCK = datetime(2026, 11, 22, 10, 15, tzinfo=ZoneInfo("Asia/Shanghai"))
+CLOCK = datetime(2026, 11, 22, 10, 15, tzinfo=timezone(timedelta(hours=8)))
 
 
 def conflict(code, table="Capital", rows=2):
@@ -184,7 +183,7 @@ class PendingCensusTests(unittest.TestCase):
     def test_full_85_stocks_are_scanned_not_only_sampled(self):
         self.state["pending"] = {
             f"{i:06d}.SZ": conflict(f"{i:06d}.SZ")
-            for i in range(1, 85)}
+            for i in range(1, 86) if i != 55}
         self.state["pending"][DECODE] = decode()
         self.save()
         r = self.inspect()
@@ -194,8 +193,9 @@ class PendingCensusTests(unittest.TestCase):
         self.assertEqual(r["first_recorded_conflict_table_counts"]["Capital"],
                          84)
         self.assertEqual(r["cache_decode_error_stocks"], [DECODE])
-        self.assertEqual(r["total_pages"], 8)
-        self.assertEqual(r["rows_on_page_count"], 12)
+        self.assertEqual(r["total_pages"], 29)
+        self.assertEqual(r["rows_on_page_count"], 3)
+        self.assertEqual(r["rows_on_page"][0]["symbol"], DECODE)
         self.assertFalse(r["page_is_complete_pending_census"])
 
     def test_pages_are_bounded_but_aggregates_are_still_full_scope(self):
@@ -228,7 +228,7 @@ class PendingCensusTests(unittest.TestCase):
 
     def test_2005_writer_window_refused_before_read(self):
         when = datetime(2026, 11, 22, 20, 5,
-                        tzinfo=ZoneInfo("Asia/Shanghai"))
+                        tzinfo=timezone(timedelta(hours=8)))
         with patch.object(C.P2, "summarize_pending") as summary:
             with self.assertRaisesRegex(
                     C.CensusBlocked, "RESERVED_2005"):
@@ -324,7 +324,8 @@ class PendingCensusTests(unittest.TestCase):
         before = ((self.workspace / I.STATE_FILE).read_bytes(),
                   target.read_bytes())
         out = io.StringIO()
-        with redirect_stdout(out):
+        with redirect_stdout(out), \
+             patch.object(C, "_no_writer_window"):
             rc = C.main([
                 "--root", str(self.root), "--workspace",
                 str(self.workspace), "--explicit-readonly"])

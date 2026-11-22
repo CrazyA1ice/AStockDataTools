@@ -462,6 +462,15 @@ class GuiSmokeTests(unittest.TestCase):
                       self.app.qmt_probe_detail.get())
         self.assertFalse(self.app._qmt_probe_running)
 
+    def test_copy_diagnostic_includes_optional_per_share_probe(self):
+        self.app._finance_diag_text = "本地待审：85只"
+        self.app.qmt_probe_detail.set(
+            "688259.SH：PerShare UTF-8解码失败；未做下载")
+        self.app.copy_finance_diagnostic()
+        clip = self.app.clipboard_get()
+        self.assertIn("本地待审：85只", clip)
+        self.assertIn("PerShare UTF-8解码失败", clip)
+
     def test_qmt_probe_blocks_stale_pending_without_subprocess(self):
         self.app._finance_decode_retry_stock = "688259.SH"
         with patch.object(UI, "safe_json", return_value={"pending": {}}), \

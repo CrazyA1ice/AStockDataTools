@@ -329,7 +329,7 @@ class CapitalCompareTests(unittest.TestCase):
              evidence["changed_business_field_key_dates"]],
             ["2026-11-12", "2026-11-13"])
         self.assertFalse(evidence["change_event_sources_verified"])
-        self.assertFalse(evidence["historical_pending_remains_blocked"] is False)
+        self.assertTrue(evidence["historical_pending_remains_blocked"])
 
     def test_date_details_fail_closed_for_ambiguous_or_unbounded_mapping(self):
         def row(day):

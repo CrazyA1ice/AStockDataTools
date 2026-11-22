@@ -93,7 +93,23 @@ def execute(args, module, timeout, *, runner=subprocess.run):
         output = p.stdout or b""
         return {"pass": p.returncode == 0, "exit": p.returncode,
                 "output_tail": output.decode("utf-8", "replace")[-1800:]}
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        # unittest -v writes test names BEFORE running their bodies. Keep
+        # the partial child output so a hang can be localized rather than
+        # reported as a blank 180-second timeout.
+        output = exc.stdout if exc.stdout is not None else exc.output
+        if output is None:
+            output = b""
+        if isinstance(output, str):
+            output = output.encode("utf-8", "replace")
+        tail = output[-4000:].decode("utf-8", "replace")
+        return {
+            "pass": False, "exit": None, "error": "TimeoutExpired",
+            "timeout_seconds": timeout, "output_tail": tail,
+            "timeout_phase": ("TEST_IN_PROGRESS_OR_TEARDOWN"
+                              if "test_" in tail else "STARTUP_OR_IMPORT"),
+        }
+    except OSError as exc:
         return {"pass": False, "exit": None,
                 "error": type(exc).__name__, "output_tail": ""}
 
@@ -125,10 +141,14 @@ def acceptance(module, head, *, full=False, runner=subprocess.run,
     powershell = powershell_ast(module, runner=runner)
     checks = []
     for name in TESTS:
+        # Each whitelisted test file has a standalone unittest.main().
+        # Executing it directly avoids an extra discovery walk, while -u -v
+        # provides real-time case names in a timeout's partial stderr.
+        # The pure S1 shadow suite should finish quickly: cap it at 45s.
+        suite_timeout = 45 if name == TESTS[0] else 180
         result = execute(
-            [sys.executable, "-B", "-m", "unittest", "discover",
-             "-s", "tests", "-p", name, "-q"],
-            module, 180, runner=runner)
+            [sys.executable, "-u", "-B", str(module / "tests" / name), "-v"],
+            module, suite_timeout, runner=runner)
         checks.append({"suite": name, **result})
         if not result["pass"]:
             break

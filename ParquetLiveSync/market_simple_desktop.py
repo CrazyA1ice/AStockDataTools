@@ -7,6 +7,7 @@ explicitly labeled legacy operation behind the original mutex and gates.
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 import os
 import subprocess
 import queue
@@ -23,6 +24,7 @@ from market_simple_ui_model import (
     initial_date, preview_request, finance_cache_refresh_scope,
     finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
     finance_decode_retry_target, finance_decode_retry_window,
+    finance_qmt_probe_view,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -38,6 +40,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_diag_running = False
         self._finance_diag_text = ""
         self._finance_decode_retry_stock = None
+        self._qmt_probe_running = False
+        self._qmt_probe_queue = queue.Queue()
         super().__init__()
         self._resolve_default_session()
 
@@ -208,6 +212,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             actions, text="定位解码异常股票（需确认刷新）",
             command=self.prepare_finance_decode_retry, state="disabled")
         self.finance_decode_retry_button.pack(side="left", padx=8)
+        self.qmt_table_probe_button = ttk.Button(
+            actions, text="检查QMT九表（只读）",
+            command=self.start_qmt_finance_table_probe, state="disabled")
+        self.qmt_table_probe_button.pack(side="left", padx=8)
         ttk.Button(actions, text="复制诊断摘要",
                    command=self.copy_finance_diagnostic).pack(
                        side="left", padx=8)
@@ -219,6 +227,9 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.finance_diag_detail = tk.StringVar(value="")
         ttk.Label(diagnosis, textvariable=self.finance_diag_detail,
                   justify="left", wraplength=980).pack(anchor="w")
+        self.qmt_probe_detail = tk.StringVar(value="")
+        ttk.Label(diagnosis, textvariable=self.qmt_probe_detail,
+                  justify="left", wraplength=980).pack(anchor="w", pady=(5, 0))
         stage = ttk.LabelFrame(page, text="最近任务 · 分阶段状态", padding=7)
         stage.pack(fill="x")
         cols = ("execution", "quality", "cross", "log")
@@ -265,6 +276,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_diag_running = True
         self._finance_decode_retry_stock = None
         self.finance_decode_retry_button.configure(state="disabled")
+        self.qmt_table_probe_button.configure(state="disabled")
+        self.qmt_probe_detail.set("")
         self.finance_diag_status.set(
             "后台检查中：不连接QMT、不下载、不写入正式财务数据。")
         self.finance_diag_button.configure(state="disabled")
@@ -307,12 +320,90 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self.finance_decode_retry_button.configure(
             state="normal" if self._finance_decode_retry_stock
             and self.process is None else "disabled")
+        self.qmt_table_probe_button.configure(
+            state="normal" if self._finance_decode_retry_stock
+            and self.process is None and not self._qmt_probe_running
+            else "disabled")
         if state == "ok":
             self.finance_diag_status.set(
                 "已检查：全体待审股票的本地九表元数据。来源冲突仍待复核，未获入库授权。")
         else:
             self.finance_diag_status.set("只读检查被阻断：没有执行任何修复")
         self.finance_diag_detail.set(detail)
+
+    def start_qmt_finance_table_probe(self):
+        """Explicit one-stock QMT cache reads; no download and no file output."""
+        code = self._finance_decode_retry_stock
+        if not code or self._qmt_probe_running or self.process is not None:
+            return
+        try:
+            now = datetime.now(SHANGHAI)
+            minute = now.hour * 60 + now.minute
+            if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+                raise InvalidSimplePlan("北京时间19:50—20:25正在保护正式更新任务")
+            progress = safe_json(
+                WORK / "qmt_extra" / "financial-cache-progress.json")
+            pending = progress.get("pending", {})
+            if (not isinstance(pending, dict)
+                    or not isinstance(pending.get(code), dict)
+                    or pending[code].get("reason") != "CACHE_DECODE_ERROR"):
+                raise InvalidSimplePlan("待审状态已变化，请重新运行本地只读检查")
+            python = REPO / ".venv" / "Scripts" / "python.exe"
+            worker_file = MODULE / "qmt_extra_financial_cache_worker.py"
+            if (os.name != "nt" or not (REPO / ".git").is_dir()
+                    or (REPO / ".git").is_symlink()
+                    or not python.is_file() or python.is_symlink()
+                    or not worker_file.is_file() or worker_file.is_symlink()):
+                raise InvalidSimplePlan("只允许正式Windows仓库执行QMT九表只读检查")
+        except (InvalidSimplePlan, OSError, ValueError, TypeError) as exc:
+            self.qmt_probe_detail.set("QMT逐表检查已阻断：" + str(exc)[:120])
+            return
+        self._qmt_probe_running = True
+        self.qmt_table_probe_button.configure(state="disabled")
+        self.qmt_probe_detail.set("正在读取 " + code +
+                                  " 的九张本地缓存表；不下载、不写入。")
+        def worker():
+            try:
+                result = subprocess.run(
+                    [str(python), "-u", "-B", str(worker_file),
+                     "--symbols", code, "--probe-readonly"],
+                    cwd=str(REPO), stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    check=False, timeout=45,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                if (result.returncode != 0 or not isinstance(result.stdout, bytes)
+                        or len(result.stdout) > 16384):
+                    raise ValueError("QMT未连接、检查超时之外的异常或输出过大")
+                lines = result.stdout.decode("utf-8", errors="strict").splitlines()
+                marker = "QMT_FINANCE_TABLE_READONLY_PROBE="
+                receipts = [line[len(marker):] for line in lines
+                            if line.startswith(marker)]
+                if len(receipts) != 1:
+                    raise ValueError("未收到唯一可信的QMT逐表回执")
+                view = finance_qmt_probe_view(
+                    json.loads(receipts[0]), code)
+                self._qmt_probe_queue.put(("ok", view))
+            except (OSError, ValueError, UnicodeError, TypeError,
+                    subprocess.TimeoutExpired) as exc:
+                self._qmt_probe_queue.put((
+                    "error", "QMT逐表检查未完成：" + type(exc).__name__ +
+                    "。没有下载或写入财务数据；请检查QMT客户端。"))
+        threading.Thread(target=worker, daemon=True,
+                         name="readonly-qmt-table-probe").start()
+        self.after(250, self._poll_qmt_finance_table_probe)
+
+    def _poll_qmt_finance_table_probe(self):
+        try:
+            state, summary = self._qmt_probe_queue.get_nowait()
+        except queue.Empty:
+            if self._qmt_probe_running:
+                self.after(250, self._poll_qmt_finance_table_probe)
+            return
+        self._qmt_probe_running = False
+        self.qmt_table_probe_button.configure(
+            state="normal" if self._finance_decode_retry_stock
+            and self.process is None else "disabled")
+        self.qmt_probe_detail.set(summary)
 
     def prepare_finance_decode_retry(self):
         """Prepare bounded vendor-cache refresh; NEVER launch it automatically."""
@@ -371,6 +462,11 @@ class SimpleMarketDashboard(UpdaterDashboard):
             self.finance_decode_retry_button.configure(
                 state="normal" if self._finance_decode_retry_stock
                 and self.process is None else "disabled")
+        if hasattr(self, "qmt_table_probe_button"):
+            self.qmt_table_probe_button.configure(
+                state="normal" if self._finance_decode_retry_stock
+                and self.process is None and not self._qmt_probe_running
+                else "disabled")
         enabled = (self.update_mode.get() == "增量更新"
                    and self.update_scope.get() == "自选股票"
                    and [name for name in MODULES if

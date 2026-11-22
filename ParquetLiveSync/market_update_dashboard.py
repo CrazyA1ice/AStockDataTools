@@ -19,7 +19,35 @@ from market_daily_autopilot_view import read_view
 
 MODULE = Path(__file__).resolve().parent
 REPO = MODULE.parent
-WORK = MODULE / "work"
+
+
+def _review_state_module(raw: str) -> Path:
+    """Validated external ledger root ONLY for detached, non-writing GUI review."""
+    if not raw:
+        return MODULE
+    root = Path(raw)
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise ValueError("GUI_REVIEW_MAIN_REPO_INVALID")
+    # The review program MUST live in a detached worktree whose .git is a
+    # file. Never enable the override for a production git checkout.
+    if not (REPO / ".git").is_file() or (REPO / ".git").is_symlink():
+        raise ValueError("GUI_REVIEW_REQUIRES_DETACHED_WORKTREE")
+    if not (root / ".git").is_dir() or (root / ".git").is_symlink():
+        raise ValueError("GUI_REVIEW_CANONICAL_CHECKOUT_REQUIRED")
+    module = root / "ParquetLiveSync"
+    work = module / "work"
+    if (not module.is_dir() or module.is_symlink()
+            or not work.is_dir() or work.is_symlink()):
+        raise ValueError("GUI_REVIEW_CANONICAL_WORKSPACE_REQUIRED")
+    if module.resolve() == MODULE.resolve():
+        raise ValueError("GUI_REVIEW_REJECTS_SELF_REFERENCE")
+    return module
+
+
+REVIEW_MAIN_REPO = os.environ.get("ASTOCK_GUI_REVIEW_REPO", "")
+REVIEW_MODE = bool(REVIEW_MAIN_REPO)
+STATE_MODULE = _review_state_module(REVIEW_MAIN_REPO)
+WORK = STATE_MODULE / "work"
 STAGES = (
     ("EIGHT_PERIODS", "八周期行情"),
     ("SECTORS", "板块"),
@@ -230,7 +258,7 @@ class UpdaterDashboard(tk.Tk):
                 "（尝试 " + str(last.get("qmt_preflight_attempts", 0)) + " 次）" +
                 "；20:05前补更=" + str(historical.get("qmt_preflight_status", "尚无记录"))
             )
-            model = read_view(MODULE)
+            model = read_view(STATE_MODULE)
             self.autopilot_status.set(model["headline"])
             self.autopilot_coverage.set(model["coverage"])
             self.autopilot_quality.set(model["quality"] +

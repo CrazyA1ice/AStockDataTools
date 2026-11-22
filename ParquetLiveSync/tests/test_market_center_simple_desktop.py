@@ -612,6 +612,92 @@ class GuiSmokeTests(unittest.TestCase):
         self.app._finance_diag_queue.put(("error", "test-only", None))
         self.app._poll_finance_diagnostic()
 
+    def test_secondary_source_button_uses_readonly_external_worker(self):
+        from datetime import datetime, timedelta, timezone
+        repo = Path(self.temp.name)
+        (repo / ".git").mkdir(exist_ok=True)
+        python = repo / ".venv" / "Scripts" / "python.exe"
+        python.parent.mkdir(parents=True)
+        python.write_text("synthetic", encoding="utf-8")
+        script = self.module / "market_finance_secondary.py"
+        script.write_text("synthetic", encoding="utf-8")
+        root = repo / "stock"
+        progress = {
+            "root": str(root / "AllCycleAStockData" / "qmt_extra"),
+            "pending": {
+                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "000036.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"},
+            }}
+        evidence = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "unique_event_leads": 1,
+                "candidate_symbols_in_known_scope": ["000010.SZ"],
+            },
+            "crosschecks": [
+                {"symbol": "000010.SZ", "fields_compared": 2,
+                 "value_differences": 1, "status": "REVIEW",
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000036.SZ", "fields_compared": 0,
+                 "value_differences": 0, "status": "REVIEW",
+                 "can_commit": False, "can_clear_pending": False},
+            ],
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False,
+        }
+        output = (
+            b"\xff external start up log\n" +
+            b"FINANCE_EXTERNAL_READONLY=" +
+            json.dumps(evidence).encode("utf-8") + b"\n")
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI, "REPO", repo), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI, "datetime") as fake_now, \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI.subprocess, "run",
+                          return_value=SimpleNamespace(
+                              returncode=0, stdout=output)) as run, \
+             patch.object(UI.threading, "Thread") as launch:
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_secondary_finance_pilot()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_secondary_finance_pilot()
+            args = run.call_args.args[0]
+            self.assertIn("--explicit-readonly", args)
+            self.assertIn("--known-symbols", args)
+            self.assertIn("--symbols", args)
+            self.assertEqual(run.call_args.kwargs["timeout"], 120)
+            self.assertEqual(run.call_args.kwargs["stdin"],
+                             UI.subprocess.DEVNULL)
+            self.assertNotIn("download", " ".join(args).lower())
+        self.assertIn("数值差异 1", self.app.secondary_finance_detail.get())
+        self.assertFalse(self.app._secondary_finance_running)
+
+    def test_secondary_source_never_starts_without_valid_pending(self):
+        with patch.object(UI, "safe_json", return_value={}), \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("UNSAFE_NETWORK")):
+            self.app.start_secondary_finance_pilot()
+        self.assertIn("跨源核验未启动", self.app.secondary_finance_detail.get())
+
+    def test_secondary_source_does_not_run_concurrent_update(self):
+        self.app._qmt_probe_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_secondary_finance_pilot()
+            launch.assert_not_called()
+        self.assertIn("其他任务运行中", self.app.secondary_finance_detail.get())
+        self.app._qmt_probe_running = False
+
     def test_qmt_probe_button_requires_verified_pending_decode(self):
         self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
                          "disabled")

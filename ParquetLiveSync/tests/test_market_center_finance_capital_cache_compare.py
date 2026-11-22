@@ -227,7 +227,8 @@ class CapitalCompareTests(unittest.TestCase):
         self.assertNotIn("123456.78", json.dumps(decorated))
         self.assertEqual(P._report_key_date(1609459200000), "2021-01-01")
         self.assertEqual(P._report_key_date("20240930120000"), "2024-09-30")
-        for untrusted in ("20260230", "20240930 extra", "X", "0"):
+        for untrusted in ("20260230", "20240930 extra", "X", "0",
+                          "2024093000000", "2026093000"):
             with self.assertRaises(P.CacheCompareBlocked):
                 P._report_key_date(untrusted)
 

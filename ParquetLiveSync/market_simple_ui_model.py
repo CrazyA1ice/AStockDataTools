@@ -665,6 +665,36 @@ def finance_secondary_pilot_view(report: dict) -> str:
             "%s：有效对比 %d 个报告期字段，无法对比 %d 个，数值差异 %d；状态%s。" %
             (code, compared, inconclusive, different,
              str(entry.get("status", ""))[:60]))
+        breakdown = entry.get("table_timings")
+        if breakdown is not None:
+            expected = ("Balance", "Income", "CashFlow")
+            status_labels = {
+                "NO_LOCAL_QMT_SNAPSHOT": "本地快照缺失",
+                "EXTERNAL_METHOD_UNAVAILABLE": "外部方法不可用",
+                "EXTERNAL_SOURCE_ERROR": "外部来源异常",
+                "NO_COMMON_REPORT_PERIOD": "报告期无交集",
+                "FIELDS_NOT_COMPARABLE_OR_REVISIONS": "字段/修订版无法比较",
+                "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION": "抽样对照完成（未认证）",
+            }
+            if not isinstance(breakdown, list) or len(breakdown) != 3:
+                raise InvalidSimplePlan("逐表耗时回执缺失或超出范围")
+            for expected_table, timer in zip(expected, breakdown):
+                if (not isinstance(timer, dict)
+                        or timer.get("table") != expected_table
+                        or timer.get("status") not in status_labels):
+                    raise InvalidSimplePlan("逐表身份或状态不可信")
+                seconds = []
+                for name in ("local_seconds", "eastmoney_seconds",
+                             "comparison_seconds"):
+                    value = timer.get(name)
+                    if (not isinstance(value, (int, float))
+                            or isinstance(value, bool)
+                            or not 0 <= value <= 3600):
+                        raise InvalidSimplePlan("逐表耗时数值非法")
+                    seconds.append(value)
+                lines.append(
+                    "  %s：本地快照 %.2f秒，东财接口 %.2f秒，字段比较 %.2f秒；%s。"
+                    % (expected_table, *seconds, status_labels[timer["status"]]))
     lines.append(
         "只读试验：仅核验三大报表少量字段，未验证公告原文、修订版及完整九表。"
         "不会自动下载、覆盖旧版、清除pending或修改20:05任务。")

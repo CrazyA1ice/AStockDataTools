@@ -447,6 +447,30 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
         self.assertFalse(self.app._finance_diag_running)
 
+    def test_pending_refresh_rejects_concurrent_qmt_probe(self):
+        self.app._qmt_probe_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.assert_not_called()
+        self.assertFalse(self.app._finance_diag_running)
+        self.assertIn("QMT逐表检查仍在运行",
+                      self.app.finance_diag_status.get())
+        self.app._qmt_probe_running = False
+
+    def test_pending_refresh_clears_previous_qmt_table_receipt(self):
+        self.app.qmt_probe_detail.set("OLD_QMT_RESULT")
+        self.app.qmt_probe_output.configure(state="normal")
+        self.app.qmt_probe_output.insert("1.0", "OLD_QMT_RESULT")
+        self.app.qmt_probe_output.configure(state="disabled")
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.assert_called_once()
+            self.assertEqual(self.app.qmt_probe_detail.get(), "")
+            self.assertEqual(
+                self.app.qmt_probe_output.get("1.0", "end-1c"), "")
+        self.app._finance_diag_queue.put(("error", "test-only", None))
+        self.app._poll_finance_diagnostic()
+
     def test_qmt_probe_button_requires_verified_pending_decode(self):
         self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
                          "disabled")

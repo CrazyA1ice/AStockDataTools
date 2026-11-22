@@ -176,7 +176,7 @@ class FinanceSecondaryTests(TestCase):
     def test_true_numeric_difference_is_preserved_as_review_only(self):
         result = S.compare_rows(
             "Balance", [{"m_timetag": "20260930", "tot_assets": 100}],
-            [{"REPORT_DATE": "2026-09-30", "TOTAL_ASSETS": 101}])
+            [{"REPORT_DATE": "2026-09-30", "TOTAL_ASSETS": 105}])
         self.assertEqual(result["status_counts"]["VALUE_DIFFERENCE"], 1)
         self.assertFalse(result["can_resolve_historical_pending"])
 

@@ -275,11 +275,18 @@ class SimpleMarketDashboard(UpdaterDashboard):
         """One-click local metadata check, isolated from the daily QMT writer."""
         if self._finance_diag_running:
             return
+        if self._qmt_probe_running:
+            self.finance_diag_status.set(
+                "QMT逐表检查仍在运行；完成后再重新读取财务待审账本。")
+            return
         self._finance_diag_running = True
         self._finance_decode_retry_stock = None
         self.finance_decode_retry_button.configure(state="disabled")
         self.qmt_table_probe_button.configure(state="disabled")
         self.qmt_probe_detail.set("")
+        self.qmt_probe_output.configure(state="normal")
+        self.qmt_probe_output.delete("1.0", "end")
+        self.qmt_probe_output.configure(state="disabled")
         self.finance_diag_status.set(
             "后台检查中：不连接QMT、不下载、不写入正式财务数据。")
         self.finance_diag_button.configure(state="disabled")

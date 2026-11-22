@@ -7,7 +7,6 @@ explicitly labeled legacy operation behind the original mutex and gates.
 from __future__ import annotations
 
 from datetime import date, datetime
-import json
 import os
 import subprocess
 import queue

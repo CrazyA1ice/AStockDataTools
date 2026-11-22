@@ -581,9 +581,15 @@ def finance_secondary_pilot_view(report: dict) -> str:
         lines.append("本轮外部财务试验总耗时 %.1f 秒（非更新速度改善证明）。" %
                      timing)
     if lead.get("scope") == "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY":
-        attempted = lead.get("source_requests_attempted")
-        failures = lead.get("failed_categories")
-        if (type(attempted) is not int or not 1 <= attempted <= 3
+        source_unavailable = (lead.get("status") ==
+                              "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE")
+        attempted = lead.get("source_requests_attempted",
+                             0 if source_unavailable else None)
+        failures = lead.get("failed_categories",
+                            [] if source_unavailable else None)
+        if (type(attempted) is not int or not 0 <= attempted <= 3
+                or (attempted == 0 and not source_unavailable)
+                or (source_unavailable and (attempted != 0 or failures != []))
                 or not isinstance(failures, list)
                 or len(failures) > attempted):
             raise InvalidSimplePlan("公告抽样请求计数或失败明细无效")
@@ -604,8 +610,12 @@ def finance_secondary_pilot_view(report: dict) -> str:
                 raise InvalidSimplePlan("公告失败股票或错误类型不可信")
             seen_failed.add(code)
             failed_briefs.append(code + "（" + kind + "）")
-        lines.append("公告抽样查询完成 %d/%d 只；%d只失败。" %
-                     (attempted - len(failures), attempted, len(failures)))
+        if attempted:
+            lines.append("公告抽样查询完成 %d/%d 只；%d只失败。" %
+                         (attempted - len(failures), attempted, len(failures)))
+        else:
+            lines.append("个股公告接口整体不可用；本轮未完成公告发现，"
+                         "不能根据空结果排除新增财报。")
         if failed_briefs:
             lines.append("失败的个股请求：" + "、".join(failed_briefs) +
                          "。失败股票的公告结果不可用于判断有无新增财报。")

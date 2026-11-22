@@ -573,6 +573,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         text = self._finance_diag_text
         if self.qmt_probe_detail.get():
             text += "\n\n" + self.qmt_probe_detail.get()
+        if self.secondary_finance_detail.get():
+            text += "\n\n" + self.secondary_finance_detail.get()
         self.clipboard_clear()
         self.clipboard_append(text)
         self.finance_diag_status.set(

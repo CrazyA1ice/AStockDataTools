@@ -182,6 +182,15 @@ class CapitalCompareTests(unittest.TestCase):
             offline.assert_called_once()
             online.assert_not_called()
 
+    def test_offline_preflight_cannot_enter_internal_qmt_child(self):
+        with patch.object(P, "_child_cache_fingerprints") as qmt, \
+             redirect_stdout(io.StringIO()):
+            result = P.main([
+                "--preflight-only", "--internal-cache-fingerprints",
+                "--stock", "000001.SZ"])
+        self.assertEqual(result, 2)
+        qmt.assert_not_called()
+
     def test_preflight_missing_proof_class_never_reads_current_cache(self):
         sha = "b" * 64
         stock = "000001.SZ"

@@ -228,8 +228,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
         ttk.Label(diagnosis, textvariable=self.finance_diag_detail,
                   justify="left", wraplength=980).pack(anchor="w")
         self.qmt_probe_detail = tk.StringVar(value="")
-        ttk.Label(diagnosis, textvariable=self.qmt_probe_detail,
-                  justify="left", wraplength=980).pack(anchor="w", pady=(5, 0))
+        self.qmt_probe_output = tk.Text(
+            diagnosis, height=5, wrap="word", state="disabled",
+            font=("Consolas", 9))
+        self.qmt_probe_output.pack(fill="x", pady=(5, 0))
         stage = ttk.LabelFrame(page, text="最近任务 · 分阶段状态", padding=7)
         stage.pack(fill="x")
         cols = ("execution", "quality", "cross", "log")
@@ -404,6 +406,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             state="normal" if self._finance_decode_retry_stock
             and self.process is None else "disabled")
         self.qmt_probe_detail.set(summary)
+        self.qmt_probe_output.configure(state="normal")
+        self.qmt_probe_output.delete("1.0", "end")
+        self.qmt_probe_output.insert("1.0", summary)
+        self.qmt_probe_output.configure(state="disabled")
 
     def prepare_finance_decode_retry(self):
         """Prepare bounded vendor-cache refresh; NEVER launch it automatically."""

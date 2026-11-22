@@ -266,9 +266,10 @@ def _compare(old: list[dict], fresh: list[dict]) -> dict:
     }
 
 
-def compare(state_module: Path | str, market_root: Path | str,
-            expected_sha: str, *, now: datetime | None = None,
-            read_cache=_run_child) -> dict:
+def _prepare_verified_histories(state_module: Path | str,
+                                market_root: Path | str, expected_sha: str, *,
+                                now: datetime | None = None):
+    """Verify canonical ledger plus two old Capital snapshot unions, NO QMT."""
     if type(expected_sha) is not str or re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha) is None:
         raise CacheCompareBlocked("explicit_financial_ledger_sha_required")
     expected_sha = expected_sha.lower()
@@ -299,6 +300,44 @@ def compare(state_module: Path | str, market_root: Path | str,
     # Revalidate ledger before QMT interaction, never allow stale scope.
     if P2.summarize_pending(state_module)["progress_sha256"] != expected_sha:
         raise CacheCompareBlocked("financial_progress_changed_before_qmt")
+    return expected_sha, histories
+
+
+def preflight(state_module: Path | str, market_root: Path | str,
+              expected_sha: str, *, now: datetime | None = None) -> dict:
+    """Explicit offline gate before the separate opt-in local QMT cache read."""
+    expected_sha, histories = _prepare_verified_histories(
+        state_module, market_root, expected_sha, now=now)
+    return {
+        "status": "FINANCE_P5_CAPITAL_TWO_STOCK_OFFLINE_PREFLIGHT_NOT_CERTIFIED",
+        "progress_sha256": expected_sha,
+        "sample_rule": "ONE_FROM_EACH_CAPITAL_PROOF_CLASS",
+        "sample_count": len(histories),
+        "samples": [{
+            "stock": item["stock"],
+            "pending_proof_class": item["proof_class"],
+            "historical_snapshot_candidates_verified":
+                details["snapshot_candidates_verified"],
+            "historical_selected_dates": details["historical_selected_dates"],
+            "selected_history_variants": details["selected_history_variants"],
+        } for item, _fingerprints, details in histories],
+        "selected_historical_snapshot_content_locally_verified": True,
+        "current_qmt_cache_compared": False,
+        "actual_conflict_report_dates_located": False,
+        "only_capital_first_blockers": True,
+        "qmt_cache_calls": 0, "download_calls": 0,
+        "financial_original_values_emitted": False,
+        "source_authenticity_certified": False,
+        "can_download": False, "can_repair": False,
+        "can_execute": False, "market_file_writes": False,
+    }
+
+
+def compare(state_module: Path | str, market_root: Path | str,
+            expected_sha: str, *, now: datetime | None = None,
+            read_cache=_run_child) -> dict:
+    expected_sha, histories = _prepare_verified_histories(
+        state_module, market_root, expected_sha, now=now)
     results = []
     for item, fingerprints, details in histories:
         fresh = read_cache(item["stock"])
@@ -341,6 +380,7 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-progress-sha256")
     parser.add_argument("--explicit-readonly", action="store_true")
     parser.add_argument("--explicit-qmt-cache-read", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--internal-cache-fingerprints", action="store_true")
     parser.add_argument("--stock")
     args = parser.parse_args(argv)
@@ -353,7 +393,15 @@ def main(argv=None) -> int:
             return 3
         print(SENTINEL + E.canonical_json(payload))
         return 0
-    if not args.explicit_readonly or not args.explicit_qmt_cache_read:
+    if args.preflight_only:
+        if not args.explicit_readonly or args.explicit_qmt_cache_read:
+            print(json.dumps({
+                "status": "FINANCE_P5_OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
+                "qmt_calls": 0, "can_execute": False,
+                "market_file_writes": False,
+            }, ensure_ascii=False))
+            return 2
+    elif not args.explicit_readonly or not args.explicit_qmt_cache_read:
         print(json.dumps({
             "status": "FINANCE_P5_TWO_EXPLICIT_OPTINS_REQUIRED",
             "qmt_calls": 0, "can_execute": False, "market_file_writes": False,
@@ -363,8 +411,12 @@ def main(argv=None) -> int:
                 args.expected_progress_sha256)):
         parser.error("state-module, market-root and expected SHA required")
     try:
-        result = compare(args.state_module, args.market_root,
-                         args.expected_progress_sha256)
+        if args.preflight_only:
+            result = preflight(args.state_module, args.market_root,
+                               args.expected_progress_sha256)
+        else:
+            result = compare(args.state_module, args.market_root,
+                             args.expected_progress_sha256)
     except (CacheCompareBlocked, P2.PendingTriageBlocked,
             P3.SnapshotReviewBlocked, P4.IntegrityBlocked,
             OSError, ValueError) as exc:

@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from collections import Counter
 from pathlib import Path
+import json
 import re
 
 from market_center_v2_model import parse_symbols
@@ -457,3 +458,26 @@ def finance_qmt_probe_view(report: dict, expected_stock: str) -> str:
         "注意：本地缓存为空不能证明数据源无数据。逐表检查不验证数值、"
         "不自动修复解码问题、不清理pending，也不提交财务Parquet。")
     return "\n".join(lines)
+
+
+def extract_qmt_probe_receipt(output: bytes) -> dict:
+    """Decode ONLY the tagged JSON receipt, not QMT's arbitrary console logs.
+
+    QMT may print GBK/CP936 Chinese diagnostics on Windows while the Python
+    receipt is UTF-8. Require exactly one UTF-8 JSON object, never interpret
+    unrelated startup/error bytes as evidence of an API failure or success.
+    """
+    if not isinstance(output, bytes) or len(output) > 16384:
+        raise InvalidSimplePlan("QMT逐表回执缺失或超出输出限制")
+    prefix = b"QMT_FINANCE_TABLE_READONLY_PROBE="
+    matches = [line[len(prefix):] for line in output.splitlines()
+               if line.startswith(prefix)]
+    if len(matches) != 1:
+        raise InvalidSimplePlan("未收到唯一可信的QMT逐表回执")
+    try:
+        payload = json.loads(matches[0].decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise InvalidSimplePlan("QMT逐表JSON回执编码或格式非法") from exc
+    if not isinstance(payload, dict):
+        raise InvalidSimplePlan("QMT逐表回执必须是JSON对象")
+    return payload

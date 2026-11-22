@@ -354,3 +354,64 @@ def finance_decode_retry_window(*, cutoff: date | None = None) -> tuple[str, str
         raise InvalidSimplePlan("无法确认最近允许的缓存刷新日期")
     start = end - timedelta(days=30)
     return start.isoformat(), end.isoformat()
+
+
+def finance_qmt_probe_view(report: dict, expected_stock: str) -> str:
+    """Render narrow, untrusted QMT table-count evidence; never approve writes."""
+    tables = ("Balance", "Income", "CashFlow", "Capital", "Top10FlowHolder",
+              "Top10Holder", "HolderNum", "PershareIndex", "PerShare")
+    valid_statuses = ("ROWS_IN_LOCAL_CACHE", "EMPTY_OR_NOT_CACHED",
+                      "SYMBOL_NOT_RETURNED", "TABLE_NOT_RETURNED",
+                      "UTF8_DECODE_ERROR", "QMT_CLIENT_UNAVAILABLE",
+                      "INVALID_PROVIDER_RESPONSE", "SOURCE_API_ERROR")
+    if (not isinstance(report, dict)
+            or report.get("status") !=
+               "QMT_FINANCE_TABLE_READONLY_PROBE_REQUIRES_REVIEW"
+            or report.get("symbol") != expected_stock
+            or report.get("tables_checked") != len(tables)
+            or report.get("qmt_get_financial_data_calls") != len(tables)
+            or report.get("qmt_download_calls") != 0
+            or report.get("can_apply") is not False
+            or report.get("can_commit") is not False
+            or report.get("empty_cache_proves_provider_empty") is not False
+            or not isinstance(report.get("tables"), list)
+            or len(report["tables"]) != len(tables)):
+        raise InvalidSimplePlan("QMT逐表回执安全身份或范围不匹配")
+    messages = {
+        "ROWS_IN_LOCAL_CACHE": "缓存有记录",
+        "EMPTY_OR_NOT_CACHED": "空记录或尚未缓存",
+        "SYMBOL_NOT_RETURNED": "QMT未返回股票",
+        "TABLE_NOT_RETURNED": "QMT未返回表",
+        "UTF8_DECODE_ERROR": "UTF-8解码失败",
+        "QMT_CLIENT_UNAVAILABLE": "QMT连接不可用",
+        "INVALID_PROVIDER_RESPONSE": "返回格式异常",
+        "SOURCE_API_ERROR": "接口异常",
+    }
+    lines = ["%s · QMT本地财务逐表只读检查（最多9次读取，无下载）"
+             % expected_stock]
+    for table, item in zip(tables, report["tables"]):
+        if (not isinstance(item, dict)
+                or item.get("table") != table
+                or item.get("role") != (
+                    "OPTIONAL_UNCONFIRMED" if table == "PerShare"
+                    else "DOCUMENTED_CORE")
+                or item.get("status") not in valid_statuses):
+            raise InvalidSimplePlan("QMT逐表回执表名或类型不匹配")
+        count = item.get("cached_rows")
+        if ((item["status"] == "ROWS_IN_LOCAL_CACHE"
+             and (type(count) is not int or not 0 < count <= 100000))
+                or (item["status"] == "EMPTY_OR_NOT_CACHED" and count != 0)
+                or (item["status"] not in
+                    ("ROWS_IN_LOCAL_CACHE", "EMPTY_OR_NOT_CACHED")
+                    and count is not None)):
+            raise InvalidSimplePlan("QMT逐表回执记录数无效")
+        label = messages[item["status"]]
+        if item["status"] == "ROWS_IN_LOCAL_CACHE":
+            label += "（%d行）" % count
+        if table == "PerShare":
+            label += "；此表跨QMT版本支持情况未确认"
+        lines.append("%s：%s" % (table, label))
+    lines.append(
+        "注意：本地缓存为空不能证明数据源无数据。逐表检查不验证数值、"
+        "不自动修复解码问题、不清理pending，也不提交财务Parquet。")
+    return "\n".join(lines)

@@ -2,7 +2,8 @@
 # Normal startup runs NO tests. -QuickCheck is an explicit, offline-only smoke test.
 param(
     [switch]$QuickCheck,
-    [string]$PythonPath = ''
+    [string]$PythonPath = '',
+    [string]$ReviewMainRepo = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -39,7 +40,35 @@ if ($QuickCheck) {
     }
     return
 }
-# Only this branch launches the GUI. Never run a test sweep on each startup.
+# The review path reads only the canonical checkout's existing work/ ledgers.
+# It MUST run from a detached .git-file worktree; all writer buttons are blocked.
+if ($ReviewMainRepo) {
+    if ($QuickCheck) { throw 'QuickCheck and ReviewMainRepo are separate modes' }
+    if (-not (Test-Path -LiteralPath (Join-Path $repo '.git') -PathType Leaf)) {
+        throw 'Read-only review requires a detached worktree'
+    }
+    $main = (Resolve-Path -LiteralPath $ReviewMainRepo -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath (Join-Path $main '.git') -PathType Container)) {
+        throw 'Canonical main checkout not found'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $main 'ParquetLiveSync\work') -PathType Container)) {
+        throw 'Canonical market-work ledger directory not found'
+    }
+    $oldReview = [Environment]::GetEnvironmentVariable('ASTOCK_GUI_REVIEW_REPO', 'Process')
+    try {
+        $env:ASTOCK_GUI_REVIEW_REPO = $main
+        & $python -u -B $entry
+        if ($LASTEXITCODE -ne 0) {
+            throw ('Read-only three-tab review exited with code ' + $LASTEXITCODE)
+        }
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            'ASTOCK_GUI_REVIEW_REPO', $oldReview, 'Process')
+    }
+    return
+}
+# Normal path is unchanged, always one GUI and no tests.
 & $python -u -B $entry
 if ($LASTEXITCODE -ne 0) {
     throw ('Three-tab market data manager exited with code ' + $LASTEXITCODE)

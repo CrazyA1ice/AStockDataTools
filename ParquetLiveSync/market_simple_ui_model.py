@@ -529,6 +529,122 @@ def extract_finance_secondary_receipt(output: bytes, returncode: int) -> dict:
     return result
 
 
+def finance_capital_first_blocker_view(triage: dict, snapshot: dict) -> str:
+    """Read-only presentation of the existing P2/P3 Capital evidence.
+
+    First-blocker report keys are not exact dates and pin metadata is not
+    financial value authenticity. Do not turn past proof classes into repair.
+    """
+    if (not isinstance(triage, dict) or not isinstance(snapshot, dict)
+            or triage.get("status") !=
+            "FINANCE_PENDING_LEDGER_READONLY_FIRST_BLOCKER_NOT_CERTIFIED"
+            or snapshot.get("status") !=
+            "FINANCE_PENDING_SNAPSHOT_METADATA_READONLY_NOT_CERTIFIED"
+            or not isinstance(triage.get("progress_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", triage["progress_sha256"])
+            or snapshot.get("progress_sha256") != triage["progress_sha256"]
+            or triage.get("all_nine_tables_checked") is not False
+            or triage.get("pending_repair_approved") is not False
+            or triage.get("qmt_calls") != 0
+            or triage.get("market_file_writes") is not False
+            or snapshot.get("only_first_blocking_table_inspected") is not True
+            or snapshot.get("financial_payloads_read") is not False
+            or snapshot.get("historical_business_fields_compared") is not False
+            or snapshot.get("immutable_snapshot_content_verified") is not False
+            or snapshot.get("source_authenticity_certified") is not False
+            or snapshot.get("all_nine_tables_checked") is not False
+            or snapshot.get("can_repair") is not False
+            or snapshot.get("can_execute") is not False
+            or snapshot.get("can_download") is not False
+            or snapshot.get("market_file_writes") is not False
+            or snapshot.get("qmt_calls") != 0):
+        raise InvalidSimplePlan("Capital只读分类回执来源、哈希或安全标志无效")
+    def count(doc, key):
+        value = doc.get(key)
+        if type(value) is not int or value < 0 or value > 100000:
+            raise InvalidSimplePlan("Capital分类计数无效")
+        return value
+
+    total = count(triage, "pending_total")
+    conflicts = count(triage, "conflict_total")
+    if conflicts > total:
+        raise InvalidSimplePlan("来源冲突总数异常")
+    first = triage.get("first_blocking_table_counts")
+    if (not isinstance(first, list) or len(first) > 10
+            or any(not isinstance(x, dict)
+                   or x.get("table") not in (
+                       "Balance", "Income", "CashFlow", "Capital",
+                       "Top10FlowHolder", "Top10Holder", "HolderNum",
+                       "PershareIndex", "PerShare", "UNCLASSIFIED")
+                   or type(x.get("count")) is not int
+                   or x["count"] < 0 for x in first)
+            or sum(x["count"] for x in first) != conflicts
+            or len({x["table"] for x in first}) != len(first)):
+        raise InvalidSimplePlan("首张冲突报表计数不可信")
+    capital = next((x["count"] for x in first
+                    if x["table"] == "Capital"), 0)
+    groups = snapshot.get("capital_proof_rejection_counts")
+    if not isinstance(groups, list) or len(groups) > 12:
+        raise InvalidSimplePlan("Capital历史证明分类无效")
+    classes = {}
+    safe_classes = {
+        "REPORT_KEYS_ADDED_OR_REMOVED": "报告期键集合增删",
+        "BUSINESS_OR_DATE_FIELD_CHANGED": "业务或日期字段变化",
+        "HISTORICAL_BUSINESS_FIELD_REVISION": "历史业务字段多版本冲突",
+        "M_QUARTER_ONLY_CANDIDATE": "仅m_quarter候选（未批准）",
+        "NO_CHANGE": "当前证明未发现变化（非认证）",
+        "BASELINE_MISSING": "历史基准缺失",
+        "M_QUARTER_FIELD_MISSING": "m_quarter字段缺失",
+        "FRESH_DUPLICATE_REPORT_KEY": "当前报告期重复",
+        "HISTORICAL_DUPLICATE_RAW_RECORD": "历史记录重复",
+        "UNVERIFIED_MALFORMED_OR_UNKEYED_RECORD": "记录格式无法验证",
+        "UNRECOGNIZED_PROOF_STATUS": "未知证明状态",
+    }
+    for item in groups:
+        if (not isinstance(item, dict)
+                or item.get("proof_class") not in safe_classes
+                or item["proof_class"] in classes
+                or type(item.get("count")) is not int
+                or not 0 < item["count"] <= 100000):
+            raise InvalidSimplePlan("Capital证明状态计数不可信")
+        classes[item["proof_class"]] = item["count"]
+    grouped = count(snapshot, "capital_proof_rejections_grouped")
+    if sum(classes.values()) != grouped or grouped > capital:
+        raise InvalidSimplePlan("Capital证明分类与首张冲突表数量不一致")
+    samples = snapshot.get("samples")
+    if (not isinstance(samples, list) or len(samples) > 18
+            or count(snapshot, "sample_count") != len(samples)):
+        raise InvalidSimplePlan("Capital历史快照抽样范围异常")
+    selected = [item for item in samples if
+                isinstance(item, dict) and
+                item.get("first_blocking_table") == "Capital"]
+    if len(selected) > 2 or any(
+            not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", str(x.get("stock")))
+            or type(x.get("immutable_snapshot_candidates")) is not int
+            or type(x.get("active_pin_metadata")) is not int
+            or x["immutable_snapshot_candidates"] < 0
+            or x["active_pin_metadata"] < 0
+            or x.get("content_sha256_verified") is not False
+            or x.get("financial_business_values_read") is not False
+            for x in selected):
+        raise InvalidSimplePlan("Capital样本身份或元数据证明状态无效")
+    labels = [safe_classes[key] + str(classes[key])
+              for key in safe_classes if key in classes]
+    return "\n".join([
+        "QMT账本待审%d只，历史冲突%d只；Capital为首张冲突表%d只（不是九表全查）。"
+        % (total, conflicts, capital),
+        "账本已记录的Capital证明分类：" +
+        ("、".join(labels) if labels else "暂无已分类证明") +
+        "；未提供可归类证明%d只。" % (capital - grouped),
+        "Capital历史快照只抽样%d只：候选文件%d份、active pin元数据%d份。"
+        % (len(selected),
+           sum(x["immutable_snapshot_candidates"] for x in selected),
+           sum(x["active_pin_metadata"] for x in selected)),
+        "未读取财务数值、未调用QMT或东方财富；历史冲突具体报告期未定位，"
+        "不能认证来源、解除pending或自动修复。",
+    ])
+
+
 def finance_secondary_timeout_stage(output: bytes | None) -> str:
     """Explain only known pre-timeout phases; never display child logs."""
     if not isinstance(output, bytes) or len(output) > 131072:

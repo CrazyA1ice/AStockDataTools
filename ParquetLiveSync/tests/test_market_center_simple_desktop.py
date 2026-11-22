@@ -230,6 +230,28 @@ class SimpleModelTests(unittest.TestCase):
                 with self.assertRaises(M.InvalidSimplePlan):
                     M.finance_issue_report_view(fake)
 
+    def test_qmt_probe_receipt_ignores_gbk_console_preamble(self):
+        payload = (b"\xd1\xb8\xcd\xb6\xc6\xf4\xb6\xaf\xc8\xd5\xd6\xbe\n" +
+                   b"QMT_FINANCE_TABLE_READONLY_PROBE=" +
+                   json.dumps(sample_qmt_table_probe()).encode("utf-8") +
+                   b"\n")
+        receipt = M.extract_qmt_probe_receipt(payload)
+        self.assertEqual(receipt["symbol"], "688259.SH")
+        self.assertIn("PerShare：UTF-8解码失败",
+                      M.finance_qmt_probe_view(receipt, "688259.SH"))
+
+    def test_qmt_probe_receipt_rejects_corrupt_or_duplicate_json(self):
+        prefix = b"QMT_FINANCE_TABLE_READONLY_PROBE="
+        good = prefix + json.dumps(sample_qmt_table_probe()).encode("utf-8")
+        for raw in (b"\xff only qmt log\n",
+                    prefix + b"\xff",
+                    prefix + b"not-json",
+                    good + b"\n" + good,
+                    prefix + b"[]"):
+            with self.subTest(raw=raw[:20]), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.extract_qmt_probe_receipt(raw)
+
     def test_qmt_readonly_probe_shows_separate_pershare_decode_failure(self):
         result = M.finance_qmt_probe_view(
             sample_qmt_table_probe(), "688259.SH")
@@ -614,8 +636,9 @@ class GuiSmokeTests(unittest.TestCase):
         script = self.module / "qmt_extra_financial_cache_worker.py"
         script.write_text("synthetic-fixture", encoding="utf-8")
         receipt = (
-            "QMT_FINANCE_TABLE_READONLY_PROBE=" +
-            json.dumps(sample_qmt_table_probe()) + "\n").encode("utf-8")
+            "迅投启动日志：本地缓存\n".encode("gbk") +
+            ("QMT_FINANCE_TABLE_READONLY_PROBE=" +
+             json.dumps(sample_qmt_table_probe()) + "\n").encode("utf-8"))
         self.app._finance_decode_retry_stock = "688259.SH"
         with patch.object(UI, "REPO", repo), \
              patch.object(UI, "MODULE", self.module), \

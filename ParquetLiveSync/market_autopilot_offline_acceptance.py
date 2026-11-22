@@ -34,6 +34,7 @@ TESTS = (
     "test_market_center_scoped_finance_transaction_sandbox.py",
     "test_market_center_autopilot_offline_acceptance.py",
 )
+POWER_SHELL = "run-scoped-qmt-finance-cache.ps1"
 
 
 class OfflineBlocked(ValueError):
@@ -115,7 +116,7 @@ def execute(args, module, timeout, *, runner=subprocess.run):
 
 
 def powershell_ast(module, *, runner=subprocess.run):
-    script = module / "run-scoped-qmt-finance-cache.ps1"
+    script = module / POWER_SHELL
     if not script.is_file() or script.is_symlink():
         raise OfflineBlocked("FINANCE_POWERSHELL_MISSING")
     if os.name != "nt":

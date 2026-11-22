@@ -89,6 +89,44 @@ class FinanceSecondaryTests(TestCase):
             ("notice", "持股变动", "2"),
         ])
 
+    def test_modern_akshare_date_based_notice_api_is_supported(self):
+        class ModernAk(FakeAk):
+            def stock_notice_report(self, *, symbol, date):
+                self.calls.append(("modern", symbol, date))
+                if date == "20261121":
+                    return FakeFrame(self.announcements[symbol])
+                return FakeFrame([])
+        ak = ModernAk()
+        d = S.discover_recent(
+            ak, observed_on=date(2026, 11, 22), days=3,
+            known_symbols=["000010.SZ"])
+        self.assertEqual(d["query_strategy"], "MODERN_BY_DATE")
+        self.assertEqual(d["source_requests_attempted"], 9)
+        self.assertEqual(d["candidate_symbols_in_known_scope"], ["000010.SZ"])
+        self.assertEqual(len(ak.calls), 9)
+        self.assertEqual(ak.calls[0], ("modern", "财务报告", "20261122"))
+        self.assertFalse(d["can_schedule_download"])
+
+    def test_partial_announcement_query_failure_not_no_new_reports(self):
+        class ModernAk(FakeAk):
+            def stock_notice_report(self, *, symbol, date):
+                if symbol == "信息变更":
+                    raise ConnectionError("request failed")
+                return FakeFrame(self.announcements[symbol] if
+                                 date == "20261121" else [])
+        d = S.discover_recent(
+            ModernAk(), observed_on=date(2026, 11, 22),
+            days=2, known_symbols=["000010.SZ"])
+        self.assertEqual(d["status"], "RECENT_LEADS_PARTIAL_SOURCE_ERROR")
+        self.assertEqual(len(d["failed_categories"]), 2)
+        self.assertFalse(d["empty_means_no_financial_updates"])
+        self.assertFalse(d["feed_complete_for_date_range"])
+
+    def test_qmt_report_date_supports_14_digits_and_millisecond_epoch(self):
+        self.assertEqual(S._day("20260930000000"), "2026-09-30")
+        self.assertEqual(S._day("20260930"), "2026-09-30")
+        self.assertEqual(S._day("1790697600000"), "2026-09-30")
+
     def test_unknown_stock_suffix_never_guessed_from_six_digits(self):
         d = S.discover_recent(FakeAk(), observed_on=date(2026, 11, 22),
                               known_symbols=["000010.SH", "000010.SZ"])

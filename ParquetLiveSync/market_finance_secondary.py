@@ -277,7 +277,7 @@ def compare_rows(table, qmt_records, eastmoney_records, *, max_periods=4):
 
 
 def crosscheck_saved(root, code, ak, *, max_periods=4):
-    """Compare verified immutable QMT snapshots, never mutate their active pins."""
+    """Compare immutable QMT pins; time local, provider and comparison separately."""
     if not isinstance(code, str) or not re.fullmatch(
             r"\d{6}\.(?:SH|SZ|BJ)", code):
         raise SecondarySourceBlocked("INVALID_FINANCE_SYMBOL")
@@ -287,35 +287,59 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
     E._path_check(root)
     extra = E._storage(root)
     tables = []
+    table_timings = []
     for table, (method_name, _) in TABLES.items():
+        local_start = monotonic()
         asof = I._latest_snapshot_day(extra, code, table)
         if asof is None:
-            tables.append({"table": table, "status": "NO_LOCAL_QMT_SNAPSHOT",
-                           "can_resolve_historical_pending": False})
+            local_seconds = round(monotonic() - local_start, 3)
+            result = {"table": table, "status": "NO_LOCAL_QMT_SNAPSHOT",
+                      "can_resolve_historical_pending": False}
+            tables.append(result)
+            table_timings.append({
+                "table": table, "status": result["status"],
+                "local_seconds": local_seconds, "eastmoney_seconds": 0.0,
+                "comparison_seconds": 0.0})
             continue
         q = E._financial_snapshot_rows(extra, code, table, asof)
+        local_seconds = round(monotonic() - local_start, 3)
         if not q:
             raise SecondarySourceBlocked("LOCAL_SNAPSHOT_UNVERIFIED_" + table)
         fn = getattr(ak, method_name, None)
+        source_seconds = 0.0
+        comparison_seconds = 0.0
         if not callable(fn):
-            tables.append({"table": table, "status": "EXTERNAL_METHOD_UNAVAILABLE",
-                           "can_resolve_historical_pending": False})
-            continue
-        try:
-            e = _dataframe_records(fn(symbol=code[-2:] + code[:6]))
-            result = compare_rows(table, q, e, max_periods=max_periods)
-            result["status"] = (
-                "NO_COMMON_REPORT_PERIOD" if not result["report_dates_in_both"]
-                else "FIELDS_NOT_COMPARABLE_OR_REVISIONS"
-                if not result["fields_comparable"]
-                else "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION")
-            result["qmt_snapshot_asof"] = asof
-        except SecondarySourceBlocked:
-            raise
-        except Exception:
-            result = {"table": table, "status": "EXTERNAL_SOURCE_ERROR",
+            result = {"table": table, "status": "EXTERNAL_METHOD_UNAVAILABLE",
                       "can_resolve_historical_pending": False}
+        else:
+            try:
+                external_start = monotonic()
+                try:
+                    e = _dataframe_records(fn(symbol=code[-2:] + code[:6]))
+                finally:
+                    source_seconds = round(monotonic() - external_start, 3)
+                compare_start = monotonic()
+                try:
+                    result = compare_rows(table, q, e, max_periods=max_periods)
+                finally:
+                    comparison_seconds = round(monotonic() - compare_start, 3)
+                result["status"] = (
+                    "NO_COMMON_REPORT_PERIOD" if not result["report_dates_in_both"]
+                    else "FIELDS_NOT_COMPARABLE_OR_REVISIONS"
+                    if not result["fields_comparable"]
+                    else "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION")
+                result["qmt_snapshot_asof"] = asof
+            except SecondarySourceBlocked:
+                raise
+            except Exception:
+                result = {"table": table, "status": "EXTERNAL_SOURCE_ERROR",
+                          "can_resolve_historical_pending": False}
         tables.append(result)
+        table_timings.append({
+            "table": table, "status": result["status"],
+            "local_seconds": local_seconds,
+            "eastmoney_seconds": source_seconds,
+            "comparison_seconds": comparison_seconds})
     compared = sum(x.get("fields_comparable", 0) for x in tables)
     inconclusive = sum(x.get("fields_inconclusive", 0) for x in tables)
     attempted = sum(x.get("comparison_count", 0) for x in tables)
@@ -323,7 +347,8 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
                       for x in tables)
     return {"symbol": code, "source": SOURCE,
             "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
-            "tables": tables, "fields_compared": compared,
+            "tables": tables, "table_timings": table_timings,
+            "fields_compared": compared,
             "fields_inconclusive": inconclusive,
             "fields_attempted": attempted,
             "value_differences": differences,
@@ -332,7 +357,6 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
             "pit_announcement_time_certified": False,
             "can_commit": False, "can_clear_pending": False,
             "qmt_api_calls": 0, "qmt_download_calls": 0}
-
 
 
 def discover_pending_sample(ak, *, observed_on: date, symbols, days=3):

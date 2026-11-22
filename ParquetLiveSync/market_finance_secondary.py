@@ -21,6 +21,7 @@ from time import monotonic
 
 import qmt_extra_data as E
 import qmt_extra_financial_cache_import as I
+import market_center_finance_pending_triage as P2
 
 SOURCE = "EASTMONEY_VIA_AKSHARE"
 KIND = ("财务报告", "信息变更", "持股变动")
@@ -276,11 +277,16 @@ def compare_rows(table, qmt_records, eastmoney_records, *, max_periods=4):
             "can_resolve_historical_pending": False}
 
 
-def crosscheck_saved(root, code, ak, *, max_periods=4):
+def crosscheck_saved(root, code, ak, *, max_periods=4, table_filter=None):
     """Compare immutable QMT pins; time local, provider and comparison separately."""
     if not isinstance(code, str) or not re.fullmatch(
             r"\d{6}\.(?:SH|SZ|BJ)", code):
         raise SecondarySourceBlocked("INVALID_FINANCE_SYMBOL")
+    if table_filter is not None and (
+            type(table_filter) not in (tuple, list)
+            or len(table_filter) != 1
+            or table_filter[0] not in TABLES):
+        raise SecondarySourceBlocked("ONLY_ONE_SUPPORTED_FIRST_BLOCKER_TABLE")
     root = Path(root)
     if not root.is_absolute() or root.is_symlink():
         raise SecondarySourceBlocked("INVALID_READONLY_STOCK_ROOT")
@@ -289,6 +295,8 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
     tables = []
     table_timings = []
     for table, (method_name, _) in TABLES.items():
+        if table_filter is not None and table != table_filter[0]:
+            continue
         local_start = monotonic()
         asof = I._latest_snapshot_day(extra, code, table)
         if asof is None:
@@ -348,6 +356,8 @@ def crosscheck_saved(root, code, ak, *, max_periods=4):
     return {"symbol": code, "source": SOURCE,
             "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
             "tables": tables, "table_timings": table_timings,
+            "first_blocker_table": table_filter[0] if table_filter else None,
+            "other_finance_tables_not_checked": table_filter is not None,
             "fields_compared": compared,
             "fields_inconclusive": inconclusive,
             "fields_attempted": attempted,
@@ -524,6 +534,85 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
             "changed_pending": False, "changed_20_05_task": False}
 
 
+
+def first_blocker_table_from_pending(code, entry):
+    """Only the ledger's FIRST QMT conflict, not all conflicts or report dates."""
+    if (not isinstance(code, str) or not re.fullmatch(
+            r"\d{6}\.(?:SH|SZ|BJ)", code)
+            or not isinstance(entry, dict)
+            or entry.get("reason") != "SOURCE_HISTORY_CONFLICT"):
+        return None
+    table, _kind, _count = P2._parse_first_conflict(
+        code, entry.get("detail"))
+    return table if table in TABLES else None
+
+
+def _verify_pending_first_blocker(root, code):
+    """Bind the opt-in source query to the canonical, unchanged QMT ledger."""
+    root = Path(root)
+    if not root.is_absolute() or root.is_symlink():
+        raise SecondarySourceBlocked("INVALID_READONLY_STOCK_ROOT")
+    module = Path.cwd() / "ParquetLiveSync"
+    try:
+        ledger_path = P2._trusted_path(module)
+        state, digest = P2._read_ledger(ledger_path)
+        extra = E._storage(root)
+        verified = I._state(extra, module / "work" / "qmt_extra")
+        if (len(state["pending"]) > 256
+                or state["pending"] != verified["pending"]
+                or code not in state["pending"]):
+            raise SecondarySourceBlocked("PENDING_LEDGER_SCOPE_OR_ID_MISMATCH")
+        table = first_blocker_table_from_pending(
+            code, state["pending"][code])
+        if table is None:
+            raise SecondarySourceBlocked("FIRST_BLOCKER_NOT_IN_THREE_STATEMENTS")
+        if ledger_path.is_symlink() or hashlib.sha256(
+                ledger_path.read_bytes()).hexdigest() != digest:
+            raise SecondarySourceBlocked("PENDING_LEDGER_CHANGED_DURING_READ")
+        return table
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SecondarySourceBlocked(
+            "CANONICAL_PENDING_FIRST_BLOCKER_UNVERIFIED") from exc
+
+
+def pilot_first_blocker(root, code, table, ak, *, progress=None):
+    """No announcement calls; exactly one already-pending, first-blocker table."""
+    if (not isinstance(code, str)
+            or not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
+            or table not in TABLES):
+        raise SecondarySourceBlocked("INVALID_FIRST_BLOCKER_PILOT")
+    started = monotonic()
+    if progress is not None:
+        progress("FIRST_BLOCKER_TABLE")
+    # Keep the original pinned-QMT read and revision-ambiguity protections.
+    checked = crosscheck_saved(root, code, ak, table_filter=(table,))
+    elapsed = round(monotonic() - started, 3)
+    return {
+        "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+        "discovery_seconds": 0.0,
+        "crosscheck_seconds": elapsed, "total_seconds": elapsed,
+        "discovery": {
+            "source": SOURCE, "scope": "QMT_FIRST_BLOCKER_TABLE_ONLY",
+            "status": "NOT_RUN_HISTORICAL_CONFLICT_REVIEW",
+            "unique_event_leads": 0, "source_requests_attempted": 0,
+            "failed_categories": [],
+            "candidate_symbols_in_known_scope": [],
+            "feed_complete_for_date_range": False,
+            "full_market_coverage_checked": False,
+            "can_schedule_download": False,
+            "empty_means_no_financial_updates": False, "can_commit": False},
+        "crosschecks": [checked],
+        "crosscheck_sample_limit": 1,
+        "first_blocker_scope_only": True,
+        "all_history_conflict_tables_identified": False,
+        "exact_conflict_report_dates_proven": False,
+        "event_candidates_to_download": [],
+        "source_discovery_not_complete": True,
+        "can_apply": False, "can_commit": False,
+        "changed_pending": False, "changed_20_05_task": False}
+
+
+
 def _blocked_readonly_pilot(reason):
     """Emit only a bounded code; never print private paths or source records."""
     print("FINANCE_EXTERNAL_READONLY_ERROR=" + json.dumps({
@@ -540,6 +629,7 @@ def main(argv=None):
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--pages", type=int, default=2)
     parser.add_argument("--explicit-readonly", action="store_true")
+    parser.add_argument("--pending-first-blocker-only", action="store_true")
     args = parser.parse_args(argv)
     if not args.explicit_readonly:
         parser.error("External financial-source pilot requires --explicit-readonly")
@@ -562,11 +652,21 @@ def main(argv=None):
     except Exception:
         return _blocked_readonly_pilot("AKSHARE_IMPORT_FAILED")
     try:
-        result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
-                       days=args.lookback_days, pages=args.pages,
-                       known_symbols=known,
-                       progress=lambda phase: print(
-                           'FINANCE_EXTERNAL_STAGE=' + phase, flush=True))
+        if args.pending_first_blocker_only:
+            if len(codes) != 1:
+                raise SecondarySourceBlocked("FIRST_BLOCKER_REQUIRES_ONE_STOCK")
+            table = _verify_pending_first_blocker(args.root, codes[0])
+            result = pilot_first_blocker(
+                args.root, codes[0], table, ak,
+                progress=lambda phase: print(
+                    "FINANCE_EXTERNAL_STAGE=" + phase, flush=True))
+        else:
+            result = pilot(args.root, codes, ak,
+                           observed_on=datetime.now(CST).date(),
+                           days=args.lookback_days, pages=args.pages,
+                           known_symbols=known,
+                           progress=lambda phase: print(
+                               "FINANCE_EXTERNAL_STAGE=" + phase, flush=True))
     except Exception:
         return _blocked_readonly_pilot("READONLY_PILOT_ABORTED")
     # Windows redirected stdout can use GBK/CP936. The GUI requires UTF-8.

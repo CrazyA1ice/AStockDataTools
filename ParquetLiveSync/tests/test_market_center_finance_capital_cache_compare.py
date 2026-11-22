@@ -472,6 +472,181 @@ class CapitalCompareTests(unittest.TestCase):
                     "--explicit-readonly", "--explicit-qmt-cache-read"]), 0)
             self.assertTrue(online.call_args.kwargs["date_details"])
 
+    def test_capital_announcement_labels_never_disclose_original_amounts(self):
+        base = {"m_timetag": "20261112", "m_quarter": "Q4",
+                "freeFloatCapital": 123456789}
+        for value, expected in (
+                ("20261111120000", {"status": "PARSED_DATE",
+                                    "date": "2026-11-11"}),
+                (None, {"status": "EMPTY_OR_ZERO"}),
+                (0, {"status": "EMPTY_OR_ZERO"}),
+                ("not-a-date", {"status": "UNPARSEABLE"})):
+            row = {**base, "m_anntime": value}
+            original = P._fingerprint(row, date_details=True)
+            found = P._fingerprint(
+                row, date_details=True, announcement_evidence=True)
+            self.assertEqual(found["key_sha256"], original["key_sha256"])
+            self.assertEqual(found["field_sha256"], original["field_sha256"])
+            self.assertEqual(found["announcement_label"], expected)
+            self.assertNotIn("123456789", json.dumps(found))
+            self.assertNotIn("20261111120000", json.dumps(found))
+        no_field = P._fingerprint(
+            base, date_details=True, announcement_evidence=True)
+        self.assertEqual(no_field["announcement_label"],
+                         {"status": "FIELD_ABSENT"})
+        with self.assertRaises(P.CacheCompareBlocked):
+            P._fingerprint(base, announcement_evidence=True)
+
+    def test_announcement_evidence_only_selected_key_differences(self):
+        def dated(day, capital, announcement):
+            return P._fingerprint({
+                "m_timetag": day, "m_quarter": "Q4",
+                "freeFloatCapital": capital, "m_anntime": announcement},
+                date_details=True, announcement_evidence=True)
+        old = [dated("20240101", 100, "20231231"),
+               dated("20261112", 200, "20261111"),
+               dated("20261113", 300, "20261113")]
+        cache = [dated("20240101", 100, "20231231"),
+                 dated("20261112", 201, "20261111"),
+                 dated("20261113", 301, "20261113"),
+                 dated("20261114", 400, "20261114")]
+        report = P._compare(
+            old, cache, date_details=True, announcement_evidence=True)
+        evidence = report["report_key_date_details"][
+            "capital_announcement_evidence"]
+        self.assertEqual(report["observed_class"],
+                         "REPORT_KEYS_ADDED_OR_REMOVED")
+        self.assertFalse(evidence["official_announcements_checked"])
+        self.assertFalse(evidence["can_certify_or_repair"])
+        self.assertEqual(len(evidence["entries"]), 3)
+        self.assertEqual(
+            [e["capital_change_date"] for e in evidence["entries"]],
+            ["2026-11-12", "2026-11-13", "2026-11-14"])
+        self.assertEqual(evidence["entries"][0]["difference_reason"],
+                         "BUSINESS_FIELD_DIFF")
+        self.assertEqual(evidence["entries"][0]["historical_m_anntime"],
+                         {"status": "PARSED_DATE", "date": "2026-11-11"})
+        self.assertEqual(evidence["entries"][-1]["difference_reason"],
+                         "CACHE_ONLY_KEY")
+        self.assertEqual(evidence["entries"][-1]["historical_m_anntime"],
+                         {"status": "RECORD_NOT_IN_THIS_VERSION"})
+        self.assertNotIn("2024-01-01", json.dumps(evidence))
+        self.assertNotIn("freeFloatCapital", json.dumps(evidence))
+        self.assertNotIn("400", json.dumps(evidence))
+        original = P._compare(old, cache, date_details=True)
+        self.assertNotIn("capital_announcement_evidence",
+                         original["report_key_date_details"])
+        self.assertEqual(report["changed_non_quarter_field_counts"],
+                         original["changed_non_quarter_field_counts"])
+
+    def test_announcement_receipt_validation_blocks_forged_status_or_date(self):
+        record = P._fingerprint({
+            "m_timetag": "20261112", "m_anntime": "20261111",
+            "m_quarter": "Q4", "freeFloatCapital": 12},
+            date_details=True, announcement_evidence=True)
+        payload = {"format": "qmt_capital_cache_fingerprints_v1",
+                   "stock": "000010.SZ", "table": "Capital",
+                   "row_count": 1, "records": [record]}
+        def runner(*args, **kwargs):
+            self.assertIn("--capital-announcement-evidence", args[0])
+            self.assertIn("--report-key-date-details", args[0])
+            self.assertIn("--explicit-readonly", args[0])
+            self.assertIn("--explicit-qmt-cache-read", args[0])
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(P.SENTINEL + json.dumps(payload)).encode("utf-8"))
+        self.assertEqual(P._run_child(
+            "000010.SZ", runner=runner, date_details=True,
+            announcement_evidence=True)["records"][0]["announcement_label"],
+            {"status": "PARSED_DATE", "date": "2026-11-11"})
+        record["announcement_label"] = {
+            "status": "PARSED_DATE", "date": "2026-02-30"}
+        with self.assertRaises(P.CacheCompareBlocked):
+            P._run_child("000010.SZ", runner=runner, date_details=True,
+                         announcement_evidence=True)
+        record["announcement_label"] = {"status": "FIELD_ABSENT"}
+        with self.assertRaises(P.CacheCompareBlocked):
+            P._run_child("000010.SZ", runner=runner, date_details=True,
+                         announcement_evidence=True)
+
+    def test_parent_announcement_opt_in_only_two_cache_reads(self):
+        sha = "a" * 64
+        def fp(day, capital, notice):
+            return P._fingerprint({
+                "m_timetag": day, "m_quarter": "Q4",
+                "freeFloatCapital": capital, "m_anntime": notice},
+                date_details=True, announcement_evidence=True)
+        old = [
+            ({"stock": "000010.SZ", "proof_class": P.PROOF_TYPES[0],
+              "pending_asof": "2026-11-19", "attempts": 6},
+             [fp("20251112", 10, "20251111")], {}),
+            ({"stock": "000055.SZ", "proof_class": P.PROOF_TYPES[1],
+              "pending_asof": "2026-11-19", "attempts": 4},
+             [fp("20261112", 20, "20261111")], {})]
+        cache = {
+            "000010.SZ": [fp("20251112", 10, "20251111"),
+                          fp("20251212", 12, "20251211")],
+            "000055.SZ": [fp("20261112", 21, "20261111")]}
+        calls = []
+        def reader(code, *, date_details, announcement_evidence):
+            calls.append((code, date_details, announcement_evidence))
+            return {"records": cache[code]}
+        with patch.object(P, "_prepare_verified_histories",
+                          return_value=(sha, old)) as prepare, \
+             patch.object(P.P2, "summarize_pending",
+                          return_value={"progress_sha256": sha}):
+            result = P.compare("/synthetic", "/synthetic", sha,
+                               read_cache=reader, date_details=True,
+                               announcement_evidence=True)
+        self.assertEqual(prepare.call_args.kwargs["announcement_evidence"],
+                         True)
+        self.assertEqual(calls, [
+            ("000010.SZ", True, True), ("000055.SZ", True, True)])
+        self.assertEqual(result["qmt_cache_calls"], 2)
+        self.assertEqual(result["download_calls"], 0)
+        self.assertFalse(result["market_file_writes"])
+        self.assertFalse(result["official_announcements_checked"])
+        self.assertFalse(result["can_repair"])
+        for sample in result["samples"]:
+            self.assertEqual(len(sample["report_key_date_details"][
+                "capital_announcement_evidence"]["entries"]), 1)
+
+    def test_announcement_cli_opt_ins_and_preflight_incompatibility(self):
+        sha = "a" * 64
+        opts = ["--state-module", "/synthetic",
+                "--market-root", "/synthetic",
+                "--expected-progress-sha256", sha,
+                "--capital-announcement-evidence"]
+        with patch.object(P, "compare") as compare, \
+             patch.object(P, "preflight") as preflight:
+            for args in (opts, opts + ["--explicit-readonly",
+                                       "--explicit-qmt-cache-read"],
+                         opts + ["--report-key-date-details",
+                                 "--preflight-only", "--explicit-readonly"]):
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(P.main(args), 2)
+            compare.assert_not_called()
+            preflight.assert_not_called()
+        with patch.object(P, "compare",
+                          return_value={"status": "MOCK_ONLY"}) as compare, \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(P.main(opts + [
+                "--report-key-date-details",
+                "--explicit-readonly", "--explicit-qmt-cache-read"]), 0)
+        self.assertTrue(compare.call_args.kwargs["announcement_evidence"])
+
+    def test_internal_announcement_mode_requires_all_readonly_opt_ins(self):
+        for args in ([], ["--explicit-readonly"],
+                     ["--explicit-qmt-cache-read"],
+                     ["--explicit-readonly", "--explicit-qmt-cache-read"]):
+            with patch.object(P, "_child_cache_fingerprints") as child, \
+                 redirect_stdout(io.StringIO()):
+                rc = P.main(["--internal-cache-fingerprints",
+                             "--capital-announcement-evidence",
+                             "--stock", "000010.SZ"] + args)
+            self.assertEqual(rc, 2)
+            child.assert_not_called()
+
     def test_default_cli_never_imports_or_calls_qmt(self):
         with patch.object(P, "compare") as compare:
             with redirect_stdout(io.StringIO()) as capture:

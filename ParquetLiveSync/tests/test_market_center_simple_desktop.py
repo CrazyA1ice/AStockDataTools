@@ -93,9 +93,9 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
         self.assertNotIn("gui_simple.py", ps)
         self.assertIn("if ($QuickCheck) {", ps)
         normal_start = ps.split(
-            "# Only this branch launches the GUI.", 1)[1]
+            "# Normal path is unchanged, always one GUI and no tests.", 1)[1]
         self.assertNotIn("-m unittest", normal_start)
-        self.assertIn("    return\n}\n# Only this branch", ps)
+        self.assertIn("    return\n}\n# The review path", ps)
         self.assertNotIn("H5ParquetReconciler", ps)
         self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
         self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
@@ -104,7 +104,7 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
     def test_opt_in_quickcheck_is_focused_and_never_starts_gui(self):
         ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
         check = ps.split("if ($QuickCheck) {", 1)[1].split(
-            "# Only this branch launches the GUI.", 1)[0]
+            "# The review path reads only", 1)[0]
         self.assertIn("test_market_center_simple_desktop.py", check)
         self.assertIn("test_qmt_extra_data.py", check)
         self.assertIn("-k table_probe", check)
@@ -135,6 +135,48 @@ class CanonicalGuiLauncherTests(unittest.TestCase):
         self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
         self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
         self.assertIn("& $python -u -B $entry", ps)
+
+
+class ReadonlyGuiReviewTests(unittest.TestCase):
+    def test_review_root_must_be_detached_and_canonical(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp)
+            detached = home / "pinned-review"
+            (detached / "ParquetLiveSync").mkdir(parents=True)
+            (detached / ".git").write_text(
+                "gitdir: synthetic", encoding="utf-8")
+            main = home / "canonical"
+            (main / ".git").mkdir(parents=True)
+            module = main / "ParquetLiveSync"
+            (module / "work").mkdir(parents=True)
+            with patch.object(OLD, "REPO", detached), \
+                 patch.object(OLD, "MODULE",
+                              detached / "ParquetLiveSync"):
+                self.assertEqual(
+                    OLD._review_state_module(str(main)), module)
+            with patch.object(OLD, "REPO", main), \
+                 patch.object(OLD, "MODULE", module), \
+                 self.assertRaisesRegex(
+                     ValueError, "DETACHED_WORKTREE"):
+                OLD._review_state_module(str(main))
+            with patch.object(OLD, "REPO", detached), \
+                 patch.object(OLD, "MODULE",
+                              detached / "ParquetLiveSync"), \
+                 self.assertRaisesRegex(
+                     ValueError, "CANONICAL_CHECKOUT_REQUIRED"):
+                OLD._review_state_module(str(detached))
+
+    def test_review_launcher_explicit_and_restores_process_environment(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("[string]$ReviewMainRepo = ''", ps)
+        self.assertIn("if ($ReviewMainRepo) {", ps)
+        self.assertIn("Read-only review requires a detached worktree", ps)
+        self.assertIn("ASTOCK_GUI_REVIEW_REPO", ps)
+        self.assertIn("SetEnvironmentVariable(", ps)
+        review = ps.split("if ($ReviewMainRepo) {", 1)[1].split(
+            "# Normal path is unchanged", 1)[0]
+        self.assertNotIn("-m unittest", review)
+        self.assertIn("    return\n}", review)
 
 
 class SimpleModelTests(unittest.TestCase):
@@ -431,6 +473,30 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(self.app.tabs.tab(2, "text"), "异常与日志")
         self.assertEqual(str(self.app.selected_run_button["state"]), "disabled")
         self.assertIn("既有游标", self.app.run_button["text"])
+
+    def test_detached_review_disables_all_market_and_finance_writers(self):
+        with patch.object(UI, "REVIEW_MODE", True), \
+             patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("WRITER_LAUNCHED")), \
+             patch.object(UI.messagebox, "showwarning"):
+            self.app.refresh()
+            self.assertEqual(str(self.app.run_button["state"]), "disabled")
+            self.assertEqual(
+                str(self.app.selected_run_button["state"]), "disabled")
+            self.app.manual_update()
+            self.app.run_scoped_finance_cache()
+            self.app.prepare_finance_decode_retry()
+        self.assertIn("只读试运行", self.app.finance_diag_status.get())
+
+    def test_review_skips_auto_calendar_qmt_connection(self):
+        with patch.object(UI, "REVIEW_MODE", True), \
+             patch.object(UI, "query_calendar",
+                          side_effect=AssertionError("QMT_CALENDAR_CALLED")), \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app._resolve_default_session()
+            launch.assert_not_called()
+        self.assertIn("未自动连接QMT日历", self.app.date_source.get())
+
 
     def test_finance_readonly_button_is_on_existing_logs_tab(self):
         self.assertEqual(self.app.finance_diag_button["text"],

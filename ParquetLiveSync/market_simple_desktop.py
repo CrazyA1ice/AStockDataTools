@@ -22,6 +22,7 @@ from market_simple_ui_model import (
     MODULES, PERIODS, EXTRAS, InvalidSimplePlan, coverage_rows,
     initial_date, preview_request, finance_cache_refresh_scope,
     finance_pending_brief, finance_root_from_progress, finance_issue_report_view,
+    finance_decode_retry_target, finance_decode_retry_window,
 )
 from market_daily_calendar_read import CalendarUnavailable, query_calendar
 
@@ -36,6 +37,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_diag_queue = queue.Queue()
         self._finance_diag_running = False
         self._finance_diag_text = ""
+        self._finance_decode_retry_stock = None
         super().__init__()
         self._resolve_default_session()
 
@@ -202,6 +204,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             actions, text="检查财务问题（只读）",
             command=self.start_finance_diagnostic)
         self.finance_diag_button.pack(side="left")
+        self.finance_decode_retry_button = ttk.Button(
+            actions, text="定位解码异常股票（需确认刷新）",
+            command=self.prepare_finance_decode_retry, state="disabled")
+        self.finance_decode_retry_button.pack(side="left", padx=8)
         ttk.Button(actions, text="复制诊断摘要",
                    command=self.copy_finance_diagnostic).pack(
                        side="left", padx=8)
@@ -257,6 +263,8 @@ class SimpleMarketDashboard(UpdaterDashboard):
         if self._finance_diag_running:
             return
         self._finance_diag_running = True
+        self._finance_decode_retry_stock = None
+        self.finance_decode_retry_button.configure(state="disabled")
         self.finance_diag_status.set(
             "后台检查中：不连接QMT、不下载、不写入正式财务数据。")
         self.finance_diag_button.configure(state="disabled")
@@ -270,15 +278,16 @@ class SimpleMarketDashboard(UpdaterDashboard):
                 report = census(root, WORK / "qmt_extra",
                                 page=1, page_size=3)
                 detail = finance_issue_report_view(report)
-                self._finance_diag_queue.put(("ok", detail))
+                target = finance_decode_retry_target(report)
+                self._finance_diag_queue.put(("ok", detail, target))
             except Exception as exc:
                 # Show a bounded diagnostic, never auto-retry or auto-repair.
                 message = str(exc)[:120]
                 if "RESERVED_2005" in message:
                     message = "北京时间19:50—20:25为正式更新保护时段，请之后再检查"
-                self._finance_diag_queue.put(
-                    ("error", "检查未完成：" + message +
-                     "。原有财务数据和待审记录未由本功能修改。"))
+                self._finance_diag_queue.put((
+                    "error", "检查未完成：" + message +
+                    "。原有财务数据和待审记录未由本功能修改。", None))
 
         threading.Thread(target=worker, daemon=True,
                          name="readonly-finance-issue-check").start()
@@ -286,7 +295,7 @@ class SimpleMarketDashboard(UpdaterDashboard):
 
     def _poll_finance_diagnostic(self):
         try:
-            state, detail = self._finance_diag_queue.get_nowait()
+            state, detail, target = self._finance_diag_queue.get_nowait()
         except queue.Empty:
             if self._finance_diag_running:
                 self.after(250, self._poll_finance_diagnostic)
@@ -294,12 +303,43 @@ class SimpleMarketDashboard(UpdaterDashboard):
         self._finance_diag_running = False
         self.finance_diag_button.configure(state="normal")
         self._finance_diag_text = detail
+        self._finance_decode_retry_stock = target if state == "ok" else None
+        self.finance_decode_retry_button.configure(
+            state="normal" if self._finance_decode_retry_stock
+            and self.process is None else "disabled")
         if state == "ok":
             self.finance_diag_status.set(
                 "已检查：全体待审股票的本地九表元数据。来源冲突仍待复核，未获入库授权。")
         else:
             self.finance_diag_status.set("只读检查被阻断：没有执行任何修复")
         self.finance_diag_detail.set(detail)
+
+    def prepare_finance_decode_retry(self):
+        """Prepare bounded vendor-cache refresh; NEVER launch it automatically."""
+        code = self._finance_decode_retry_stock
+        if not code:
+            self.finance_diag_status.set(
+                "没有已确认的单只缓存解码异常；请先运行只读检查。")
+            return
+        if self.process is not None:
+            self.finance_diag_status.set("已有任务运行，暂不能准备新的QMT缓存刷新。")
+            return
+        start, end = finance_decode_retry_window()
+        self.update_mode.set("增量更新")
+        self.update_scope.set("自选股票")
+        self._toggle_stock_entry()
+        for name, selected in self.module_vars.items():
+            selected.set(name == "财务")
+        self.stock_input.delete("1.0", "end")
+        self.stock_input.insert("1.0", code)
+        self.date_start.set(start)
+        self.date_end.set(end)
+        self.date_source.set("仅预填最近31日公告窗口；不是全历史验证")
+        self.preview_selection()
+        self.tabs.select(1)
+        self.finance_diag_status.set(
+            "已定位 " + code + "；请先检查日期，再按“刷新财务缓存并检查历史"
+            "（不入库）”并确认。此操作不会清除历史待审。")
 
     def copy_finance_diagnostic(self):
         """Copy a short, actionable receipt; no files are written."""
@@ -312,6 +352,10 @@ class SimpleMarketDashboard(UpdaterDashboard):
             "诊断摘要已复制；无需再提供数百项测试的完整输出。")
 
     def _scoped_button_state(self, *_):
+        if hasattr(self, "finance_decode_retry_button"):
+            self.finance_decode_retry_button.configure(
+                state="normal" if self._finance_decode_retry_stock
+                and self.process is None else "disabled")
         enabled = (self.update_mode.get() == "增量更新"
                    and self.update_scope.get() == "自选股票"
                    and [name for name in MODULES if

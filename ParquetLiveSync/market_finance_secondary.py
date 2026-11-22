@@ -113,10 +113,16 @@ def discover_recent(ak, *, observed_on: date, days=7, pages=2,
     seen = {}
     scanned = 0
     latest = None
+    failed_categories = []
     for category in KIND:
-        frame = ak.stock_notice_report(
-            report_type=category, recent_page=str(pages))
-        records = _dataframe_records(frame, cap=1500)
+        try:
+            frame = ak.stock_notice_report(
+                report_type=category, recent_page=str(pages))
+            records = _dataframe_records(frame, cap=1500)
+        except Exception as exc:
+            failed_categories.append({"category": category,
+                                      "error_type": type(exc).__name__})
+            continue
         scanned += len(records)
         for item in records:
             published = _day(item.get("公告日期"))
@@ -148,7 +154,10 @@ def discover_recent(ak, *, observed_on: date, days=7, pages=2,
                     reverse=True)
     candidates = sorted({e["symbol"] for e in events if e["symbol"]})
     return {
-        "source": SOURCE, "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+        "source": SOURCE,
+        "status": ("RECENT_PAGED_LEADS_NOT_COMPLETE" if not failed_categories
+                   else "RECENT_LEADS_PARTIAL_SOURCE_ERROR"),
+        "failed_categories": failed_categories,
         "from_date": cutoff, "through_date": observed_on.isoformat(),
         "latest_listed_date": latest,
         "categories_requested": list(KIND), "pages_per_category": pages,
@@ -311,10 +320,17 @@ def pilot(root, symbols, ak, *, observed_on: date, days=7, pages=2,
                      "feed_complete_for_date_range": False,
                      "empty_means_no_financial_updates": False,
                      "can_schedule_download": False, "can_commit": False}
-    comparisons = [
-        crosscheck_saved(root, code, ak)
-        for code in symbols
-    ]
+    comparisons = []
+    for code in symbols:
+        try:
+            comparisons.append(crosscheck_saved(root, code, ak))
+        except Exception as exc:
+            comparisons.append({
+                "symbol": code, "source": SOURCE,
+                "status": "CROSSCHECK_BLOCKED_UNTRUSTED_LOCAL_OR_SOURCE",
+                "error_type": type(exc).__name__,
+                "can_commit": False, "can_clear_pending": False,
+                "qmt_api_calls": 0, "qmt_download_calls": 0})
     return {"status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
             "discovery": discovery, "crosschecks": comparisons,
             "event_candidates_to_download": [],
@@ -327,6 +343,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--symbols", required=True)
+    parser.add_argument("--known-symbols", default="")
     parser.add_argument("--lookback-days", type=int, default=7)
     parser.add_argument("--pages", type=int, default=2)
     parser.add_argument("--explicit-readonly", action="store_true")
@@ -337,9 +354,16 @@ def main(argv=None):
     if any(not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
            for code in codes):
         parser.error("Invalid explicit stock IDs")
+    known = ([part.strip() for part in args.known_symbols.split(",")]
+             if args.known_symbols else codes)
+    if (len(known) > 500 or not known or any(
+            not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", code)
+            for code in known) or len(set(known)) != len(known)):
+        parser.error("Invalid known-stock identities (max 500)")
     ak = importlib.import_module("akshare")
     result = pilot(args.root, codes, ak, observed_on=datetime.now(CST).date(),
-                   days=args.lookback_days, pages=args.pages)
+                   days=args.lookback_days, pages=args.pages,
+                   known_symbols=known)
     print("FINANCE_EXTERNAL_READONLY=" +
           json.dumps(result, ensure_ascii=False, default=str,
                      separators=(",", ":"), allow_nan=False))

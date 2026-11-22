@@ -277,6 +277,24 @@ def finance_issue_report_view(report: dict) -> str:
         "PerShare 无本地快照 %d/%d；不能据此判断QMT来源为空。" %
         (missing, total),
     ]
+    states = report.get("nine_table_local_state_counts", [])
+    if not isinstance(states, list):
+        raise InvalidSimplePlan("九表快照状态计数格式异常")
+    state_totals = Counter()
+    for item in states:
+        if (not isinstance(item, dict)
+                or item.get("state") not in ("M", "U", "R", "P", "A")
+                or type(item.get("count")) is not int
+                or item["count"] < 0):
+            raise InvalidSimplePlan("九表快照状态计数格式异常")
+        state_totals[item["state"]] += item["count"]
+    if sum(state_totals.values()) != total * 9:
+        raise InvalidSimplePlan("九表快照状态总数与待审股票不一致")
+    pieces.append(
+        "九表本地状态（股票×表）：无快照%d、未pin%d、部分固定%d、"
+        "元数据已固定%d、同日版本歧义%d；不代表内容已经认证。" %
+        (state_totals["M"], state_totals["U"], state_totals["R"],
+         state_totals["P"], state_totals["A"]))
     decode = report.get("cache_decode_error_stocks", [])
     if not isinstance(decode, list) or any(not isinstance(x, str) for x in decode):
         raise InvalidSimplePlan("缓存解码明细格式异常")
@@ -303,7 +321,9 @@ def finance_issue_report_view(report: dict) -> str:
             (code, category, table, "、".join(missing_tables) or "无",
              "、".join(unpinned_tables) or "无"))
     pieces.append(
-        "建议：先查看解码错误与历史差异原因；已保存的旧版本保留。"
-        "该功能不会补pin、清理待审记录或提交财务Parquet。"
+        "建议：单股解码错误可在“下载 / 更新”页选自选股票、财务、"
+        "增量更新，限定公告日期后明确确认刷新QMT本地缓存；"
+        "如仍失败须检查QMT接口。历史差异需保留旧版本、先核对来源，"
+        "本诊断不会补pin、清理待审记录或提交财务Parquet。"
     )
     return "\n".join(pieces)

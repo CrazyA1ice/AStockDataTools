@@ -33,7 +33,9 @@ if ($QuickCheck) {
         if ($LASTEXITCODE -ne 0) { throw 'Three-tab GUI focused synthetic tests FAILED' }
         & $python -u -B -m unittest discover -s $tests -p 'test_qmt_extra_data.py' -k table_probe -k probe_cli -k valid_probe_cli -k probe_version_missing -q
         if ($LASTEXITCODE -ne 0) { throw 'QMT table probe focused synthetic tests FAILED' }
-        Write-Host 'QUICK_GUI_CHECK_PASS: GUI + QMT nine-table read-only mock tests'
+        & $python -u -B -m unittest discover -s $tests -p 'test_market_center_finance_secondary.py' -q
+        if ($LASTEXITCODE -ne 0) { throw 'Secondary-source financial read-only tests FAILED' }
+        Write-Host 'QUICK_GUI_CHECK_PASS: GUI + QMT nine-table + external financial-source mock tests'
     }
     finally {
         [Environment]::SetEnvironmentVariable('PYTHONPATH', $oldPythonPath, 'Process')

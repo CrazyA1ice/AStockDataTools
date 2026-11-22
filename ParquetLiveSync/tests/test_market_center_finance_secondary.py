@@ -58,6 +58,14 @@ class FakeAk:
         self.calls.append(("notice", report_type, recent_page))
         return FakeFrame(self.announcements[report_type])
 
+    def stock_individual_notice_report(self, *, symbol, indicator, start_date,
+                                       end_date):
+        self.calls.append(("individual_notice", symbol, indicator,
+                           start_date, end_date))
+        rows = [item for group in self.announcements.values()
+                for item in group if item.get("代码") == symbol]
+        return FakeFrame(rows)
+
     def stock_balance_sheet_by_report_em(self, *, symbol):
         self.calls.append(("balance", symbol))
         return FakeFrame(self.balance)
@@ -119,6 +127,70 @@ class FinanceSecondaryTests(TestCase):
         result = json.loads(output.getvalue().split("=", 1)[1])
         self.assertEqual(result["status"], "AKSHARE_DEPENDENCY_MISSING")
         self.assertFalse(result["can_commit"])
+
+
+    def test_scoped_recent_pending_notices_never_call_all_market_9_times(self):
+        ak = FakeAk()
+        def unsafe(*args, **kwargs):
+            raise AssertionError("full market all-page notice must not be called")
+        ak.stock_notice_report = unsafe
+        result = S.discover_pending_sample(
+            ak, observed_on=date(2026, 11, 22), days=3,
+            symbols=["000010.SZ", "000036.SZ", "000055.SZ"])
+        self.assertEqual(result["query_strategy"], "INDIVIDUAL_BY_DATE_RANGE")
+        self.assertEqual(result["source_requests_attempted"], 3)
+        self.assertEqual(result["candidate_symbols_in_known_scope"], ["000010.SZ"])
+        self.assertFalse(result["feed_complete_for_date_range"])
+        self.assertFalse(result["full_market_coverage_checked"])
+        self.assertFalse(result["can_schedule_download"])
+        calls = [c for c in ak.calls if c[0] == "individual_notice"]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0],
+                         ("individual_notice", "000010", "全部",
+                          "20261120", "20261122"))
+
+    def test_scoped_notice_error_never_proves_no_report_changes(self):
+        ak = FakeAk()
+        def fail(**kwargs):
+            raise TimeoutError("synthetic")
+        ak.stock_individual_notice_report = fail
+        result = S.discover_pending_sample(
+            ak, observed_on=date(2026, 11, 22),
+            symbols=["000010.SZ"])
+        self.assertEqual(result["status"],
+                         "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR")
+        self.assertEqual(result["unique_event_leads"], 0)
+        self.assertEqual(result["failed_categories"][0]["error_type"],
+                         "TimeoutError")
+        self.assertFalse(result["empty_means_no_financial_updates"])
+        self.assertFalse(result["can_commit"])
+
+    def test_pilot_comparison_budget_one_stock_and_staged_progress(self):
+        stages, called = [], []
+        def compare(root, code, ak):
+            called.append(code)
+            return {"symbol": code, "source": S.SOURCE,
+                    "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                    "fields_compared": 1, "value_differences": 0,
+                    "can_commit": False, "can_clear_pending": False}
+        with TemporaryDirectory() as folder, \
+             patch.object(S, "_best_pinned_crosscheck_stock",
+                          return_value="000036.SZ"), \
+             patch.object(S, "crosscheck_saved", side_effect=compare):
+            result = S.pilot(Path(folder), [
+                "000010.SZ", "000036.SZ", "000055.SZ"], FakeAk(),
+                observed_on=date(2026, 11, 22), days=3,
+                progress=stages.append)
+        self.assertEqual(stages, ["SCOPED_NOTICES", "THREE_STATEMENTS"])
+        self.assertEqual(called, ["000036.SZ"])
+        self.assertEqual(result["crosscheck_sample_limit"], 1)
+        self.assertEqual(result["crosscheck_stocks_not_attempted"], 2)
+        skipped = [c for c in result["crosschecks"] if
+                   c["status"] == "NOT_RUN_ONE_STOCK_PILOT_BUDGET"]
+        self.assertEqual(len(skipped), 2)
+        self.assertTrue(all(c["can_commit"] is False for c in skipped))
+        self.assertFalse(result["can_apply"])
+        self.assertEqual(result["event_candidates_to_download"], [])
 
     def test_recent_financial_and_correction_candidates_have_stable_identity(self):
         ak = FakeAk()

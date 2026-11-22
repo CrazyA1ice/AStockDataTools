@@ -40,3 +40,14 @@ PR #241继续Draft，不合并main、不部署生产、不调用QMT下载、不�
 增量缓存刷新成功也不代表历史冲突已修复或正式财务Parquet已入库；本地状态需要等原有带审批的安全处理链确认才能变更。84例历史冲突继续保留，必须通过报表日期/字段级来源核验来制定保留旧版本的合并策略。正式20:05任务、QMT worker和财务importer本阶段**完全不修改**。
 
 新增10项小型模型/GUI自测，核查名单必须等于账本解码原因数量、只允许单股、最近31日、定位动作只预填且不偷偷启动子进程、已解决或变化的待审记录不可被旧报告重试、界面有运行中任务时不能改目标以及异常时清理按钮状态。原UI测试19→此前30→本次40项；本提交的Windows测试尚未实机运行，因此禁止把之前的S9 726次测试PASS当作本次修改通过。
+## 已内建QMT逐表只读定位：不再靠聊天推测PerShare缺失原因
+
+针对正式账本单股688259.SH的CACHE_DECODE_ERROR，现有“异常与日志”页在确认待审为恰好一只后，增加 **「检查QMT九表（只读）」** 按钮。它不会默认自动执行，也不会对84只SOURCE_HISTORY_CONFLICT股票批量连接QMT。点击后再次核对正式pending账本原因，禁止在北京时间19:50—20:25的正式任务保护时段运行；使用正式仓库的Windows .venv Python与既有 qmt_extra_financial_cache_worker.py 中的 `--probe-readonly` 模式，45秒有界子进程，标准输入关闭、输出上限16KiB，任何失败只显示界面错误、不自动重试。
+
+与正式财务缓存导入完全分离：既有 worker 的日常 `--mode daily/cache --output ...` 模式保持原样，仍是已使用的九表读取+8表下载策略；新的 `--probe-readonly` 模式不要求输出路径、不允许 --output、--mode、--start 或 --end，最多只对一只股票调用QMT `get_financial_data` **9次、每次只问一张表**，不调用download_financial_data/download_financial_data2、不写入本地文件或进度账本，输出一条带固定前缀的JSON诊断。如此可单独发现哪张表触发UnicodeDecodeError、连接不可用、源API异常、表未返回、缓存有记录或空/未缓存。**QMT无返回记录不能判定上游没有记录**；PerShare标记为可选表兼容性尚未认证。
+
+官方迅投的部分XtData接口文档列出Balance/Income/CashFlow/Capital/Holdernum/Top10holder/Top10flowholder/Pershareindex共8表；另有XtQuant API版本默认清单列有PerShare为第9表。现有用户环境是否支持PerShare仍未通过实机逐表探针确认。因此不修改现有财务源 schema、不会从九表验收直接降为八表、不强制改写历史快照、不清空85只pending。
+
+新增6项已有qmt_extra数据单测与6项原三页桌面模型/GUI单测，覆盖九次单表无下载、PerShare与八表解码隔离、空缓存不等于供应商为空、保护窗口、CLI拒绝写参数、回执身份校验与桌面调用有界性。**所有本阶段新增测试仅完成静态变更核验；未在用户Windows真实QMT与桌面GUI执行，之前S9的726次测试通过不可替代此轮实测。**
+
+下一步在实际QMT客户端点击此按钮，根据九表结果决定有针对性的兼容修复：如果仅PerShare报错，可将可选表读取独立兼容而不拖累其余八表；如果八个核心表某个报错，针对该表处理；若九个单表均正常而整批失败，则定位QMT批量组合调用。任一情况均不能在尚未确认源数据真实性前自动合并84例历史差异。本PR继续Draft，不自动部署或修改20:05更新任务。

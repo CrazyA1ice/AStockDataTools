@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from contextlib import redirect_stdout
+from types import ModuleType
+import io
+import sys
 import json
 import subprocess
 import tempfile
@@ -1391,6 +1395,69 @@ class QmtExtraTests(unittest.TestCase):
         ):
             with self.subTest(args=args), self.assertRaises(SystemExit):
                 W.main(args)
+
+    def test_valid_probe_cli_executes_all_nine_readonly_calls(self):
+        """Regression: a legal --symbols value must reach the probe path."""
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.tables_read = []
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.tables_read.extend(tables)
+                return {codes[0]: {
+                    tables[0]: FakeFrame([{"m_timetag": 20260930}])}}
+            def download_financial_data(self, *args, **kwargs):
+                raise AssertionError("READONLY_PROBE_DOWNLOADED")
+            def download_financial_data2(self, *args, **kwargs):
+                raise AssertionError("READONLY_PROBE_DOWNLOADED")
+        fake = ModuleType("xtquant")
+        fake.xtdata = XT()
+        output = io.StringIO()
+        with patch.dict(sys.modules, {"xtquant": fake}), \
+             patch.object(W, "datetime") as clock, \
+             patch.object(W, "_installed_xtquant_version",
+                          return_value="250807.1.2"), \
+             redirect_stdout(output):
+            clock.now.return_value = datetime(
+                2026, 11, 22, 11, 0, tzinfo=L.UTC8)
+            rc = W.main(["--probe-readonly", "--symbols", "688259.SH"])
+        self.assertEqual(rc, 0)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        prefix = "QMT_FINANCE_TABLE_READONLY_PROBE="
+        self.assertTrue(lines[0].startswith(prefix))
+        receipt = json.loads(lines[0][len(prefix):])
+        self.assertEqual(receipt["symbol"], "688259.SH")
+        self.assertEqual(receipt["installed_xtquant_version"], "250807.1.2")
+        self.assertEqual(fake.xtdata.tables_read, list(E.FIN_TABLES))
+        self.assertEqual(receipt["qmt_download_calls"], 0)
+        self.assertFalse(receipt["can_commit"])
+
+    def test_probe_version_missing_does_not_block_diagnosis(self):
+        import qmt_extra_financial_cache_worker as W
+        with patch.object(W.metadata, "version",
+                          side_effect=W.metadata.PackageNotFoundError):
+            self.assertEqual(W._installed_xtquant_version(), "UNKNOWN")
+        with patch.object(W.metadata, "version",
+                          return_value="bad\nversion"):
+            self.assertEqual(W._installed_xtquant_version(), "UNKNOWN")
+
+    def test_probe_stops_if_daily_writer_window_begins_between_tables(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.calls = 0
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.calls += 1
+                return {codes[0]: {tables[0]: FakeFrame([])}}
+        xt = XT()
+        early = datetime(2026, 11, 22, 19, 49, tzinfo=L.UTC8)
+        blocked = datetime(2026, 11, 22, 19, 50, tzinfo=L.UTC8)
+        with patch.object(W, "datetime") as clock:
+            clock.now.side_effect = [early, early, blocked]
+            with self.assertRaisesRegex(ValueError, "RESERVED_2005"):
+                W.probe_tables_readonly(xt, "600000.SH")
+        self.assertEqual(xt.calls, 1)
 
     def test_cache_import_explicit_finance_dat_universe_adds_historical_bj(self):
         import qmt_extra_financial_cache_import as I

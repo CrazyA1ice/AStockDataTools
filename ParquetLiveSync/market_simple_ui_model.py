@@ -504,11 +504,19 @@ def finance_secondary_pilot_view(report: dict) -> str:
     n = lead.get("unique_event_leads", 0)
     if type(n) is not int or not 0 <= n <= 31500:
         raise InvalidSimplePlan("公告候选计数超出范围")
+    timing = report.get("total_seconds")
+    if timing is not None and (not isinstance(timing, (int, float))
+                               or isinstance(timing, bool)
+                               or not 0 <= timing <= 3600):
+        raise InvalidSimplePlan("外部财务来源耗时统计异常")
     lines = [
         "东方财富近期公告候选 %d 条（限页/限日期、非完整公告流）。" % n,
         "公告列表状态：%s。空列表绝不代表没有新增财务数据。" %
         str(lead.get("status", "UNKNOWN"))[:70],
     ]
+    if timing is not None:
+        lines.append("本轮外部财务试验总耗时 %.1f 秒（非更新速度改善证明）。" %
+                     timing)
     picks = lead.get("candidate_symbols_in_known_scope", [])
     if not isinstance(picks, list) or len(picks) > 500:
         raise InvalidSimplePlan("外部股票候选数量异常")

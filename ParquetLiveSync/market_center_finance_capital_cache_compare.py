@@ -60,9 +60,16 @@ def _report_key_date(value) -> str:
         elif re.fullmatch(r"\d{14}", token):
             day = datetime.strptime(token, "%Y%m%d%H%M%S").date()
         elif re.fullmatch(r"\d{13}", token):
+            # Reject decimal date-like encodings such as YYYYMMDDHHmmm;
+            # treating one as Unix milliseconds would invent the wrong date.
+            if re.fullmatch(r"(19|20)\d{6}", token[:8]):
+                try:
+                    date.fromisoformat(token[:8])
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("ambiguous numeric QMT date encoding")
             day = datetime.fromtimestamp(int(token) / 1000, CN).date()
-        elif re.fullmatch(r"\d{10}", token):
-            day = datetime.fromtimestamp(int(token), CN).date()
         elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
             day = date.fromisoformat(token)
         elif re.fullmatch(

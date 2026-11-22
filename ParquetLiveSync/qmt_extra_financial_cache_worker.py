@@ -141,6 +141,11 @@ def probe_tables_readonly(xt, code, *, now=None):
         raise ValueError("QMT_FINANCE_PROBE_RESERVED_2005_WINDOW")
     results = []
     for table in E.FIN_TABLES:
+        # Recheck between calls if wall clock crosses the scheduled window.
+        current = (now or datetime.now(E.L.UTC8)).astimezone(E.L.UTC8)
+        minute = current.hour * 60 + current.minute
+        if 19 * 60 + 50 <= minute < 20 * 60 + 25:
+            raise ValueError("QMT_FINANCE_PROBE_RESERVED_2005_WINDOW")
         kind = "OPTIONAL_UNCONFIRMED" if table == "PerShare" else "DOCUMENTED_CORE"
         try:
             data = _qmt_provider_call(

@@ -323,6 +323,13 @@ class FinanceSecondaryTests(TestCase):
         self.assertEqual(r["fields_compared"], 6)
         self.assertEqual(r["fields_inconclusive"], 0)
         self.assertEqual(r["fields_attempted"], 6)
+        self.assertEqual([row["table"] for row in r["table_timings"]],
+                         ["Balance", "Income", "CashFlow"])
+        self.assertTrue(all(
+            row["status"] == "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION"
+            and all(type(row[key]) is float and row[key] >= 0 for key in (
+                "local_seconds", "eastmoney_seconds", "comparison_seconds"))
+            for row in r["table_timings"]))
         self.assertEqual(r["value_differences"], 0)
         self.assertEqual([t["report_dates_in_both"] for t in r["tables"]],
                          [1, 1, 1])
@@ -378,6 +385,9 @@ class FinanceSecondaryTests(TestCase):
             r = S.crosscheck_saved(synthetic_stock_root(folder), "000010.SZ", FakeAk())
         self.assertTrue(all(t["status"] == "NO_LOCAL_QMT_SNAPSHOT"
                             for t in r["tables"]))
+        self.assertTrue(all(
+            x["eastmoney_seconds"] == x["comparison_seconds"] == 0.0
+            for x in r["table_timings"]))
         self.assertEqual(r["fields_compared"], 0)
 
     def test_provider_failure_is_explicit_and_cannot_greenlight_history(self):

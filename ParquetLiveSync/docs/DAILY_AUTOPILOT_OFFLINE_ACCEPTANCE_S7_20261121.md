@@ -26,3 +26,13 @@ S7新增12项纯合成验收器测试；原预计458项命名回归，加上本�
 新增4项纯合成验收器测试覆盖：直接逐文件verbose调用、超时部分输出保留、无输出识别为启动/导入卡住、首组超时立即停止其余套件。既有固定SHA和detached审核检查、Windows PowerShell AST、可选完整市场中心+原操作面板回归保持不变。**这是提高诊断准确度的修复，不代表已经查清用户Windows上挂起的最终原因，更不代表S1—S6已通过**。
 
 重新验收必须使用新的固定 SHA 和全新 detached worktree 目录（例如 `work/autopilot-s7r-review`），不修改旧 `work/autopilot-s7-review` 或正式主仓库；不执行任何真实QMT下载或生产入库。若首组再次超时，请查看 JSON 的 `timeout_phase` 和 `output_tail`，一次性定位具体停点，不再重复盲目加大超时。
+
+## S7.2（2026-11-22）Windows 回执定位与验收器自测修复
+
+用户固定提交 `c2ccdda3453d2347ef68a1421fe3350c0b5b5d1f` 的二次真实 Windows 验收记录：Python AST 16/16、PowerShell AST PASS；前七组单独执行的测试共 **107/107 PASS**（15+9+19+9+17+22+16），其中沙盒真实 Parquet 文件写入和事务故障注入组16项通过；S7 自测组16项全部在 `setUp` 阶段因同一错误而终止：
+
+`AttributeError: module 'market_autopilot_offline_acceptance' has no attribute 'POWER_SHELL'`
+
+原因是 S7 测试夹具以 `G.POWER_SHELL` 读取 PowerShell 脚本名，而 S7 本体此前用硬编码字符串读取该脚本，没声明这个常量。这是**测试夹具接口失配**，不是 QMT 下载或用户金融数据写入失败。修复在本体内定义 `POWER_SHELL = "run-scoped-qmt-finance-cache.ps1"`，并让实际解析器复用该常量，避免两边未来不一致；追加1项回归测试固定文件名。
+
+**S7.2 代码尚未经过 Windows 实机复测**；新的测试预期S7自测17项，S1–S6已有七组107项通过的结果仅适用于旧提交，不能替代新版本全量回归。正式20:05任务、财务历史、市场数据库、GUI与人工更新脚本保持不变；整个PR仍为Draft，`approved_for_production=false`。

@@ -671,6 +671,30 @@ class GuiSmokeTests(unittest.TestCase):
         self.app._finance_diag_queue.put(("error", "test-only", None))
         self.app._poll_finance_diagnostic()
 
+    def test_secondary_finance_prefers_isolated_python_without_changing_qmt(self):
+        with TemporaryDirectory() as folder:
+            repo = Path(folder)
+            (repo / ".venv" / "Scripts").mkdir(parents=True)
+            official = repo / ".venv" / "Scripts" / "python.exe"
+            official.write_text("canonical", encoding="utf-8")
+            self.assertEqual(UI.secondary_finance_python(repo), official)
+            (repo / ".venv-akshare" / "Scripts").mkdir(parents=True)
+            isolated = repo / ".venv-akshare" / "Scripts" / "python.exe"
+            isolated.write_text("readonly", encoding="utf-8")
+            self.assertEqual(UI.secondary_finance_python(repo), isolated)
+            self.assertTrue(official.is_file())
+
+    def test_secondary_finance_incomplete_isolated_environment_blocks_fallback(self):
+        with TemporaryDirectory() as folder:
+            repo = Path(folder)
+            (repo / ".venv" / "Scripts").mkdir(parents=True)
+            (repo / ".venv" / "Scripts" / "python.exe").write_text(
+                "canonical", encoding="utf-8")
+            (repo / ".venv-akshare").mkdir()
+            with self.assertRaisesRegex(
+                    M.InvalidSimplePlan, "独立AKShare环境不完整"):
+                UI.secondary_finance_python(repo)
+
     def test_secondary_source_button_uses_readonly_external_worker(self):
         from datetime import datetime, timedelta, timezone
         repo = Path(self.temp.name)

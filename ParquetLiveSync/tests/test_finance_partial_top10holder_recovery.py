@@ -136,6 +136,29 @@ class CapitalPartialRecoveryTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(self.ledger.read_bytes()).hexdigest(),
                          self.sha)
 
+    def test_zero_rows_in_previously_readable_core_table_blocks_commit(self):
+        qmt = FakeQMT()
+        original = qmt.get_financial_data
+
+        def missing_cashflow(codes, tables, **kwargs):
+            if tables == ["CashFlow"]:
+                return {codes[0]: {"CashFlow": FakeFrame([])}}
+            return original(codes, tables, **kwargs)
+
+        qmt.get_financial_data = missing_cashflow
+        clock = datetime.now(E.L.UTC8)
+        if 19 * 60 + 20 <= clock.hour * 60 + clock.minute < 20 * 60 + 40:
+            self.skipTest("market protected window")
+        with self.assertRaisesRegex(P.PartialRecoveryBlocked,
+                                    "PREVIOUSLY_READABLE_CORE_TABLE_NOW_EMPTY"):
+            P.recover(self.root, self.workspace, self.sha,
+                      xt=qmt, apply=True, now=clock, progress=lambda _: None)
+        self.assertEqual(hashlib.sha256(self.ledger.read_bytes()).hexdigest(),
+                         self.sha)
+        self.assertIsNone(E._financial_snapshot_file(
+            self.extra, P.KNOWN_SYMBOL, "Balance",
+            clock.date().isoformat()))
+
     def test_bad_ledger_sha_denied_before_reads(self):
         fake = FakeQMT()
         with self.assertRaisesRegex(P.PartialRecoveryBlocked,

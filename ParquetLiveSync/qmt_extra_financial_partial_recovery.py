@@ -104,6 +104,10 @@ def recover(root, workspace, expected_sha, *, xt, apply=False,
     if not apply:
         progress("QMT_FINANCE_PARTIAL_PREFLIGHT=" + E.canonical_json(preflight))
         return preflight
+    # If run from a detached worktree, share the canonical main-repository
+    # lock adjacent to the official financial ledger rather than an unrelated
+    # review-worktree lock.
+    E.LIVE.WORK = workspace.parent
     with E.LIVE.exclusive_writer():
         _ledger_identity(root, workspace, expected_sha)
         source, counts = _read_healthy_tables(xt)

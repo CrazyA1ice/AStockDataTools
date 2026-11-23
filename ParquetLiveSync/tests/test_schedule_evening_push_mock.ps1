@@ -40,7 +40,7 @@ if($installSource -notmatch 'AddHours\(20\).AddMinutes\(5\)' -or
     throw 'One 20:05 trigger or disabled midnight finance guard missing'
 }
 $out=@(& $runner -Invocation Manual 6>&1) -join [Environment]::NewLine
-if($out -notmatch 'MARKET_1630_SECTIONS=EIGHT_PERIODS,FINANCIAL_DAILY,SECTORS,ADJUSTMENTS_ROTATING'){
+if($out -notmatch 'MARKET_1630_SECTIONS=EIGHT_PERIODS,SECTORS,ADJUSTMENTS_ROTATING,FINANCIAL_DAILY'){
     throw 'Runner preview stages missing'
 }
 if($out -notmatch 'WECOM_CHUNKED_PUSH' -or $out -notmatch '23:20_CHINA'){

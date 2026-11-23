@@ -3,6 +3,8 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $installer=Join-Path (Split-Path -Parent $PSScriptRoot) 'install-schedule.ps1'
 $global:AfternoonMock=New-Object System.Collections.ArrayList
+$global:OldFinanceMock=$null
+$global:OldFinanceDisableCalls=0
 function Test-Path {
     param([string]$LiteralPath,[string]$Path,[string]$PathType)
     $p=if($LiteralPath){$LiteralPath}else{$Path}
@@ -13,7 +15,19 @@ function Test-Path {
 }
 function Get-ScheduledTask {
     param([string]$TaskName,[string]$ErrorAction)
+    if($TaskName -eq 'AStockDataTools-QMT-Financial-Daily'){
+        return $global:OldFinanceMock
+    }
     return $null
+}
+function Disable-ScheduledTask {
+    param([string]$TaskName,[string]$ErrorAction)
+    if($TaskName -ne 'AStockDataTools-QMT-Financial-Daily'){
+        throw 'Unexpected independent task disabled'
+    }
+    $global:OldFinanceDisableCalls++
+    $global:OldFinanceMock.State='Disabled'
+    return [pscustomobject]@{Disabled=$true}
 }
 function New-ScheduledTaskAction {
     param([string]$Execute,[string]$Argument,[string]$WorkingDirectory)
@@ -53,5 +67,17 @@ $firstLocal=[TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).
 if($reg.Triggers[0].At -ne $firstLocal){throw 'Single China 20:05 trigger time invalid'}
 if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive' -or $reg.Settings.ExecutionTimeLimit -ne (New-TimeSpan -Hours 3 -Minutes 40) -or $reg.Settings.StartWhenAvailable){throw 'Task schedule must be bounded and must not replay after midnight'}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}
-Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_NO_REAL_TASKS CST_2005_SINGLE_2345_CUTOFF'
+$global:OldFinanceMock=[pscustomobject]@{State='Ready'}
+& $installer -Action Install
+if($global:OldFinanceDisableCalls -ne 1 -or
+   [string]$global:OldFinanceMock.State -ne 'Disabled'){
+    throw 'Old 00:30 task must be disabled once without deleting'
+}
+if($global:AfternoonMock.Count -ne 2 -or
+   $global:AfternoonMock[1].Name -ne 'AStockDataTools-ParquetLiveSync'){
+    throw 'Installing with old finance task must still register one 20:05 entry'
+}
+Write-Host 'PASS_INSTALL_AFTERNOON_MOCK_2005_ONE_TRIGGER_0030_OLD_DISABLED_NO_REAL_TASKS'
 Remove-Variable -Name AfternoonMock -Scope Global -ErrorAction SilentlyContinue
+Remove-Variable -Name OldFinanceMock -Scope Global -ErrorAction SilentlyContinue
+Remove-Variable -Name OldFinanceDisableCalls -Scope Global -ErrorAction SilentlyContinue

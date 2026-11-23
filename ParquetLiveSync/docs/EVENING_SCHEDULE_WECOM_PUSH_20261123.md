@@ -36,3 +36,11 @@
 必须由用户在本机显式调用 `market_update_push.py --config <私有配置> --canary-send` 发送一次不包含数据更新的真实企业微信测试消息。取得API ACK后用户仍需在手机端确认收件，再执行正式切换；不能把API ACK或离线测试当成实际手机送达。整个过程不触碰TecentSystem QQ/微信机器人，也不会要求用户在聊天中粘贴WeCom密钥。
 
 此阶段新canary和启用器代码尚待Windows再次运行最新版本的11项消息测试、12项验证及3组PS模拟；已有用户22项和模拟PASS仅覆盖先前固定提交。
+
+## Windows PowerShell 5.1 setup script parser encoding fix (2026-11-23)
+
+User ran the pinned branch's WeCom local setup before real canary sending. `setup-market-notification.ps1` failed **PowerShell ParserError** (unterminated string at line 72 and unclosed else brace at line 47) before asking for credentials. The original setup script was UTF-8 without BOM and embedded Chinese Read-Host prompt text. Windows PowerShell 5.1 can load BOM-less UTF-8 as the system ANSI codepage, corrupting those prompts and leading to misleading syntax errors. This is script encoding, NOT a provider authentication failure, financial cache issue, or scheduled-task failure.
+
+The setup script is now **100% ASCII source**: all prompts use concise English while provider/config keys stay unchanged; no secret/config or scheduled task was created by the failed parse. `tests/test_schedule_evening_push_mock.ps1` now parses the setup script, rejects any byte >= 128, confirms hidden `Read-Host -AsSecureString` and owner-restricted file ACL, and rejects an implicit `--canary-send` in local credential setup. The mock test requires the user's Windows PowerShell rerun; GitHub code-only review is NOT real local test completion.
+
+After fetching the new SHA in the detached review worktree, run the isolated scheduled mock test, then `setup-market-notification.ps1 -Provider App -CanonicalRepo D:\ChatGPT\AStockDataTools` only if no prior config file. Validate and explicitly call `market_update_push.py --canary-send` only with the user-requested real WeCom receipt test. Do NOT run activation preflight/install during protected China time 19:20–20:40; actual schedule activation still requires separate device receipt confirmation and explicit `-Apply`. No finance/Kline/cursor code changes.

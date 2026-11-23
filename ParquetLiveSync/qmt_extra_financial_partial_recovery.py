@@ -107,20 +107,24 @@ def recover(root, workspace, expected_sha, *, xt, apply=False,
     # If run from a detached worktree, share the canonical main-repository
     # lock adjacent to the official financial ledger rather than an unrelated
     # review-worktree lock.
+    former_writer_workspace = E.LIVE.WORK
     E.LIVE.WORK = workspace.parent
-    with E.LIVE.exclusive_writer():
-        _ledger_identity(root, workspace, expected_sha)
-        source, counts = _read_healthy_tables(xt)
-        if _allow_time(datetime.now(E.L.UTC8)) != asof:
-            raise PartialRecoveryBlocked("MARKET_DATE_CHANGED_DURING_CACHE_READ")
-        _ledger_identity(root, workspace, expected_sha)
-        # Existing, tested immutable writer. Top10Holder is deliberately []
-        # and its old snapshot is retained by QMT-primary-versioned policy.
-        report = I._commit_symbol(
-            extra, workspace, KNOWN_SYMBOL, asof, source,
-            qmt_primary_versioned=True)
-        # The pending ledger MUST retain the bad Top10Holder identity.
-        _ledger_identity(root, workspace, expected_sha)
+    try:
+        with E.LIVE.exclusive_writer():
+            _ledger_identity(root, workspace, expected_sha)
+            source, counts = _read_healthy_tables(xt)
+            if _allow_time(datetime.now(E.L.UTC8)) != asof:
+                raise PartialRecoveryBlocked("MARKET_DATE_CHANGED_DURING_CACHE_READ")
+            _ledger_identity(root, workspace, expected_sha)
+            # Existing, tested immutable writer. Top10Holder is deliberately []
+            # and its old snapshot is retained by QMT-primary-versioned policy.
+            report = I._commit_symbol(
+                extra, workspace, KNOWN_SYMBOL, asof, source,
+                qmt_primary_versioned=True)
+            # The pending ledger MUST retain the bad Top10Holder identity.
+            _ledger_identity(root, workspace, expected_sha)
+    finally:
+        E.LIVE.WORK = former_writer_workspace
     result = {
         "status": "QMT_FINANCE_PARTIAL_HEALTHY_TABLES_COMMITTED",
         "symbol": KNOWN_SYMBOL, "excluded_bad_table": KNOWN_BAD_TABLE,

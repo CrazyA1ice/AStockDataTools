@@ -75,17 +75,23 @@ $shanghai=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $todayChina=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)).Date
 $utc=[TimeZoneInfo]::ConvertTimeToUtc($todayChina.AddHours(20).AddMinutes(5),$shanghai)
 $at=[TimeZoneInfo]::ConvertTimeFromUtc($utc,[TimeZoneInfo]::Local).ToString('HH:mm')
+$clockParts=$at.Split(':')
+$pcStart=[datetime]::Today.AddHours([int]$clockParts[0]).AddMinutes([int]$clockParts[1])
+$pcBedtime=[datetime]::Today.AddHours(23).AddMinutes(45)
+$pcBudget=[int][Math]::Floor(($pcBedtime-$pcStart).TotalMinutes)
+if($pcBudget -lt 20){throw 'PC_LOCAL_2005_CHINA_TRIGGER_TOO_LATE_FOR_BEDTIME'}
+$runtimeMinutes=[Math]::Min(220,$pcBudget)
 $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $arguments=('-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $at
-# Absolute latest task runtime from normal 20:05 start: 23:45 China time.
-# No StartWhenAvailable: do not replay a missed evening job after midnight.
-$settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3 -Minutes 40)
+# Limit to BOTH China 23:45 and PC-local 23:45; do not rely on the PC
+# timezone matching Asia/Shanghai. No overnight missed-run replay.
+$settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes $runtimeMinutes)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 $description='One 20:05 China-time K-lines/sectors/adjustments/finance-last run; before-midnight bounded, WeCom push and durable receipt'
 Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
-Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit=03:40:00 user='+$identity)
+Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit_minutes='+$runtimeMinutes+' user='+$identity)
 Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WECOM_PRIVATE_OPT_IN; WINDOWS_TOAST=OFF; MISSED_NIGHTLY_CATCHUP=OFF'
 Write-Host 'MARKET_QMT_REQUIREMENT=Logged-in Windows user and connected QMT; machine awake for execution'

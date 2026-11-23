@@ -100,9 +100,10 @@ class CapitalPartialRecoveryTests(unittest.TestCase):
         self.assertEqual(res["status"],
                          "QMT_FINANCE_PARTIAL_HEALTHY_TABLES_COMMITTED")
         self.assertEqual(set(qmt.calls),
-                         set(E.FIN_TABLES) - {P.KNOWN_BAD_TABLE})
-        self.assertEqual(len(qmt.calls), 8)
+                         set(E.FIN_TABLES) - {P.KNOWN_BAD_TABLE, "PerShare"})
+        self.assertEqual(len(qmt.calls), 7)
         self.assertEqual(res["excluded_table_read_calls"], 0)
+        self.assertEqual(res["optional_pershare_read_calls"], 0)
         self.assertEqual(res["new_snapshots"], 7)
         self.assertEqual(res["bad_table_action"], "SOURCE_EMPTY_OLD_RETAINED")
         self.assertEqual(E.L.hash_file(self.previous), self.prev_sha)

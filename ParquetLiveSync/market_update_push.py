@@ -270,12 +270,23 @@ def dispatch(receipt: Path, private_config: Path, outbox: Path, *,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--receipt", required=True, type=Path)
+    parser.add_argument("--receipt", type=Path)
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("--outbox", required=True, type=Path)
+    parser.add_argument("--outbox", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--validate-config", action="store_true")
     parser.add_argument("--expected-start-local", default="")
     args = parser.parse_args(argv)
+    if args.validate_config:
+        try:
+            cfg = _checked_config(args.config)
+        except Exception:
+            print("MARKET_PUSH_CONFIG_INVALID=TRUE")
+            return 2
+        print("MARKET_PUSH_CONFIG_VALID=" + cfg["provider"])
+        return 0
+    if args.receipt is None or args.outbox is None:
+        parser.error("--receipt and --outbox required to dispatch")
     try:
         result = dispatch(args.receipt, args.config, args.outbox,
                           dry_run=args.dry_run,

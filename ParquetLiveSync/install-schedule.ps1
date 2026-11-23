@@ -1,4 +1,4 @@
-# One Windows task, one daily 20:05 China-time trigger. No other time modes.
+# One daily 20:05 China-time trigger. No midnight finance task or delayed re-run.
 param([ValidateSet('Install','Status','Remove')][string]$Action='Status')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -21,7 +21,7 @@ if($Action -eq 'Status'){
         $xmlNode=$taskXml.SelectSingleNode("/*[local-name()='Task']/*[local-name()='Settings']/*[local-name()='ExecutionTimeLimit']")
         $xmlLimit=if($null -ne $xmlNode){[string]$xmlNode.InnerText}else{'MISSING'}
         Write-Host ('MARKET_TASK_XML_EXECUTION_TIME_LIMIT='+$xmlLimit)
-        Write-Host ('MARKET_TASK_XML_RUNTIME_UNLIMITED='+($xmlLimit -eq 'PT0S'))
+        Write-Host ('MARKET_TASK_XML_RUNTIME_BOUNDED='+($xmlLimit -ne 'PT0S'))
         Get-ScheduledTaskInfo -TaskName $task |
             Select-Object LastRunTime,LastTaskResult,NextRunTime | Format-List
     }
@@ -32,6 +32,10 @@ if($Action -eq 'Status'){
             Get-Content -LiteralPath $recent -Raw -Encoding UTF8
         }
     }
+    $standalone=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
+    if($null -ne $standalone){
+        Write-Host ('MARKET_STANDALONE_FINANCE_TASK_STATE='+[string]$standalone.State)
+    }else{Write-Host 'MARKET_STANDALONE_FINANCE_TASK=NOT_INSTALLED'}
     exit 0
 }
 if($Action -eq 'Remove'){
@@ -46,7 +50,14 @@ if(Test-Path -LiteralPath (Join-Path $module 'work\qmt_extra\schedule-enabled.js
     throw 'Legacy extras schedule opt-in exists; refuse overlapping supplementary update'
 }
 $oldFinance=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
-if($null -ne $oldFinance){throw 'Independent finance scheduled task exists; resolve overlap before install'}
+if($null -ne $oldFinance -and [string]$oldFinance.State -ne 'Disabled'){
+    # User explicitly requires no separate 00:30 finance run. Disable only
+    # this known, named task; preserve its registration for easy rollback.
+    Disable-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop | Out-Null
+    $afterDisable=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop
+    if([string]$afterDisable.State -ne 'Disabled'){throw 'Standalone finance task remains active'}
+    Write-Host 'MARKET_0030_STANDALONE_FINANCE_TASK_DISABLED=TRUE'
+}
 $python=Join-Path $repo '.venv\Scripts\python.exe'
 if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project Python'}
 if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
@@ -66,12 +77,13 @@ $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.ex
 $arguments=('-NoProfile -WindowStyle Normal -ExecutionPolicy Bypass -File "{0}" -Apply' -f $scheduled)
 $taskExecAction=New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory $repo
 $trigger=New-ScheduledTaskTrigger -Daily -At $at
-# Zero means no Task Scheduler runtime cap; IgnoreNew prevents overlap.
-$settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero)
+# Absolute latest task runtime from normal 20:05 start: 23:45 China time.
+# No StartWhenAvailable: do not replay a missed evening job after midnight.
+$settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 3 -Minutes 40)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
-$description='One daily 20:05 China-time market-finance-sectors-adjustments update, with completion/failure desktop notification and durable receipt'
+$description='One 20:05 China-time K-lines/sectors/adjustments/finance-last run; before-midnight bounded, WeCom push and durable receipt'
 Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
-Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit=NONE user='+$identity)
-Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WINDOWS_DESKTOP; CONSOLE=VISIBLE_WHEN_LOGGED_IN'
+Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit=03:40:00 user='+$identity)
+Write-Host 'MARKET_SCHEDULE_MODE=ONE_DAILY_2005_ALL_FOUR_SECTIONS; TASK_NOTIFICATIONS=WECOM_PRIVATE_OPT_IN; WINDOWS_TOAST=OFF; MISSED_NIGHTLY_CATCHUP=OFF'
 Write-Host 'MARKET_QMT_REQUIREMENT=Logged-in Windows user and connected QMT; machine awake for execution'

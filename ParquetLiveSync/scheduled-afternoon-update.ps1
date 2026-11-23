@@ -41,7 +41,8 @@ if(-not $Apply){
 # Manual HistoryOnly remains explicitly available for daytime recovery.
 if($Invocation -eq 'Scheduled' -and
    ($chinaNow.TimeOfDay -lt (New-TimeSpan -Hours 20 -Minutes 5) -or
-    $chinaNow.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
+    $chinaNow.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20) -or
+    (Get-Date).TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
     Write-Host 'MARKET_2005_SCHEDULED_OUTSIDE_EVENING_WINDOW_NO_EXECUTION=TRUE'
     return
 }
@@ -196,7 +197,8 @@ try {
     # A slow QMT startup must not create an after-midnight scheduled run.
     $afterQmtProbe=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
     if($Invocation -eq 'Scheduled' -and
-       $afterQmtProbe.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20)){
+       ($afterQmtProbe.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20) -or
+        (Get-Date).TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
         throw 'EVENING_CUTOFF_REACHED_AFTER_QMT_PREFLIGHT_NO_STAGES_EXECUTED'
     }
     # Each source is verified by its own pipeline. No second scheduled retry.
@@ -214,7 +216,11 @@ try {
         # down. A 5m buffer covers the importer's single 180s worker call.
         $beforeFinance=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
         $financeStop=$beforeFinance.Date.AddHours(23).AddMinutes(20)
-        $financeMinutes=[int][Math]::Floor(($financeStop-$beforeFinance).TotalMinutes)-5
+        $localBeforeFinance=Get-Date
+        $localFinanceStop=$localBeforeFinance.Date.AddHours(23).AddMinutes(20)
+        $financeMinutes=[int][Math]::Floor([Math]::Min(
+            ($financeStop-$beforeFinance).TotalMinutes,
+            ($localFinanceStop-$localBeforeFinance).TotalMinutes))-5
         if($financeMinutes -ge 10){
             $financeBudget=[Math]::Min(40,$financeMinutes)
             Write-Host ('MARKET_2005_FINANCE_QMT_PRIMARY_VERSIONED=TRUE max_minutes='+$financeBudget)

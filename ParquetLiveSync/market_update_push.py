@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, parse_qs, urlencode
 from urllib.request import Request, urlopen
 
@@ -31,7 +32,33 @@ STAGES = tuple(NAMES)
 
 
 class PushBlocked(RuntimeError):
-    pass
+    """Safe status metadata only; never carry response text, URL or credentials."""
+
+    def __init__(self, reason: str, *, stage: str = "",
+                 provider_errcode: int | None = None,
+                 http_status: int | None = None):
+        super().__init__(reason)
+        self.stage = stage
+        self.provider_errcode = provider_errcode
+        self.http_status = http_status
+
+
+def _safe_diagnostic(exc: Exception) -> dict:
+    """Whitelisted fields only: provider numeric error, not its errormsg."""
+    if isinstance(exc, PushBlocked):
+        reason = str(exc)
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,79}", reason):
+            reason = "WECOM_ERROR"
+        stage = (exc.stage if exc.stage in
+                 ("TOKEN", "MESSAGE_SEND", "CONFIG") else "UNKNOWN")
+        result = {"status": "NOT_CONFIRMED", "stage": stage, "reason": reason}
+        if type(exc.provider_errcode) is int and -9999999 <= exc.provider_errcode <= 9999999:
+            result["provider_errcode"] = exc.provider_errcode
+        if type(exc.http_status) is int and 100 <= exc.http_status <= 599:
+            result["http_status"] = exc.http_status
+        return result
+    return {"status": "NOT_CONFIRMED", "stage": "UNKNOWN",
+            "reason": "UNEXPECTED_ERROR", "error_type": type(exc).__name__}
 
 
 def _read_json(path: Path, bound: int) -> dict:
@@ -171,14 +198,35 @@ def _http_json(url: str, *, payload: dict | None = None) -> dict:
     return res
 
 
+def _provider_request(url: str, *, payload: dict | None = None,
+                      stage: str) -> dict:
+    """Attach a safe stage to HTTP/JSON errors; never reveal the request URL."""
+    try:
+        return _http_json(url, payload=payload)
+    except PushBlocked as exc:
+        raise PushBlocked(str(exc), stage=stage,
+                          provider_errcode=exc.provider_errcode,
+                          http_status=exc.http_status) from None
+    except HTTPError as exc:
+        raise PushBlocked("WECOM_HTTP_ERROR", stage=stage,
+                          http_status=exc.code) from None
+    except (URLError, TimeoutError, OSError):
+        raise PushBlocked("WECOM_TRANSPORT_ERROR", stage=stage) from None
+    except (UnicodeError, ValueError):
+        raise PushBlocked("WECOM_RESPONSE_PARSE_ERROR", stage=stage) from None
+
+
 def _send_one(cfg: dict, message: str) -> None:
     kind = cfg["provider"]
     if kind == "wecom_app":
         url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?" + urlencode({
             "corpid": cfg["corp_id"], "corpsecret": cfg["corp_secret"]})
-        token = _http_json(url)
-        if token["errcode"] != 0 or not token.get("access_token"):
-            raise PushBlocked("WECOM_ACCESS_TOKEN_REJECTED")
+        token = _provider_request(url, stage="TOKEN")
+        if token["errcode"] != 0:
+            raise PushBlocked("WECOM_ACCESS_TOKEN_REJECTED", stage="TOKEN",
+                              provider_errcode=token["errcode"])
+        if not isinstance(token.get("access_token"), str) or not token["access_token"]:
+            raise PushBlocked("WECOM_ACCESS_TOKEN_MISSING", stage="TOKEN")
         send_url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?" + urlencode({
             "access_token": token["access_token"]})
         body = {"touser": cfg["to_user"], "agentid": cfg["agent_id"],
@@ -188,12 +236,16 @@ def _send_one(cfg: dict, message: str) -> None:
     else:
         send_url = cfg["webhook_url"]
         body = {"msgtype": "text", "text": {"content": message}}
-    res = _http_json(send_url, payload=body)
+    res = _provider_request(send_url, payload=body, stage="MESSAGE_SEND")
     if res["errcode"] != 0:
-        raise PushBlocked("WECOM_PROVIDER_MESSAGE_REJECTED")
+        raise PushBlocked("WECOM_PROVIDER_MESSAGE_REJECTED",
+                          stage="MESSAGE_SEND",
+                          provider_errcode=res["errcode"])
     if kind == "wecom_app" and (
             res.get("invaliduser") or res.get("unlicenseduser")):
-        raise PushBlocked("WECOM_APP_RECIPIENT_NOT_ACCEPTED")
+        # Do not print recipients from the provider's response.
+        raise PushBlocked("WECOM_APP_RECIPIENT_NOT_ACCEPTED",
+                          stage="MESSAGE_SEND")
 
 
 def _atomic_json(path: Path, obj: dict) -> None:
@@ -310,8 +362,13 @@ def main(argv=None):
             else:
                 print("MARKET_PUSH_CONFIG_VALID=" + cfg["provider"])
         except Exception as exc:
-            # No secret/token/user ID/webhook URL or raw provider exception.
-            print("MARKET_PUSH_SETUP_CHECK_FAILED=" + type(exc).__name__)
+            # Never emit the raw provider 'errmsg', URLs, keys, or response.
+            # For a canary only, show numeric errcode plus fixed stage.
+            if args.canary_send:
+                print("MARKET_PUSH_CANARY_DIAGNOSTIC=" + json.dumps(
+                    _safe_diagnostic(exc), ensure_ascii=False, sort_keys=True))
+            else:
+                print("MARKET_PUSH_CONFIG_INVALID=TRUE")
             return 2
         return 0
     if args.receipt is None or args.outbox is None:

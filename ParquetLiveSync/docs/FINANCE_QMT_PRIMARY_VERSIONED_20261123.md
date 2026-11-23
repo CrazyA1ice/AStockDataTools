@@ -19,3 +19,23 @@
 
 ## 未验证的边界
 截至本PR的这一变更只完成GitHub源码和合成测试文件编写，**用户Windows测试和正式pending入库尚未执行**；不能宣称115只冲突已解决。市场最新来源不等于证券交易所认证的历史数值。原QMT市场文件/数据库分区不会在此阶段发生隐式修改。
+
+## 2026-11-23 688259.SH 单表损坏、七张核心表独立恢复
+
+用户 QMT 重新下载单股八表后，九表联合读取仍连续2次`UnicodeDecodeError(utf-8, unexpected end of data, start=198)`。再通过已有`qmt_extra_financial_cache_worker.py --probe-readonly --symbols 688259.SH`逐表只读确认：
+
+| 表 | QMT缓存状态 | 行 |
+|---|---|---:|
+| Balance | ROWS_IN_LOCAL_CACHE | 25 |
+| Income | ROWS_IN_LOCAL_CACHE | 30 |
+| CashFlow | ROWS_IN_LOCAL_CACHE | 27 |
+| Capital | ROWS_IN_LOCAL_CACHE | 32 |
+| Top10FlowHolder | ROWS_IN_LOCAL_CACHE | 200 |
+| Top10Holder | **UTF8_DECODE_ERROR** | 不可读取 |
+| HolderNum | ROWS_IN_LOCAL_CACHE | 21 |
+| PershareIndex | ROWS_IN_LOCAL_CACHE | 33 |
+| PerShare | EMPTY_OR_NOT_CACHED（可选） | 0 |
+
+所以 **7张核心表共368条QMT当前缓存记录可读，Top10Holder确实独立损坏**。新工具`qmt_extra_financial_partial_recovery.py`严格绑定`688259.SH`、跳过唯一`Top10Holder`，按QMT一表一次`get_financial_data`读取其余八表；无任何QMT下载调用；强制本机QMT主库`financial-cache-progress.json`SHA一致、唯一pending `688259.SH/CACHE_DECODE_ERROR`、北京时间19:20~20:40避让、主仓库而非review worktree的独占写入锁。同一锁内复核账本SHA前后，复用已有`_commit_symbol(...,qmt_primary_versioned=True)`为**健康表**入库，以不可变Parquet快照保留全部旧版。坏表作为`[]`仅用于触发旧表`SOURCE_EMPTY_OLD_RETAINED`或`NO_SOURCE_RECORDS`，它**从未向QMT请求、也不会保存伪造的空历史记录**。原进度账本不写、故障标记仍是`CACHE_DECODE_ERROR`；因此不能报告全部九表完成。新的输出`QMT_FINANCE_PARTIAL_COMMIT`注明`pending_remaining=true`、`source_completeness_verified=false`，并打印每健康表行数，不打印原财务值。
+
+新增5项完全模拟测试：离线preflight零QMT/零写；七核心表实际调用现有写入器后原Top10Holder文件字节保留且pending不清；另一个健康表解码错误会拒绝本次入库；账本SHA变化拒绝；异常身份状态拒绝。**截至提交，这些新增测试和真实数据恢复尚未在用户Windows执行。** 先执行测试，再正式仅处理该股健全表；确认7张可查询后直接转入回测，对Top10Holder单独列待修复，不继续全市场反复下载。

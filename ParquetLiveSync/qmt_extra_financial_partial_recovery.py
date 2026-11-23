@@ -81,10 +81,10 @@ def _read_healthy_tables(xt, code=KNOWN_SYMBOL):
             raise PartialRecoveryBlocked("BAD_SINGLE_TABLE_SOURCE_SHAPE")
         source[table] = rows
         counts[table] = len(rows)
-    if (set(source) != set(E.FIN_TABLES)
-            or not any(counts[name] for name in E.FIN_TABLES
-                       if name not in (KNOWN_BAD_TABLE, "PerShare"))):
-        raise PartialRecoveryBlocked("NO_VERIFIED_HEALTHY_CORE_TABLES")
+    required = set(E.FIN_TABLES) - {KNOWN_BAD_TABLE, "PerShare"}
+    if set(source) != set(E.FIN_TABLES) or any(
+            counts[name] == 0 for name in required):
+        raise PartialRecoveryBlocked("PREVIOUSLY_READABLE_CORE_TABLE_NOW_EMPTY")
     return source, counts
 
 

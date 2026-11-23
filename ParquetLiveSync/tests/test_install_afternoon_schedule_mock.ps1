@@ -65,7 +65,16 @@ $chinaToday=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)).Date
 $firstUtc=[TimeZoneInfo]::ConvertTimeToUtc($chinaToday.AddHours(20).AddMinutes(5),$china)
 $firstLocal=[TimeZoneInfo]::ConvertTimeFromUtc($firstUtc,[TimeZoneInfo]::Local).ToString('HH:mm')
 if($reg.Triggers[0].At -ne $firstLocal){throw 'Single China 20:05 trigger time invalid'}
-if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or $reg.Principal.LogonType -ne 'Interactive' -or $reg.Settings.ExecutionTimeLimit -ne (New-TimeSpan -Hours 3 -Minutes 40) -or $reg.Settings.StartWhenAvailable){throw 'Task schedule must be bounded and must not replay after midnight'}
+$parts=$firstLocal.Split(':')
+$triggerLocal=[datetime]::Today.AddHours([int]$parts[0]).AddMinutes([int]$parts[1])
+$deadlineLocal=[datetime]::Today.AddHours(23).AddMinutes(45)
+$expectedMins=[Math]::Min(220,[int][Math]::Floor(($deadlineLocal-$triggerLocal).TotalMinutes))
+if($reg.Settings.MultipleInstances -ne 'IgnoreNew' -or
+   $reg.Principal.LogonType -ne 'Interactive' -or
+   $reg.Settings.ExecutionTimeLimit -ne (New-TimeSpan -Minutes $expectedMins) -or
+   $reg.Settings.StartWhenAvailable){
+    throw 'Task schedule must end before China and PC-local midnight'
+}
 if(-not $reg.Force){throw 'Existing task must be reused, not duplicated'}
 $global:OldFinanceMock=[pscustomobject]@{State='Ready'}
 & $installer -Action Install

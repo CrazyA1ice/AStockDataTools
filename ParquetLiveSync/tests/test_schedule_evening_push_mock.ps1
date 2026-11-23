@@ -5,7 +5,8 @@ $module=Split-Path -Parent $PSScriptRoot
 $runner=Join-Path $module 'scheduled-afternoon-update.ps1'
 $installer=Join-Path $module 'install-schedule.ps1'
 $notify=Join-Path $module 'notify-market-update.ps1'
-foreach($file in @($runner,$installer,$notify,(Join-Path $module 'run-qmt-financial-daily.ps1'))){
+$activation=Join-Path $module 'activate-evening-schedule.ps1'
+foreach($file in @($runner,$installer,$notify,$activation,(Join-Path $module 'run-qmt-financial-daily.ps1'))){
     $tokens=$null; $errors=$null
     [void][System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)
     if($null -ne $errors -and $errors.Count -gt 0){throw ('PowerShell AST error: '+$file+' '+($errors | Out-String))}
@@ -45,5 +46,13 @@ if($out -notmatch 'MARKET_1630_SECTIONS=EIGHT_PERIODS,SECTORS,ADJUSTMENTS_ROTATI
 }
 if($out -notmatch 'WECOM_CHUNKED_PUSH' -or $out -notmatch '23:20_CHINA'){
     throw 'Runner preview missing push or nightly deadline'
+}
+$activationSource=[IO.File]::ReadAllText($activation)
+if($activationSource -notmatch 'CONFIRM_REAL_WECOM_CANARY_ON_HANDSET_BEFORE_APPLY' -or
+   $activationSource -notmatch 'REVIEW_WORKTREE_NOT_PINNED' -or
+   $activationSource -notmatch 'evening-schedule-backup-' -or
+   $activationSource -notmatch 'CANONICAL_LOCAL_FILE_CHANGED_' -or
+   $activationSource -notmatch 'EVENING_SCHEDULE_ACTIVATION_PREVIEW_ONLY_NO_LOCAL_CHANGES'){
+    throw 'Pinned, backup-first, canary-confirmed schedule activation missing'
 }
 Write-Host 'PASS_SINGLE_2005_KLINE_SECTORS_ADJUSTMENTS_FINANCE_WECom_NO_DESKTOP_MOCK'

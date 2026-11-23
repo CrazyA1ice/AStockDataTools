@@ -37,6 +37,14 @@ if(-not $Apply){
     Write-Host 'MARKET_1630_MULTISOURCE=EIGHT_PERIODS_ONLY;OTHER_TYPES_UNVERIFIED'
     return
 }
+# Do not replay a missed 20:05 scheduled job after the user's shutdown time.
+# Manual HistoryOnly remains explicitly available for daytime recovery.
+if($Invocation -eq 'Scheduled' -and
+   ($chinaNow.TimeOfDay -lt (New-TimeSpan -Hours 20 -Minutes 5) -or
+    $chinaNow.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
+    Write-Host 'MARKET_2005_SCHEDULED_OUTSIDE_EVENING_WINDOW_NO_EXECUTION=TRUE'
+    return
+}
 # Shared named mutex: Task Scheduler IgnoreNew alone does not protect manual GUI runs.
 # Fail closed if the scheduled task or another manual invocation already owns it.
 $runMutex=[System.Threading.Mutex]::new($false,'Local\AStockDataTools2005AllStages')
@@ -184,6 +192,12 @@ try {
         $qmtPreflightStatus='QMT_SERVICE_UNAVAILABLE'
         Write-Host 'MARKET_2005_QMT_SERVICE_UNAVAILABLE=TRUE'
         throw 'QMT_SERVICE_UNAVAILABLE: xtquant get_client did not connect after six bounded attempts; no update stages executed'
+    }
+    # A slow QMT startup must not create an after-midnight scheduled run.
+    $afterQmtProbe=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
+    if($Invocation -eq 'Scheduled' -and
+       $afterQmtProbe.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20)){
+        throw 'EVENING_CUTOFF_REACHED_AFTER_QMT_PREFLIGHT_NO_STAGES_EXECUTED'
     }
     # Each source is verified by its own pipeline. No second scheduled retry.
     # Failure in an independent stage is captured; other stages still run.

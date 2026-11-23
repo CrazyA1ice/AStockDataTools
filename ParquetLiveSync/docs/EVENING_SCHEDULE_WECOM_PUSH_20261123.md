@@ -19,7 +19,7 @@
 
 **凭据永远不进GitHub**：一次性工具`setup-market-notification.ps1 -Provider App` 或 `-Provider Webhook` 在本机隐藏输入Secret/Webhook，验证配置结构并设置只对当前Windows用户可读的ACL；目标是主仓库被gitignore排除的`ParquetLiveSync/work/qmt_extra/market-notification.private.json`。该工具本身不发消息或改变计划任务。远端腾讯云TecentSystem新闻机器人、QQ/微信现有发送器、群关系、订阅及令牌全不修改。
 
-发送时：先落地本机`work/qmt_extra/market-notification-outbox/<run-id>.json`，按序发送每个编号分段并标记API_ACK；同轮已确认不重发。超时/服务端响应不明时标记UNKNOWN，不会**盲目重发可能已经送达的部分**，避免刷屏；错误打印只输出定型状态，不泄露App Secret/Token/群Webhook。注意：**API_ACK只是企业微信接口接受，不等于手机端实际展示**；首次必须用真实个人应用/群消息做设备收件验收。如果私有配置未创建则只留下本地outbox回执并报告`NOT_CONFIGURED`，**不宣称消息已推送**。若外部推送失败，行情数据结果不会反向伪装成功/失败；本机运行报告仍可查看。
+发送时：先落地本机`work/qmt_extra/market-notification-outbox/<run-id>.json`，按序发送每个编号分段并标记API_ACK；同轮已确认不重发。超时/服务端响应不明时标记UNKNOWN，不会**盲目重发可能已经送达的部分**，避免刷屏；错误打印只输出定型状态，不泄露App Secret/Token/群Webhook。注意：**API_ACK只是企业微信接口接受，不等于手机端实际展示**；首次必须用真实个人应用/群消息做设备收件验收。如果私有配置未创建则只留下本地outbox回执并报告`NOT_CONFIGURED`，**不宣称消息已推送**。若外部推送失败，行情数据结果不会反向伪装成功/失败；本机运行报告仍可查看。每次非DryRun还会将**完整的人类可读通知文本**落到同一私有outbox中的`<run-id>.txt`，无凭据时也可查阅，不会丢失消息内容。
 
 ## 开发部署与可回滚性
 

@@ -8,7 +8,7 @@ $notify=Join-Path $module 'notify-market-update.ps1'
 foreach($file in @($runner,$installer,$notify,(Join-Path $module 'run-qmt-financial-daily.ps1'))){
     $tokens=$null; $errors=$null
     [void][System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)
-    if(@($errors).Count){throw ('PowerShell AST error: '+$file+' '+($errors | Out-String))}
+    if($null -ne $errors -and $errors.Count -gt 0){throw ('PowerShell AST error: '+$file+' '+($errors | Out-String))}
 }
 $text=[IO.File]::ReadAllText($runner)
 $names=@("'EIGHT_PERIODS'","'SECTORS'","'ADJUSTMENTS_ROTATING'","'FINANCIAL_DAILY'")

@@ -61,15 +61,6 @@ foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1'
 }
 # Only after validating every mandatory component, disable the old separate
 # 00:30 finance task. Preserve registration for rollback; refuse overlap.
-$oldFinance=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
-if($null -ne $oldFinance -and [string]$oldFinance.State -ne 'Disabled'){
-    # User explicitly requires no separate 00:30 finance run. Disable only
-    # this known, named task; preserve its registration for easy rollback.
-    Disable-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop | Out-Null
-    $afterDisable=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop
-    if([string]$afterDisable.State -ne 'Disabled'){throw 'Standalone finance task remains active'}
-    Write-Host 'MARKET_0030_STANDALONE_FINANCE_TASK_DISABLED=TRUE'
-}
 # Convert once to PC-local clock time. There is exactly ONE trigger.
 $shanghai=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $todayChina=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)).Date
@@ -90,6 +81,15 @@ $trigger=New-ScheduledTaskTrigger -Daily -At $at
 $settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes $runtimeMinutes)
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
+$oldFinance=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
+if($null -ne $oldFinance -and [string]$oldFinance.State -ne 'Disabled'){
+    # User explicitly requires no separate 00:30 finance run. Disable only
+    # this known, named task; preserve its registration for easy rollback.
+    Disable-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop | Out-Null
+    $afterDisable=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop
+    if([string]$afterDisable.State -ne 'Disabled'){throw 'Standalone finance task remains active'}
+    Write-Host 'MARKET_0030_STANDALONE_FINANCE_TASK_DISABLED=TRUE'
+}
 $description='One 20:05 China-time K-lines/sectors/adjustments/finance-last run; before-midnight bounded, WeCom push and durable receipt'
 Register-ScheduledTask -TaskName $task -Action $taskExecAction -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
 Write-Host ('MARKET_2005_INSTALLED task='+$task+' china_start=20:05 pc_local_start='+$at+' triggers=1 runtime_limit_minutes='+$runtimeMinutes+' user='+$identity)

@@ -146,6 +146,20 @@ class CompletionPushTests(unittest.TestCase):
         self.assertIn("财务顺延", text)
         self.assertNotIn("QMT财务：运行完成", text)
 
+    def test_real_canary_is_explicit_and_has_no_market_data_actions(self):
+        self.write_app_config()
+        sent = []
+        with patch.object(P, "_send_one",
+                          side_effect=lambda cfg, text:
+                              sent.append((cfg["provider"], text))):
+            result = P.main(["--config", str(self.config), "--canary-send"])
+        self.assertEqual(result, 0)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0], "wecom_app")
+        self.assertIn("手动发送的测试消息", sent[0][1])
+        self.assertIn("没有执行K线或财务更新", sent[0][1])
+        self.assertFalse(self.outbox.exists())
+
     def test_wecom_app_uses_correct_routes_and_acks(self):
         self.write_app_config()
         cfg = P._checked_config(self.config)

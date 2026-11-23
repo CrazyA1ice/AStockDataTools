@@ -26,3 +26,13 @@
 本阶段只在现有 Draft PR #241上提交源码和离线测试；没有调用用户Windows任务计划程序，不禁用当前旧任务，也没有推送真实消息。需在Windows测试Python`test_market_update_push.py`、`test_market_daily_verification.py`和PowerShell`test_notify_market_mock.ps1`、`test_install_afternoon_schedule_mock.ps1`、`test_schedule_evening_push_mock.ps1`后，经过专门的正式仓库源文件更新/备份/计划任务安装操作，才能称为上线。
 
 正式启用后只需每日晚上正常开机并保持QMT可连接：20:05单任务执行，K线→板块→除权→财务；完成后企业微信分段消息。若关机/断电或Windows不在线，当晚无法生成和推送任务结果；不能声称能够离线执行。回滚方式为恢复备份脚本和原定时任务设置、撤回或移走私有推送配置，不触碰已入库财务Parquet。
+
+## 2026-11-23 实机离线验收与一次性安全启用（补充）
+
+用户在固定提交 `3dedf34481cb5d813cbbc1ad100d9c854c66f8ab` 的Windows review worktree实测：WeCom通知Python 10/10 PASS；运行验证12/12 PASS；无Windows弹窗模拟、20:05单任务模拟及K线→板块→除权→财务顺序模拟全部PASS，结尾标记EVENING_SCHEDULE_PUSH_OFFLINE_TESTS_PASSED。模拟输出的旧00:30任务禁用并不表示用户注册的任务被改动。
+
+后续新增 `activate-evening-schedule.ps1` 一次性本机启用器：默认只读预检，只有明确传入 `-Apply -ConfirmCanaryReceived -ReviewedCommit <审核提交>` 才允许部署；仅将8个限定调度/通知/财务脚本复制到现役主仓库，先将所有原文件和旧Task Scheduler XML备份至被gitignore的`work/qmt_extra/evening-schedule-backup-*`；检测本地主仓库相应代码未改动、同一20:05任务及旧独立财务任务未运行、正式WeCom凭据可用，执行新专项离线测试和主仓库脚本载入检查后才重新注册原20:05任务。若失败尝试恢复原文件、原任务XML和旧独立财务任务启用状态，并保留备份以便人工恢复。不会合并巨大开发分支或执行历史行情下载。
+
+必须由用户在本机显式调用 `market_update_push.py --config <私有配置> --canary-send` 发送一次不包含数据更新的真实企业微信测试消息。取得API ACK后用户仍需在手机端确认收件，再执行正式切换；不能把API ACK或离线测试当成实际手机送达。整个过程不触碰TecentSystem QQ/微信机器人，也不会要求用户在聊天中粘贴WeCom密钥。
+
+此阶段新canary和启用器代码尚待Windows再次运行最新版本的11项消息测试、12项验证及3组PS模拟；已有用户22项和模拟PASS仅覆盖先前固定提交。

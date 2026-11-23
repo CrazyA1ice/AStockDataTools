@@ -34,18 +34,18 @@ function Read-SecretText {
     }
 }
 if($Provider -eq 'App'){
-    $corp=Read-Host '企业微信CorpID（仅本机保存）'
-    $member=Read-Host '个人应用收件人UserID（仅本机保存）'
-    $agentText=Read-Host '个人应用AgentID（仅本机保存）'
+    $corp=Read-Host 'WeCom app CorpID (saved locally)'
+    $member=Read-Host 'WeCom personal recipient UserID (saved locally)'
+    $agentText=Read-Host 'WeCom app AgentID (positive integer)'
     $agent=0
     if(-not [int]::TryParse($agentText,[ref]$agent) -or $agent -le 0){
         throw 'INVALID_AGENT_ID'
     }
-    $secret=Read-SecretText '个人应用Secret（输入时隐藏）'
+    $secret=Read-SecretText 'WeCom app Secret (hidden input)'
     $cfg=[ordered]@{provider='wecom_app';corp_id=$corp;corp_secret=$secret;
                     agent_id=$agent;to_user=$member}
 }else{
-    $webhook=Read-SecretText '企业微信群Webhook完整HTTPS地址（输入时隐藏）'
+    $webhook=Read-SecretText 'Existing WeCom group webhook HTTPS URL (hidden input)'
     $cfg=[ordered]@{provider='wecom_webhook';webhook_url=$webhook}
 }
 $tmp=$target+'.tmp'

@@ -1,11 +1,14 @@
 """Offline tests for full-length WeCom completion push; no network or UI."""
 from __future__ import annotations
 
+import io
 import json
+from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 import market_update_push as P
 
@@ -159,6 +162,122 @@ class CompletionPushTests(unittest.TestCase):
         self.assertIn("手动发送的测试消息", sent[0][1])
         self.assertIn("没有执行K线或财务更新", sent[0][1])
         self.assertFalse(self.outbox.exists())
+
+    def _canary_with_fake_provider(self, responses):
+        self.write_app_config()
+        output = io.StringIO()
+        with patch.object(P, "_http_json", side_effect=responses) as provider:
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--canary-send"])
+        self.assertEqual(status, 2)
+        self.assertNotIn("MARKET_PUSH_CANARY_PROVIDER_ACK=TRUE", output.getvalue())
+        self.assertEqual(provider.call_count, len(responses))
+        marker = "MARKET_PUSH_CANARY_DIAGNOSTIC="
+        self.assertIn(marker, output.getvalue())
+        diagnostic = json.loads(output.getvalue().split(marker, 1)[1].strip())
+        self.assertEqual(diagnostic["status"], "NOT_CONFIRMED")
+        return diagnostic, output.getvalue()
+
+    def test_canary_token_error_code_printed_without_credentials(self):
+        diagnostic, output = self._canary_with_fake_provider([
+            {"errcode": 40013, "errmsg": "LEAK_SECRET_userid"},
+        ])
+        self.assertEqual(diagnostic["stage"], "TOKEN")
+        self.assertEqual(diagnostic["reason"], "WECOM_ACCESS_TOKEN_REJECTED")
+        self.assertEqual(diagnostic["provider_errcode"], 40013)
+        self.assertNotIn("LEAK_SECRET_userid", output)
+        self.assertNotIn("secret-fake", output)
+        self.assertNotIn("corp-fake", output)
+
+    def test_canary_send_error_code_printed_without_token_or_raw_errmsg(self):
+        diagnostic, output = self._canary_with_fake_provider([
+            {"errcode": 0, "access_token": "EXAMPLE_TOKEN_PRIVATE"},
+            {"errcode": 60020, "errmsg": "LEAK_USER_ID"},
+        ])
+        self.assertEqual(diagnostic["stage"], "MESSAGE_SEND")
+        self.assertEqual(diagnostic["provider_errcode"], 60020)
+        self.assertEqual(diagnostic["reason"], "WECOM_PROVIDER_MESSAGE_REJECTED")
+        self.assertNotIn("EXAMPLE_TOKEN_PRIVATE", output)
+        self.assertNotIn("LEAK_USER_ID", output)
+        self.assertNotIn("fake-user", output)
+
+    def test_canary_invalid_recipient_never_prints_user_identifier(self):
+        diagnostic, output = self._canary_with_fake_provider([
+            {"errcode": 0, "access_token": "TESTTOKEN"},
+            {"errcode": 0, "invaliduser": "USER_ID_SHOULD_NOT_PRINT"},
+        ])
+        self.assertEqual(diagnostic["stage"], "MESSAGE_SEND")
+        self.assertEqual(diagnostic["reason"], "WECOM_APP_RECIPIENT_NOT_ACCEPTED")
+        self.assertNotIn("USER_ID_SHOULD_NOT_PRINT", output)
+
+    def test_canary_http_error_prints_safe_status_never_secret_url(self):
+        self.write_app_config()
+        error = HTTPError(
+            "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpsecret=PRIVATE",
+            403, "SECRET_REASON", {}, None)
+        output = io.StringIO()
+        with patch.object(P, "_http_json", side_effect=error) as provider:
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--canary-send"])
+        self.assertEqual(status, 2)
+        self.assertEqual(provider.call_count, 1)
+        detail = json.loads(output.getvalue().split(
+            "MARKET_PUSH_CANARY_DIAGNOSTIC=", 1)[1].strip())
+        self.assertEqual(detail["stage"], "TOKEN")
+        self.assertEqual(detail["http_status"], 403)
+        self.assertEqual(detail["reason"], "WECOM_HTTP_ERROR")
+        self.assertNotIn("corpsecret=PRIVATE", output)
+        self.assertNotIn("SECRET_REASON", output)
+
+    def test_canary_network_error_prints_stage_without_raw_exception(self):
+        self.write_app_config()
+        output = io.StringIO()
+        with patch.object(P, "_http_json",
+                          side_effect=URLError("SECRET_PROXY_ADDRESS")) as provider:
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--canary-send"])
+        self.assertEqual(status, 2)
+        self.assertEqual(provider.call_count, 1)
+        detail = json.loads(output.getvalue().split(
+            "MARKET_PUSH_CANARY_DIAGNOSTIC=", 1)[1].strip())
+        self.assertEqual(detail["stage"], "TOKEN")
+        self.assertEqual(detail["reason"], "WECOM_TRANSPORT_ERROR")
+        self.assertNotIn("SECRET_PROXY_ADDRESS", output)
+
+    def test_malformed_provider_response_does_not_leak_response_text(self):
+        self.write_app_config()
+        output = io.StringIO()
+        with patch.object(P, "_http_json",
+                          side_effect=ValueError("SECRET_FULL_RESPONSE")):
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--canary-send"])
+        self.assertEqual(status, 2)
+        self.assertIn('"reason": "WECOM_RESPONSE_PARSE_ERROR"', output.getvalue())
+        self.assertNotIn("SECRET_FULL_RESPONSE", output.getvalue())
+
+    def test_provider_numeric_error_can_be_negative_and_no_message_sent(self):
+        diagnostic, output = self._canary_with_fake_provider([
+            {"errcode": -1, "errmsg": "SECRET_STATUS"},
+        ])
+        self.assertEqual(diagnostic["stage"], "TOKEN")
+        self.assertEqual(diagnostic["provider_errcode"], -1)
+        self.assertNotIn("SECRET_STATUS", output)
+
+    def test_safe_diagnostic_never_echoes_arbitrary_exception_text(self):
+        report = P._safe_diagnostic(RuntimeError("PRIVATE_APP_SECRET"))
+        self.assertEqual(report["reason"], "UNEXPECTED_ERROR")
+        self.assertEqual(report["stage"], "UNKNOWN")
+        self.assertNotIn("PRIVATE_APP_SECRET", json.dumps(report))
+
+    def test_config_validation_still_performs_no_provider_request(self):
+        self.write_app_config()
+        with patch.object(P, "_http_json",
+                          side_effect=AssertionError("VALIDATE_MUST_BE_OFFLINE")):
+            with redirect_stdout(io.StringIO()) as output:
+                result = P.main(["--config", str(self.config),
+                                 "--validate-config"])
+        self.assertEqual(result, 0)
+        self.assertIn("MARKET_PUSH_CONFIG_VALID=wecom_app", output.getvalue())
 
     def test_wecom_app_uses_correct_routes_and_acks(self):
         self.write_app_config()

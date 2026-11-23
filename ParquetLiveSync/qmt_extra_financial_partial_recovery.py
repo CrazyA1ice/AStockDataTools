@@ -55,7 +55,9 @@ def _read_healthy_tables(xt, code=KNOWN_SYMBOL):
     source = {}
     counts = {}
     for table in E.FIN_TABLES:
-        if table == KNOWN_BAD_TABLE:
+        if table in (KNOWN_BAD_TABLE, "PerShare"):
+            # PerShare is independently observed as optional/empty. Retain any
+            # earlier version without spending another QMT cache API read.
             source[table] = []
             continue
         # Explicitly independent API requests: do not use the all-nine
@@ -129,6 +131,7 @@ def recover(root, workspace, expected_sha, *, xt, apply=False,
         "status": "QMT_FINANCE_PARTIAL_HEALTHY_TABLES_COMMITTED",
         "symbol": KNOWN_SYMBOL, "excluded_bad_table": KNOWN_BAD_TABLE,
         "readable_table_rows": counts, "excluded_table_read_calls": 0,
+        "optional_pershare_read_calls": 0,
         "download_calls": 0, "new_snapshots": sum(
             item["action"] == "CREATE_VERSION" for item in report.values()),
         "bad_table_action": report[KNOWN_BAD_TABLE]["action"],

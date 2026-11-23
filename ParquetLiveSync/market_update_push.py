@@ -294,15 +294,25 @@ def main(argv=None):
     parser.add_argument("--outbox", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--validate-config", action="store_true")
+    parser.add_argument("--canary-send", action="store_true",
+                        help="Explicitly send ONE harmless real WeCom test message")
     parser.add_argument("--expected-start-local", default="")
     args = parser.parse_args(argv)
-    if args.validate_config:
+    if args.validate_config or args.canary_send:
         try:
             cfg = _checked_config(args.config)
-        except Exception:
-            print("MARKET_PUSH_CONFIG_INVALID=TRUE")
+            if args.canary_send:
+                # This mode is never invoked by the scheduled market runner.
+                # Provider ACK must be checked separately on the handset.
+                _send_one(cfg, "【A股数据更新】企业微信通知渠道测试。"
+                               "这是一条手动发送的测试消息，没有执行K线或财务更新。")
+                print("MARKET_PUSH_CANARY_PROVIDER_ACK=TRUE")
+            else:
+                print("MARKET_PUSH_CONFIG_VALID=" + cfg["provider"])
+        except Exception as exc:
+            # No secret/token/user ID/webhook URL or raw provider exception.
+            print("MARKET_PUSH_SETUP_CHECK_FAILED=" + type(exc).__name__)
             return 2
-        print("MARKET_PUSH_CONFIG_VALID=" + cfg["provider"])
         return 0
     if args.receipt is None or args.outbox is None:
         parser.error("--receipt and --outbox required to dispatch")

@@ -208,10 +208,12 @@ def _atomic_json(path: Path, obj: dict) -> None:
 
 
 def dispatch(receipt: Path, private_config: Path, outbox: Path, *,
-             dry_run=False, transport=_send_one) -> dict:
+             dry_run=False, expected_start="", transport=_send_one) -> dict:
     doc = _read_json(receipt, MAX_RECEIPT)
     if doc.get("format") != "qmt_daily_single_trigger_v3":
         raise PushBlocked("WRONG_MARKET_COMPLETION_RECEIPT")
+    if expected_start and doc.get("started_local") != expected_start:
+        raise PushBlocked("STALE_MARKET_COMPLETION_RECEIPT")
     text = _report_text(doc)
     chunks = _chunks(text)
     if any(len(part.encode("utf-8")) > 1700 for part in chunks):
@@ -272,10 +274,12 @@ def main(argv=None):
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--outbox", required=True, type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--expected-start-local", default="")
     args = parser.parse_args(argv)
     try:
         result = dispatch(args.receipt, args.config, args.outbox,
-                          dry_run=args.dry_run)
+                          dry_run=args.dry_run,
+                          expected_start=args.expected_start_local)
     except Exception as exc:
         # Never print sensitive urllib errors: they can contain credentials
         # in the token URL. Fixed error type only.

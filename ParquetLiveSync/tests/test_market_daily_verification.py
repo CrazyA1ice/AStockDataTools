@@ -128,6 +128,31 @@ class DailyVerificationTests(unittest.TestCase):
         self.assertEqual(
             V.assess("SECTORS", None, "")["data_validation"], "NOT_RUN")
 
+    def test_finance_nightly_cutoff_is_deferred_not_bad_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = {
+                "EIGHT_PERIODS": market_log(),
+                "SECTORS": sector_log(),
+                "ADJUSTMENTS_ROTATING": adj_log(more=False),
+            }
+            records = {}
+            for name, contents in logs.items():
+                path = Path(tmp) / (name + ".log")
+                path.write_text(contents, encoding="utf-8")
+                records[name] = {"exit_code": 0, "log_path": str(path)}
+            records["FINANCIAL_DAILY"] = {
+                "exit_code": 87, "status": "DEFERRED_CUTOFF",
+                "log_path": str(Path(tmp) / "not-downloaded.log")}
+            found = V.report({"stage_records": records},
+                             expected_sources={"eltdx", "tencent"})
+        self.assertEqual(found["execution"], "PARTIAL")
+        self.assertNotEqual(found["data_validation"], "FAIL")
+        self.assertEqual(found["sections"]["FINANCIAL_DAILY"]["execution"],
+                         "DEFERRED")
+        self.assertIn("顺延下次20:05",
+                      found["sections"]["FINANCIAL_DAILY"]["detail"])
+        self.assertIn("财务：数据未验证", found["notification_text"])
+
     def test_run_summary_mentions_failures_unknown_and_known_issues(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = {

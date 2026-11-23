@@ -71,6 +71,10 @@ class CompletionPushTests(unittest.TestCase):
         self.assertEqual(res["status"],
                          "NOT_CONFIGURED_LOCAL_RECEIPT_RETAINED")
         self.assertEqual(len(list(self.outbox.glob("*.json"))), 1)
+        text_files = list(self.outbox.glob("*.txt"))
+        self.assertEqual(len(text_files), 1)
+        self.assertEqual(text_files[0].read_text(encoding="utf-8"),
+                         P._report_text(fixture_report()))
         with self.assertRaises(P.PushBlocked):
             # Prevent duplicate sends if status becomes ambiguous
             P._checked_config(self.config)

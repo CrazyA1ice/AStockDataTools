@@ -6,10 +6,23 @@ $runner=Join-Path $module 'scheduled-afternoon-update.ps1'
 $installer=Join-Path $module 'install-schedule.ps1'
 $notify=Join-Path $module 'notify-market-update.ps1'
 $activation=Join-Path $module 'activate-evening-schedule.ps1'
-foreach($file in @($runner,$installer,$notify,$activation,(Join-Path $module 'run-qmt-financial-daily.ps1'))){
+$setup=Join-Path $module 'setup-market-notification.ps1'
+foreach($file in @($runner,$installer,$notify,$activation,$setup,(Join-Path $module 'run-qmt-financial-daily.ps1'))){
     $tokens=$null; $errors=$null
     [void][System.Management.Automation.Language.Parser]::ParseFile($file,[ref]$tokens,[ref]$errors)
     if($null -ne $errors -and $errors.Count -gt 0){throw ('PowerShell AST error: '+$file+' '+($errors | Out-String))}
+}
+# The user runs Windows PowerShell 5.1. A UTF-8 script without BOM
+# containing Chinese prompts can be mis-decoded using the Windows ANSI
+# codepage and may fail to parse before prompting for credentials.
+foreach($value in [IO.File]::ReadAllBytes($setup)){
+    if($value -gt 127){throw 'WECOM_SETUP_MUST_BE_ASCII_FOR_WINDOWS_POWERSHELL_51'}
+}
+$setupSource=[IO.File]::ReadAllText($setup)
+if($setupSource -notmatch '-AsSecureString' -or
+   $setupSource -notmatch 'SetAccessRuleProtection' -or
+   $setupSource -match '--canary-send'){
+    throw 'WeCom local setup must hide secrets and never transmit a canary'
 }
 $text=[IO.File]::ReadAllText($runner)
 $names=@("'EIGHT_PERIODS'","'SECTORS'","'ADJUSTMENTS_ROTATING'","'FINANCIAL_DAILY'")

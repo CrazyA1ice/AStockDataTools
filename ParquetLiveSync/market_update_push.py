@@ -216,19 +216,27 @@ def _provider_request(url: str, *, payload: dict | None = None,
         raise PushBlocked("WECOM_RESPONSE_PARSE_ERROR", stage=stage) from None
 
 
+def _app_access_token(cfg: dict) -> str:
+    """Authenticate only: never sends a message or prints the access token."""
+    if cfg["provider"] != "wecom_app":
+        raise PushBlocked("WECOM_APP_REQUIRED_FOR_TOKEN_PROBE", stage="CONFIG")
+    url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?" + urlencode({
+        "corpid": cfg["corp_id"], "corpsecret": cfg["corp_secret"]})
+    token = _provider_request(url, stage="TOKEN")
+    if token["errcode"] != 0:
+        raise PushBlocked("WECOM_ACCESS_TOKEN_REJECTED", stage="TOKEN",
+                          provider_errcode=token["errcode"])
+    if not isinstance(token.get("access_token"), str) or not token["access_token"]:
+        raise PushBlocked("WECOM_ACCESS_TOKEN_MISSING", stage="TOKEN")
+    return token["access_token"]
+
+
 def _send_one(cfg: dict, message: str) -> None:
     kind = cfg["provider"]
     if kind == "wecom_app":
-        url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?" + urlencode({
-            "corpid": cfg["corp_id"], "corpsecret": cfg["corp_secret"]})
-        token = _provider_request(url, stage="TOKEN")
-        if token["errcode"] != 0:
-            raise PushBlocked("WECOM_ACCESS_TOKEN_REJECTED", stage="TOKEN",
-                              provider_errcode=token["errcode"])
-        if not isinstance(token.get("access_token"), str) or not token["access_token"]:
-            raise PushBlocked("WECOM_ACCESS_TOKEN_MISSING", stage="TOKEN")
+        access_token = _app_access_token(cfg)
         send_url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?" + urlencode({
-            "access_token": token["access_token"]})
+            "access_token": access_token})
         body = {"touser": cfg["to_user"], "agentid": cfg["agent_id"],
                 "msgtype": "text", "text": {"content": message},
                 "safe": 0, "enable_duplicate_check": 1,
@@ -348,12 +356,20 @@ def main(argv=None):
     parser.add_argument("--validate-config", action="store_true")
     parser.add_argument("--canary-send", action="store_true",
                         help="Explicitly send ONE harmless real WeCom test message")
+    parser.add_argument("--probe-token", action="store_true",
+                        help="WeCom app access-token check ONLY, no message sent")
     parser.add_argument("--expected-start-local", default="")
     args = parser.parse_args(argv)
-    if args.validate_config or args.canary_send:
+    if sum(bool(x) for x in (args.validate_config, args.canary_send,
+                             args.probe_token)) > 1:
+        parser.error("Choose one of --validate-config, --probe-token or --canary-send")
+    if args.validate_config or args.canary_send or args.probe_token:
         try:
             cfg = _checked_config(args.config)
-            if args.canary_send:
+            if args.probe_token:
+                _app_access_token(cfg)
+                print("MARKET_PUSH_TOKEN_PROBE=READY_NO_MESSAGE_SENT")
+            elif args.canary_send:
                 # This mode is never invoked by the scheduled market runner.
                 # Provider ACK must be checked separately on the handset.
                 _send_one(cfg, "【A股数据更新】企业微信通知渠道测试。"
@@ -364,8 +380,10 @@ def main(argv=None):
         except Exception as exc:
             # Never emit the raw provider 'errmsg', URLs, keys, or response.
             # For a canary only, show numeric errcode plus fixed stage.
-            if args.canary_send:
-                print("MARKET_PUSH_CANARY_DIAGNOSTIC=" + json.dumps(
+            if args.canary_send or args.probe_token:
+                label = ("MARKET_PUSH_TOKEN_DIAGNOSTIC=" if args.probe_token
+                         else "MARKET_PUSH_CANARY_DIAGNOSTIC=")
+                print(label + json.dumps(
                     _safe_diagnostic(exc), ensure_ascii=False, sort_keys=True))
             else:
                 print("MARKET_PUSH_CONFIG_INVALID=TRUE")

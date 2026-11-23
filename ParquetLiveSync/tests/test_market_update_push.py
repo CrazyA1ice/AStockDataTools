@@ -279,6 +279,54 @@ class CompletionPushTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("MARKET_PUSH_CONFIG_VALID=wecom_app", output.getvalue())
 
+    def test_probe_token_success_never_sends_message_or_leaks_token(self):
+        self.write_app_config()
+        output = io.StringIO()
+        with patch.object(P, "_http_json",
+                          return_value={"errcode": 0,
+                                        "access_token": "PRIVATE_TOKEN"}) as hit:
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--probe-token"])
+        self.assertEqual(status, 0)
+        self.assertEqual(hit.call_count, 1)
+        self.assertIsNone(hit.call_args.kwargs.get("payload"))
+        self.assertIn("READY_NO_MESSAGE_SENT", output.getvalue())
+        self.assertNotIn("PRIVATE_TOKEN", output.getvalue())
+        self.assertFalse(self.outbox.exists())
+
+    def test_probe_token_failure_shows_error_code_without_message_send(self):
+        self.write_app_config()
+        output = io.StringIO()
+        with patch.object(P, "_http_json",
+                          return_value={"errcode": 40013,
+                                        "errmsg": "PRIVATE_SECRET"}) as hit:
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--probe-token"])
+        self.assertEqual(status, 2)
+        self.assertEqual(hit.call_count, 1)
+        marker = "MARKET_PUSH_TOKEN_DIAGNOSTIC="
+        self.assertIn(marker, output.getvalue())
+        data = json.loads(output.getvalue().split(marker, 1)[1].strip())
+        self.assertEqual(data["stage"], "TOKEN")
+        self.assertEqual(data["provider_errcode"], 40013)
+        self.assertNotIn("PRIVATE_SECRET", output.getvalue())
+        self.assertFalse(self.outbox.exists())
+
+    def test_probe_token_refuses_webhook_without_sending(self):
+        self.config.write_text(json.dumps({
+            "provider": "wecom_webhook",
+            "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=fake"
+        }), encoding="utf-8")
+        output = io.StringIO()
+        with patch.object(P, "_http_json",
+                          side_effect=AssertionError("MUST_NOT_SEND")):
+            with redirect_stdout(output):
+                status = P.main(["--config", str(self.config), "--probe-token"])
+        self.assertEqual(status, 2)
+        self.assertIn("WECOM_APP_REQUIRED_FOR_TOKEN_PROBE",
+                      output.getvalue())
+        self.assertFalse(self.outbox.exists())
+
     def test_wecom_app_uses_correct_routes_and_acks(self):
         self.write_app_config()
         cfg = P._checked_config(self.config)

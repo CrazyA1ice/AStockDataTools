@@ -331,7 +331,14 @@ try {
 }
 if($failures.Count){throw ('Market daily update failed: '+($failures -join '; '))}
 if($outcome -eq 'PARTIAL'){
-    throw 'MARKET_2005_PARTIAL_DATA_VALIDATION: detailed same-run logs and status receipt retained'
+    if($financeDeferred -and $failures.Count -eq 0 -and
+       $completed.Count -eq ($stageNames.Count-1)){
+        # An honest PARTIAL receipt and push are still emitted; a planned
+        # bedtime deferral is not a broken Windows scheduled task.
+        Write-Host 'MARKET_2005_ROUTINE_FINANCE_CONTINUATION_NEXT_EVENING=TRUE'
+    }else{
+        throw 'MARKET_2005_PARTIAL_DATA_VALIDATION: detailed same-run logs and status receipt retained'
+    }
 }
 }finally{
     if($runMutexHeld){$runMutex.ReleaseMutex()}

@@ -31,13 +31,33 @@ a4987bba0ce3a1f6da05242f64cc21b94b070b193b5590ddb7bbd7f9197f5b01
 
 ## Windows 可视化运行
 
-在 D:\ChatGPT\AStockDataTools 工作目录执行一整行：
+**统一三页数据管理中心入口**（在正式主仓库 D:\ChatGPT\AStockDataTools 打开）：
 
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1
 
-入口会先跑40项全离线模拟回归测试，成功后打开 Tkinter 中文 GUI，展示八周期状态、日期、下载进度、日志，支持预览、开始、停止（在当前日完成后退出），不会再运行H5任务。
+**无需部署即可查看真实账本的只读试运行**：新版GUI先在固定 SHA 的 detached Git worktree 打开，不复制或覆盖主仓库文件。使用已存在的主仓库 `.venv` Python 和新的 `-ReviewMainRepo` 参数，只在窗口内读取正式主仓库 `ParquetLiveSync/work` 下的账本、日志、历史待审记录；主仓库中的 `.git` 必须是目录，试运行工作树中的 `.git` 必须是文件。程序标题显式显示「只读试运行」。
 
-默认从2026-10-14取到前一个北京时间交易候选日；若当前已过北京时间20:00也允许尝试今天（仍以真实ZIP可下载为准）。建议先用3个最近日期验证，再扩大到10月14日以后的所有日期。
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File <固定SHA独立工作树>\ParquetLiveSync\run-gui.ps1 -ReviewMainRepo D:\ChatGPT\AStockDataTools -PythonPath D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe
+
+试运行模式下的「按既有游标继续更新」「刷新财务缓存并检查历史」和解码异常的刷新引导均禁用，代码入口也拒绝调用写入程序；不会自动查询QMT日历。可先点击「检查财务问题（只读）」查看真实待审，随后如确认存在单只解码错误，可手动点击「检查QMT九表（只读）」从真实客户端读取最多九张表的缓存状态，**不下载/入库，不可据此宣称历史来源认证**。此模式不要求切换主仓库分支、不修改20:05任务，也不把 detached 工作树的空 `work` 误当成正式账本；若校验不通过则拒绝启动。关闭窗口即退出试运行，原正式界面不受影响。
+**首次更新后的可选自检**：若需要对某一固定提交进行验收，可运行原启动器的 `-QuickCheck`，它仅执行原三页界面合成测试和QMT九表模拟接口测试，完成后直接退出，不打开GUI、不连接真实QMT、不执行生产任务。普通启动不加开关时**完全不会运行测试**。如果在独立的Git worktree验收，可添加 `-PythonPath D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe` 复用现有Python环境；这不把隔离工作树的假数据当成主仓库正式账本，也不自动部署任何代码。
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File ParquetLiveSync\run-gui.ps1 -QuickCheck
+
+也可以直接双击 `ParquetLiveSync\start-market-update-dashboard.cmd`。CMD 会调用上述同一份 `run-gui.ps1`，再由它启动**唯一的** `market_simple_desktop.py`，两个入口不再各自维护一套启动规则：仅显示「数据总览」「下载 / 更新」「异常与日志」。不再在每次打开软件前执行数百项模拟测试，也不因旧日线研究数据集的清单不存在而拒绝打开三页界面。启动时只检查项目既有 `.venv\Scripts\python.exe` 与 GUI 主文件是否存在，并清除可能造成退出后 `>>>` 挂住的继承 Python 交互变量。
+
+**外部财务源的独立Python环境（可选）**：仅「近期公告与东财三表对照（只读试验）」优先寻找主仓库根目录的 `.venv-akshare\\Scripts\\python.exe`；如果独立环境不存在，沿用现有 `.venv`，但**不会自动安装依赖**。如果独立环境目录已经创建却不完整，会拒绝回退到正式 QMT Python。独立环境需具备 `akshare` 和 `pyarrow` 及其必要依赖，以只读读取已有 QMT Parquet 快照；建议使用 Python 3.11、通过官方 PyPI 安装。GUI 主进程、QMT 九表探针、财务导入器和原 20:05 任务始终继续使用原 `.venv`，不可用跨源试验来授权历史版本覆盖。纯工具环境 `.venv-akshare/` 已加入 Git 忽略。
+
+**Capital首阻断分类（GUI只读元数据）**：在「异常与日志」页点击「Capital首阻断分类（只读）」，复用既有 Finance P2 `market_center_finance_pending_triage.summarize_pending` 与 P3 `market_center_finance_pending_snapshot_review.review`，以同一个正式账本SHA校验分类与历史快照样本。展示全体待审数、Capital作为首张冲突表的数量、报告期键集合增删/业务日期字段变更等**既有证明拒绝类别**及最多2只Capital历史快照文件/active pin元数据样本。该入口不启动QMT缓存读取、不查询东方财富、不读Parquet财务数值、不修改本地账本；保护19:50–20:25正式调度时段。证明类别属于**先前记录的待审原因**，不是本次重新验证；历史异常**具体报告期尚未定位**，不能据此豁免冲突、自动修复或判定九表全部正常。若元数据或账本SHA变动，拒绝展示分类结论。
+
+**QMT异常定向财务核验（首张冲突表只读试验）**：三页管理中心「异常与日志」页的「QMT异常首张报表核验（只读）」只对正式财务待审账本中 `SOURCE_HISTORY_CONFLICT` 且 `detail` 能可信识别第一张冲突表为 Balance/Income/CashFlow 的股票请求东方财富，只选择按股票代码排序的首只合格股票及该第一张报表；本轮不查询近期公告、不拉另外两张无关三表、不会核对正常QMT股票，绝不做全市场交叉审核。Python子进程会重新校验正式待审账本的身份、对应主数据根目录、文件SHA稳定性以及第一冲突表，拒绝GUI传入的无依据选择。Capital、持股及PerShare等非三表异常或无法分类的冲突仍保留待审，使用QMT专项诊断，不把它们归为两源一致。账本原始冲突记录**只记录第一张发生冲突的表，未可信定位具体历史报告期**；此阶段仅缩到“股票+首张表”，该表当前仍通过AKShare读取完整历史，后续必须依据经过验证的具体报告期证据才能优化成精确报告期请求。对比结果只作为人工审阅线索，不会下载QMT、覆盖历史、清pending、修改20:05或证明全部九表一致。独立`.venv-akshare`仍仅用于只读外部源按钮。
+
+**旧版公告抽样试验（当前GUI不再触发）**：`discover_recent()`、`discover_pending_sample()` 与原三表 `pilot()` 的只读实验代码及专项测试暂时保留，供旧样本回归对照使用；它们既不接入每日20:05任务，也不会由新版「QMT异常首张报表核验（只读）」按钮调用。历史冲突的外部核验应以待审账本的首张冲突表为限，不能因近3日公告是否存在，推断历史版本冲突已解决。所有跨源结果仅为辅助证据，不批准入库、覆盖、清除pending或减少QMT全市场更新与自身质量核验。
+
+**尚未上线的重点**：自动使用公告发现结果优先下载新增财务、可靠的全市场公告覆盖证明和巨潮原始PDF裁决仍未实现；正式财务系统继续依靠旧有单一20:05任务进行受保护轮转。这个按钮只是有界真实源对照，用于先验证接口可用性和字段口径、避免继续只在纸面规划。
+「数据总览」读取已有账本，显示各周期覆盖和财务待审数量；「异常与日志」可手动运行本地财务九表元数据检查，定位单股解码异常，并可进一步启动**仅只读**的 QMT 九表接口定位。诊断会给出中文结论并可复制，既不自动修复历史数据，也不批准正式财务入库。「下载 / 更新」仍保留既有带确认的执行入口；自选股票与日期的完整写入尚未开放，预览不等于下载。打开 GUI 本身不会安装定时任务、下载数据、写Parquet/H5或清除pending。
+
+旧 `gui.py`、`gui_simple.py` 仍保留在仓库中供历史维护，不再由上述两个日常入口启动。**本启动器统一调整尚处 PR #241 Draft，合并或在主仓库部署前，用户电脑上的旧脚本不会自动改变。** 下方较早日期的研发说明属于原旧GUI与日线更新器的历史记录，不应视作新版三页GUI当前按钮行为。
 
 CLI 命令示例，使用仓库既有Python .venv：
 

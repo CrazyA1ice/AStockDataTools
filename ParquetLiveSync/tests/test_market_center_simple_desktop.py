@@ -1,0 +1,1443 @@
+"""Synthetic latest trading day, date-range and three-tab GUI tests."""
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
+import json
+import tkinter as tk
+import unittest
+
+import market_simple_ui_model as M
+import market_daily_calendar_read as C
+import market_simple_desktop as UI
+import market_update_dashboard as OLD
+
+
+def sample_finance_census():
+    return {
+        "status": "S9_FULL_PENDING_METADATA_CENSUS_READONLY_NOT_SOURCE_CERTIFIED",
+        "can_apply": False, "can_commit": False,
+        "all_historical_versions_verified": False, "qmt_calls": 0,
+        "ledger_pending_total": 2,
+        "pending_by_reason": {
+            "SOURCE_HISTORY_CONFLICT": 1, "CACHE_DECODE_ERROR": 1},
+        "first_recorded_conflict_table_counts": {"Capital": 1},
+        "per_share_without_local_snapshots": 2,
+        "nine_table_local_state_counts": [
+            {"table": "PerShare", "state": "M", "count": 2},
+            {"table": "Capital", "state": "M", "count": 1},
+            {"table": "Capital", "state": "U", "count": 1},
+            {"table": "Balance", "state": "M", "count": 1},
+            {"table": "Balance", "state": "P", "count": 1},
+            {"table": "Income", "state": "M", "count": 1},
+            {"table": "Income", "state": "P", "count": 1},
+            {"table": "CashFlow", "state": "M", "count": 1},
+            {"table": "CashFlow", "state": "P", "count": 1},
+            {"table": "Top10FlowHolder", "state": "M", "count": 1},
+            {"table": "Top10FlowHolder", "state": "P", "count": 1},
+            {"table": "Top10Holder", "state": "M", "count": 1},
+            {"table": "Top10Holder", "state": "P", "count": 1},
+            {"table": "HolderNum", "state": "M", "count": 1},
+            {"table": "HolderNum", "state": "P", "count": 1},
+            {"table": "PershareIndex", "state": "M", "count": 1},
+            {"table": "PershareIndex", "state": "P", "count": 1},
+        ],
+        "cache_decode_error_stocks": ["688259.SH"],
+        "journal_counts": {"capital-recovery-journal": 0,
+                           "scoped-finance-transaction-journals": 0},
+        "rows_on_page": [
+            {"symbol": "688259.SH", "reason": "CACHE_DECODE_ERROR",
+             "nine_table_states": {"PerShare": "M"},
+             "first_recorded_conflict_table": None},
+            {"symbol": "000010.SZ", "reason": "SOURCE_HISTORY_CONFLICT",
+             "nine_table_states": {"PerShare": "M", "Capital": "U"},
+             "first_recorded_conflict_table": "Capital"},
+        ],
+    }
+
+
+def sample_qmt_table_probe():
+    names = ("Balance", "Income", "CashFlow", "Capital",
+             "Top10FlowHolder", "Top10Holder", "HolderNum",
+             "PershareIndex", "PerShare")
+    values = []
+    for name in names:
+        bad = name == "PerShare"
+        values.append({
+            "table": name,
+            "role": "OPTIONAL_UNCONFIRMED" if bad else "DOCUMENTED_CORE",
+            "status": "UTF8_DECODE_ERROR" if bad else "ROWS_IN_LOCAL_CACHE",
+            "cached_rows": None if bad else 3,
+        })
+    return {
+        "status": "QMT_FINANCE_TABLE_READONLY_PROBE_REQUIRES_REVIEW",
+        "symbol": "688259.SH", "tables_checked": 9, "tables": values,
+        "qmt_get_financial_data_calls": 9, "qmt_download_calls": 0,
+        "can_apply": False, "can_commit": False,
+        "can_download": False, "official_finance_writes": 0,
+        "per_share_optional_support_proven": False,
+        "historical_consistency_verified": False,
+        "empty_cache_proves_provider_empty": False,
+    }
+
+
+class CanonicalGuiLauncherTests(unittest.TestCase):
+    """Smoke both real launchers without creating a GUI or touching disk data."""
+
+    def test_ps_launcher_opens_three_tab_gui_without_full_regression(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("market_simple_desktop.py", ps)
+        self.assertNotIn("gui_simple.py", ps)
+        self.assertIn("if ($QuickCheck) {", ps)
+        normal_start = ps.split(
+            "# Normal path is unchanged, always one GUI and no tests.", 1)[1]
+        self.assertNotIn("-m unittest", normal_start)
+        self.assertIn("    return\n}\n# The review path", ps)
+        self.assertNotIn("H5ParquetReconciler", ps)
+        self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
+        self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
+        self.assertIn("& $python -u -B $entry", ps)
+
+    def test_opt_in_quickcheck_is_focused_and_never_starts_gui(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        check = ps.split("if ($QuickCheck) {", 1)[1].split(
+            "# The review path reads only", 1)[0]
+        self.assertIn("test_market_center_simple_desktop.py", check)
+        self.assertIn("test_qmt_extra_data.py", check)
+        self.assertIn("-k table_probe", check)
+        self.assertIn("-k valid_probe_cli", check)
+        self.assertNotIn("-p 'test_*.py'", check)
+        self.assertNotIn("& $python -u -B $entry", check)
+        self.assertIn("QUICK_GUI_CHECK_PASS", check)
+        self.assertIn("SetEnvironmentVariable('PYTHONPATH'", check)
+
+    def test_quickcheck_can_use_existing_main_checkout_python(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("[string]$PythonPath = ''", ps)
+        self.assertIn("if ($PythonPath)", ps)
+        self.assertIn("Test-Path -LiteralPath $python -PathType Leaf", ps)
+        self.assertNotIn("scheduled-afternoon-update.ps1", ps)
+
+    def test_cmd_launcher_delegates_to_the_canonical_ps_gui(self):
+        cmd = (UI.MODULE / "start-market-update-dashboard.cmd").read_text(
+            encoding="utf-8")
+        self.assertIn(
+            'powershell.exe -NoProfile -ExecutionPolicy Bypass -File '
+            '"%~dp0run-gui.ps1"', cmd)
+        self.assertNotIn("market_simple_desktop.py", cmd)
+        self.assertNotIn("gui_simple.py", cmd)
+        self.assertNotIn("python.exe", cmd)
+        self.assertNotIn("unittest", cmd)
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("Remove-Item Env:PYTHONINSPECT", ps)
+        self.assertIn("Remove-Item Env:PYTHONSTARTUP", ps)
+        self.assertIn("& $python -u -B $entry", ps)
+
+
+class ReadonlyGuiReviewTests(unittest.TestCase):
+    def test_review_root_must_be_detached_and_canonical(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp)
+            detached = home / "pinned-review"
+            (detached / "ParquetLiveSync").mkdir(parents=True)
+            (detached / ".git").write_text(
+                "gitdir: synthetic", encoding="utf-8")
+            main = home / "canonical"
+            (main / ".git").mkdir(parents=True)
+            module = main / "ParquetLiveSync"
+            (module / "work").mkdir(parents=True)
+            with patch.object(OLD, "REPO", detached), \
+                 patch.object(OLD, "MODULE",
+                              detached / "ParquetLiveSync"):
+                self.assertEqual(
+                    OLD._review_state_module(str(main)), module)
+            with patch.object(OLD, "REPO", main), \
+                 patch.object(OLD, "MODULE", module), \
+                 self.assertRaisesRegex(
+                     ValueError, "DETACHED_WORKTREE"):
+                OLD._review_state_module(str(main))
+            with patch.object(OLD, "REPO", detached), \
+                 patch.object(OLD, "MODULE",
+                              detached / "ParquetLiveSync"), \
+                 self.assertRaisesRegex(
+                     ValueError, "CANONICAL_CHECKOUT_REQUIRED"):
+                OLD._review_state_module(str(detached))
+
+    def test_review_launcher_explicit_and_restores_process_environment(self):
+        ps = (UI.MODULE / "run-gui.ps1").read_text(encoding="utf-8")
+        self.assertIn("[string]$ReviewMainRepo = ''", ps)
+        self.assertIn("if ($ReviewMainRepo) {", ps)
+        self.assertIn("Read-only review requires a detached worktree", ps)
+        self.assertIn("ASTOCK_GUI_REVIEW_REPO", ps)
+        self.assertIn("SetEnvironmentVariable(", ps)
+        review = ps.split("if ($ReviewMainRepo) {", 1)[1].split(
+            "# Normal path is unchanged", 1)[0]
+        self.assertNotIn("-m unittest", review)
+        self.assertIn("    return\n}", review)
+
+
+class SimpleModelTests(unittest.TestCase):
+    def test_finance_pending_exposes_reasons_not_just_count(self):
+        brief = M.finance_pending_brief({
+            "pending": {
+                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"},
+            }})
+        self.assertIn("待审 2 只", brief)
+        self.assertIn("历史差异 1", brief)
+        self.assertIn("缓存解码 1", brief)
+        self.assertIn("不会覆盖旧历史", brief)
+
+    def test_missing_or_malformed_finance_ledger_not_green(self):
+        self.assertIn("账本不可用", M.finance_pending_brief({}))
+        self.assertIn("格式待核实", M.finance_pending_brief(
+            {"pending": {"000010.SZ": "bad"}}))
+        self.assertIn("不代表财务历史已跨源核验",
+                      M.finance_pending_brief({"pending": {}}))
+
+    def test_finance_diagnostic_binds_root_from_existing_ledger(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            extra = root / "AllCycleAStockData" / "qmt_extra"
+            self.assertEqual(M.finance_root_from_progress(
+                {"root": str(extra)}), root)
+            for invalid in ({}, {"root": str(root)},
+                            {"root": "relative/qmt_extra"}):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises(M.InvalidSimplePlan):
+                        M.finance_root_from_progress(invalid)
+
+    def test_finance_diagnostic_chinese_view_is_not_repair_approval(self):
+        text = M.finance_issue_report_view(sample_finance_census())
+        self.assertIn("待审 2 只", text)
+        self.assertIn("688259.SH", text)
+        self.assertIn("PerShare 无本地快照 2/2", text)
+        self.assertIn("无快照10、未pin1", text)
+        self.assertIn("不能据此判断QMT来源为空", text)
+        self.assertIn("不会补pin", text)
+
+    def test_finance_diagnostic_rejects_forged_green_or_bad_counts(self):
+        for fake in (
+            {**sample_finance_census(), "can_commit": True},
+            {**sample_finance_census(), "qmt_calls": 1},
+            {**sample_finance_census(), "ledger_pending_total": 4},
+            {**sample_finance_census(), "status": "UNKNOWN"},
+        ):
+            with self.subTest(fake=fake.get("status")):
+                with self.assertRaises(M.InvalidSimplePlan):
+                    M.finance_issue_report_view(fake)
+
+    def test_qmt_probe_receipt_ignores_gbk_console_preamble(self):
+        payload = (b"\xd1\xb8\xcd\xb6\xc6\xf4\xb6\xaf\xc8\xd5\xd6\xbe\n" +
+                   b"QMT_FINANCE_TABLE_READONLY_PROBE=" +
+                   json.dumps(sample_qmt_table_probe()).encode("utf-8") +
+                   b"\n")
+        receipt = M.extract_qmt_probe_receipt(payload)
+        self.assertEqual(receipt["symbol"], "688259.SH")
+        self.assertIn("PerShare：UTF-8解码失败",
+                      M.finance_qmt_probe_view(receipt, "688259.SH"))
+
+    def test_qmt_probe_receipt_rejects_corrupt_or_duplicate_json(self):
+        prefix = b"QMT_FINANCE_TABLE_READONLY_PROBE="
+        good = prefix + json.dumps(sample_qmt_table_probe()).encode("utf-8")
+        for raw in (b"\xff only qmt log\n",
+                    prefix + b"\xff",
+                    prefix + b"not-json",
+                    good + b"\n" + good,
+                    prefix + b"[]"):
+            with self.subTest(raw=raw[:20]), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.extract_qmt_probe_receipt(raw)
+
+
+    def test_external_finance_chinese_json_survives_gbk_pipe_as_ascii(self):
+        # Simulates ASCII-escaped child output under a Windows cp936 pipe.
+        receipt = {"status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+                   "公告标题": "2026年第三季度报告更正公告"}
+        escaped = json.dumps(receipt, ensure_ascii=True,
+                             separators=(",", ":")).encode("cp936")
+        raw = b"\xff legacy provider log\nFINANCE_EXTERNAL_READONLY=" + escaped + b"\n"
+        got = M.extract_finance_secondary_receipt(raw, 0)
+        self.assertEqual(got["公告标题"], receipt["公告标题"])
+        # A raw cp936 success receipt must still fail closed; do not
+        # weaken UTF-8 validation to accept untrusted vendor output.
+        legacy = json.dumps(receipt, ensure_ascii=False).encode("cp936")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b"FINANCE_EXTERNAL_READONLY=" + legacy + b"\n", 0)
+
+    def test_external_finance_tagged_error_distinguishes_missing_dependency(self):
+        payload = (b"\xff GBK vendor startup log\n" +
+                   b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                   b'"can_apply":false,"can_commit":false}\n')
+        with self.assertRaisesRegex(M.InvalidSimplePlan, "未安装akshare"):
+            M.extract_finance_secondary_receipt(payload, 2)
+        self.assertNotIn(b"ValueError", payload)
+
+    def test_external_finance_exit_and_receipt_are_fail_closed(self):
+        valid = (b'FINANCE_EXTERNAL_READONLY={"status":"TEST"}\n')
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(valid, 2)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                b'"can_apply":true,"can_commit":false}\n', 2)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                b'FINANCE_EXTERNAL_READONLY_ERROR={"status":"AKSHARE_NOT_INSTALLED",'
+                b'"can_apply":false,"can_commit":false}\n', 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                valid + valid, 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(
+                valid + b'FINANCE_EXTERNAL_READONLY_ERROR={}\n', 0)
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.extract_finance_secondary_receipt(b'just stdout\n', 0)
+        self.assertEqual(M.extract_finance_secondary_receipt(valid, 0),
+                         {"status": "TEST"})
+
+    def test_timeout_phase_uses_only_trusted_stage_markers(self):
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"\xff log\nFINANCE_EXTERNAL_STAGE=SCOPED_NOTICES\n"),
+            "近期单股公告查询阶段")
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"FINANCE_EXTERNAL_STAGE=SCOPED_NOTICES\n"
+            b"FINANCE_EXTERNAL_STAGE=THREE_STATEMENTS\n"),
+            "东方财富三大报表历史查询阶段")
+        self.assertEqual(M.finance_secondary_timeout_stage(
+            b"FINANCE_EXTERNAL_STAGE=untrusted\n"), "阶段不明")
+        self.assertEqual(M.finance_secondary_timeout_stage(None), "阶段不明")
+
+    def test_one_stock_sample_is_not_reported_as_three_stock_agreement(self):
+        result = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_NOT_COMPLETE",
+                "source_requests_attempted": 2,
+                "failed_categories": [],
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [
+                {"symbol": "000010.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000036.SZ",
+                 "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                 "fields_compared": 2, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "crosscheck_stocks_not_attempted": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False,
+        }
+        view = M.finance_secondary_pilot_view(result)
+        self.assertIn("非全市场", view)
+        self.assertIn("最多实际比较1只", view)
+        self.assertIn("未运行财报对照", view)
+        self.assertIn("不代表两源一致", view)
+        self.assertIn("仍须继续QMT轮转兜底", view)
+
+    def test_real_scoped_finance_receipt_explains_failed_stock_and_time(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR",
+                "source_requests_attempted": 3,
+                "failed_categories": [
+                    {"symbol": "000036.SZ", "error_type": "TimeoutError"}],
+                "unique_event_leads": 4,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": ["000010.SZ", "000055.SZ"]},
+            "crosschecks": [
+                {"symbol": "000010.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000036.SZ",
+                 "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                 "fields_compared": 24, "fields_inconclusive": 0,
+                 "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False},
+                {"symbol": "000055.SZ",
+                 "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                 "fields_compared": 0, "value_differences": 0,
+                 "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "discovery_seconds": 65.1,
+            "crosscheck_seconds": 26.9,
+            "total_seconds": 92.0,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("公告抽样查询完成 2/3", view)
+        self.assertIn("000036.SZ（TimeoutError）", view)
+        self.assertIn("个股公告 65.1 秒", view)
+        self.assertIn("三表对照及本地快照 26.9 秒", view)
+        self.assertIn("有效对比 24 个", view)
+        self.assertIn("不代表两源一致", view)
+        self.assertIn("不会自动下载", view)
+        report["discovery"]["failed_categories"][0]["error_type"] = (
+            "TimeoutError private/path")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
+    def test_no_notice_api_is_explicitly_incomplete_not_zero_updates(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "EXTERNAL_ANNOUNCEMENT_SOURCE_UNAVAILABLE",
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("公告接口整体不可用", view)
+        self.assertIn("不能根据空结果排除新增财报", view)
+        report["discovery"]["status"] = "SCOPED_PENDING_LEADS_NOT_COMPLETE"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
+    def test_scoped_finance_rejects_spoofed_failure_or_time(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "EXPLICIT_PENDING_STOCK_SAMPLE_ONLY",
+                "status": "SCOPED_PENDING_LEADS_PARTIAL_SOURCE_ERROR",
+                "source_requests_attempted": 1,
+                "failed_categories": [
+                    {"symbol": "688000.SH", "error_type": "OSError"}],
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "NOT_RUN_ONE_STOCK_PILOT_BUDGET",
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "discovery_seconds": 2,
+            "crosscheck_seconds": 3,
+            "total_seconds": 2,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["discovery"]["failed_categories"][0]["symbol"] = "000010.SZ"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["total_seconds"] = 5
+        self.assertIn("公告抽样查询完成 0/1",
+                      M.finance_secondary_pilot_view(report))
+
+    def test_individual_three_table_timings_shown_without_source_values(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "unique_event_leads": 0,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": []},
+            "crosschecks": [{
+                "symbol": "000010.SZ",
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "fields_compared": 3, "fields_inconclusive": 0,
+                "value_differences": 0,
+                "can_commit": False, "can_clear_pending": False,
+                "table_timings": [
+                    {"table": "Balance",
+                     "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                     "local_seconds": 0.15, "eastmoney_seconds": 12.25,
+                     "comparison_seconds": 0.05},
+                    {"table": "Income",
+                     "status": "EXTERNAL_SOURCE_ERROR",
+                     "local_seconds": 0.10, "eastmoney_seconds": 8.5,
+                     "comparison_seconds": 0.0},
+                    {"table": "CashFlow", "status": "NO_LOCAL_QMT_SNAPSHOT",
+                     "local_seconds": 0.02, "eastmoney_seconds": 0.0,
+                     "comparison_seconds": 0.0}]}],
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(report)
+        self.assertIn("Balance：本地快照 0.15秒，东财接口 12.25秒", view)
+        self.assertIn("Income：本地快照 0.10秒，东财接口 8.50秒", view)
+        self.assertIn("外部来源异常", view)
+        self.assertIn("CashFlow：本地快照 0.02秒", view)
+        self.assertNotIn("2026年第三季度报告", view)
+        report["crosschecks"][0]["table_timings"][0]["table"] = "Other"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["table_timings"][0]["table"] = "Balance"
+        report["crosschecks"][0]["table_timings"][0]["eastmoney_seconds"] = -1
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["table_timings"][0]["eastmoney_seconds"] = 12.25
+        report["crosschecks"][0]["table_timings"][1]["status"] = (
+            "EXTERNAL_SOURCE_ERROR private-account")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
+    def test_single_first_blocker_view_never_claims_all_tables_or_history(self):
+        report = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "scope": "QMT_FIRST_BLOCKER_TABLE_ONLY",
+                "status": "NOT_RUN_HISTORICAL_CONFLICT_REVIEW",
+                "unique_event_leads": 0, "source_requests_attempted": 0,
+                "failed_categories": [], "candidate_symbols_in_known_scope": [],
+                "full_market_coverage_checked": False,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False},
+            "crosschecks": [{
+                "symbol": "000036.SZ",
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "first_blocker_table": "Income",
+                "other_finance_tables_not_checked": True,
+                "fields_compared": 8, "fields_inconclusive": 0,
+                "value_differences": 0,
+                "tables": [{"table": "Income"}],
+                "table_timings": [{
+                    "table": "Income",
+                    "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                    "local_seconds": 0.03, "eastmoney_seconds": 25.5,
+                    "comparison_seconds": 0.0}],
+                "can_commit": False, "can_clear_pending": False}],
+            "crosscheck_sample_limit": 1,
+            "first_blocker_scope_only": True,
+            "all_history_conflict_tables_identified": False,
+            "exact_conflict_report_dates_proven": False,
+            "total_seconds": 25.53,
+            "discovery_seconds": 0.0,
+            "crosscheck_seconds": 25.53,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        msg = M.finance_secondary_pilot_view(report)
+        self.assertIn("首张冲突表 Income", msg)
+        self.assertIn("本轮未执行近期公告查询", msg)
+        self.assertIn("冲突报告期未精准定位", msg)
+        self.assertIn("不会解除待审", msg)
+        self.assertIn("东财接口 25.50秒", msg)
+        self.assertIn("不会自动下载", msg)
+        report["crosschecks"][0]["first_blocker_table"] = "Capital"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+        report["crosschecks"][0]["first_blocker_table"] = "Income"
+        report["exact_conflict_report_dates_proven"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(report)
+
+    def test_capital_first_blocker_summary_is_ledger_only_not_report_date_proof(self):
+        triage = {
+            "status": "FINANCE_PENDING_LEDGER_READONLY_FIRST_BLOCKER_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "pending_total": 85, "conflict_total": 84,
+            "first_blocking_table_counts": [
+                {"table": "Capital", "count": 42},
+                {"table": "Top10Holder", "count": 33},
+                {"table": "Top10FlowHolder", "count": 5},
+                {"table": "HolderNum", "count": 4}],
+            "all_nine_tables_checked": False,
+            "pending_repair_approved": False,
+            "market_file_writes": False, "qmt_calls": 0}
+        snapshot = {
+            "status": "FINANCE_PENDING_SNAPSHOT_METADATA_READONLY_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "capital_proof_rejection_counts": [
+                {"proof_class": "REPORT_KEYS_ADDED_OR_REMOVED", "count": 36},
+                {"proof_class": "BUSINESS_OR_DATE_FIELD_CHANGED", "count": 6}],
+            "capital_proof_rejections_grouped": 42,
+            "samples": [{"stock": "000010.SZ", "first_blocking_table": "Capital",
+                         "immutable_snapshot_candidates": 3,
+                         "active_pin_metadata": 1,
+                         "content_sha256_verified": False,
+                         "financial_business_values_read": False}],
+            "sample_count": 1, "only_first_blocking_table_inspected": True,
+            "financial_payloads_read": False,
+            "historical_business_fields_compared": False,
+            "immutable_snapshot_content_verified": False,
+            "source_authenticity_certified": False,
+            "all_nine_tables_checked": False,
+            "can_repair": False, "can_execute": False,
+            "can_download": False, "market_file_writes": False,
+            "qmt_calls": 0}
+        view = M.finance_capital_first_blocker_view(triage, snapshot)
+        self.assertIn("Capital为首张冲突表42只", view)
+        self.assertIn("报告期键集合增删36", view)
+        self.assertIn("业务或日期字段变化6", view)
+        self.assertIn("只抽样1只", view)
+        self.assertIn("候选文件3份", view)
+        self.assertIn("历史冲突具体报告期未定位", view)
+        self.assertIn("未调用QMT或东方财富", view)
+        self.assertNotIn("2026-09-30", view)
+        snapshot["progress_sha256"] = "b" * 64
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+        snapshot["progress_sha256"] = "a" * 64
+        snapshot["can_repair"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+        snapshot["can_repair"] = False
+        snapshot["capital_proof_rejection_counts"][0]["proof_class"] = (
+            "REPORT_KEYS_ADDED_OR_REMOVED private path")
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_capital_first_blocker_view(triage, snapshot)
+
+    def test_external_finance_view_rejects_automatic_download_approval(self):
+        r = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "status": "RECENT_PAGED_LEADS_NOT_COMPLETE",
+                "unique_event_leads": 2,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": ["000010.SZ"]},
+            "crosschecks": [
+                {"symbol": "000010.SZ", "status": "READONLY",
+                 "fields_compared": 3, "fields_inconclusive": 2,
+                 "value_differences": 1,
+                 "can_commit": False, "can_clear_pending": False}],
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False}
+        view = M.finance_secondary_pilot_view(r)
+        self.assertIn("数值差异 1", view)
+        self.assertIn("有效对比 3", view)
+        self.assertIn("无法对比 2", view)
+        self.assertIn("不会自动下载", view)
+        r["discovery"]["can_schedule_download"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_secondary_pilot_view(r)
+
+    def test_qmt_readonly_probe_shows_separate_pershare_decode_failure(self):
+        result = M.finance_qmt_probe_view(
+            sample_qmt_table_probe(), "688259.SH")
+        self.assertIn("688259.SH", result)
+        self.assertIn("Balance：缓存有记录（3行）", result)
+        self.assertIn("PerShare：UTF-8解码失败", result)
+        self.assertIn("支持情况未确认", result)
+        self.assertIn("不自动修复", result)
+
+    def test_qmt_probe_refuses_forged_download_or_wrong_count(self):
+        for change in (
+            {"qmt_download_calls": 1},
+            {"can_commit": True},
+            {"tables_checked": 8},
+            {"symbol": "600000.SH"},
+        ):
+            with self.subTest(change=change):
+                r = {**sample_qmt_table_probe(), **change}
+                with self.assertRaises(M.InvalidSimplePlan):
+                    M.finance_qmt_probe_view(r, "688259.SH")
+
+    def test_qmt_probe_rejects_duplicate_tables_or_claimed_source_emptiness(self):
+        r = sample_qmt_table_probe()
+        r["tables"][8]["table"] = "Balance"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
+        r = sample_qmt_table_probe()
+        r["empty_cache_proves_provider_empty"] = True
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
+
+    def test_qmt_probe_distinguishes_optional_pershare_from_core(self):
+        r = sample_qmt_table_probe()
+        r["installed_xtquant_version"] = "250807.1.2"
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("250807.1.2", view)
+        self.assertIn("仅PerShare单表存在异常", view)
+        self.assertIn("仍不能证明九表组合请求的根因", view)
+
+    def test_qmt_probe_reports_core_failure_without_blame_on_pershare(self):
+        r = sample_qmt_table_probe()
+        r["tables"][0]["status"] = "UTF8_DECODE_ERROR"
+        r["tables"][0]["cached_rows"] = None
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("核心八表中需要排查 Balance", view)
+        self.assertIn("不能仅归因于PerShare", view)
+
+    def test_qmt_probe_all_empty_is_not_claimed_source_empty(self):
+        r = sample_qmt_table_probe()
+        for item in r["tables"]:
+            item["status"] = "EMPTY_OR_NOT_CACHED"
+            item["cached_rows"] = 0
+        view = M.finance_qmt_probe_view(r, "688259.SH")
+        self.assertIn("核心八表的本地缓存均为空或尚未采集", view)
+        self.assertIn("不能判定供应商源数据不存在", view)
+
+    def test_qmt_probe_rejects_false_history_or_optional_certification(self):
+        for claimed in ("historical_consistency_verified",
+                        "per_share_optional_support_proven"):
+            r = sample_qmt_table_probe()
+            r[claimed] = True
+            with self.subTest(claimed=claimed), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.finance_qmt_probe_view(r, "688259.SH")
+
+    def test_qmt_probe_version_must_not_contain_control_characters(self):
+        r = sample_qmt_table_probe()
+        r["installed_xtquant_version"] = "1.2\nINJECTED_APPROVAL"
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_qmt_probe_view(r, "688259.SH")
+
+    def test_verified_single_decode_error_can_prepare_only_one_stock(self):
+        self.assertEqual(
+            M.finance_decode_retry_target(sample_finance_census()),
+            "688259.SH")
+        empty = sample_finance_census()
+        empty["pending_by_reason"]["CACHE_DECODE_ERROR"] = 0
+        empty["pending_by_reason"]["SOURCE_HISTORY_CONFLICT"] = 2
+        empty["cache_decode_error_stocks"] = []
+        self.assertIsNone(M.finance_decode_retry_target(empty))
+
+    def test_decode_target_list_must_match_pending_and_stock_format(self):
+        for codes in ([], ["not-a-stock"], ["688259.SH", "688259.SH"]):
+            report = sample_finance_census()
+            report["cache_decode_error_stocks"] = codes
+            with self.subTest(codes=codes), \
+                 self.assertRaises(M.InvalidSimplePlan):
+                M.finance_decode_retry_target(report)
+
+    def test_cache_refresh_window_is_only_recent_31_days(self):
+        start, end = M.finance_decode_retry_window(cutoff=date(2026, 11, 20))
+        self.assertEqual((start, end), ("2026-10-21", "2026-11-20"))
+        with self.assertRaises(M.InvalidSimplePlan):
+            M.finance_decode_retry_window(cutoff="2026-11-20")
+
+    def test_one_decode_target_disabled_when_multiple_stocks_fail(self):
+        report = sample_finance_census()
+        report["pending_by_reason"]["CACHE_DECODE_ERROR"] = 2
+        report["pending_by_reason"]["SOURCE_HISTORY_CONFLICT"] = 0
+        report["cache_decode_error_stocks"] = ["688259.SH", "688622.SH"]
+        self.assertIsNone(M.finance_decode_retry_target(report))
+
+    def test_committed_date_is_selected_as_fallback(self):
+        ledger = {"periods": {"1min": {"2026-11": {
+            "days": ["2026-11-19", "2026-11-20"]}}}}
+        day, reason = M.initial_date(ledger, cutoff=date(2026, 11, 21))
+        self.assertEqual(day, "2026-11-20")
+        self.assertIn("本地已提交", reason)
+
+    def test_missing_ledger_never_guesses_holiday(self):
+        self.assertEqual(M.initial_date({}, cutoff=date(2026, 11, 21))[0], "")
+
+    def test_future_ledger_day_rejected(self):
+        ledger = {"periods": {"1min": {"2026-11": {
+            "days": ["2026-11-23"]}}}}
+        self.assertEqual(M.initial_date(
+            ledger, cutoff=date(2026, 11, 21))[0], "")
+
+    def test_eight_cycles_have_independent_date_ranges(self):
+        ledger = {"periods": {
+            "1min": {"2026-11": {"days": ["2026-11-19", "2026-11-20"]}},
+            "day": {"2026-11": {"days": ["2026-11-18", "2026-11-19"]}},
+        }}
+        result = {r["key"]: r for r in M.coverage_rows(ledger, {}, {})}
+        self.assertEqual(len(result), 11)
+        self.assertEqual(result["1min"]["end"], "2026-11-20")
+        self.assertEqual(result["day"]["end"], "2026-11-19")
+        self.assertEqual(result["week"]["end"], "未核实")
+        self.assertEqual(result["1min"]["multi_source"], "未核验")
+
+    def test_single_stage_pass_not_multisource_verified(self):
+        receipt = {"validation": {"sections": {"SECTORS": {
+            "data_validation": "PASS",
+            "cross_validation": "UNVERIFIED"}}}}
+        result = {r["key"]: r for r in M.coverage_rows({}, receipt, {})}
+        self.assertEqual(result["SECTORS"]["multi_source"], "未核验")
+
+    def test_cross_source_fail_is_visible(self):
+        receipt = {"validation": {"sections": {"SECTORS": {
+            "data_validation": "PASS",
+            "cross_validation": "FAIL"}}}}
+        result = {r["key"]: r for r in M.coverage_rows({}, receipt, {})}
+        self.assertEqual(result["SECTORS"]["multi_source"], "失败")
+
+    def test_single_day_selected_stocks_are_preview_only(self):
+        selected = M.preview_request(
+            mode="重新下载并比对", scope="自选股票",
+            stocks="000001.SZ, 600519.SH",
+            start="2026-11-20", end="2026-11-20",
+            modules=["八周期行情", "财务"],
+            cutoff=date(2026, 11, 21))
+        self.assertEqual(selected["start"], selected["end"])
+        self.assertEqual(len(selected["symbols"]), 2)
+        self.assertFalse(selected["allowed_to_execute_selected_range"])
+
+    def test_invalid_selected_dates_block(self):
+        for a, b in (("2026-11-20", "2026-11-22"),
+                     ("2026-11-21", "2026-11-20")):
+            with self.subTest(a=a, b=b), self.assertRaises(ValueError):
+                M.preview_request(
+                    mode="增量更新", scope="全市场", stocks="",
+                    start=a, end=b, modules=["财务"],
+                    cutoff=date(2026, 11, 21))
+
+    def test_incomplete_stock_code_blocked(self):
+        with self.assertRaises(ValueError):
+            M.preview_request(
+                mode="增量更新", scope="自选股票", stocks="600519",
+                start="2026-11-20", end="2026-11-20",
+                modules=["财务"], cutoff=date(2026, 11, 21))
+
+
+class CalendarTests(unittest.TestCase):
+    def test_exchange_calendar_skips_holiday_and_weekend(self):
+        self.assertEqual(C.last_session(
+            ["20261117", "20261118", "20261120"],
+            date(2026, 11, 22)), "2026-11-20")
+
+    def test_calendar_excludes_future_dates(self):
+        self.assertEqual(C.last_session(
+            [20261120, 20261123], date(2026, 11, 22)),
+            "2026-11-20")
+
+    def test_empty_and_invalid_calendar_block(self):
+        with self.assertRaises(C.CalendarUnavailable):
+            C.last_session([], date(2026, 11, 22))
+        with self.assertRaises(C.CalendarUnavailable):
+            C.last_session(["invalid"], date(2026, 11, 22))
+
+    def test_only_bounded_calendar_child_is_run(self):
+        payload = {"market": "SH", "cutoff": "2026-11-22",
+                   "last": "2026-11-20", "source": "QMT交易日历"}
+        def runner(args, **kw):
+            self.assertIn("--read-calendar", args)
+            self.assertEqual(kw["timeout"], 9)
+            self.assertNotIn("download", " ".join(args))
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(C.SENTINEL + json.dumps(payload) + "\n").encode())
+        self.assertEqual(
+            C.query_calendar(date(2026, 11, 22), runner=runner)["last"],
+            "2026-11-20")
+
+    def test_malformed_child_receipt_rejected(self):
+        with self.assertRaises(C.CalendarUnavailable):
+            C.query_calendar(
+                date(2026, 11, 22),
+                runner=lambda *a, **k: SimpleNamespace(
+                    returncode=0, stdout=b"invalid"))
+
+
+class GuiSmokeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = TemporaryDirectory(prefix="market-simple-")
+        self.addCleanup(self.temp.cleanup)
+        self.module = Path(self.temp.name) / "ParquetLiveSync"
+        self.work = self.module / "work"
+        (self.work / "market_update").mkdir(parents=True)
+        (self.work / "market_update" / "commits.json").write_text(
+            json.dumps({"periods": {"1min": {
+                "2026-11": {"days": ["2026-11-20"]}}}}),
+            encoding="utf-8")
+        try:
+            with patch.object(UI, "WORK", self.work), \
+                 patch.object(OLD, "WORK", self.work), \
+                 patch.object(OLD, "MODULE", self.module), \
+                 patch.object(UI.SimpleMarketDashboard,
+                              "_resolve_default_session", return_value=None):
+                self.app = UI.SimpleMarketDashboard()
+        except tk.TclError as exc:
+            if "display" in str(exc).lower() or "couldn't connect" in str(exc).lower():
+                self.skipTest("No Tk display")
+            raise
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+
+    def test_capital_classification_button_uses_only_p2_p3_no_qmt(self):
+        from datetime import datetime, timedelta, timezone
+        repo = Path(self.temp.name)
+        market = repo / "stock" / "AllCycleAStockData"
+        market.mkdir(parents=True)
+        progress = {"root": str(market / "qmt_extra")}
+        ledger = {"status":
+            "FINANCE_PENDING_LEDGER_READONLY_FIRST_BLOCKER_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "pending_total": 1, "conflict_total": 1,
+            "first_blocking_table_counts": [{"table": "Capital", "count": 1}],
+            "all_nine_tables_checked": False,
+            "pending_repair_approved": False,
+            "qmt_calls": 0, "market_file_writes": False}
+        metadata = {
+            "status": "FINANCE_PENDING_SNAPSHOT_METADATA_READONLY_NOT_CERTIFIED",
+            "progress_sha256": "a" * 64,
+            "capital_proof_rejection_counts": [
+                {"proof_class": "REPORT_KEYS_ADDED_OR_REMOVED", "count": 1}],
+            "capital_proof_rejections_grouped": 1,
+            "sample_count": 0, "samples": [],
+            "only_first_blocking_table_inspected": True,
+            "financial_payloads_read": False,
+            "historical_business_fields_compared": False,
+            "immutable_snapshot_content_verified": False,
+            "source_authenticity_certified": False,
+            "all_nine_tables_checked": False,
+            "can_repair": False, "can_execute": False,
+            "can_download": False, "market_file_writes": False,
+            "qmt_calls": 0}
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "REPO", repo), \
+             patch.object(UI, "REVIEW_MODE", False), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.P2, "summarize_pending",
+                          return_value=ledger) as p2, \
+             patch.object(UI.P3, "review",
+                          return_value=metadata) as p3, \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("NO_SUBPROCESS")), \
+             patch.object(UI.threading, "Thread") as launch, \
+             patch.object(UI, "datetime") as fake_now:
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 21, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_capital_first_blocker_review()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_capital_first_blocker_review()
+            p2.assert_called_once_with(repo / "ParquetLiveSync")
+            p3.assert_called_once_with(
+                repo / "ParquetLiveSync", market)
+        self.assertIn("Capital为首张冲突表1只",
+                      self.app.capital_review_detail.get())
+        self.assertIn("未调用QMT或东方财富",
+                      self.app.capital_review_detail.get())
+        self.assertFalse(self.app._capital_review_running)
+
+    def test_capital_classification_blocks_if_external_probe_is_running(self):
+        self.app._secondary_finance_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_capital_first_blocker_review()
+            launch.assert_not_called()
+        self.assertIn("其他财务任务仍在运行",
+                      self.app.capital_review_detail.get())
+        self.app._secondary_finance_running = False
+
+    def test_only_three_tabs_and_legacy_runner_is_separate(self):
+        self.assertEqual(len(self.app.tabs.tabs()), 3)
+        self.assertEqual(self.app.tabs.tab(0, "text"), "数据总览")
+        self.assertEqual(self.app.tabs.tab(1, "text"), "下载 / 更新")
+        self.assertEqual(self.app.tabs.tab(2, "text"), "异常与日志")
+        self.assertEqual(str(self.app.selected_run_button["state"]), "disabled")
+        self.assertIn("既有游标", self.app.run_button["text"])
+
+    def test_detached_review_disables_all_market_and_finance_writers(self):
+        with patch.object(UI, "REVIEW_MODE", True), \
+             patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("WRITER_LAUNCHED")), \
+             patch.object(UI.messagebox, "showwarning"):
+            self.app.refresh()
+            self.assertEqual(str(self.app.run_button["state"]), "disabled")
+            self.assertEqual(
+                str(self.app.selected_run_button["state"]), "disabled")
+            self.app.manual_update()
+            self.app.run_scoped_finance_cache()
+            self.app.prepare_finance_decode_retry()
+        self.assertIn("只读试运行", self.app.finance_diag_status.get())
+
+    def test_review_skips_auto_calendar_qmt_connection(self):
+        with patch.object(UI, "REVIEW_MODE", True), \
+             patch.object(UI, "query_calendar",
+                          side_effect=AssertionError("QMT_CALENDAR_CALLED")), \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app._resolve_default_session()
+            launch.assert_not_called()
+        self.assertIn("未自动连接QMT日历", self.app.date_source.get())
+
+
+    def test_finance_readonly_button_is_on_existing_logs_tab(self):
+        self.assertEqual(self.app.finance_diag_button["text"],
+                         "检查财务问题（只读）")
+        self.assertEqual(len(self.app.tabs.tabs()), 3)
+
+    def test_finance_pending_is_visible_automatically_on_overview(self):
+        progress = self.work / "qmt_extra" / "financial-cache-progress.json"
+        progress.parent.mkdir(parents=True, exist_ok=True)
+        progress.write_text(json.dumps({
+            "pending": {
+                "000010.SZ": {"reason": "SOURCE_HISTORY_CONFLICT"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}),
+            encoding="utf-8")
+        with patch.object(UI, "WORK", self.work):
+            self.app._refresh_coverage()
+        self.assertIn("待审 2 只", self.app.finance_attention.get())
+        self.assertIn("缓存解码 1", self.app.finance_attention.get())
+
+    def test_finance_diagnostic_worker_uses_census_not_qmt_or_writer(self):
+        import market_scoped_finance_pending_full_census as S9
+        root = Path(self.temp.name) / "stock"
+        progress = {"root": str(root / "AllCycleAStockData" / "qmt_extra")}
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(S9, "census",
+                          return_value=sample_finance_census()) as scan, \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            self.assertEqual(str(self.app.finance_diag_button["state"]),
+                             "disabled")
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_finance_diagnostic()
+            scan.assert_called_once_with(root, self.work / "qmt_extra",
+                                         page=1, page_size=3)
+        self.assertIn("688259.SH", self.app.finance_diag_detail.get())
+        self.assertEqual(str(self.app.finance_diag_button["state"]), "normal")
+        self.assertFalse(self.app._finance_diag_running)
+
+    def test_missing_real_ledger_blocks_without_running_census(self):
+        import market_scoped_finance_pending_full_census as S9
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value={}), \
+             patch.object(S9, "census") as scan, \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_finance_diagnostic()
+        scan.assert_not_called()
+        self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
+        self.assertFalse(self.app._finance_diag_running)
+
+    def test_repeated_click_while_running_does_not_spawn_new_worker(self):
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            self.app.start_finance_diagnostic()
+            launch.assert_called_once()
+        self.app._finance_diag_queue.put(("error", "Synthetic only", None))
+        self.app._poll_finance_diagnostic()
+
+    def test_diagnostic_failure_does_not_start_retry_or_approval(self):
+        self.app._finance_diag_running = True
+        self.app._finance_diag_queue.put(
+            ("error", "检查未完成：RESERVED_2005_NO_FINANCE_INVENTORY", None))
+        self.app._poll_finance_diagnostic()
+        self.assertIn("只读检查被阻断", self.app.finance_diag_status.get())
+        self.assertFalse(self.app._finance_diag_running)
+
+    def test_pending_refresh_rejects_concurrent_qmt_probe(self):
+        self.app._qmt_probe_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.assert_not_called()
+        self.assertFalse(self.app._finance_diag_running)
+        self.assertIn("QMT逐表检查仍在运行",
+                      self.app.finance_diag_status.get())
+        self.app._qmt_probe_running = False
+
+    def test_pending_refresh_clears_previous_qmt_table_receipt(self):
+        self.app.qmt_probe_detail.set("OLD_QMT_RESULT")
+        self.app.qmt_probe_output.configure(state="normal")
+        self.app.qmt_probe_output.insert("1.0", "OLD_QMT_RESULT")
+        self.app.qmt_probe_output.configure(state="disabled")
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_finance_diagnostic()
+            launch.assert_called_once()
+            self.assertEqual(self.app.qmt_probe_detail.get(), "")
+            self.assertEqual(
+                self.app.qmt_probe_output.get("1.0", "end-1c"), "")
+        self.app._finance_diag_queue.put(("error", "test-only", None))
+        self.app._poll_finance_diagnostic()
+
+    def test_secondary_finance_prefers_isolated_python_without_changing_qmt(self):
+        with TemporaryDirectory() as folder:
+            repo = Path(folder)
+            (repo / ".venv" / "Scripts").mkdir(parents=True)
+            official = repo / ".venv" / "Scripts" / "python.exe"
+            official.write_text("canonical", encoding="utf-8")
+            self.assertEqual(UI.secondary_finance_python(repo), official)
+            (repo / ".venv-akshare" / "Scripts").mkdir(parents=True)
+            isolated = repo / ".venv-akshare" / "Scripts" / "python.exe"
+            isolated.write_text("readonly", encoding="utf-8")
+            self.assertEqual(UI.secondary_finance_python(repo), isolated)
+            self.assertTrue(official.is_file())
+
+    def test_secondary_finance_incomplete_isolated_environment_blocks_fallback(self):
+        with TemporaryDirectory() as folder:
+            repo = Path(folder)
+            (repo / ".venv" / "Scripts").mkdir(parents=True)
+            (repo / ".venv" / "Scripts" / "python.exe").write_text(
+                "canonical", encoding="utf-8")
+            (repo / ".venv-akshare").mkdir()
+            with self.assertRaisesRegex(
+                    M.InvalidSimplePlan, "独立AKShare环境不完整"):
+                UI.secondary_finance_python(repo)
+
+    def test_secondary_source_button_uses_readonly_external_worker(self):
+        from datetime import datetime, timedelta, timezone
+        repo = Path(self.temp.name)
+        (repo / ".git").mkdir(exist_ok=True)
+        python = repo / ".venv" / "Scripts" / "python.exe"
+        python.parent.mkdir(parents=True)
+        python.write_text("synthetic", encoding="utf-8")
+        script = self.module / "market_finance_secondary.py"
+        script.write_text("synthetic", encoding="utf-8")
+        root = repo / "stock"
+        progress = {
+            "root": str(root / "AllCycleAStockData" / "qmt_extra"),
+            "pending": {
+                "000010.SZ": {
+                    "reason": "SOURCE_HISTORY_CONFLICT",
+                    "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                              "table=Balance removed_or_revised=2"},
+                "000036.SZ": {
+                    "reason": "SOURCE_HISTORY_CONFLICT",
+                    "detail": "SOURCE_HISTORY_CONFLICT 000036.SZ "
+                              "table=Capital removed_or_revised=3"},
+                "688259.SH": {"reason": "CACHE_DECODE_ERROR"},
+            }}
+        evidence = {
+            "status": "EXTERNAL_FINANCE_PILOT_REVIEW_ONLY",
+            "discovery": {
+                "source": "EASTMONEY_VIA_AKSHARE",
+                "scope": "QMT_FIRST_BLOCKER_TABLE_ONLY",
+                "status": "NOT_RUN_HISTORICAL_CONFLICT_REVIEW",
+                "source_requests_attempted": 0,
+                "failed_categories": [],
+                "unique_event_leads": 0,
+                "full_market_coverage_checked": False,
+                "feed_complete_for_date_range": False,
+                "can_schedule_download": False,
+                "candidate_symbols_in_known_scope": [],
+            },
+            "crosschecks": [{
+                "symbol": "000010.SZ", "fields_compared": 2,
+                "value_differences": 1,
+                "status": "READONLY_SECONDARY_FIELDS_NOT_SOURCE_CERTIFIED",
+                "first_blocker_table": "Balance",
+                "other_finance_tables_not_checked": True,
+                "tables": [{"table": "Balance"}],
+                "table_timings": [{
+                    "table": "Balance",
+                    "status": "PARTIAL_FIELD_COMPARISON_NOT_CERTIFICATION",
+                    "local_seconds": 0.05, "eastmoney_seconds": 12.0,
+                    "comparison_seconds": 0.0}],
+                "can_commit": False, "can_clear_pending": False,
+            }],
+            "first_blocker_scope_only": True,
+            "all_history_conflict_tables_identified": False,
+            "exact_conflict_report_dates_proven": False,
+            "crosscheck_sample_limit": 1,
+            "discovery_seconds": 0.0,
+            "crosscheck_seconds": 12.05,
+            "total_seconds": 12.05,
+            "event_candidates_to_download": [],
+            "source_discovery_not_complete": True,
+            "can_apply": False, "can_commit": False,
+            "changed_pending": False, "changed_20_05_task": False,
+        }
+        output = (
+            b"\xff external start up log\n" +
+            b"FINANCE_EXTERNAL_READONLY=" +
+            json.dumps(evidence).encode("utf-8") + b"\n")
+        with patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI, "REPO", repo), \
+             patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI, "datetime") as fake_now, \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI.subprocess, "run",
+                          return_value=SimpleNamespace(
+                              returncode=0, stdout=output)) as run, \
+             patch.object(UI.threading, "Thread") as launch:
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_secondary_finance_pilot()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_secondary_finance_pilot()
+            args = run.call_args.args[0]
+            self.assertIn("--explicit-readonly", args)
+            self.assertIn("--known-symbols", args)
+            self.assertIn("--symbols", args)
+            self.assertIn("--pending-first-blocker-only", args)
+            self.assertEqual(args[args.index("--symbols") + 1], "000010.SZ")
+            self.assertEqual(run.call_args.kwargs["timeout"], 120)
+            self.assertEqual(run.call_args.kwargs["stdin"],
+                             UI.subprocess.DEVNULL)
+            self.assertNotIn("download", " ".join(args).lower())
+        self.assertIn("数值差异 1", self.app.secondary_finance_detail.get())
+        self.assertFalse(self.app._secondary_finance_running)
+
+    def test_secondary_only_capital_or_unclassified_pending_does_not_call_provider(self):
+        progress = {"root": str(Path(self.temp.name) / "stock" /
+                                "AllCycleAStockData" / "qmt_extra"),
+                    "pending": {
+                        "000010.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                                      "table=Capital removed_or_revised=1"},
+                        "000036.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "unexpected-unclassified"},
+                        "688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}
+        with patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.threading, "Thread") as launch:
+            self.app.start_secondary_finance_pilot()
+            launch.assert_not_called()
+        self.assertIn("未发现可由东财三表对应", self.app.secondary_finance_detail.get())
+
+    def test_secondary_selects_eligible_first_blocker_not_first_capital(self):
+        progress = {"root": str(Path(self.temp.name) / "stock" /
+                                "AllCycleAStockData" / "qmt_extra"),
+                    "pending": {
+                        "000010.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000010.SZ "
+                                      "table=Capital removed_or_revised=1"},
+                        "000036.SZ": {
+                            "reason": "SOURCE_HISTORY_CONFLICT",
+                            "detail": "SOURCE_HISTORY_CONFLICT 000036.SZ "
+                                      "table=Income removed_or_revised=1"}}}
+        # Only test the guarded selection; no actual network or worker.
+        with patch.object(UI, "safe_json", return_value=progress), \
+             patch.object(UI.threading, "Thread") as launch, \
+             patch.object(UI, "secondary_finance_python",
+                          return_value=Path(self.temp.name) / "python.exe"), \
+             patch.object(UI, "REPO", Path(self.temp.name)), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI, "datetime") as fake_now:
+            from datetime import datetime, timedelta, timezone
+            (Path(self.temp.name) / ".git").mkdir(exist_ok=True)
+            (self.module / "market_finance_secondary.py").write_text(
+                "synthetic", encoding="utf-8")
+            fake_now.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_secondary_finance_pilot()
+            launch.assert_called_once()
+            self.assertIn("000036.SZ 首张冲突表 Income",
+                          self.app.secondary_finance_detail.get())
+        self.app._secondary_finance_running = False
+
+    def test_secondary_source_never_starts_without_valid_pending(self):
+        with patch.object(UI, "safe_json", return_value={}), \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("UNSAFE_NETWORK")):
+            self.app.start_secondary_finance_pilot()
+        self.assertIn("跨源核验未启动", self.app.secondary_finance_detail.get())
+
+    def test_secondary_source_does_not_run_concurrent_update(self):
+        self.app._qmt_probe_running = True
+        with patch.object(UI.threading, "Thread") as launch:
+            self.app.start_secondary_finance_pilot()
+            launch.assert_not_called()
+        self.assertIn("其他任务运行中", self.app.secondary_finance_detail.get())
+        self.app._qmt_probe_running = False
+
+    def test_qmt_probe_button_requires_verified_pending_decode(self):
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "disabled")
+        self.app._finance_diag_queue.put((
+            "ok", M.finance_issue_report_view(sample_finance_census()),
+            "688259.SH"))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "normal")
+        self.app._finance_diag_queue.put(("error", "blocked", None))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(str(self.app.qmt_table_probe_button["state"]),
+                         "disabled")
+
+    def test_qmt_probe_worker_is_read_only_and_shows_utf8_table(self):
+        from datetime import datetime, timezone, timedelta
+        repo = Path(self.temp.name)
+        (repo / ".git").mkdir(exist_ok=True)
+        python = repo / ".venv" / "Scripts" / "python.exe"
+        python.parent.mkdir(parents=True)
+        python.write_text("synthetic-fixture", encoding="utf-8")
+        script = self.module / "qmt_extra_financial_cache_worker.py"
+        script.write_text("synthetic-fixture", encoding="utf-8")
+        receipt = (
+            "迅投启动日志：本地缓存\n".encode("gbk") +
+            ("QMT_FINANCE_TABLE_READONLY_PROBE=" +
+             json.dumps(sample_qmt_table_probe()) + "\n").encode("utf-8"))
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "REPO", repo), \
+             patch.object(UI, "MODULE", self.module), \
+             patch.object(UI, "WORK", self.work), \
+             patch.object(UI, "safe_json", return_value={
+                 "pending": {"688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}), \
+             patch.object(UI, "datetime") as fake_clock, \
+             patch.object(UI.os, "name", "nt"), \
+             patch.object(UI.subprocess, "run",
+                          return_value=SimpleNamespace(
+                              returncode=0, stdout=receipt)) as exec_read, \
+             patch.object(UI.threading, "Thread") as launch:
+            fake_clock.now.return_value = datetime(
+                2026, 11, 22, 11, 0,
+                tzinfo=timezone(timedelta(hours=8)))
+            self.app.start_qmt_finance_table_probe()
+            launch.assert_called_once()
+            launch.call_args.kwargs["target"]()
+            self.app._poll_qmt_finance_table_probe()
+            args = exec_read.call_args.args[0]
+            self.assertIn("--probe-readonly", args)
+            self.assertNotIn("--mode", args)
+            self.assertNotIn("--output", args)
+            self.assertNotIn("download", " ".join(args))
+            self.assertEqual(exec_read.call_args.kwargs["timeout"], 45)
+            self.assertEqual(exec_read.call_args.kwargs["stdin"],
+                             UI.subprocess.DEVNULL)
+        self.assertIn("PerShare：UTF-8解码失败",
+                      self.app.qmt_probe_detail.get())
+        self.assertFalse(self.app._qmt_probe_running)
+
+    def test_copy_diagnostic_includes_optional_per_share_probe(self):
+        self.app._finance_diag_text = "本地待审：85只"
+        self.app.qmt_probe_detail.set(
+            "688259.SH：PerShare UTF-8解码失败；未做下载")
+        self.app.copy_finance_diagnostic()
+        clip = self.app.clipboard_get()
+        self.assertIn("本地待审：85只", clip)
+        self.assertIn("PerShare UTF-8解码失败", clip)
+
+    def test_copy_diagnostic_includes_external_financial_evidence(self):
+        self.app._finance_diag_text = "QMT待审85只"
+        self.app.secondary_finance_detail.set(
+            "东财三表对照：000055.SZ归母净利润不一致")
+        self.app.copy_finance_diagnostic()
+        self.assertIn(
+            "归母净利润不一致", self.app.clipboard_get())
+
+    def test_qmt_probe_blocks_stale_pending_without_subprocess(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "safe_json", return_value={"pending": {}}), \
+             patch.object(UI.subprocess, "run",
+                          side_effect=AssertionError("QMT_CALLED")):
+            self.app.start_qmt_finance_table_probe()
+        self.assertIn("已阻断", self.app.qmt_probe_detail.get())
+
+    def test_decode_retry_button_opens_scoped_form_without_running_qmt(self):
+        self.app._finance_diag_queue.put((
+            "ok", M.finance_issue_report_view(sample_finance_census()),
+            "688259.SH"))
+        self.app._poll_finance_diagnostic()
+        self.assertEqual(
+            str(self.app.finance_decode_retry_button["state"]), "normal")
+        with patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("QMT_STARTED")), \
+             patch.object(UI, "safe_json", return_value={
+                 "pending": {"688259.SH": {"reason": "CACHE_DECODE_ERROR"}}}), \
+             patch.object(self.app, "run_scoped_finance_cache",
+                          side_effect=AssertionError("REFRESH_STARTED")):
+            self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.tabs.index(self.app.tabs.select()), 1)
+        self.assertEqual(self.app.stock_input.get("1.0", "end-1c"),
+                         "688259.SH")
+        self.assertEqual(self.app.update_scope.get(), "自选股票")
+        self.assertEqual(self.app.update_mode.get(), "增量更新")
+        self.assertEqual([name for name in M.MODULES
+                          if self.app.module_vars[name].get()], ["财务"])
+        self.assertEqual(str(self.app.selected_run_button["state"]),
+                         "normal")
+        self.assertIn("请先检查日期", self.app.finance_diag_status.get())
+        self.assertIn("不是全历史验证", self.app.date_source.get())
+
+    def test_preparation_without_verified_target_does_not_change_scope(self):
+        original = self.app.update_scope.get()
+        self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.update_scope.get(), original)
+        self.assertIn("请先运行只读检查", self.app.finance_diag_status.get())
+
+    def test_resolved_pending_cannot_be_retried_from_stale_diagnostic(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        before = self.app.update_scope.get()
+        with patch.object(UI, "safe_json", return_value={"pending": {}}), \
+             patch.object(UI.subprocess, "Popen",
+                          side_effect=AssertionError("QMT_STARTED")):
+            self.app.prepare_finance_decode_retry()
+        self.assertIsNone(self.app._finance_decode_retry_stock)
+        self.assertEqual(before, self.app.update_scope.get())
+        self.assertIn("待审状态已变化", self.app.finance_diag_status.get())
+
+    def test_stale_invalid_ledger_cannot_prepare_decode_retry(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        with patch.object(UI, "safe_json", side_effect=ValueError("bad")):
+            self.app.prepare_finance_decode_retry()
+        self.assertIn("无法核对最新待审账本", self.app.finance_diag_status.get())
+        self.assertEqual(self.app.update_scope.get(), "全市场")
+
+    def test_preparation_is_blocked_if_existing_update_process_running(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        self.app.process = SimpleNamespace(poll=lambda: None)
+        previous = self.app.update_scope.get()
+        self.app.prepare_finance_decode_retry()
+        self.assertEqual(self.app.update_scope.get(), previous)
+        self.assertIn("已有任务运行", self.app.finance_diag_status.get())
+        self.app.process = None
+
+    def test_failed_diagnostic_cannot_leave_decode_retry_enabled(self):
+        self.app._finance_decode_retry_stock = "688259.SH"
+        self.app._finance_diag_running = True
+        self.app._finance_diag_queue.put(("error", "blocked", None))
+        self.app._poll_finance_diagnostic()
+        self.assertIsNone(self.app._finance_decode_retry_stock)
+        self.assertEqual(
+            str(self.app.finance_decode_retry_button["state"]), "disabled")
+
+    def test_date_start_and_end_auto_fill_identically(self):
+        self.app._apply_default_day("2026-11-20", "QMT交易日历")
+        self.assertEqual(self.app.date_start.get(), "2026-11-20")
+        self.assertEqual(self.app.date_end.get(), "2026-11-20")
+        self.app.date_start.set("2026-11-10")
+        self.app._apply_default_day("2026-11-21", "QMT交易日历")
+        self.assertEqual(self.app.date_start.get(), "2026-11-10")
+
+    def test_stock_input_only_when_scoped(self):
+        self.assertEqual(self.app.stock_frame.winfo_manager(), "")
+        self.app.update_scope.set("自选股票")
+        self.app._toggle_stock_entry()
+        self.assertEqual(self.app.stock_frame.winfo_manager(), "pack")
+        self.app.update_scope.set("全市场")
+        self.app._toggle_stock_entry()
+        self.assertEqual(self.app.stock_frame.winfo_manager(), "")
+
+    def test_coverage_table_uses_ledger_not_guessed_dates(self):
+        with patch.object(UI, "WORK", self.work):
+            self.app._refresh_coverage()
+        items = [self.app.coverage_table.item(k, "values")
+                 for k in self.app.coverage_table.get_children()]
+        minute = next(row for row in items if row[0] == "1分钟")
+        week = next(row for row in items if row[0] == "周线")
+        self.assertEqual(minute[2], "2026-11-20")
+        self.assertEqual(minute[4], "未核验")
+        self.assertEqual(week[2], "未核实")
+
+    def test_preview_never_launches_market_writer(self):
+        self.app._apply_default_day("2026-11-20", "本地")
+        with patch.object(self.app, "manual_update",
+                          side_effect=AssertionError("writer_launched")):
+            self.app.preview_selection()
+        self.assertIn("定向执行尚未开放", self.app.preview_line.get())
+
+
+if __name__ == "__main__":
+    unittest.main()

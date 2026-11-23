@@ -1,0 +1,54 @@
+# 2026-11-23｜保留20:05既有行情顺序，财务最后执行，企业微信替代系统弹窗
+
+## 用户确认的运营偏好
+
+- **只有一条正式20:05（中国时间）Windows任务** `AStockDataTools-ParquetLiveSync`，不设置独立00:30财务任务、零点后补跑或新的GitHub Actions。
+- **顺序不变**：八周期K线→板块→除权批次→**QMT财务（最后）**。阶段逐项记录退出码/日志；某阶段失败仍尽力处理其他互不依赖阶段，结束后通知准确的SUCCESS/PARTIAL/FAILED。
+- 财务直接采用已实机验证的`-QMTPrimaryVersioned`，源历史修订保存不可变新快照，旧版留存；其它七张可用财务表不因已知`688259.SH` Top10Holder单表异常而被删除。该异常pending留存，仍可能在常规全九表扫描中产生一个解码错误，后续需优化静默隔离。
+- 财务正常最多40分钟，且动态计算到**北京时间和电脑本地时间中较早的23:20**之前的有界余量，另留5分钟作为单个QMT worker超时及收尾缓冲；若行情阶段结束太晚、余量不足10分钟，当晚财务不启动，明确记为**DEFERRED_CUTOFF**，保存原财务游标，下一晚继续，不隐式下载到午夜后。
+- Windows任务安装模板的Trigger仍是唯一20:05，不再带`StartWhenAvailable`，避免错过晚间后凌晨重跑；硬兜底执行时间上限取**3小时40分**与**距离电脑本地23:45的余量**中较小者（正常北京时间20:05→最多23:45；如电脑时区为日本则更早停止）。**硬兜底有强制终止风险，不应视作数据写入原子性的替代品**，故前置阶段预算/数据快照原有原子写入规则仍需遵守。若当天出现极端长时间的早期行情阶段，不能绝对保证每个阶段都完成。
+- `install-schedule.ps1 -Action Install` 若查到旧名称`AStockDataTools-QMT-Financial-Daily`独立定时任务，**只禁用、保留注册**，不创建第二任务；要求禁用成功才安装唯一20:05任务。此前实际本机是否存在该旧任务尚未检查。状态命令会报告独立任务状态。
+
+## 不再使用Windows系统弹窗
+
+旧`notify-market-update.ps1`的Windows Toast最多使用620字符摘要，失败时改用20秒WScript.Popup，无法保证全文或离线接收。新版本**完全移除Toast/Popup逻辑**，采用标准HTTPS企业微信推送作为一次性可选通道。消息正文从**同一轮运行的完整`last-afternoon-unified.json` / `last-precutoff-market-only.json` 回执**组装，严格核对`started_local`避免误发旧报告；包含每个阶段执行情况、校验与跨源状态、已知错误、财务夜间顺延说明，不再使用旧620字符通知短文本。若超过安全的微信消息字节上限，按UTF-8完整字符**分段编号**，避免中文截断；所有内容的完整原始日志和结构化回执仍在本机。
+
+支持两种官方目的地：
+- `wecom_app`：企业微信自建**个人应用消息**，适合单人接收（需要一次性输入CorpID、Secret、AgentID、UserID，存在本机，不发给ChatGPT）。该方式不要求另建企微群。
+- `wecom_webhook`：已有企业微信群机器人Webhook，仅允许官方`https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`，不会调用任意第三方域名。
+
+**凭据永远不进GitHub**：一次性工具`setup-market-notification.ps1 -Provider App` 或 `-Provider Webhook` 在本机隐藏输入Secret/Webhook，验证配置结构并设置只对当前Windows用户可读的ACL；目标是主仓库被gitignore排除的`ParquetLiveSync/work/qmt_extra/market-notification.private.json`。该工具本身不发消息或改变计划任务。远端腾讯云TecentSystem新闻机器人、QQ/微信现有发送器、群关系、订阅及令牌全不修改。
+
+发送时：先落地本机`work/qmt_extra/market-notification-outbox/<run-id>.json`，按序发送每个编号分段并标记API_ACK；同轮已确认不重发。超时/服务端响应不明时标记UNKNOWN，不会**盲目重发可能已经送达的部分**，避免刷屏；错误打印只输出定型状态，不泄露App Secret/Token/群Webhook。注意：**API_ACK只是企业微信接口接受，不等于手机端实际展示**；首次必须用真实个人应用/群消息做设备收件验收。如果私有配置未创建则只留下本地outbox回执并报告`NOT_CONFIGURED`，**不宣称消息已推送**。若外部推送失败，行情数据结果不会反向伪装成功/失败；本机运行报告仍可查看。每次非DryRun还会将**完整的人类可读通知文本**落到同一私有outbox中的`<run-id>.txt`，无凭据时也可查阅，不会丢失消息内容。
+
+## 开发部署与可回滚性
+
+本阶段只在现有 Draft PR #241上提交源码和离线测试；没有调用用户Windows任务计划程序，不禁用当前旧任务，也没有推送真实消息。需在Windows测试Python`test_market_update_push.py`、`test_market_daily_verification.py`和PowerShell`test_notify_market_mock.ps1`、`test_install_afternoon_schedule_mock.ps1`、`test_schedule_evening_push_mock.ps1`后，经过专门的正式仓库源文件更新/备份/计划任务安装操作，才能称为上线。
+
+正式启用后只需每日晚上正常开机并保持QMT可连接：20:05单任务执行，K线→板块→除权→财务；完成后企业微信分段消息。若关机/断电或Windows不在线，当晚无法生成和推送任务结果；不能声称能够离线执行。回滚方式为恢复备份脚本和原定时任务设置、撤回或移走私有推送配置，不触碰已入库财务Parquet。
+
+## 2026-11-23 实机离线验收与一次性安全启用（补充）
+
+用户在固定提交 `3dedf34481cb5d813cbbc1ad100d9c854c66f8ab` 的Windows review worktree实测：WeCom通知Python 10/10 PASS；运行验证12/12 PASS；无Windows弹窗模拟、20:05单任务模拟及K线→板块→除权→财务顺序模拟全部PASS，结尾标记EVENING_SCHEDULE_PUSH_OFFLINE_TESTS_PASSED。模拟输出的旧00:30任务禁用并不表示用户注册的任务被改动。
+
+后续新增 `activate-evening-schedule.ps1` 一次性本机启用器：默认只读预检，只有明确传入 `-Apply -ConfirmCanaryReceived -ReviewedCommit <审核提交>` 才允许部署；仅将8个限定调度/通知/财务脚本复制到现役主仓库，先将所有原文件和旧Task Scheduler XML备份至被gitignore的`work/qmt_extra/evening-schedule-backup-*`；检测本地主仓库相应代码未改动、同一20:05任务及旧独立财务任务未运行、正式WeCom凭据可用，执行新专项离线测试和主仓库脚本载入检查后才重新注册原20:05任务。若失败尝试恢复原文件、原任务XML和旧独立财务任务启用状态，并保留备份以便人工恢复。不会合并巨大开发分支或执行历史行情下载。
+
+必须由用户在本机显式调用 `market_update_push.py --config <私有配置> --canary-send` 发送一次不包含数据更新的真实企业微信测试消息。取得API ACK后用户仍需在手机端确认收件，再执行正式切换；不能把API ACK或离线测试当成实际手机送达。整个过程不触碰TecentSystem QQ/微信机器人，也不会要求用户在聊天中粘贴WeCom密钥。
+
+此阶段新canary和启用器代码尚待Windows再次运行最新版本的11项消息测试、12项验证及3组PS模拟；已有用户22项和模拟PASS仅覆盖先前固定提交。
+
+## Windows PowerShell 5.1 setup script parser encoding fix (2026-11-23)
+
+User ran the pinned branch's WeCom local setup before real canary sending. `setup-market-notification.ps1` failed **PowerShell ParserError** (unterminated string at line 72 and unclosed else brace at line 47) before asking for credentials. The original setup script was UTF-8 without BOM and embedded Chinese Read-Host prompt text. Windows PowerShell 5.1 can load BOM-less UTF-8 as the system ANSI codepage, corrupting those prompts and leading to misleading syntax errors. This is script encoding, NOT a provider authentication failure, financial cache issue, or scheduled-task failure.
+
+The setup script is now **100% ASCII source**: all prompts use concise English while provider/config keys stay unchanged; no secret/config or scheduled task was created by the failed parse. `tests/test_schedule_evening_push_mock.ps1` now parses the setup script, rejects any byte >= 128, confirms hidden `Read-Host -AsSecureString` and owner-restricted file ACL, and rejects an implicit `--canary-send` in local credential setup. The mock test requires the user's Windows PowerShell rerun; GitHub code-only review is NOT real local test completion.
+
+After fetching the new SHA in the detached review worktree, run the isolated scheduled mock test, then `setup-market-notification.ps1 -Provider App -CanonicalRepo D:\ChatGPT\AStockDataTools` only if no prior config file. Validate and explicitly call `market_update_push.py --canary-send` only with the user-requested real WeCom receipt test. Do NOT run activation preflight/install during protected China time 19:20–20:40; actual schedule activation still requires separate device receipt confirmation and explicit `-Apply`. No finance/Kline/cursor code changes.
+
+## 2026-11-23 WeCom provider failure safe diagnostics (next phase)
+
+Windows user successfully completed ASCII-only PowerShell setup and saved the private WeCom App configuration (`MARKET_PUSH_CONFIG_VALID=wecom_app`, `MARKET_PUSH_PRIVATE_CONFIG_SAVED=TRUE`). First explicit canary returned `MARKET_PUSH_SETUP_CHECK_FAILED=PushBlocked` and was not accepted by our client. Existing CLI suppressed the actual stage and WeCom integer `errcode`; therefore it is **not proven** that CorpID/Secret/AgentID/UserID is wrong, that the network failed, or that phone delivery happened. No Windows Task Scheduler or market data action was performed.
+
+New `market_update_push.py` adds a typed local-only `PushBlocked` with safe stage `TOKEN` or `MESSAGE_SEND`, WeCom **integer** `provider_errcode` (when returned), optional numeric HTTP status, and a fixed reason. A canary failure emits `MARKET_PUSH_CANARY_DIAGNOSTIC={...}`. It never prints the original `errmsg`, HTTP request URL, `corp_secret`, access token, recipient UserID, webhook URL, or raw Python exceptions. Read-only-to-provider `--probe-token` explicitly checks WeCom App gettoken **without sending any user message**; success only prints `MARKET_PUSH_TOKEN_PROBE=READY_NO_MESSAGE_SENT`, failure outputs one sanitized `MARKET_PUSH_TOKEN_DIAGNOSTIC` line. It does not write credentials or change scheduled tasks, financial ledgers, QMT, push outbox or news group routing.
+
+New isolated synthetic tests cover token rejection with integer code, message/send rejection with integer code, invalid recipient without exposing user identifiers, HTTP 403 with secret-bearing URL, transport failure, invalid JSON response, negative provider errcode, arbitrary exception text redaction, config-only no-network validation, and 3 token probe cases. Test suite `test_market_update_push.py` now has 23 Python tests; **not yet executed on the user's Windows for this SHA**. Existing notification/scheduler mock remains unchanged. The recommended next user action is only to fetch/pin the new review commit, run these 23 isolated tests, then call exactly one `--probe-token` with the existing private config and report the sanitized result. Never rerun `setup` or `--canary-send` automatically; decide the next action from the actual TOKEN result.

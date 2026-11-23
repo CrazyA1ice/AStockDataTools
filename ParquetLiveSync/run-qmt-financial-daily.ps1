@@ -5,7 +5,8 @@ param(
     [ValidateRange(1,1095)][int]$LookbackDays = 120,
     [ValidateRange(0,1440)][int]$MaxMinutes = 0,
     [ValidateRange(1,10000)][int]$MaxSymbols = 10000,
-    [ValidateRange(30,3600)][int]$WorkerTimeoutSeconds = 180
+    [ValidateRange(30,3600)][int]$WorkerTimeoutSeconds = 180,
+    [switch]$QMTPrimaryVersioned
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -24,7 +25,10 @@ try {
     $budget=if($MaxMinutes -eq 0){'UNLIMITED'}else{[string]$MaxMinutes}
     Write-Host ('QMT_FINANCIAL_DAILY_TIME_BUDGET='+$budget)
     if(-not(Test-Path -LiteralPath $FinanceDir -PathType Container)){ throw "Required QMT Finance cache directory missing" }
-    $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols",[string]$MaxSymbols,"--max-minutes",[string]$MaxMinutes,"--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays,"--capital-mquarter-nonbusiness","--apply")
+    $cli = @("-u","-B",(Join-Path $PSScriptRoot "qmt_extra_financial_cache_import.py"),"--root",$Root,"--mode","daily","--workspace",$work,"--finance-dir",$FinanceDir,"--batch-size",[string]$BatchSize,"--max-symbols",[string]$MaxSymbols,"--max-minutes",[string]$MaxMinutes,"--worker-timeout-seconds",[string]$WorkerTimeoutSeconds,"--lookback-days",[string]$LookbackDays)
+    if($QMTPrimaryVersioned){$cli += "--qmt-primary-versioned"}else{$cli += "--capital-mquarter-nonbusiness"}
+    $cli += "--apply"
+    Write-Host ("QMT_FINANCIAL_DAILY_POLICY="+$(if($QMTPrimaryVersioned){"QMT_PRIMARY_IMMUTABLE_VERSIONED"}else{"STRICT_CAPITAL_MQUARTER_ONLY"}))
     & $python @cli
     if($LASTEXITCODE -ne 0){ throw "QMT financial daily incremental job failed" }
     Write-Host "QMT_FINANCIAL_DAILY_FINISHED=$((Get-Date).ToString('o'))"

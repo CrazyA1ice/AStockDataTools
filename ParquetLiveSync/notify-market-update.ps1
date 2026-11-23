@@ -1,58 +1,48 @@
-﻿# Best-effort user-visible Windows completion notice (PowerShell 5.1).
-# -DryRun is pure and never displays desktop UI. No external dependency.
+# Market update notification: durable WeCom provider, NEVER Windows Toast/Popup.
+# Without a private opt-in configuration, keep a local outbox receipt rather
+# than pretending the user received an external message.
 param(
     [ValidateSet('SUCCESS','PARTIAL','FAILED')][string]$Status='FAILED',
     [string]$Summary='',
     [string]$LogPath='',
+    [string]$StatusPath='',
+    [string]$ExpectedStart='',
     [switch]$DryRun
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-$label=switch($Status){'SUCCESS' {'完成'} 'PARTIAL' {'部分失败'} 'FAILED' {'失败'}}
-$title='A股每日更新：'+$label
-$detail=if($Summary){$Summary}else{'请查看本地运行报告'}
-if($detail.Length -gt 620){$detail=$detail.Substring(0,617)+'...'}
-$message=$detail
-if($LogPath){$message+="`n日志："+$LogPath}
-Write-Host ("MARKET_NOTIFICATION_STATUS="+$Status)
-Write-Host ("MARKET_NOTIFICATION_TEXT="+$message.Replace("`n",' | '))
+$module=Split-Path -Parent $PSCommandPath
+$repo=Split-Path -Parent $module
+$python=Join-Path $repo '.venv\Scripts\python.exe'
+$sender=Join-Path $module 'market_update_push.py'
+$private=Join-Path $module 'work\qmt_extra\market-notification.private.json'
+$outbox=Join-Path $module 'work\qmt_extra\market-notification-outbox'
+Write-Host ('MARKET_NOTIFICATION_STATUS='+$Status)
+Write-Host 'MARKET_NOTIFICATION_CHANNEL=WECOM_EXTERNAL_PUSH'
+Write-Host 'MARKET_NOTIFICATION_WINDOWS_TOAST_DISABLED=TRUE'
 if($DryRun){
+    if($Summary){Write-Host ('MARKET_NOTIFICATION_TEXT='+$Summary)}
     Write-Host 'MARKET_NOTIFICATION_DRY_RUN_NO_DESKTOP=TRUE'
     return
 }
-# Notifications are attempted even for PARTIAL/FAILED runs. The durable
-# JSON receipt is the authoritative audit; a Windows toast is best-effort.
-$method=''
-try {
-    [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    [void][Windows.UI.Notifications.ToastNotification, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    [void][Windows.UI.Notifications.ToastTemplateType, Windows.UI.Notifications, ContentType = WindowsRuntime]
-    $template=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(
-        [Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-    $texts=$template.GetElementsByTagName('text')
-    [void]$texts.Item(0).AppendChild($template.CreateTextNode($title))
-    [void]$texts.Item(1).AppendChild($template.CreateTextNode($detail))
-    $toast=[Windows.UI.Notifications.ToastNotification]::new($template)
-    [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(
-        'Microsoft.Windows.PowerShell').Show($toast)
-    $method='WINDOWS_TOAST_REQUESTED'
-}catch{
-    Write-Host ('MARKET_NOTIFICATION_TOAST_FALLBACK='+$_.Exception.Message)
-}
-if(-not $method){
-    try {
-        # Requires the task's interactive logged-in Windows user. Popup
-        # times out itself after 20 seconds; no indefinite UI block.
-        $shell=New-Object -ComObject 'WScript.Shell'
-        $icon=if($Status -eq 'SUCCESS'){64}else{48}
-        [void]$shell.Popup($message,20,$title,$icon)
-        $method='WINDOWS_POPUP_REQUESTED'
-    }catch{
-        Write-Host ('MARKET_NOTIFICATION_POPUP_FAILED='+$_.Exception.Message)
-    }
-}
-if(-not $method){
-    Write-Host 'MARKET_NOTIFICATION_DELIVERY_FAILED=TRUE'
+if(-not(Test-Path -LiteralPath $python -PathType Leaf) -or
+   -not(Test-Path -LiteralPath $sender -PathType Leaf)){
+    Write-Host 'MARKET_NOTIFICATION_SENDER_MISSING=TRUE'
     exit 2
 }
-Write-Host ('MARKET_NOTIFICATION_METHOD='+$method)
+if(-not $StatusPath -or -not(Test-Path -LiteralPath $StatusPath -PathType Leaf)){
+    Write-Host 'MARKET_NOTIFICATION_SAME_RUN_RECEIPT_MISSING=TRUE'
+    exit 2
+}
+$argv=@('-u','-B',$sender,'--receipt',$StatusPath,
+        '--config',$private,'--outbox',$outbox)
+if($ExpectedStart){$argv+=@('--expected-start-local',$ExpectedStart)}
+# The Python CLI intentionally never emits credentials, full URLs, or raw
+# provider exceptions. Status 0 means API ACK, NOT handset delivery proof.
+& $python @argv
+$code=$LASTEXITCODE
+if($code -ne 0){
+    Write-Host ('MARKET_NOTIFICATION_PUSH_NOT_CONFIRMED=TRUE exit='+$code)
+    exit 2
+}
+Write-Host 'MARKET_NOTIFICATION_PUSH_PROVIDER_ACK=TRUE'

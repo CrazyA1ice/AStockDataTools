@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-STAGES = ("EIGHT_PERIODS", "FINANCIAL_DAILY", "SECTORS", "ADJUSTMENTS_ROTATING")
+STAGES = ("EIGHT_PERIODS", "SECTORS", "ADJUSTMENTS_ROTATING", "FINANCIAL_DAILY")
 NAMES = {
     "EIGHT_PERIODS": "K线",
     "FINANCIAL_DAILY": "财务",
@@ -187,6 +187,18 @@ def report(run, *, expected_sources=()):
         item = raw.get(stage)
         if not item:
             sections[stage] = assess(stage, None, "", expected_sources=expected_sources)
+            continue
+        if (stage == "FINANCIAL_DAILY"
+                and item.get("status") == "DEFERRED_CUTOFF"
+                and item.get("exit_code") == 87):
+            # A bounded evening job has intentionally not started the finance
+            # batch. This is a reported continuation, not data corruption.
+            sections[stage] = {
+                "execution": "DEFERRED",
+                "data_validation": "UNVERIFIED",
+                "cross_validation": "UNVERIFIED",
+                "detail": "财务因晚间时间预算不足顺延下次20:05，原游标保留",
+            }
             continue
         file = Path(item["log_path"])
         try:

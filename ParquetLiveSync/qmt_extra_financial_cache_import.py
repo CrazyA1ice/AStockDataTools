@@ -139,8 +139,19 @@ def _prior_rows(extra, code, table):
     return max(dates), combined
 
 
+def _latest_selected_rows(extra, code, table, last_day):
+    """Compare current QMT to latest active, preserving older versions."""
+    if last_day is None:
+        return Counter()
+    rows = E._financial_snapshot_rows(extra, code, table, last_day)
+    if rows is None:
+        raise ValueError("Missing QMT latest selected snapshot")
+    return _rows(rows)
+
+
 def _plan_symbol(extra, code, asof, source, *,
-                 capital_approved_symbol=None, capital_policy=None):
+                 capital_approved_symbol=None, capital_policy=None,
+                 qmt_primary_versioned=False):
     """Nine-table all-history planning; BOTH experimental gates default OFF.
 
     Neither the symbol rehearsal gate nor a policy object is accepted by
@@ -148,6 +159,8 @@ def _plan_symbol(extra, code, asof, source, *,
     """
     if capital_approved_symbol is not None and capital_policy is not None:
         raise ValueError("Two Capital pilot routes cannot be combined")
+    if qmt_primary_versioned and (capital_approved_symbol is not None or capital_policy is not None):
+        raise ValueError("Cannot combine QMT primary and Capital-specific pilot")
     if capital_approved_symbol is not None and (
             E.valid_code(capital_approved_symbol) != code):
         raise ValueError("Capital exception must name exactly the planned stock")
@@ -180,7 +193,7 @@ def _plan_symbol(extra, code, asof, source, *,
                     verified["approved_historical_quarter_differences"],
                 "verified_persistent_policy": True,
                 "allowed_report_dates": verified["allowed_report_dates"]}
-        if missing:
+        if missing and not qmt_primary_versioned:
             if table == "Capital" and capital_policy is not None:
                 # validate_policy already checked every original raw row,
                 # date and business field; the other eight still use strict.
@@ -206,13 +219,30 @@ def _plan_symbol(extra, code, asof, source, *,
         # When the current original raw version was already preserved, an
         # approved semantic waiver must not re-commit that same file forever
         # merely because older immutable variants remain in the union.
-        action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
-                  "UNCHANGED" if (saved == current or
-                     (exception_proof is not None and not (current - saved)))
-                  else "CREATE_VERSION")
+        if qmt_primary_versioned:
+            # Accept QMT latest as a NEW observation; never delete past files.
+            # Empty current tables retain prior observations, not an empty
+            # replacement that would erase otherwise valid old finance data.
+            last_selected = _latest_selected_rows(extra, code, table, old_date)
+            action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None
+                      else "SOURCE_EMPTY_OLD_RETAINED" if not fresh
+                      else "UNCHANGED" if current == last_selected
+                      else "CREATE_VERSION")
+        else:
+            action = ("NO_SOURCE_RECORDS" if not fresh and old_date is None else
+                      "UNCHANGED" if (saved == current or
+                         (exception_proof is not None and not (current - saved)))
+                      else "CREATE_VERSION")
         result[table] = {"rows": len(fresh), "previous_rows": sum(saved.values()),
                          "action": action, "previous_asof": old_date,
                          "extra_records": sum((current - saved).values())}
+        if qmt_primary_versioned:
+            result[table].update({
+                "qmt_primary_versioned": True,
+                "historical_records_not_in_current": sum(missing.values()),
+                "old_selected_snapshots_preserved": old_date is not None,
+                "provider_source_certified": False,
+            })
         if exception_proof is not None:
             result[table]["scoped_m_quarter_semantic_exception"] = {
                 "symbol": code, "historical_variants": sum(saved.values()),
@@ -232,12 +262,14 @@ def _plan_symbol(extra, code, asof, source, *,
 
 
 def _commit_symbol(extra, workspace, code, asof, source, *,
-                   capital_approved_symbol=None, capital_policy=None):
+                   capital_approved_symbol=None, capital_policy=None,
+                   qmt_primary_versioned=False):
     """Validate ALL nine tables before writes; optional pilot scope OFF."""
     report, staged = _plan_symbol(
         extra, code, asof, source,
         capital_approved_symbol=capital_approved_symbol,
-        capital_policy=capital_policy)
+        capital_policy=capital_policy,
+        qmt_primary_versioned=qmt_primary_versioned)
     for table, records in staged.items():
         group = "financial/" + table + "/" + code
         # Same-day old version always pinned before a second immutable file.
@@ -513,9 +545,12 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         batch_size=5, max_minutes=0, worker_timeout_seconds=180,
         lookback_days=120, retry_pending=False, workspace=E.WORK,
         finance_dir=None, clock=None, progress=print, worker=None,
-        capital_mquarter_nonbusiness=False):
+        capital_mquarter_nonbusiness=False,
+        qmt_primary_versioned=False):
     if mode not in ("cache", "daily"):
         raise ValueError("Invalid financial import mode")
+    if qmt_primary_versioned and capital_mquarter_nonbusiness:
+        raise ValueError("QMT primary and Capital metadata waiver are exclusive")
     if (not 1 <= batch_size <= MAX_GROUP or
             not 1 <= max_symbols <= 10000 or
             not 0 <= max_minutes <= 1440 or
@@ -601,6 +636,7 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
         "purchased_8_cycle_modified": False, "h5_modified": False,
         "qmt_full_download_called": False,
         "capital_mquarter_nonbusiness": bool(capital_mquarter_nonbusiness),
+        "qmt_primary_versioned": bool(qmt_primary_versioned),
         "daily_sweep_start": (state["daily_sweep_start"] if mode == "daily"
                               else None),
         "daily_sweep_reached_end": (state["daily_sweep_reached_end"]
@@ -677,7 +713,9 @@ def run(root, *, xt, mode="cache", apply=False, max_symbols=6000,
                         table_report = _commit_symbol(
                             extra, workspace, code, asof, source,
                             **({"capital_approved_symbol": code}
-                               if capital_mquarter_nonbusiness else {}))
+                               if capital_mquarter_nonbusiness else {}),
+                            **({"qmt_primary_versioned": True}
+                               if qmt_primary_versioned else {}))
                     except ValueError as exc:
                         if not str(exc).startswith("SOURCE_HISTORY_CONFLICT"):
                             raise
@@ -758,6 +796,11 @@ def main(argv=None):
     parser.add_argument("--capital-mquarter-nonbusiness", action="store_true",
                         help="Opt in: only Capital.m_quarter may differ; all"
                              " other historical fields/dates/tables stay strict")
+    parser.add_argument("--qmt-primary-versioned", action="store_true",
+                        help="Accept QMT cache revisions as new immutable snapshots, "
+                             "retaining all prior snapshots and selected pins")
+    parser.add_argument("--workspace", type=Path, default=E.WORK,
+                        help="Canonical financial progress directory for detached runs")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
     from xtquant import xtdata
@@ -767,8 +810,9 @@ def main(argv=None):
         worker_timeout_seconds=args.worker_timeout_seconds,
         lookback_days=args.lookback_days,
         retry_pending=args.retry_pending,
-        finance_dir=args.finance_dir,
-        capital_mquarter_nonbusiness=args.capital_mquarter_nonbusiness)
+        finance_dir=args.finance_dir, workspace=args.workspace,
+        capital_mquarter_nonbusiness=args.capital_mquarter_nonbusiness,
+        qmt_primary_versioned=args.qmt_primary_versioned)
 
 
 if __name__ == "__main__":

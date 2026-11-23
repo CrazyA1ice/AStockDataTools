@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from contextlib import redirect_stdout
+from types import ModuleType
+import io
+import sys
 import json
 import subprocess
 import tempfile
@@ -1297,6 +1301,163 @@ class QmtExtraTests(unittest.TestCase):
             self.assertEqual(xt.calls[0][3:], ("20260717", "20261117"))
             self.assertNotIn("PerShare", xt.calls[0][2])
             self.assertEqual(len(xt.calls[1][2]), 9)
+
+    def test_table_probe_reads_each_financial_table_without_download(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.calls = []
+            def get_financial_data(self, codes, tables, **kw):
+                self.calls.append((codes, tables))
+                name = tables[0]
+                return {codes[0]: {name: FakeFrame(
+                    [{"m_timetag": 20260930}])}}
+            def download_financial_data2(self, *a, **kw):
+                raise AssertionError("QMT_DOWNLOAD_NOT_ALLOWED")
+        xt = XT()
+        r = W.probe_tables_readonly(
+            xt, "600000.SH",
+            now=datetime(2026, 11, 22, 11, 0, tzinfo=L.UTC8))
+        self.assertEqual(r["tables_checked"], 9)
+        self.assertEqual(r["qmt_get_financial_data_calls"], 9)
+        self.assertEqual(len(xt.calls), 9)
+        self.assertEqual([call[1][0] for call in xt.calls], list(E.FIN_TABLES))
+        self.assertTrue(all(call[0] == ["600000.SH"] for call in xt.calls))
+        self.assertEqual(r["tables"][-1]["table"], "PerShare")
+        self.assertEqual(r["tables"][-1]["role"], "OPTIONAL_UNCONFIRMED")
+        self.assertEqual(r["tables"][-1]["status"], "ROWS_IN_LOCAL_CACHE")
+        self.assertFalse(r["can_commit"])
+        self.assertEqual(r["qmt_download_calls"], 0)
+
+    def test_table_probe_isolates_optional_pershare_utf8_from_core_eight(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def get_financial_data(self, codes, tables, **kw):
+                if tables == ["PerShare"]:
+                    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+                return {codes[0]: {tables[0]: FakeFrame(
+                    [{"m_timetag": 20260930}])}}
+        r = W.probe_tables_readonly(
+            XT(), "600000.SH",
+            now=datetime(2026, 11, 22, 11, 0, tzinfo=L.UTC8))
+        self.assertEqual(
+            [x["status"] for x in r["tables"][:-1]],
+            ["ROWS_IN_LOCAL_CACHE"] * 8)
+        self.assertEqual(r["tables"][-1]["status"], "UTF8_DECODE_ERROR")
+        self.assertFalse(r["per_share_optional_support_proven"])
+
+    def test_table_probe_reports_empty_cache_without_claiming_provider_empty(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def get_financial_data(self, codes, tables, **kw):
+                return {codes[0]: {tables[0]: FakeFrame([])}}
+        r = W.probe_tables_readonly(
+            XT(), "600000.SH",
+            now=datetime(2026, 11, 22, 11, 0, tzinfo=L.UTC8))
+        self.assertTrue(all(x["status"] == "EMPTY_OR_NOT_CACHED"
+                            for x in r["tables"]))
+        self.assertFalse(r["empty_cache_proves_provider_empty"])
+
+    def test_table_probe_unknown_table_and_utf8_errors_are_separate(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def get_financial_data(self, codes, tables, **kw):
+                if tables == ["Balance"]:
+                    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+                if tables == ["PerShare"]:
+                    return {codes[0]: {}}
+                return {codes[0]: {tables[0]: FakeFrame([])}}
+        r = W.probe_tables_readonly(
+            XT(), "600000.SH",
+            now=datetime(2026, 11, 22, 11, 0, tzinfo=L.UTC8))
+        self.assertEqual(r["tables"][0]["status"], "UTF8_DECODE_ERROR")
+        self.assertEqual(r["tables"][-1]["status"], "TABLE_NOT_RETURNED")
+        self.assertEqual(r["qmt_download_calls"], 0)
+
+    def test_table_probe_refuses_writer_window_before_qmt_call(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def get_financial_data(self, *args, **kwargs):
+                raise AssertionError("NO_QMT_CALL_IN_WRITER_WINDOW")
+        with self.assertRaisesRegex(ValueError, "RESERVED_2005"):
+            W.probe_tables_readonly(
+                XT(), "600000.SH",
+                now=datetime(2026, 11, 22, 20, 5, tzinfo=L.UTC8))
+
+    def test_probe_cli_rejects_output_mode_and_multiple_symbols(self):
+        import qmt_extra_financial_cache_worker as W
+        for args in (
+            ["--probe-readonly", "--symbols", "600000.SH,600001.SH"],
+            ["--probe-readonly", "--symbols", "600000.SH",
+             "--output", "out.json"],
+            ["--probe-readonly", "--symbols", "600000.SH",
+             "--mode", "daily"],
+        ):
+            with self.subTest(args=args), self.assertRaises(SystemExit):
+                W.main(args)
+
+    def test_valid_probe_cli_executes_all_nine_readonly_calls(self):
+        """Regression: a legal --symbols value must reach the probe path."""
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.tables_read = []
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.tables_read.extend(tables)
+                return {codes[0]: {
+                    tables[0]: FakeFrame([{"m_timetag": 20260930}])}}
+            def download_financial_data(self, *args, **kwargs):
+                raise AssertionError("READONLY_PROBE_DOWNLOADED")
+            def download_financial_data2(self, *args, **kwargs):
+                raise AssertionError("READONLY_PROBE_DOWNLOADED")
+        fake = ModuleType("xtquant")
+        fake.xtdata = XT()
+        output = io.StringIO()
+        with patch.dict(sys.modules, {"xtquant": fake}), \
+             patch.object(W, "datetime") as clock, \
+             patch.object(W, "_installed_xtquant_version",
+                          return_value="250807.1.2"), \
+             redirect_stdout(output):
+            clock.now.return_value = datetime(
+                2026, 11, 22, 11, 0, tzinfo=L.UTC8)
+            rc = W.main(["--probe-readonly", "--symbols", "688259.SH"])
+        self.assertEqual(rc, 0)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        prefix = "QMT_FINANCE_TABLE_READONLY_PROBE="
+        self.assertTrue(lines[0].startswith(prefix))
+        receipt = json.loads(lines[0][len(prefix):])
+        self.assertEqual(receipt["symbol"], "688259.SH")
+        self.assertEqual(receipt["installed_xtquant_version"], "250807.1.2")
+        self.assertEqual(fake.xtdata.tables_read, list(E.FIN_TABLES))
+        self.assertEqual(receipt["qmt_download_calls"], 0)
+        self.assertFalse(receipt["can_commit"])
+
+    def test_probe_version_missing_does_not_block_diagnosis(self):
+        import qmt_extra_financial_cache_worker as W
+        with patch.object(W.metadata, "version",
+                          side_effect=W.metadata.PackageNotFoundError):
+            self.assertEqual(W._installed_xtquant_version(), "UNKNOWN")
+        with patch.object(W.metadata, "version",
+                          return_value="bad\nversion"):
+            self.assertEqual(W._installed_xtquant_version(), "UNKNOWN")
+
+    def test_probe_stops_if_daily_writer_window_begins_between_tables(self):
+        import qmt_extra_financial_cache_worker as W
+        class XT:
+            def __init__(self):
+                self.calls = 0
+            def get_financial_data(self, codes, tables, **kwargs):
+                self.calls += 1
+                return {codes[0]: {tables[0]: FakeFrame([])}}
+        xt = XT()
+        early = datetime(2026, 11, 22, 19, 49, tzinfo=L.UTC8)
+        blocked = datetime(2026, 11, 22, 19, 50, tzinfo=L.UTC8)
+        with patch.object(W, "datetime") as clock:
+            clock.now.side_effect = [early, early, blocked]
+            with self.assertRaisesRegex(ValueError, "RESERVED_2005"):
+                W.probe_tables_readonly(xt, "600000.SH")
+        self.assertEqual(xt.calls, 1)
 
     def test_cache_import_explicit_finance_dat_universe_adds_historical_bj(self):
         import qmt_extra_financial_cache_import as I

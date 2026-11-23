@@ -1,5 +1,5 @@
-﻿# One 20:05 China-time trigger -> market, finance, sectors, adjustments.
-# No runtime deadline. Every finished run attempts user notification.
+﻿# One 20:05 China-time trigger -> K-lines, sectors, adjustments, finance LAST.
+# Finance has a nightly deadline; completed runs attempt durable WeCom push.
 param(
     [switch]$Apply,
     [string]$Root = "D:\stock",
@@ -27,14 +27,23 @@ if(-not $Apply){
     Write-Host ('MARKET_1630_CHINA_NOW='+$chinaNow.ToString('o'))
     Write-Host ('MARKET_2005_RUN_START_CHINA='+$chinaNow.ToString('o'))
     Write-Host 'MARKET_1630_MODE=UNIFIED_SINGLE_RUN'
-    Write-Host 'MARKET_1630_SECTIONS=EIGHT_PERIODS,FINANCIAL_DAILY,SECTORS,ADJUSTMENTS_ROTATING'
-    Write-Host 'MARKET_1630_FINANCIAL_RUNTIME_LIMIT=NONE'
+    Write-Host 'MARKET_1630_SECTIONS=EIGHT_PERIODS,SECTORS,ADJUSTMENTS_ROTATING,FINANCIAL_DAILY'
+    Write-Host 'MARKET_1630_FINANCIAL_RUNTIME_LIMIT=40_MINUTES_MAX; HARD_NIGHTLY_CUTOFF=23:20_CHINA'
     Write-Host 'MARKET_1630_WINDOWS_TASK_RUNTIME_LIMIT=NONE'
     Write-Host ('MARKET_1630_ADJUSTMENTS_PER_RUN_LIMIT='+$AdjustmentStockLimit)
     Write-Host ('MARKET_1630_FINANCE_DAILY_MAX_SYMBOLS='+$FinanceDailyStockLimit)
     Write-Host 'MARKET_1630_FINANCE_FULL_UNIVERSE_DAILY=FALSE'
-    Write-Host 'MARKET_1630_NOTIFICATION=WINDOWS_DESKTOP_AFTER_ALL_OUTCOMES'
+    Write-Host 'MARKET_1630_NOTIFICATION=WECOM_CHUNKED_PUSH_AFTER_ALL_OUTCOMES; WINDOWS_TOAST_DISABLED'
     Write-Host 'MARKET_1630_MULTISOURCE=EIGHT_PERIODS_ONLY;OTHER_TYPES_UNVERIFIED'
+    return
+}
+# Do not replay a missed 20:05 scheduled job after the user's shutdown time.
+# Manual HistoryOnly remains explicitly available for daytime recovery.
+if($Invocation -eq 'Scheduled' -and
+   ($chinaNow.TimeOfDay -lt (New-TimeSpan -Hours 20 -Minutes 5) -or
+    $chinaNow.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20) -or
+    (Get-Date).TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
+    Write-Host 'MARKET_2005_SCHEDULED_OUTSIDE_EVENING_WINDOW_NO_EXECUTION=TRUE'
     return
 }
 # Shared named mutex: Task Scheduler IgnoreNew alone does not protect manual GUI runs.
@@ -63,10 +72,11 @@ $engine=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.ex
 $completed=New-Object System.Collections.ArrayList
 $failures=New-Object System.Collections.ArrayList
 $stageRecords=[ordered]@{}
+$financeDeferred=$false
 $transcribing=$false
 $qmtPreflightStatus='NOT_RUN'
 $qmtPreflightAttempts=0
-$stageNames=@('EIGHT_PERIODS','FINANCIAL_DAILY','SECTORS','ADJUSTMENTS_ROTATING')
+$stageNames=@('EIGHT_PERIODS','SECTORS','ADJUSTMENTS_ROTATING','FINANCIAL_DAILY')
 if($HistoryOnly){$stageNames=@('EIGHT_PERIODS')}
 $runScope=if($HistoryOnly){'MARKET_HISTORY_ONLY_PRE_2005'}else{'ALL_FOUR_SECTIONS'}
 function Invoke-MarketStage {
@@ -184,6 +194,13 @@ try {
         Write-Host 'MARKET_2005_QMT_SERVICE_UNAVAILABLE=TRUE'
         throw 'QMT_SERVICE_UNAVAILABLE: xtquant get_client did not connect after six bounded attempts; no update stages executed'
     }
+    # A slow QMT startup must not create an after-midnight scheduled run.
+    $afterQmtProbe=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
+    if($Invocation -eq 'Scheduled' -and
+       ($afterQmtProbe.TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20) -or
+        (Get-Date).TimeOfDay -ge (New-TimeSpan -Hours 23 -Minutes 20))){
+        throw 'EVENING_CUTOFF_REACHED_AFTER_QMT_PREFLIGHT_NO_STAGES_EXECUTED'
+    }
     # Each source is verified by its own pipeline. No second scheduled retry.
     # Failure in an independent stage is captured; other stages still run.
     # Market/sector/adjustment updates should not wait for a long or
@@ -194,7 +211,27 @@ try {
         Invoke-MarketStage -Label 'SECTORS' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','sectors','-ExtraStockLimit','1','-ExtraAssetLimit','0')
         $start=$chinaNow.Date.AddDays(-30).ToString('yyyy-MM-dd')
         Invoke-MarketStage -Label 'ADJUSTMENTS_ROTATING' -Script $update -Arguments @('-Mode','extras','-Root',$Root,'-ExtraSection','adjustments','-ExtraStockLimit',[string]$AdjustmentStockLimit,'-ExtraAssetLimit','0','-ExtraStart',$start)
-        Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit)
+        # Finance always runs after K-lines, sectors and adjustments. It may
+        # continue the next evening instead of running while the PC is shut
+        # down. A 5m buffer covers the importer's single 180s worker call.
+        $beforeFinance=[TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$china)
+        $financeStop=$beforeFinance.Date.AddHours(23).AddMinutes(20)
+        $localBeforeFinance=Get-Date
+        $localFinanceStop=$localBeforeFinance.Date.AddHours(23).AddMinutes(20)
+        $financeMinutes=[int][Math]::Floor([Math]::Min(
+            ($financeStop-$beforeFinance).TotalMinutes,
+            ($localFinanceStop-$localBeforeFinance).TotalMinutes))-5
+        if($financeMinutes -ge 10){
+            $financeBudget=[Math]::Min(40,$financeMinutes)
+            Write-Host ('MARKET_2005_FINANCE_QMT_PRIMARY_VERSIONED=TRUE max_minutes='+$financeBudget)
+            Invoke-MarketStage -Label 'FINANCIAL_DAILY' -Script $finance -Arguments @('-Root',$Root,'-FinanceDir',$FinanceDir,'-LookbackDays',[string]$FinanceLookbackDays,'-MaxSymbols',[string]$FinanceDailyStockLimit,'-MaxMinutes',[string]$financeBudget,'-QMTPrimaryVersioned')
+        }else{
+            $financeDeferred=$true
+            $lateLog=Join-Path $work ('afternoon-'+$chinaNow.ToString('yyyyMMdd-HHmmss')+'-FINANCIAL_DAILY.log')
+            Set-Content -LiteralPath $lateLog -Encoding UTF8 -Value 'FINANCIAL_DEFERRED_CUTOFF_CHINA_2320=TRUE; NO_QMT_FINANCE_DOWNLOAD; CURSOR_UNCHANGED'
+            $stageRecords['FINANCIAL_DAILY']=@{exit_code=87;status='DEFERRED_CUTOFF';log_path=$lateLog}
+            Write-Host 'MARKET_2005_FINANCE_DEFERRED_BY_NIGHTLY_CUTOFF=TRUE'
+        }
     }else{
         Write-Host 'MARKET_MANUAL_HISTORY_ONLY=TRUE; NO_CURRENT_FINANCE_SECTOR_ADJUSTMENT_QUERIES'
     }
@@ -229,6 +266,7 @@ try {
         errors=@($failures.ToArray())
         validation=$null
         financial_complete_universe=$false
+        finance_deferred_by_cutoff=[bool]$financeDeferred
         adjustments_complete_universe=$false
         other_extra_multisource_verified=$false
         log_path=$log
@@ -304,7 +342,7 @@ try {
         if(-not(Test-Path -LiteralPath $notifier -PathType Leaf)){
             throw 'Notification script missing'
         }
-        & $engine -NoProfile -ExecutionPolicy Bypass -File $notifier -Status $outcome -Summary $stepText -LogPath $log
+        & $engine -NoProfile -ExecutionPolicy Bypass -File $notifier -Status $outcome -Summary $stepText -LogPath $log -StatusPath $status -ExpectedStart $started
         if($LASTEXITCODE -ne 0){throw ('Notification exit '+$LASTEXITCODE)}
         Write-Host 'MARKET_1630_USER_NOTIFICATION_ATTEMPTED=TRUE'
     }catch{
@@ -313,7 +351,14 @@ try {
 }
 if($failures.Count){throw ('Market daily update failed: '+($failures -join '; '))}
 if($outcome -eq 'PARTIAL'){
-    throw 'MARKET_2005_PARTIAL_DATA_VALIDATION: detailed same-run logs and status receipt retained'
+    if($financeDeferred -and $failures.Count -eq 0 -and
+       $completed.Count -eq ($stageNames.Count-1)){
+        # An honest PARTIAL receipt and push are still emitted; a planned
+        # bedtime deferral is not a broken Windows scheduled task.
+        Write-Host 'MARKET_2005_ROUTINE_FINANCE_CONTINUATION_NEXT_EVENING=TRUE'
+    }else{
+        throw 'MARKET_2005_PARTIAL_DATA_VALIDATION: detailed same-run logs and status receipt retained'
+    }
 }
 }finally{
     if($runMutexHeld){$runMutex.ReleaseMutex()}

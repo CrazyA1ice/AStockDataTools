@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +30,7 @@ MAX_SNAPSHOT_FILES = 8
 MAX_TOTAL_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_CACHE_ROWS = 2000
 MAX_FIELDS = 128
+MAX_DATE_DETAILS = 32
 MAX_CHILD_STDOUT_BYTES = 3 * 1024 * 1024
 FIELD = re.compile(r"[A-Za-z0-9_]{1,96}")
 SENTINEL = "FINANCE_P5_CACHED_FINGERPRINTS="
@@ -42,7 +44,88 @@ def _digest(value) -> str:
     return sha256(E.canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _fingerprint(row: dict) -> dict:
+def _report_key_date(value) -> str:
+    """Strict Capital change-date label, NOT a quarterly filing period."""
+    try:
+        value = json.loads(E.canonical_json(value))
+        if type(value) is bool or type(value) not in (str, int, float):
+            raise ValueError("unsupported QMT key date type")
+        if type(value) is float:
+            if not math.isfinite(value) or not value.is_integer():
+                raise ValueError("fractional QMT key date")
+            value = int(value)
+        token = str(value).strip()
+        if re.fullmatch(r"\d{8}", token):
+            day = datetime.strptime(token, "%Y%m%d").date()
+        elif re.fullmatch(r"\d{14}", token):
+            day = datetime.strptime(token, "%Y%m%d%H%M%S").date()
+        elif re.fullmatch(r"\d{13}", token):
+            # Reject decimal date-like encodings such as YYYYMMDDHHmmm;
+            # treating one as Unix milliseconds would invent the wrong date.
+            if re.fullmatch(r"(19|20)\d{6}", token[:8]):
+                try:
+                    date.fromisoformat(token[:8])
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("ambiguous numeric QMT date encoding")
+            day = datetime.fromtimestamp(int(token) / 1000, CN).date()
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", token):
+            day = date.fromisoformat(token)
+        elif re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+                r"(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})?", token):
+            stamp = datetime.fromisoformat(token.replace("Z", "+00:00"))
+            day = (stamp.astimezone(CN).date()
+                   if stamp.tzinfo is not None else stamp.date())
+        else:
+            raise ValueError("unknown QMT report-key encoding")
+        if not 1980 <= day.year <= 2100:
+            raise ValueError("QMT report-key date outside bounded range")
+        return day.isoformat()
+    except (ValueError, OverflowError, OSError) as exc:
+        raise CacheCompareBlocked("qmt_report_key_date_unverifiable") from exc
+
+
+def _announcement_label(row: dict) -> dict:
+    """Bounded local m_anntime availability only; never disclose raw values."""
+    if "m_anntime" not in row:
+        return {"status": "FIELD_ABSENT"}
+    value = row["m_anntime"]
+    if value is None or str(value).strip() in ("", "0", "0.0"):
+        return {"status": "EMPTY_OR_ZERO"}
+    try:
+        day = _report_key_date(value)
+    except CacheCompareBlocked:
+        return {"status": "UNPARSEABLE"}
+    return {"status": "PARSED_DATE", "date": day}
+
+
+def _validate_announcement_label(label: dict, field_sha: dict) -> None:
+    if type(label) is not dict or label.get("status") not in (
+            "FIELD_ABSENT", "EMPTY_OR_ZERO", "UNPARSEABLE", "PARSED_DATE"):
+        raise CacheCompareBlocked("invalid_capital_announcement_label")
+    status = label["status"]
+    if ((status == "PARSED_DATE" and set(label) != {"status", "date"})
+            or (status != "PARSED_DATE" and set(label) != {"status"})
+            or ((status == "FIELD_ABSENT") !=
+                ("m_anntime" not in field_sha))):
+        raise CacheCompareBlocked("capital_announcement_presence_mismatch")
+    if status == "PARSED_DATE":
+        day = label["date"]
+        if (type(day) is not str or
+                re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) is None):
+            raise CacheCompareBlocked("invalid_capital_announcement_day")
+        try:
+            d = date.fromisoformat(day)
+            if d.isoformat() != day or not 1980 <= d.year <= 2100:
+                raise ValueError("noncanonical date")
+        except ValueError as exc:
+            raise CacheCompareBlocked("invalid_capital_announcement_day") from exc
+
+
+def _fingerprint(row: dict, *, date_details=False,
+                 announcement_evidence=False) -> dict:
     if type(row) is not dict or len(row) > MAX_FIELDS + 1:
         raise CacheCompareBlocked("cache_record_field_budget")
     if ("m_timetag" not in row or row["m_timetag"] is None
@@ -56,10 +139,19 @@ def _fingerprint(row: dict) -> dict:
         if type(key) is not str or FIELD.fullmatch(key) is None:
             raise CacheCompareBlocked("unexpected_capital_field_name")
         fields[key] = _digest(value)
-    return {"key_sha256": _digest(row["m_timetag"]), "field_sha256": fields}
+    result = {"key_sha256": _digest(row["m_timetag"]),
+              "field_sha256": fields}
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
+    if date_details:
+        result["report_key_date"] = _report_key_date(row["m_timetag"])
+    if announcement_evidence:
+        result["announcement_label"] = _announcement_label(row)
+    return result
 
 
-def _child_cache_fingerprints(code: str) -> dict:
+def _child_cache_fingerprints(code: str, *, date_details=False,
+                              announcement_evidence=False) -> dict:
     if type(code) is not str or P2.STOCK.fullmatch(code) is None:
         raise CacheCompareBlocked("invalid_child_symbol")
     from xtquant import xtdata
@@ -80,16 +172,26 @@ def _child_cache_fingerprints(code: str) -> dict:
         "stock": code,
         "table": "Capital",
         "row_count": len(records),
-        "records": [_fingerprint(row) for row in records],
+        "records": [_fingerprint(row, date_details=date_details,
+                                 announcement_evidence=announcement_evidence)
+                    for row in records],
     }
 
 
 def _run_child(code: str, timeout_seconds: int = 25,
-               runner=subprocess.run) -> dict:
+               runner=subprocess.run, *, date_details=False,
+               announcement_evidence=False) -> dict:
     if type(timeout_seconds) is not int or not 5 <= timeout_seconds <= 30:
         raise CacheCompareBlocked("invalid_cache_child_timeout")
     cmd = [sys.executable, "-u", "-B", str(Path(__file__).resolve()),
            "--internal-cache-fingerprints", "--stock", code]
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
+    if date_details:
+        cmd.extend(["--report-key-date-details", "--explicit-readonly",
+                    "--explicit-qmt-cache-read"])
+    if announcement_evidence:
+        cmd.append("--capital-announcement-evidence")
     try:
         completed = runner(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -122,12 +224,21 @@ def _run_child(code: str, timeout_seconds: int = 25,
         raise CacheCompareBlocked("qmt_cache_fingerprint_envelope_invalid")
     for record in payload["records"]:
         if (type(record) is not dict
-                or set(record) != {"key_sha256", "field_sha256"}
+                or set(record) != ({"key_sha256", "field_sha256",
+                                   "report_key_date",
+                                   "announcement_label"} if announcement_evidence
+                                  else {"key_sha256", "field_sha256",
+                                        "report_key_date"} if date_details else
+                                       {"key_sha256", "field_sha256"})
                 or type(record["key_sha256"]) is not str
                 or len(record["key_sha256"]) != 64
                 or type(record["field_sha256"]) is not dict
                 or not 1 <= len(record["field_sha256"]) <= MAX_FIELDS
-                or "m_timetag" not in record["field_sha256"]):
+                or "m_timetag" not in record["field_sha256"]
+                or (date_details and
+                    (type(record["report_key_date"]) is not str or
+                     re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                  record["report_key_date"]) is None))):
             raise CacheCompareBlocked("qmt_cache_fingerprint_record_invalid")
         if (any(type(k) is not str or FIELD.fullmatch(k) is None
                 or type(v) is not str or len(v) != 64
@@ -136,6 +247,20 @@ def _run_child(code: str, timeout_seconds: int = 25,
                 or re.fullmatch(r"[0-9a-f]{64}",
                                 record["key_sha256"]) is None):
             raise CacheCompareBlocked("qmt_cache_fingerprint_digest_invalid")
+    if announcement_evidence:
+        for record in payload["records"]:
+            _validate_announcement_label(record["announcement_label"],
+                                         record["field_sha256"])
+    if date_details:
+        for record in payload["records"]:
+            try:
+                parsed = date.fromisoformat(record["report_key_date"])
+                if (parsed.isoformat() != record["report_key_date"]
+                        or not 1980 <= parsed.year <= 2100):
+                    raise ValueError("noncanonical date")
+            except ValueError as exc:
+                raise CacheCompareBlocked(
+                    "qmt_cache_report_key_date_invalid") from exc
     return payload
 
 
@@ -166,7 +291,8 @@ def _pick_two(ledger: dict, p3_sample_codes: set[str]) -> list[dict]:
 
 
 def _old_verified_fingerprints(finance: Path, extra: Path,
-                               item: dict) -> tuple[list[dict], dict]:
+                               item: dict, *, date_details=False,
+                               announcement_evidence=False) -> tuple[list[dict], dict]:
     code = item["stock"]
     if type(code) is not str or P2.STOCK.fullmatch(code) is None:
         raise CacheCompareBlocked("invalid_history_stock")
@@ -199,7 +325,9 @@ def _old_verified_fingerprints(finance: Path, extra: Path,
         raise CacheCompareBlocked("unbounded_historical_capital_union")
     if any(multiplicity != 1 for multiplicity in merged.values()):
         raise CacheCompareBlocked("duplicate_historical_raw_records")
-    return ([_fingerprint(json.loads(record)) for record in merged],
+    return ([_fingerprint(json.loads(record), date_details=date_details,
+                          announcement_evidence=announcement_evidence)
+             for record in merged],
             {"snapshot_candidates_verified": len(files),
              "historical_selected_dates": len(by_day),
              "selected_history_variants": len(merged),
@@ -207,7 +335,186 @@ def _old_verified_fingerprints(finance: Path, extra: Path,
              "history_fingerprint_locally_verified": True})
 
 
-def _compare(old: list[dict], fresh: list[dict]) -> dict:
+def _calendar_bucket(date_text: str) -> str:
+    """Calendar annotation only: Capital may change outside quarter ends."""
+    d = date.fromisoformat(date_text)
+    return ("CALENDAR_QUARTER_END"
+            if (d.month, d.day) in ((3, 31), (6, 30), (9, 30), (12, 31))
+            else "OTHER_CALENDAR_DATE")
+
+
+def _announcement_evidence_for_changed_keys(old: list[dict],
+                                            fresh: list[dict],
+                                            dates: dict) -> list[dict]:
+    """Only m_anntime status for P5-selected changed Capital dates."""
+    def by_day(rows):
+        group = {}
+        for item in rows:
+            day = item["report_key_date"]
+            label = item.get("announcement_label")
+            _validate_announcement_label(label, item["field_sha256"])
+            group.setdefault(day, []).append(label)
+        return group
+
+    previous, current = by_day(old), by_day(fresh)
+    selected = ([(day, "HISTORY_ONLY_KEY") for day in
+                 dates["previous_only_key_dates"]] +
+                [(day, "CACHE_ONLY_KEY") for day in
+                 dates["current_only_key_dates"]] +
+                [(item["report_key_date"], "BUSINESS_FIELD_DIFF")
+                 for item in dates["changed_business_field_key_dates"]])
+    if len(selected) > MAX_DATE_DETAILS or len(set(x[0] for x in selected)) != len(selected):
+        raise CacheCompareBlocked("announcement_date_scope_ambiguous_or_unbounded")
+
+    def label_for(group, day):
+        options = group.get(day)
+        if not options:
+            return {"status": "RECORD_NOT_IN_THIS_VERSION"}
+        first = options[0]
+        if any(item != first for item in options[1:]):
+            raise CacheCompareBlocked("historical_announcement_versions_ambiguous")
+        return first
+
+    results = []
+    for day, reason in sorted(selected):
+        historical = label_for(previous, day)
+        cached = label_for(current, day)
+        if (reason == "HISTORY_ONLY_KEY" and
+                (historical["status"] == "RECORD_NOT_IN_THIS_VERSION"
+                 or cached["status"] != "RECORD_NOT_IN_THIS_VERSION")):
+            raise CacheCompareBlocked("announcement_scope_inconsistent")
+        if (reason == "CACHE_ONLY_KEY" and
+                (cached["status"] == "RECORD_NOT_IN_THIS_VERSION"
+                 or historical["status"] != "RECORD_NOT_IN_THIS_VERSION")):
+            raise CacheCompareBlocked("announcement_scope_inconsistent")
+        if (reason == "BUSINESS_FIELD_DIFF" and
+                (historical["status"] == "RECORD_NOT_IN_THIS_VERSION"
+                 or cached["status"] == "RECORD_NOT_IN_THIS_VERSION")):
+            raise CacheCompareBlocked("announcement_scope_inconsistent")
+        results.append({
+            "capital_change_date": day,
+            "difference_reason": reason,
+            "historical_m_anntime": historical,
+            "cached_m_anntime": cached,
+        })
+    return results
+
+
+def _locate_report_key_dates(old: list[dict], fresh: list[dict],
+                             outcome: dict, *, announcement_evidence=False) -> dict:
+    """Expose Capital change-date labels and field NAMES, not filing dates."""
+    def dates(rows):
+        by_key, by_day = {}, {}
+        for row in rows:
+            key = row["key_sha256"]
+            label = row.get("report_key_date")
+            if (type(label) is not str or
+                    not re.fullmatch(r"\d{4}-\d{2}-\d{2}", label)):
+                raise CacheCompareBlocked("missing_verified_qmt_key_date")
+            try:
+                parsed = date.fromisoformat(label)
+                if parsed.isoformat() != label or not 1980 <= parsed.year <= 2100:
+                    raise ValueError("noncanonical")
+            except ValueError as exc:
+                raise CacheCompareBlocked("invalid_qmt_key_date") from exc
+            if ((key in by_key and by_key[key] != label) or
+                    (label in by_day and by_day[label] != key)):
+                raise CacheCompareBlocked("ambiguous_qmt_key_date_mapping")
+            by_key[key], by_day[label] = label, key
+        return by_key
+
+    old_dates, fresh_dates = dates(old), dates(fresh)
+    previous, current = {}, {}
+    for row in old:
+        previous.setdefault(row["key_sha256"], []).append(row["field_sha256"])
+    for row in fresh:
+        key = row["key_sha256"]
+        if key in current:
+            raise CacheCompareBlocked("duplicate_cached_report_key")
+        current[key] = row["field_sha256"]
+    old_keys, fresh_keys = set(previous), set(current)
+    removed = sorted(old_dates[k] for k in old_keys - fresh_keys)
+    added = sorted(fresh_dates[k] for k in fresh_keys - old_keys)
+    changed, field_totals = [], Counter()
+    for key in old_keys & fresh_keys:
+        if old_dates[key] != fresh_dates[key]:
+            raise CacheCompareBlocked("mismatched_common_key_date")
+        variants = previous[key]
+        def business(fields):
+            return {name: value for name, value in fields.items()
+                    if name != "m_quarter"}
+        stable = {json.dumps(business(fields), sort_keys=True)
+                  for fields in variants}
+        if len(stable) != 1:
+            raise CacheCompareBlocked("ambiguous_historical_business_key_dates")
+        before, after = business(variants[0]), business(current[key])
+        names = sorted(name for name in before.keys() | after.keys()
+                       if before.get(name) != after.get(name))
+        if names:
+            if old_dates[key] != fresh_dates[key]:
+                raise CacheCompareBlocked("mismatched_common_key_date")
+            for name in names:
+                if FIELD.fullmatch(name) is None or name == "m_timetag":
+                    raise CacheCompareBlocked("unsafe_date_detail_field")
+                field_totals[name] += 1
+            changed.append({"report_key_date": old_dates[key], "fields": names})
+    changed.sort(key=lambda x: x["report_key_date"])
+    expected = {entry["field"]: entry["report_keys"]
+                for entry in outcome["changed_non_quarter_field_counts"]}
+    if (len(removed) != outcome["previous_keys_missing_from_cache"]
+            or len(added) != outcome["cached_keys_absent_from_previous"]
+            or field_totals != Counter(expected)):
+        raise CacheCompareBlocked("qmt_key_dates_not_aligned_with_p5_counts")
+    if len(removed) + len(added) + len(changed) > MAX_DATE_DETAILS:
+        raise CacheCompareBlocked("report_key_date_detail_budget_exceeded")
+    def calendar_counts(labels):
+        return {
+            "calendar_quarter_end": sum(
+                _calendar_bucket(label) == "CALENDAR_QUARTER_END"
+                for label in labels),
+            "other_calendar_dates": sum(
+                _calendar_bucket(label) == "OTHER_CALENDAR_DATE"
+                for label in labels),
+        }
+    result = {
+        "source_key": "QMT_CAPITAL_M_TIMETAG",
+        "capital_date_role": "SHARE_CAPITAL_CHANGE_DATE",
+        "capital_announcement_date_field": "m_anntime",
+        "capital_announcement_dates_verified": False,
+        "calendar_quarter_ends_required": False,
+        "change_event_sources_verified": False,
+        "free_float_capital_alias_normalized": False,
+        "calendar_only_date_counts": {
+            "previous_only": calendar_counts(removed),
+            "current_only": calendar_counts(added),
+            "changed_business_fields": calendar_counts(
+                [item["report_key_date"] for item in changed]),
+        },
+        "date_labels_from_existing_local_cache": True,
+        "official_report_periods_or_filing_dates_certified": False,
+        "previous_only_key_dates": removed,
+        "current_only_key_dates": added,
+        "changed_business_field_key_dates": changed,
+        "m_quarter_date_labels_omitted": True,
+        "historical_pending_remains_blocked": True,
+        "financial_original_values_emitted": False,
+    }
+    if announcement_evidence:
+        result["capital_announcement_evidence"] = {
+            "source": "QMT_EXISTING_CAPITAL_CACHE_AND_VERIFIED_HISTORY_ONLY",
+            "announcement_field": "m_anntime",
+            "availability_is_not_disclosure_proof": True,
+            "official_announcements_checked": False,
+            "dates_limited_to_changed_keys": True,
+            "entries": _announcement_evidence_for_changed_keys(
+                old, fresh, result),
+            "can_certify_or_repair": False,
+        }
+    return result
+
+
+def _compare(old: list[dict], fresh: list[dict], *, date_details=False,
+             announcement_evidence=False) -> dict:
     previous = {}
     current = {}
     for row in old:
@@ -249,7 +556,7 @@ def _compare(old: list[dict], fresh: list[dict]) -> dict:
         verdict = "M_QUARTER_ONLY_CANDIDATE_NOT_APPROVED"
     else:
         verdict = "NO_DIFFERENCE_OBSERVED_IN_CURRENT_CACHE"
-    return {
+    result = {
         "previous_report_keys": len(old_keys),
         "cached_report_keys": len(fresh_keys),
         "previous_keys_missing_from_cache": len(old_keys - fresh_keys),
@@ -264,11 +571,20 @@ def _compare(old: list[dict], fresh: list[dict]) -> dict:
         "observed_class": verdict,
         "current_cache_only_not_provider_certified": True,
     }
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
+    if date_details:
+        result["report_key_date_details"] = _locate_report_key_dates(
+            old, fresh, result,
+            announcement_evidence=announcement_evidence)
+    return result
 
 
-def compare(state_module: Path | str, market_root: Path | str,
-            expected_sha: str, *, now: datetime | None = None,
-            read_cache=_run_child) -> dict:
+def _prepare_verified_histories(state_module: Path | str,
+                                market_root: Path | str, expected_sha: str, *,
+                                now: datetime | None = None,
+                                date_details=False, announcement_evidence=False):
+    """Verify canonical ledger plus two old Capital snapshot unions, NO QMT."""
     if type(expected_sha) is not str or re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha) is None:
         raise CacheCompareBlocked("explicit_financial_ledger_sha_required")
     expected_sha = expected_sha.lower()
@@ -291,7 +607,9 @@ def compare(state_module: Path | str, market_root: Path | str,
     histories = []
     total = 0
     for item in first:
-        fingerprints, details = _old_verified_fingerprints(finance, extra, item)
+        fingerprints, details = _old_verified_fingerprints(
+            finance, extra, item, date_details=date_details,
+            announcement_evidence=announcement_evidence)
         total += details["snapshot_candidates_verified"]
         if total > MAX_SNAPSHOT_FILES:
             raise CacheCompareBlocked("two_stock_history_file_budget")
@@ -299,10 +617,59 @@ def compare(state_module: Path | str, market_root: Path | str,
     # Revalidate ledger before QMT interaction, never allow stale scope.
     if P2.summarize_pending(state_module)["progress_sha256"] != expected_sha:
         raise CacheCompareBlocked("financial_progress_changed_before_qmt")
+    return expected_sha, histories
+
+
+def preflight(state_module: Path | str, market_root: Path | str,
+              expected_sha: str, *, now: datetime | None = None) -> dict:
+    """Explicit offline gate before the separate opt-in local QMT cache read."""
+    expected_sha, histories = _prepare_verified_histories(
+        state_module, market_root, expected_sha, now=now)
+    return {
+        "status": "FINANCE_P5_CAPITAL_TWO_STOCK_OFFLINE_PREFLIGHT_NOT_CERTIFIED",
+        "progress_sha256": expected_sha,
+        "sample_rule": "ONE_FROM_EACH_CAPITAL_PROOF_CLASS",
+        "sample_count": len(histories),
+        "samples": [{
+            "stock": item["stock"],
+            "pending_proof_class": item["proof_class"],
+            "historical_snapshot_candidates_verified":
+                details["snapshot_candidates_verified"],
+            "historical_selected_dates": details["historical_selected_dates"],
+            "selected_history_variants": details["selected_history_variants"],
+        } for item, _fingerprints, details in histories],
+        "selected_historical_snapshot_content_locally_verified": True,
+        "current_qmt_cache_compared": False,
+        "actual_conflict_report_dates_located": False,
+        "only_capital_first_blockers": True,
+        "qmt_cache_calls": 0, "download_calls": 0,
+        "financial_original_values_emitted": False,
+        "source_authenticity_certified": False,
+        "can_download": False, "can_repair": False,
+        "can_execute": False, "market_file_writes": False,
+    }
+
+
+def compare(state_module: Path | str, market_root: Path | str,
+            expected_sha: str, *, now: datetime | None = None,
+            read_cache=_run_child, date_details=False,
+            announcement_evidence=False) -> dict:
+    if announcement_evidence and not date_details:
+        raise CacheCompareBlocked("announcement_evidence_needs_date_scope")
+    expected_sha, histories = _prepare_verified_histories(
+        state_module, market_root, expected_sha, now=now,
+        date_details=date_details,
+        announcement_evidence=announcement_evidence)
     results = []
     for item, fingerprints, details in histories:
-        fresh = read_cache(item["stock"])
-        outcome = _compare(fingerprints, fresh["records"])
+        fresh = (read_cache(item["stock"], date_details=True,
+                            announcement_evidence=True)
+                 if announcement_evidence else
+                 read_cache(item["stock"], date_details=True)
+                 if date_details else read_cache(item["stock"]))
+        outcome = _compare(fingerprints, fresh["records"],
+                           date_details=date_details,
+                           announcement_evidence=announcement_evidence)
         if P2.summarize_pending(state_module)["progress_sha256"] != expected_sha:
             raise CacheCompareBlocked("financial_progress_changed_during_qmt")
         results.append({
@@ -320,6 +687,11 @@ def compare(state_module: Path | str, market_root: Path | str,
         "samples": results,
         "only_capital_first_blockers": True,
         "fresh_qmt_cache_read_only": True,
+        "report_key_dates_explicitly_requested": bool(date_details),
+        "capital_announcement_evidence_explicitly_requested":
+            bool(announcement_evidence),
+        "official_announcements_checked": False,
+        "official_report_periods_certified": False,
         "qmt_cache_calls": len(results),
         "download_calls": 0,
         "temp_files_created": 0,
@@ -341,19 +713,42 @@ def main(argv=None) -> int:
     parser.add_argument("--expected-progress-sha256")
     parser.add_argument("--explicit-readonly", action="store_true")
     parser.add_argument("--explicit-qmt-cache-read", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--report-key-date-details", action="store_true")
+    parser.add_argument("--capital-announcement-evidence", action="store_true")
     parser.add_argument("--internal-cache-fingerprints", action="store_true")
     parser.add_argument("--stock")
     args = parser.parse_args(argv)
     if args.internal_cache_fingerprints:
-        if not args.stock:
+        # An offline-only invocation must never enter the QMT cache child,
+        # even if a caller combines incompatible CLI flags.
+        if (args.preflight_only or not args.stock
+                or (args.capital_announcement_evidence and
+                    not args.report_key_date_details)
+                or (args.report_key_date_details and not (
+                    args.explicit_readonly and args.explicit_qmt_cache_read))):
             return 2
         try:
-            payload = _child_cache_fingerprints(args.stock)
+            payload = _child_cache_fingerprints(
+                args.stock, date_details=args.report_key_date_details,
+                announcement_evidence=args.capital_announcement_evidence)
         except Exception:
             return 3
         print(SENTINEL + E.canonical_json(payload))
         return 0
-    if not args.explicit_readonly or not args.explicit_qmt_cache_read:
+    if args.preflight_only:
+        if (not args.explicit_readonly or args.explicit_qmt_cache_read
+                or args.report_key_date_details
+                or args.capital_announcement_evidence):
+            print(json.dumps({
+                "status": "FINANCE_P5_OFFLINE_PREFLIGHT_ONLY_READONLY_REQUIRED",
+                "qmt_calls": 0, "can_execute": False,
+                "market_file_writes": False,
+            }, ensure_ascii=False))
+            return 2
+    elif (not args.explicit_readonly or not args.explicit_qmt_cache_read
+          or (args.capital_announcement_evidence and
+              not args.report_key_date_details)):
         print(json.dumps({
             "status": "FINANCE_P5_TWO_EXPLICIT_OPTINS_REQUIRED",
             "qmt_calls": 0, "can_execute": False, "market_file_writes": False,
@@ -363,8 +758,14 @@ def main(argv=None) -> int:
                 args.expected_progress_sha256)):
         parser.error("state-module, market-root and expected SHA required")
     try:
-        result = compare(args.state_module, args.market_root,
-                         args.expected_progress_sha256)
+        if args.preflight_only:
+            result = preflight(args.state_module, args.market_root,
+                               args.expected_progress_sha256)
+        else:
+            result = compare(args.state_module, args.market_root,
+                             args.expected_progress_sha256,
+                             date_details=args.report_key_date_details,
+                             announcement_evidence=args.capital_announcement_evidence)
     except (CacheCompareBlocked, P2.PendingTriageBlocked,
             P3.SnapshotReviewBlocked, P4.IntegrityBlocked,
             OSError, ValueError) as exc:

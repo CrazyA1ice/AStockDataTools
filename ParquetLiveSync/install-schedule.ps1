@@ -49,6 +49,18 @@ if($Action -eq 'Remove'){
 if(Test-Path -LiteralPath (Join-Path $module 'work\qmt_extra\schedule-enabled.json') -PathType Leaf){
     throw 'Legacy extras schedule opt-in exists; refuse overlapping supplementary update'
 }
+$python=Join-Path $repo '.venv\Scripts\python.exe'
+if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project Python'}
+if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
+    throw 'Missing original physical market dataset'
+}
+foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1','run-qmt-financial-daily.ps1','qmt_extra_financial_cache_import.py','market_update_push.py','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
+    if(-not(Test-Path -LiteralPath (Join-Path $module $relative) -PathType Leaf)){
+        throw 'Required unified market script missing: '+$relative
+    }
+}
+# Only after validating every mandatory component, disable the old separate
+# 00:30 finance task. Preserve registration for rollback; refuse overlap.
 $oldFinance=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction SilentlyContinue
 if($null -ne $oldFinance -and [string]$oldFinance.State -ne 'Disabled'){
     # User explicitly requires no separate 00:30 finance run. Disable only
@@ -57,16 +69,6 @@ if($null -ne $oldFinance -and [string]$oldFinance.State -ne 'Disabled'){
     $afterDisable=Get-ScheduledTask -TaskName 'AStockDataTools-QMT-Financial-Daily' -ErrorAction Stop
     if([string]$afterDisable.State -ne 'Disabled'){throw 'Standalone finance task remains active'}
     Write-Host 'MARKET_0030_STANDALONE_FINANCE_TASK_DISABLED=TRUE'
-}
-$python=Join-Path $repo '.venv\Scripts\python.exe'
-if(-not(Test-Path -LiteralPath $python -PathType Leaf)){throw 'Missing project Python'}
-if(-not(Test-Path -LiteralPath 'D:\stock\AllCycleAStockData\1min' -PathType Container)){
-    throw 'Missing original physical market dataset'
-}
-foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1','notify-market-update.ps1','market_daily_verification.py','update-market.ps1')){
-    if(-not(Test-Path -LiteralPath (Join-Path $module $relative) -PathType Leaf)){
-        throw 'Required unified market script missing: '+$relative
-    }
 }
 # Convert once to PC-local clock time. There is exactly ONE trigger.
 $shanghai=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')

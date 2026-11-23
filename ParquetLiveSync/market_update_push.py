@@ -207,6 +207,24 @@ def _atomic_json(path: Path, obj: dict) -> None:
     os.replace(tmp, path)
 
 
+def _retain_full_text(path: Path, content: str) -> None:
+    """The complete message is always inspectable locally, even without Wi-Fi."""
+    if path.is_symlink():
+        raise PushBlocked("LINKED_NOTIFICATION_TEXT")
+    if path.exists():
+        if path.read_text(encoding="utf-8") != content:
+            raise PushBlocked("OUTBOX_TEXT_CONTENT_CHANGED")
+        return
+    tmp = path.with_suffix(".txt.part")
+    if tmp.exists() or tmp.is_symlink():
+        raise PushBlocked("OUTBOX_TEXT_PARTIAL_FILE")
+    with tmp.open("x", encoding="utf-8") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(tmp, path)
+
+
 def dispatch(receipt: Path, private_config: Path, outbox: Path, *,
              dry_run=False, expected_start="", transport=_send_one) -> dict:
     doc = _read_json(receipt, MAX_RECEIPT)
@@ -229,6 +247,7 @@ def dispatch(receipt: Path, private_config: Path, outbox: Path, *,
     if outbox.is_symlink():
         raise PushBlocked("LINKED_NOTIFICATION_OUTBOX")
     file = outbox / (key + ".json")
+    _retain_full_text(outbox / (key + ".txt"), text)
     if file.exists():
         existing = _read_json(file, MAX_RECEIPT)
         if (existing.get("format") != FORMAT or

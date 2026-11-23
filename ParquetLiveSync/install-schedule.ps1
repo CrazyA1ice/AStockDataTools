@@ -59,8 +59,19 @@ foreach($relative in @('scheduled-afternoon-update.ps1','run-market-catchup.ps1'
         throw 'Required unified market script missing: '+$relative
     }
 }
-# Only after validating every mandatory component, disable the old separate
-# 00:30 finance task. Preserve registration for rollback; refuse overlap.
+# A pre-existing old main checkout may contain these filenames without
+# the new behavior; never install finance-last scheduling on stale code.
+foreach($required in @(
+    @('scheduled-afternoon-update.ps1','-QMTPrimaryVersioned'),
+    @('run-qmt-financial-daily.ps1','--qmt-primary-versioned'),
+    @('qmt_extra_financial_cache_import.py','--qmt-primary-versioned'),
+    @('notify-market-update.ps1','market_update_push.py')
+)){
+    $actual=[IO.File]::ReadAllText((Join-Path $module $required[0]))
+    if(-not $actual.Contains([string]$required[1])){
+        throw ('STALE_MAINLINE_SCHEDULE_COMPONENT='+$required[0])
+    }
+}
 # Convert once to PC-local clock time. There is exactly ONE trigger.
 $shanghai=[TimeZoneInfo]::FindSystemTimeZoneById('China Standard Time')
 $todayChina=([TimeZoneInfo]::ConvertTimeFromUtc([datetime]::UtcNow,$shanghai)).Date

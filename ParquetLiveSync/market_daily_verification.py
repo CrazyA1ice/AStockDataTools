@@ -134,12 +134,14 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
         result["processed"] = processed
         result["pending_total"] = pending
         result["remaining_unvisited"] = remaining
+        result["daily_sweep_reached_end"] = scanned
         incomplete = (receipt.get("source_completeness_verified") is not True)
         if not ran:
             result["data_validation"] = "FAIL"
-        elif (not isinstance(pending, int) or
-              not isinstance(remaining, int) or
-              not isinstance(processed, int)):
+        elif (any(type(x) is not int or x < 0
+                  for x in (pending, remaining, processed))
+              or type(scanned) is not bool):
+            # Missing/malformed sweep evidence is not routine completion.
             result["data_validation"] = "UNVERIFIED"
         elif pending or remaining or not scanned:
             result["data_validation"] = "PARTIAL"
@@ -168,7 +170,9 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
         adj = sections.get("adjustments", {}) if isinstance(sections, dict) else {}
         processed = adj.get("symbols_processed") if isinstance(adj, dict) else None
         more = adj.get("next_batch_required") if isinstance(adj, dict) else None
-        if ran and isinstance(processed, int) and processed > 0 and isinstance(more, bool):
+        result["processed"] = processed
+        result["next_batch_required"] = more
+        if ran and type(processed) is int and processed > 0 and type(more) is bool:
             result["data_validation"] = "PARTIAL" if more else "PASS"
             result["detail"] = (f"QMT除权本批处理{processed}只；"
                                 + ("后续仍有批次" if more else "本轮遍历已到末尾"))
@@ -178,6 +182,59 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
     # There are currently no certified independent financial, sector, or
     # adjustment sources. Preserve UNVERIFIED even when their QMT commit passed.
     return result
+
+
+def routine_continuation(run: dict, sections: dict, execution: str,
+                         quality: str, cross: str) -> bool:
+    """Identify a proven routine FINANCE/ADJUSTMENTS rotation, not data PASS.
+
+    Exits and quality certification are distinct. Unknown evidence and all
+    actual failures are excluded. No pending ledger or Parquet is touched.
+    """
+    raw = run.get("stage_records")
+    completed = run.get("steps_completed")
+    if (execution != "PASS" or quality != "PARTIAL" or cross == "FAIL"
+            or run.get("status") != "SUCCESS"
+            or run.get("format") != "qmt_daily_single_trigger_v3"
+            or run.get("mode") != "UNIFIED_SINGLE_RUN"
+            or type(raw) is not dict or type(completed) is not list
+            or len(completed) != len(STAGES)
+            or any(type(x) is not str for x in completed)
+            or set(completed) != set(STAGES)
+            or run.get("errors") != []):
+        return False
+    for stage in STAGES:
+        record = raw.get(stage)
+        section = sections.get(stage)
+        if (type(record) is not dict or type(record.get("exit_code")) is not int
+                or record["exit_code"] != 0 or type(section) is not dict
+                or section.get("execution") != "PASS"
+                or section.get("cross_validation") == "FAIL"):
+            return False
+    if (sections["EIGHT_PERIODS"]["data_validation"] != "PASS"
+            or sections["SECTORS"]["data_validation"] != "PASS"):
+        return False
+    finance = sections["FINANCIAL_DAILY"]
+    adjust = sections["ADJUSTMENTS_ROTATING"]
+    if (finance["data_validation"] not in ("PASS", "PARTIAL")
+            or adjust["data_validation"] not in ("PASS", "PARTIAL")
+            or not (finance["data_validation"] == "PARTIAL"
+                    or adjust["data_validation"] == "PARTIAL")):
+        return False
+    if finance["data_validation"] == "PARTIAL":
+        if (any(type(finance.get(k)) is not int or finance[k] < 0
+                for k in ("processed", "pending_total", "remaining_unvisited"))
+                or type(finance.get("daily_sweep_reached_end")) is not bool
+                or not (finance["pending_total"] > 0
+                        or finance["remaining_unvisited"] > 0
+                        or not finance["daily_sweep_reached_end"])):
+            return False
+    if adjust["data_validation"] == "PARTIAL":
+        if (type(adjust.get("processed")) is not int
+                or adjust["processed"] <= 0
+                or adjust.get("next_batch_required") is not True):
+            return False
+    return True
 
 
 def report(run, *, expected_sources=()):
@@ -211,6 +268,7 @@ def report(run, *, expected_sources=()):
                else "UNVERIFIED" if any(
                    s["data_validation"] != "PASS" for s in sections.values())
                else "PASS")
+    routine = routine_continuation(run, sections, execution, quality, cross)
     # Keep notification concise, but fully explicit even when steps all exit 0.
     message = (f"执行{LABELS[execution]}({completed}/4)；"
                f"数据校验{LABELS[quality]}；跨源验证{LABELS[cross]}。")
@@ -221,6 +279,8 @@ def report(run, *, expected_sources=()):
                     f"跨源{LABELS[item['cross_validation']]}；")
         if item["data_validation"] != "PASS" or item["cross_validation"] == "FAIL":
             details.append(f"{NAMES[stage]}：{item['detail']}")
+    if routine:
+        message = "本轮更新执行完成，财务/除权正常轮换；历史待审和未认证状态保留。 " + message
     if details:
         message += " 说明：" + "；".join(details)
     errors = run.get("errors")
@@ -230,6 +290,7 @@ def report(run, *, expected_sources=()):
     return {"format": "qmt_daily_verification_v1",
             "execution": execution, "data_validation": quality,
             "cross_validation": cross, "sections": sections,
+            "routine_continuation": routine,
             "notification_text": message[:620],
             "warning": "PASS refers only to supported local/phase checks; cross PASS is sampled, not full universe"}
 

@@ -304,7 +304,7 @@ class RunAdmissionTests(unittest.TestCase):
             for fn in [*P.FREEZE_INPUT_NAMES.values(), P.DOSSIER_FILE]:
                 shutil.copyfile(DOCS / fn, Path(td) / fn)
             path = Path(td) / P.FREEZE_INPUT_NAMES["issuer"]
-            source = json.loads(path.read_text())
+            source = json.loads(path.read_text(encoding="utf-8"))
             next(x for x in source["cases"] if x["symbol"] == "002328.SZ")[
                 "current"]["shareholder"] = 57896
             path.write_text(json.dumps(source), encoding="utf-8")

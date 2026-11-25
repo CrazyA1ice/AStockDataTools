@@ -1,0 +1,120 @@
+{
+  "schema": "astock_finance_disclosure_vintage_exact_character_hold_only_v1",
+  "observation_date": "2026-11-25",
+  "source_p8_packet_sha256": "a704a50174e143141cc91a668a0898fd8ca9d725ea27206aa780a0e80647b117",
+  "source_p7_packet_sha256": "d461cf2b3dc38e17fb055b0385fc95bdb759250dae8642f531be6ebeb0ba6bd0",
+  "historical_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "source_method": "Online published source text and primary PDF page screenshot cross-check; no authenticated original investor-interaction API record or QMT ingestion provenance; external bytes not hashed.",
+  "case_count": 5,
+  "evidence_focus_count": 2,
+  "approved_count": 0,
+  "human_approval_granted": false,
+  "live_source_or_ledger_revalidated": false,
+  "allow_apply": false,
+  "allow_pending_clear": false,
+  "allow_deduplication": false,
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "decision": "HOLD_PENDING",
+      "new_evidence": "NO_CHANGE_FROM_P8",
+      "source_preview_sha256": "1e43a595a91fa23963d947a2959ce591891facc3bebbf233c544d6e24c4367fe",
+      "unresolved": [
+        "QMT_TYPE_TAXONOMY_MAPPING",
+        "ROW_NAME_IDENTITY"
+      ]
+    },
+    {
+      "symbol": "002188.SZ",
+      "table": "Capital",
+      "decision": "HOLD_PENDING",
+      "new_evidence": "NO_CHANGE_FROM_P8",
+      "source_preview_sha256": "426ffd9ad947bf320625f337e59b3e21baa47fd196fe6a3e1403a40536e0a25d",
+      "unresolved": [
+        "NINE_SOURCE_IDENTICAL_RAW_ROWS_OWNER_SEMANTICS",
+        "NEW_CAPITAL_PERIOD_PROVIDER_LINEAGE"
+      ]
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "decision": "HOLD_PENDING",
+      "new_evidence": "ISSUER_PDF_FULLWIDTH_DASH_OBSERVED_TARGET_ROW_UNMATCHED",
+      "source_preview_sha256": "6ffba8c7c21a7810a1c02dd8e89aa81d563763f11892b32064630c96fee42401",
+      "unresolved": [
+        "QMT_TARGET_HOLDER_IDENTITY_NOT_MATCHED_TO_ISSUER_ROW",
+        "PDF_GLYPH_VS_RAW_SOURCE_CHARACTER_NOT_PROVEN"
+      ],
+      "focused_evidence": {
+        "source_type": "ISSUER_PRIMARY_PDF_TEXT_AND_PAGE_IMAGE",
+        "source_url": "https://static.cninfo.com.cn/finalpage/2026-10-30/1225641410.PDF",
+        "source_pdf_page_one_based": 4,
+        "source_stock_code": "002310",
+        "issuer_sample_name": "北京朝投发投资管理有限公司－北京市盈润汇民基金管理中心（有限合伙）",
+        "issuer_sample_separator": "－",
+        "issuer_sample_separator_codepoint": "U+FF0D",
+        "qmt_old_name_sha256": "ee1477b0b158cd0482a0e105eed893936d3b68b60edd2b307beb208285fffef3",
+        "qmt_current_name_sha256": "e14ebf59a2359a032c152b480b841e1772a394971c6d31404b2f2c40de775151",
+        "qmt_diff_old_codepoint": "U+002D",
+        "qmt_diff_current_codepoint": "U+4E00",
+        "sample_row_equals_disputed_hashed_qmt_row": false,
+        "source_pdf_raw_byte_sha256_verified": false,
+        "allowed_to_normalize_holder_names": false,
+        "limit": "Fullwidth issuer connector is visible in the issuer PDF, but the exact hashed target QMT row has NOT been independently paired to that displayed issuer sample; no codepoint normalization or holder identity approval."
+      }
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "decision": "HOLD_PENDING",
+      "new_evidence": "EARLIER_APPROXIMATE_VS_LATER_EXACT_DISCLOSURE_VINTAGE_HYPOTHESIS",
+      "source_preview_sha256": "6f87d4ef0aaaa4fa93c39ef55aa9794b441f57bfc257a9fea791c9189256892e",
+      "unresolved": [
+        "QMT_INGEST_SOURCE_LINEAGE_UNVERIFIED",
+        "APPROXIMATE_57900_NOT_EXACT_ISSUER_COUNT",
+        "SHAREHOLDERA_PERIOD_POPULATION_MAPPING_UNVERIFIED"
+      ],
+      "focused_evidence": {
+        "report_period": "20260930",
+        "historical_qmt_declareDate": "20261029",
+        "historical_qmt_shareholder": 57896,
+        "current_qmt_declareDate": "20261012",
+        "current_qmt_shareholder": 57900,
+        "issuer_original_document_url": "https://static.cninfo.com.cn/finalpage/2026-10-29/1225633534.PDF",
+        "issuer_report_date": "2026-10-29",
+        "issuer_report_shareholder_exact": 57896,
+        "issuer_report_page_one_based": 4,
+        "early_approximate_secondary_url": "https://stock.quote.stockstar.com/info/notice_002328.shtml",
+        "early_approximate_mentioned_on": "2026-10-12",
+        "early_approximate_shareholder_reported": "约57900户",
+        "early_approximate_secondary_source_type": "THIRD_PARTY_INVESTOR_INTERACTION_REPOST",
+        "early_approximate_separate_repost_url": "https://webf10.gw.com.cn/SZ/B1/SZ002328_B1.html",
+        "early_company_reply_repost_text": "根据中国证券登记结算有限责任公司提供的数据，截至2026年9月30日，公司股东户数约5.79万户",
+        "qmt_field_definition_url": "https://dict.thinktrader.net/dictionary/stock.html",
+        "qmt_shareholder_field_label": "股东总数",
+        "qmt_shareholderA_field_label": "A股东户数",
+        "reported_numerical_difference": 4,
+        "early_value_exact_source_count_proven": false,
+        "authenticated_original_interaction_record_verified": false,
+        "provider_qmt_source_lineage_proven": false,
+        "historical_qmt_exact_cas_verified_now": false,
+        "automatic_rounding_explanation_allowed": false,
+        "allowed_to_overwrite_either_version": false,
+        "limit": "Timing and approximate-vs-exact representations match the two observed QMT declareDate values; source propagation and exact feed lineage remain unproven, and 57900 is explicitly an approximation, not an issuer-certified exact count."
+      }
+    },
+    {
+      "symbol": "002388.SZ",
+      "table": "Top10FlowHolder",
+      "decision": "HOLD_PENDING",
+      "new_evidence": "NO_CHANGE_FROM_P8",
+      "source_preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
+      "unresolved": [
+        "HOLDER_METADATA_VERSION_ORIGIN",
+        "CROSS_CAPITAL_MQUARTER_PROVENANCE"
+      ]
+    }
+  ],
+  "notice": "P9 records publicly observed disclosure vintages and character codepoints without proving QMT row-level lineage. A positive test is evidence-integrity only. No candidate is authorized to write, normalize, deduplicate or clear pending."
+}

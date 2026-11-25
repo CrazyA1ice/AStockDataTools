@@ -142,8 +142,8 @@ class PairTests(unittest.TestCase):
         a = {"name": "甲", "shares": 100}
         b = {"shares": 100}
         x = M.analyze_single_pair(oldrows(a), [b], frozenset(("name",)), FakeF)
-        self.assertEqual(x["classification"], "EXACT_SCOPED_CHANGE_REVIEW_REQUIRED")
-        self.assertEqual(x["changes"]["name"]["new"]["characters"], len(str(M.ABSENT)))
+        self.assertEqual(x["classification"], "BLOCKED_MISSING_EXPECTED_FIELD")
+        self.assertNotIn("changes", x)
 
 
 class BoundaryTests(unittest.TestCase):

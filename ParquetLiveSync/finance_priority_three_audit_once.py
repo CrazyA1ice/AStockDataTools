@@ -172,6 +172,9 @@ def analyze_single_pair(prior, fresh, expected, F):
     result["new_record_sha256"] = hashlib.sha256(canonical(new, F).encode("utf-8")).hexdigest()
     result["report_period_old"] = old.get("endDate")
     result["report_period_new"] = new.get("endDate")
+    if any(field not in old or field not in new for field in expected):
+        result["classification"] = "BLOCKED_MISSING_EXPECTED_FIELD"
+        return result
     if set(changed) != set(expected) or old_stable != new_stable:
         result["classification"] = "BLOCKED_SCOPE_OR_IDENTITY_MISMATCH"
         # Unexpected source fields are not printed or normalized.

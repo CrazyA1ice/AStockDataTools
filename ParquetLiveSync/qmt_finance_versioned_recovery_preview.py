@@ -32,6 +32,12 @@ MAX_PAIRS = 256
 # A count=2 is preserved, NEVER collapsed. No other symbol/table can opt in.
 PINNED_002188_LEDGER_SHA256 = "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1"
 PINNED_002188_UNION_SHA256 = "664618c29fbdc510fc2155c0657a8cb8c843be45c0e5bfa2affa68f364756359"
+# Exact canonical JSON representations of the SAME audited 20261119 date.
+# No normalization of source rows: the original type and raw SHA are retained.
+# Pandas/QMT may preserve date as integer, whole float, or decimal-free string.
+PINNED_002188_NEW_KEY_JSON = frozenset((
+    "20261119", "20261119.0", '"20261119"',
+))
 PINNED_002188_RAW_SHA256 = frozenset((
     "29c7349378b4754a430a640b6307090820c296cc8f3e485d02a904ad6f038f8d",
     "92b1e49b01714a2e7a780ec680c88946492654d2fcc3a7a15d75b70e006a2f6d",
@@ -313,6 +319,34 @@ def _capital(old, new, F):
 
 
 
+def _verify_pinned_002188_capital_scope(proof):
+    """Strict audited 108->109 scope, with type-preserving date-token check.
+
+    Refuse independently by dimension; print only counts or a hard-coded
+    category, never underlying Capital values or shareholder raw records.
+    """
+    if not isinstance(proof, dict):
+        refuse("PINNED_CAPITAL_PROOF_MALFORMED")
+    if proof.get("old_report_keys") != 108:
+        refuse("PINNED_CAPITAL_HISTORICAL_KEY_COUNT_DRIFT")
+    if proof.get("current_report_keys") != 109:
+        refuse("PINNED_CAPITAL_CURRENT_KEY_COUNT_DRIFT")
+    if proof.get("historical_raw_variants_retained") != 110:
+        refuse("PINNED_CAPITAL_HISTORICAL_RAW_VERSION_COUNT_DRIFT")
+    if proof.get("removed_report_keys") != 0:
+        refuse("PINNED_CAPITAL_REMOVED_REPORT_KEY")
+    if proof.get("economic_fields_unchanged_on_shared_keys") is not True:
+        refuse("PINNED_CAPITAL_SHARED_ECONOMIC_FIELD_DRIFT")
+    keys = proof.get("added_report_keys")
+    if not isinstance(keys, list) or len(keys) != 1:
+        refuse("PINNED_CAPITAL_ADDED_KEY_COUNT_DRIFT")
+    if keys[0] not in PINNED_002188_NEW_KEY_JSON:
+        # Keep fail-closed even if new source uses a different date format;
+        # never parse or round an unknown value into an approved date.
+        refuse("PINNED_CAPITAL_ADDED_KEY_VALUE_OR_TYPE_CHANGED")
+    return True
+
+
 def _cross_table_capital_quarter_proof(old, new, F):
     """Only read-only evidence for m_quarter variants in an UNCHANGED-key Capital table.
 
@@ -490,14 +524,9 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     if mode == "CAPITAL_ADDITIVE":
         proof = _capital(old_by_table[table], new_by_table[table], F)
         if use_pinned:
-            # The 2026-11-25 Capital observation was old=108, new=109,
-            # exactly one new report key 20261119. Do not broaden this
-            # duplicate-bound exception to later/other Capital revisions.
-            if (proof["old_report_keys"] != 108
-                    or proof["current_report_keys"] != 109
-                    or proof["added_report_keys"] != ["20261119"]
-                    or proof["historical_raw_variants_retained"] != 110):
-                refuse("PINNED_CAPITAL_ADDITIVE_SCOPE_CHANGED")
+            # Review remains bound to the audited 108->109/110-raw scope.
+            # Preserve the provider's original m_timetag JSON scalar type.
+            _verify_pinned_002188_capital_scope(proof)
         classification = "CAPITAL_ADDITIVE_REVIEW_REQUIRED"
     else:
         if mode == "HOLDER_METADATA":

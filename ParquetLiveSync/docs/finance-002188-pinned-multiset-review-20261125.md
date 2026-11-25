@@ -41,3 +41,25 @@ New PowerShell 5.1 runner run-finance-002188-pinned-review-once.ps1 stages revie
 This is NOT a recovery writer or permission to accept the source. Future actual snapshot creation or ledger clearance requires independent human review per original-record SHA256, immutable staged Parquet files, CAS ledger and active pins, crash journal, rollback and post-write verification. Previous four other review-only symbols remain pending; 002328.SZ issuer's 57896 versus QMT 57900 discrepancy remains separately unresolved. No changes to production importer, scheduler, PR #243, source ledger or any raw data.
 
 New 27 tests and one-stock real-cache P5 pilot have NOT yet been confirmed by owner. The PR remains Draft. If the ledger advanced legitimately, STOP before QMT rather than resetting state.
+
+
+## Owner's first P5 run and subsequent diagnostic tightening (13:20 Beijing)
+
+Owner executed the pinned P5 first revision on Windows: **208/208** offline tests PASS. QMT existing-cache-only fetched **002188.SZ** successfully, and selected snapshot / nine-row multiset checks reached the final Capital scope check. The runner STOPPED with:
+
+    VERSIONED_RECOVERY_PREVIEW_BLOCKED PINNED_CAPITAL_ADDITIVE_SCOPE_CHANGED
+
+The ledger SHA256 remained unchanged (both Python and outer PowerShell confirmed). The success review marker was NOT printed and the tool did not commit/import/clear any source data.
+
+The original scope expression simultaneously checked old_report_keys=108, current_report_keys=109, added_report_keys=["20261119"], and historical_raw_variants_retained=110. The exception does NOT identify which expression failed; **there is no evidence yet that Capital's economic fields were changed or that its history disappeared**.
+
+One plausible cause is canonical JSON scalar typing: source m_timetag values 20261119 (integer), 20261119.0 (whole float), and "20261119" (string) have exactly these different canonical JSON report-key tokens:
+- 20261119
+- 20261119.0
+- \\"20261119\\" (the JSON-encoded string token, including quotation marks)
+
+QMT records have NOT been inspected directly to establish which form caused the first failure. The new strict guard accepts ONLY those three exact representations of the already identified date, keeps the original raw scalar/type untouched, and never rounds, strips whitespace or reformats other dates. It now raises independent failure classifications for historical count, current count, historical variants count, removed keys, changed business fields, new-key cardinality and incorrect date representation. The one-stock runner uses this same guard; it does NOT bypass the strict multi-table verifier or the nine pinned historical duplicates.
+
+New tests add 14 cases: string/float whole-date end-to-end nine-table P5 rehearsals and unit checks for all scope dimensions and prohibited date formats. Combined offline suite is **222 tests** (208 owner-validated + 14 new). New tests and real QMT pilot NOT YET owner-executed.
+
+If the next owner-side run produces a dimension-specific block, keep 002188 quarantined and investigate the measured dimension. Do not change the 108->109/110 assumptions, source hashes, current cache or live pending state without independent evidence.

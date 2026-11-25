@@ -26,6 +26,13 @@ HOLDER_FIELDS = {
 MODES = frozenset(("HOLDER_METADATA", "CAPITAL_ADDITIVE", "ISSUER_DISPUTED"))
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 MAX_PAIRS = 256
+# Evidence is currently sufficient only for these exact observed
+# (symbol, target-table) combinations; this is NOT a generic bypass.
+CROSS_CAPITAL_SCOPED_REVIEW = frozenset((
+    ("002310.SZ", "Top10Holder"),
+    ("002328.SZ", "HolderNum"),
+    ("002388.SZ", "Top10FlowHolder"),
+))
 
 
 class ReviewBlocked(ValueError):
@@ -325,6 +332,9 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
             # still BLOCK; source-history variants remain immutable.
             cross_table_capital_proof = _cross_table_capital_quarter_proof(
                 old_by_table[t], new_by_table[t], F)
+            if (cross_table_capital_proof["raw_mismatch_report_keys"] > 0
+                    and (code, table) not in CROSS_CAPITAL_SCOPED_REVIEW):
+                refuse("CROSS_CAPITAL_UNREVIEWED_SYMBOL_TABLE_SCOPE")
             unaffected_additions[t] = 0
             continue
         prior = _rawc(old_by_table[t], F)

@@ -57,7 +57,7 @@ Every successful preview result has:
 
 ## Tests
 
-ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py has 45 synthetic unittest functions covering all three cohorts, complete nine-table preservation, record uniqueness, field masking, Capital revisions and external-manifest pinning. No QMT, Parquet engine, network or real finance data needed. They are **not claimed to pass until actually executed**.
+ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py has 46 synthetic unittest functions covering all three cohorts, complete nine-table preservation, record uniqueness, field masking, Capital revisions and external-manifest pinning. No QMT, Parquet engine, network or real finance data needed. They are **not claimed to pass until actually executed**.
 
 The completed 53-stock QMT audit does not need to be rerun merely to review this preview implementation.
 

@@ -71,6 +71,7 @@ def report_for(*, logs=None, exit_codes=None, completed=None, errors=None):
             records[stage] = {"exit_code": codes[stage], "log_path": str(log)}
         run = {
             "format": "qmt_daily_single_trigger_v3", "status": "SUCCESS",
+            "mode": "UNIFIED_SINGLE_RUN",
             "steps_completed": list(V.STAGES) if completed is None else completed,
             "stage_records": records, "errors": [] if errors is None else errors,
             "china_start": "2026-11-24T23:10:47+08:00",

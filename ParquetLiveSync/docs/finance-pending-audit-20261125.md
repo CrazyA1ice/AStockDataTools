@@ -60,3 +60,10 @@ Evidence rules for each case:
 6. \`EXACT_SCOPED_CHANGE_REVIEW_REQUIRED\` is *not* a data clearance, not a source normalization rule, and not a permitted overwrite/commit. External filing provenance and explicit approval remain required.
 
 No re-query of \`688259.SH\`, no change to PR #243 runner, no import-policy change, no new scheduler or GitHub Actions. The owner only needs **one test-and-run command** once the source-controlled change has been reviewed.
+
+
+### External report cross-check prepared for 002328.SZ (not yet mapped to its QMT revision)
+
+- Shanghai Xin Peng Industry Co., Ltd. (002328.SZ), **2026 third-quarter report**, contains the period-end ordinary shareholder count **57,896 households** for **2026-09-30**. Readable announcement reproduction: https://money.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12669891&stockid=002328 (shareholder information, report's Section II). Independent market-data listing for the same date: https://stock.quote.stockstar.com/share_002328.shtml.
+- The \`HolderNum\` historical-vs-cache mismatch has **not yet supplied the affected \`endDate\` or either version's \`shareholder\` / \`shareholderA\` values**. Therefore 57,896 must only be used as a benchmark *if* the individual mismatched record is confirmed to represent 2026-09-30, and the QMT field semantics truly correspond to total ordinary shareholders. A discrepancy between a rounded market-data display and an exact official figure does not independently prove the provider's raw table is corrupt.
+- Do not conflate \`shareholderA\` with ordinary shareholder total without field-dictionary verification.

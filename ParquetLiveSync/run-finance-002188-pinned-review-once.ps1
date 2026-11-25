@@ -1,4 +1,4 @@
-# Pinned Windows PowerShell 5.1: 208 offline tests, one 002188 nine-table pinned multiset review.
+# Pinned Windows PowerShell 5.1: 222 offline tests, one 002188 nine-table pinned multiset review.
 # Does not deploy, download, clear pending, select active pins, or commit Parquet.
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$RepoRoot,
@@ -24,7 +24,7 @@ $files=@(
 @{Path='ParquetLiveSync/finance_priority_three_audit_once.py';Blob='f6c4c3c7495e8c401ba49c77d206a63f8b508544'}
 @{Path='ParquetLiveSync/tests/test_finance_priority_three_audit_once.py';Blob='911967e172b6a776e4773e2a721a3669f9a8ff65'}
 @{Path='ParquetLiveSync/tests/test_finance_priority_three_disclosure_proof.py';Blob='ca2113db8c262eca5cad6375aa380303077437d3'}
-@{Path='ParquetLiveSync/qmt_finance_versioned_recovery_preview.py';Blob='e9150e9c45cd5fff908293723452bee2d977a5d9'}
+@{Path='ParquetLiveSync/qmt_finance_versioned_recovery_preview.py';Blob='1bc9285440a7368688950ec397f5a750adbff8a7'}
 @{Path='ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py';Blob='748f03a3c259595992dd7d330f4cecc125da0e51'}
 @{Path='ParquetLiveSync/qmt_finance_five_pilot_once.py';Blob='e60c177e630f168321b8dc619182127760b4619d'}
 @{Path='ParquetLiveSync/tests/test_qmt_finance_five_pilot_once.py';Blob='5ce753512e5ff801312f9720ada70cddf9ef2cd7'}
@@ -33,8 +33,8 @@ $files=@(
 @{Path='ParquetLiveSync/tests/test_finance_capital_quarter_compat_preview.py';Blob='5a7110aaa8ea733c38a581245c88b2312583ed9d'}
 @{Path='ParquetLiveSync/qmt_finance_top10holder_duplicate_audit_once.py';Blob='45cf665f95d41e8c2f9094a91ae1be119023d1dd'}
 @{Path='ParquetLiveSync/tests/test_qmt_finance_top10holder_duplicate_audit_once.py';Blob='c037150a0d5af3ffefb17e6f16a9af5b814aa60c'}
-@{Path='ParquetLiveSync/qmt_finance_002188_pinned_review_once.py';Blob='2866be76f4c32edd094144ce3fb52ea7ce181649'}
-@{Path='ParquetLiveSync/tests/test_finance_002188_exact_multiplicity_review.py';Blob='5fc730fb08c3a4cbae4b2a7654043b048f9d4136'}
+@{Path='ParquetLiveSync/qmt_finance_002188_pinned_review_once.py';Blob='47b65abb421dca53c26946abacacd87db7d6182a'}
+@{Path='ParquetLiveSync/tests/test_finance_002188_exact_multiplicity_review.py';Blob='4248bcd491a35ad76e8f65437e68d2f93e0af547'}
 @{Path='ParquetLiveSync/docs/finance-002188-top10holder-raw-multiplicity-pin-20261125.json';Blob='b9f4aeab54b46ea652711455e770c7046dec6a2e'}
 @{Path='ParquetLiveSync/docs/finance-priority-three-adjudication-manifest-20261125.json';Blob='3ba609a9b9200ee18093104fb29dd205acaecd68'}
 )
@@ -108,14 +108,14 @@ if($p.ExitCode -ne 0){throw "GIT_STAGE_FAILED=$spec $stderr"}
 }finally{$p.Dispose()}
 HashMatches $dest $item.Blob
 }
-Write-Host '===FINANCE_OFFLINE_TESTS_208==='
+Write-Host '===FINANCE_OFFLINE_TESTS_222==='
 foreach($name in $tests){
 CheckWindow
 & $py -B (Join-Path $dir ('tests\'+$name)) -q
 if($LASTEXITCODE -ne 0){throw "FINANCE_OFFLINE_TEST_FAILED=$name"}
 Write-Host "TEST_FILE_PASS=$name"
 }
-Write-Host 'FINANCE_OFFLINE_208_TESTS_PASS'
+Write-Host 'FINANCE_OFFLINE_222_TESTS_PASS'
 $task2=Get-ScheduledTask -TaskName 'AStockDataTools-ParquetLiveSync' -TaskPath '\' -ErrorAction Stop
 if($task2.State -ne 'Ready'){throw 'TASK_BECAME_BUSY_STOP'}
 CheckWindow

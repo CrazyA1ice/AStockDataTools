@@ -150,6 +150,7 @@ def run(base, manifest_path, E, F, P, *, expected_ledger_sha=KNOWN_LEDGER_SHA256
                 raise RuntimeError("PILOT_QMT_EXISTING_CACHE_NOT_COMPLETE")
             history = {}
             versions = {}
+            multiset_diagnostics = []
             for code, table, mode in CASES:
                 protect_time()
                 past, summary = verified_histories(source_root, code, E, F)
@@ -157,6 +158,21 @@ def run(base, manifest_path, E, F, P, *, expected_ledger_sha=KNOWN_LEDGER_SHA256
                     raise ValueError("PILOT_TARGET_HISTORICAL_SNAPSHOT_MISSING_" + code)
                 history[code] = past
                 versions[code] = summary
+                for name in E.FIN_TABLES:
+                    counts = past[name]
+                    extras = sum(count - 1 for count in counts.values()
+                                 if type(count) is int and count > 1)
+                    malformed = sum(1 for count in counts.values()
+                                    if type(count) is not int or count < 1)
+                    if extras or malformed:
+                        multiset_diagnostics.append({
+                            "symbol": code,
+                            "table": name,
+                            "distinct_raw_rows": len(counts),
+                            "extra_raw_multiplicity": extras,
+                            "invalid_multiplicity_values": malformed,
+                            "automatic_deduplication": False,
+                        })
             cases = [{"symbol": code, "table": table, "mode": mode}
                      for code, table, mode in CASES]
             # The source-version preview is a pure function: NO apply route.
@@ -171,7 +187,10 @@ def run(base, manifest_path, E, F, P, *, expected_ledger_sha=KNOWN_LEDGER_SHA256
                 raise RuntimeError("PILOT_UNSAFE_PREVIEW_RESULT")
             # Build review-only output in memory. Do not publish a seemingly
             # completed preview if the ledger's final integrity gate fails.
-            verified_lines = []
+            verified_lines = [
+                "PILOT_HISTORY_MULTIPLICITY=" + json.dumps(
+                    issue, sort_keys=True) for issue in multiset_diagnostics
+            ]
             for item in report["evidence_only"]:
                 code = item["symbol"]
                 verified_lines.append("PILOT_REVIEW=" + json.dumps({

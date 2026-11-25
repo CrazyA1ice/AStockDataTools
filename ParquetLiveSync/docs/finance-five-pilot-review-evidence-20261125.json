@@ -47,9 +47,18 @@
       "symbol": "002388.SZ",
       "table": "Top10FlowHolder",
       "status": "HOLDER_METADATA_REVIEW_REQUIRED",
-      "preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec6f37f0c984ed05c",
+      "preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
       "original_discrepancy": "Top10FlowHolder date/type revisions; cross-table Capital quarter-only historical variants"
     }
   ],
-  "notes": "These hashes are read-only observations from user's completed live cache pilot. They are not signed authorization, not exact CAS ledger transition instructions, and not permission to normalize/delete any source records."
+  "notes": "These hashes are read-only observations from user's completed live cache pilot. They are not signed authorization, not exact CAS ledger transition instructions, and not permission to normalize/delete any source records. Archival correction in Draft PR251: 002388.SZ preview SHA256 was accidentally truncated to 54 hex digits in earlier documentation; corrected to the full 64-digit SHA256 shown in the owner's real PR248 output. No review status or live source changed.",
+  "archival_correction": {
+    "case": "002388.SZ / Top10FlowHolder",
+    "field": "preview_sha256",
+    "incorrect_previous_value": "f0e0601ff35d1eb683a8401aca16bc9e3800eec6f37f0c984ed05c",
+    "verified_full_value": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
+    "verification": "Owner supplied successful PR248 162/162 offline and five QMT existing-cache preview output on 2026-11-25",
+    "changes_historical_review_outcome": false,
+    "authorizes_live_mutation": false
+  }
 }

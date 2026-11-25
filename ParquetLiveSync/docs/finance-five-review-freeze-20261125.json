@@ -1,0 +1,132 @@
+{
+  "schema": "astock_finance_five_readonly_review_freeze_v1",
+  "produced_from_observations": "2026-11-25",
+  "asof_ledger_daily_date": "2026-11-24",
+  "asof_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "historical_evidence_only": true,
+  "live_data_state_revalidated_for_apply": false,
+  "source_observation_receipts": {
+    "five_stock_pr248": {
+      "offline_tests_passed": 162,
+      "qmt_existing_cache_symbols_present": 5,
+      "cohort_sha256": "124bff95dfde683beb282dba89d3bc5ed71cd9c65909183823f86b7fe92fb540"
+    },
+    "targeted_pr250": {
+      "offline_tests_passed": 222,
+      "existing_cache_only_symbol": "002188.SZ",
+      "capital_preview_sha256": "426ffd9ad947bf320625f337e59b3e21baa47fd196fe6a3e1403a40536e0a25d",
+      "verified_duplicate_raw_groups": 9,
+      "verified_source_rows_with_multiplicity": 788,
+      "new_capital_report_key_json": "\"20261119\"",
+      "new_capital_record_sha256": "32c01e03bb442c6de6df075e735bcddf4e669061a626bccf491e798a1d7251cb",
+      "raw_holder_union_sha256": "664618c29fbdc510fc2155c0657a8cb8c843be45c0e5bfa2affa68f364756359"
+    }
+  },
+  "source_documents": {
+    "prior_five_pilot": "finance-five-pilot-review-evidence-20261125.json",
+    "disclosure_manifest": "finance-priority-three-adjudication-manifest-20261125.json",
+    "exact_holder_pin": "finance-002188-top10holder-raw-multiplicity-pin-20261125.json"
+  },
+  "case_count": 5,
+  "review_required_count": 5,
+  "approved_count": 0,
+  "pending_ledger_entry_count_unchanged": 54,
+  "known_quarantine_symbol": "688259.SH",
+  "default_decision": "HOLD_PENDING_NO_COMMIT",
+  "allowed_live_mutations": false,
+  "automated_approval": false,
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "classification": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "1e43a595a91fa23963d947a2959ce591891facc3bebbf233c544d6e24c4367fe",
+      "verified_target_historical_versions": 762,
+      "nine_table_selected_union_sha256": "0e16003fd4a5835f6ade2f3709a185e83d3199ac457aab99c2b333fd9f6141ec",
+      "evidence_source": "PR248_162_OFFLINE_FIVE_STOCK_QMT",
+      "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+      "review_gaps": [
+        "NAME_SPACING_AND_TYPE_TAXONOMY_UNRESOLVED"
+      ],
+      "decision": "HOLD_PENDING",
+      "manual_approval_granted": false,
+      "data_write_authorized": false,
+      "auto_clear_authorized": false,
+      "deduplication_authorized": false
+    },
+    {
+      "symbol": "002188.SZ",
+      "table": "Capital",
+      "classification": "CAPITAL_ADDITIVE_REVIEW_REQUIRED",
+      "preview_sha256": "426ffd9ad947bf320625f337e59b3e21baa47fd196fe6a3e1403a40536e0a25d",
+      "verified_target_historical_versions": 110,
+      "evidence_source": "PR250_222_OFFLINE_ONE_STOCK_QMT",
+      "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+      "review_gaps": [
+        "PROVIDER_IDENTICAL_HOLDER_ROWS_DISTINCT_IDENTITY_UNPROVEN",
+        "NEW_CAPITAL_REPORT_KEY_NO_WRITE_AUTHORIZATION"
+      ],
+      "decision": "HOLD_PENDING",
+      "manual_approval_granted": false,
+      "data_write_authorized": false,
+      "auto_clear_authorized": false,
+      "deduplication_authorized": false
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "classification": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "6ffba8c7c21a7810a1c02dd8e89aa81d563763f11892b32064630c96fee42401",
+      "verified_target_historical_versions": 888,
+      "nine_table_selected_union_sha256": "2152b1d668daf9813b7bef73fe3ce97a230265389d12983f87beb3607cf54797",
+      "evidence_source": "PR248_162_OFFLINE_FIVE_STOCK_QMT",
+      "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+      "review_gaps": [
+        "NAME_PUNCTUATION_ISSUER_SOURCE_DISPUTE"
+      ],
+      "decision": "HOLD_PENDING",
+      "manual_approval_granted": false,
+      "data_write_authorized": false,
+      "auto_clear_authorized": false,
+      "deduplication_authorized": false
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "classification": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "6f87d4ef0aaaa4fa93c39ef55aa9794b441f57bfc257a9fea791c9189256892e",
+      "verified_target_historical_versions": 238,
+      "nine_table_selected_union_sha256": "4a90694baeb937e258f18b842e7489270ee0bac85f1779d50c6fa46cdafeb415",
+      "evidence_source": "PR248_162_OFFLINE_FIVE_STOCK_QMT",
+      "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+      "review_gaps": [
+        "ISSUER_57896_VS_PROVIDER_57900_NUMERIC_CONFLICT",
+        "SHAREHOLDERA_SEMANTICS_UNPROVEN"
+      ],
+      "decision": "HOLD_PENDING",
+      "manual_approval_granted": false,
+      "data_write_authorized": false,
+      "auto_clear_authorized": false,
+      "deduplication_authorized": false
+    },
+    {
+      "symbol": "002388.SZ",
+      "table": "Top10FlowHolder",
+      "classification": "HOLDER_METADATA_REVIEW_REQUIRED",
+      "preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
+      "verified_target_historical_versions": 660,
+      "nine_table_selected_union_sha256": "ada40e5504652b5dfbb5f65c850dceb33ec6c97cffe5a485511e0e46b4a918ba",
+      "evidence_source": "PR248_162_OFFLINE_FIVE_STOCK_QMT",
+      "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+      "review_gaps": [
+        "HOLDER_DISCLOSURE_DATE_AND_TYPE_REVISION_UNADJUDICATED"
+      ],
+      "decision": "HOLD_PENDING",
+      "manual_approval_granted": false,
+      "data_write_authorized": false,
+      "auto_clear_authorized": false,
+      "deduplication_authorized": false
+    }
+  ],
+  "note": "Review readiness is not issuer/source truth and never authorizes QMT downloads, financial repairs, loss of exact duplicate source counts, Parquet writes, active pin changes or 54-pending ledger clearance. If scheduler advances state, revalidate before any future attempted writer; do not reset epoch."
+}

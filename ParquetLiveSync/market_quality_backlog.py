@@ -102,7 +102,10 @@ def build_backlog(quality_batch):
                     "UNTRUSTED_FINDING_ACTION")
             seen_rules.add(rule)
             (detected if state == "DETECTED" else unknown).add(rule)
-            key = digest({"scope": scope, "rule_id": rule})
+            # Policy format/version participates in ID: revised rule semantics
+            # cannot silently inherit an old incident identity.
+            key = digest({"policy_version": Q.REPORT, "scope": scope,
+                          "rule_id": rule})
             version = {"case_evidence_json_sha256": identity_hash.lower(),
                        "raw_source_sha256_if_supplied":
                            source_hash.lower() if source_hash else None,

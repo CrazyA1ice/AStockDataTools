@@ -302,12 +302,18 @@ class PilotTests(unittest.TestCase):
         _, out = self._run(changed_ledger=True)
         self.assertNotIn("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT", out)
         self.assertNotIn("FINANCE_LEDGER_UNCHANGED_VERIFIED", out)
+        self.assertNotIn("PILOT_REVIEW=", out)
+        self.assertNotIn("PILOT_SUMMARY=", out)
 
     def test_success_marker_only_after_final_sha_check(self):
         _, out = self._run()
         checked = out.index("FINANCE_LEDGER_UNCHANGED_VERIFIED")
+        review = out.index("PILOT_REVIEW=")
+        summary = out.index("PILOT_SUMMARY=")
         complete = out.index("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT")
-        self.assertLess(checked, complete)
+        self.assertLess(checked, review)
+        self.assertLess(review, summary)
+        self.assertLess(summary, complete)
 
 
 if __name__ == "__main__":

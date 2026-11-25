@@ -290,8 +290,13 @@ class RunBoundaryTests(unittest.TestCase):
                     ledger.write_text(ledger.read_text() + " ")
                     return {code: {table: ([rec()] if table == "Capital" else [])
                                    for table in E.FIN_TABLES} for code in codes}, []
-            seq = iter((D.LEDGER_SHA, "0"*64))
-            with patch.object(D, "file_sha", side_effect=lambda _: next(seq)), \
+            def fingerprint(p):
+                # Per-day selected-snapshot hashes must not consume or
+                # interfere with the before/after ledger drift simulation.
+                if Path(p) == ledger and ledger.read_text().endswith(" "):
+                    return "0"*64
+                return D.LEDGER_SHA
+            with patch.object(D, "file_sha", side_effect=fingerprint), \
                  patch.object(D, "protect_time"), redirect_stdout(io.StringIO()) as sink:
                 with self.assertRaisesRegex(RuntimeError, "LEDGER_CHANGED_DURING_READ"):
                     D.run(base, E, WorkerF)

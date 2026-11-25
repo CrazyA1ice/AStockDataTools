@@ -68,6 +68,19 @@ class BacklogTests(unittest.TestCase):
         self.assertEqual(r['unique_incidents'],6)
         self.assertEqual(len({i['incident_id'] for i in r['issues']}),6)
 
+    def test_rule_policy_version_is_part_of_stable_incident_identity(self):
+        a=case()
+        original=B.build_backlog(batch([a]))
+        old=Q.REPORT
+        try:
+            Q.REPORT=old+'_v2'
+            a['format']=Q.REPORT
+            altered=B.build_backlog(batch([a]))
+        finally:
+            Q.REPORT=old
+        self.assertNotEqual([i['incident_id'] for i in original['issues']],
+                            [i['incident_id'] for i in altered['issues']])
+
     def test_same_scope_different_case_digest_requests_revision_review(self):
         a=case(version='v1',raw='a'*64)
         b=case(version='v2',raw='b'*64)

@@ -1,5 +1,6 @@
 """Synthetic offline fail-closed tests, no real QMT, Parquet engine, or network."""
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 from pathlib import Path
@@ -177,8 +178,8 @@ class MultisetPureTests(unittest.TestCase):
 
     def test_invalid_json_blocks(self):
         old, current, hashes, digest = tiny_fixture()
-        old["NOT_JSON"] = 1
-        old.pop(next(iter(old)))
+        source = next(iter(old))
+        old["NOT_JSON"] = old.pop(source)
         with self.assertRaisesRegex(P.ReviewBlocked, "INVALID_JSON"):
             check(old, current, hashes, digest)
 

@@ -57,6 +57,11 @@ Every successful preview result has:
 
 ## Tests
 
-ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py has 39 synthetic unittest functions covering all three cohorts, complete nine-table preservation, record uniqueness, field masking, Capital revisions and external-manifest pinning. No QMT, Parquet engine, network or real finance data needed. They are **not claimed to pass until actually executed**.
+ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py has 45 synthetic unittest functions covering all three cohorts, complete nine-table preservation, record uniqueness, field masking, Capital revisions and external-manifest pinning. No QMT, Parquet engine, network or real finance data needed. They are **not claimed to pass until actually executed**.
 
 The completed 53-stock QMT audit does not need to be rerun merely to review this preview implementation.
+
+
+### Batch-level strict preview
+
+The same pure module now exports preview_cohort, accepting a complete explicit list of (symbol, mode, table) descriptors, all nine-table verified historical Counters for each symbol, and already-supplied current cache data. It rejects missing/extra symbols and duplicate entries, enforces an optional expected cohort size, preserves per-symbol BLOCKED reasons rather than granting clearance, and returns a stable cohort_sha256 for comparison. It performs **zero** QMT requests itself. Future use on 53 real stocks requires a separately guarded cache-read driver and approval evidence; that execution has **not** occurred in this phase.

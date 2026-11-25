@@ -303,8 +303,11 @@ try {
         # Only explicit, receipt-backed finance/adjustment rotation is a
         # successful *execution*. Preserve validation PARTIAL and UNVERIFIED.
         # Old verifiers omit routine_continuation and fail closed as before.
+        $routineFlagPresent=($verification.PSObject.Properties.Name -contains 'routine_continuation')
+        $routineFlag=$false
+        if($routineFlagPresent){$routineFlag=($verification.routine_continuation -eq $true)}
         $routineContinuation=($outcome -eq 'SUCCESS' -and
-                              $verification.routine_continuation -eq $true -and
+                              $routineFlag -and
                               $verification.execution -eq 'PASS' -and
                               $verification.data_validation -eq 'PARTIAL' -and
                               $verification.cross_validation -ne 'FAIL')

@@ -44,3 +44,19 @@ The \`DATE_OR_TYPE_ONLY\` category is an **observational projection** that omits
 - Canonical deployed code base: \`2b5c1bd28f8df4d4512dd933e50b1be50741f6a6\`, with **two working-tree PR #243 hotfix blobs** installed; do not overwrite them using a hard checkout/reset.
 - PR #243 hotfix commit: \`c8f35ed38545ae5bfc20c7d21f26b20394ed54b8\`, still Draft.
 - PR #244 is independent **audit-only**, still Draft, not a production deploy. It creates no GitHub Actions, cron, extra task, QMT data writes, notification, or persistent audit output.
+
+
+## Next stage: three-stock material-field provenance audit (developed, not run live)
+
+A dedicated read-only diagnostic was added at \`ParquetLiveSync/finance_priority_three_audit_once.py\`, with 21 offline unit/integration test functions at \`ParquetLiveSync/tests/test_finance_priority_three_audit_once.py\`. **New tests are source-controlled, not yet confirmed by owner Windows execution.** It queries only \`002178.SZ\`, \`002310.SZ\`, \`002328.SZ\`, each through the already existing QMT cache-only worker (three symbols, one bounded batch), and verifies the original ledger SHA256 in a \`finally\` block.
+
+Evidence rules for each case:
+
+1. Require a matching pending-ledger entry and the expected table, verified preexisting selected Parquet snapshots, and complete fresh cached table.
+2. Require **exactly one old-only and exactly one new-only raw record**; otherwise mark \`BLOCKED_UNEXPECTED_CARDINALITY\`.
+3. Remove only the **previously observed changed field set** from the proposed record-pairing projection: \`name,type\` for 002178; \`name\` for 002310; \`declareDate,shareholder,shareholderA\` for 002328. The two projections must match byte-for-byte through canonical JSON, and each projection must be unique **among all old and all current rows**.
+4. If the observed changed field set differs, fields are missing, identity is ambiguous, or unrelated business fields differ, return a \`BLOCKED_*\` category rather than auto-accept.
+5. For successfully scoped **diagnostic-only** pairs, emit old/new stable and raw row SHA-256, report-period identifiers, selected snapshot dates, and narrow per-field evidence. Shareholder *names* are fingerprinted instead of emitted in plaintext; \`type\` and disclosure dates can be shown, and \`shareholder\` / \`shareholderA\` may be shown with exact numeric deltas and percent changes.
+6. \`EXACT_SCOPED_CHANGE_REVIEW_REQUIRED\` is *not* a data clearance, not a source normalization rule, and not a permitted overwrite/commit. External filing provenance and explicit approval remain required.
+
+No re-query of \`688259.SH\`, no change to PR #243 runner, no import-policy change, no new scheduler or GitHub Actions. The owner only needs **one test-and-run command** once the source-controlled change has been reviewed.

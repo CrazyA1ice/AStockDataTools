@@ -234,6 +234,8 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     if (not isinstance(code, str) or
             re.fullmatch(r"\d{6}\.(?:SZ|SH)", code) is None):
         refuse("SYMBOL_INVALID")
+    if code == "688259.SH":
+        refuse("KNOWN_PROVIDER_UTF8_QUARANTINE_NO_PREVIEW")
     if mode not in MODES or table not in F.E.FIN_TABLES:
         refuse("UNSUPPORTED_RECOVERY_MODE")
     if not isinstance(historical, dict) or set(historical) != set(F.E.FIN_TABLES):

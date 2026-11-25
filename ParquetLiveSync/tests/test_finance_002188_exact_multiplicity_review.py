@@ -191,8 +191,12 @@ class MultisetPureTests(unittest.TestCase):
     def test_review_proof_deterministic_under_reordering(self):
         old, current, hashes, digest = tiny_fixture()
         _, x = check(old, current, hashes, digest)
-        _, y = check(Counter(reversed(list(old.items()))), list(reversed(current)),
-                     hashes, digest)
+        # Counter(iterable) counts tuple elements; build a mapping instead
+        # so only iteration order changes, never the raw-row multiplicity.
+        reordered = Counter(dict(reversed(list(old.items()))))
+        self.assertEqual(reordered, old)
+        self.assertEqual(list(reordered), list(reversed(old)))
+        _, y = check(reordered, list(reversed(current)), hashes, digest)
         self.assertEqual(x, y)
 
     def test_no_generic_duplicate_waiver(self):

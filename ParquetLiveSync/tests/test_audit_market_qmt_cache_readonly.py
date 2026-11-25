@@ -1,6 +1,8 @@
 """Offline simulated QMT cache triage; NEVER calls xtquant or a network."""
 from datetime import date
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import tempfile
 import unittest
 from unittest.mock import MagicMock

@@ -1,4 +1,4 @@
-# Pinned Windows PowerShell 5.1 launcher: 116 offline tests, 5 QMT CACHE reads.
+# Pinned Windows PowerShell 5.1 launcher: 117 offline tests, 5 QMT CACHE reads.
 # Does not deploy, download, clear pending, select active pins, or commit Parquet.
 [CmdletBinding()]
 param([Parameter(Mandatory=$true)][string]$RepoRoot,
@@ -26,8 +26,8 @@ $files=@(
 @{Path='ParquetLiveSync/tests/test_finance_priority_three_disclosure_proof.py';Blob='ca2113db8c262eca5cad6375aa380303077437d3'}
 @{Path='ParquetLiveSync/qmt_finance_versioned_recovery_preview.py';Blob='e1b0411354e304b4380006a85b05e204d69eb51e'}
 @{Path='ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py';Blob='748f03a3c259595992dd7d330f4cecc125da0e51'}
-@{Path='ParquetLiveSync/qmt_finance_five_pilot_once.py';Blob='25f6559f55d6bbefb380eb6e1aa40b58ab768c87'}
-@{Path='ParquetLiveSync/tests/test_qmt_finance_five_pilot_once.py';Blob='10cb12e7dcfc09f92139a2193249c08ab02f6676'}
+@{Path='ParquetLiveSync/qmt_finance_five_pilot_once.py';Blob='1ad0fb3e4023ad0e5cd50cb0a8954f48bdcb3dbd'}
+@{Path='ParquetLiveSync/tests/test_qmt_finance_five_pilot_once.py';Blob='66a96230b3da28bb66c201aca9ce0d27ffadd4e1'}
 @{Path='ParquetLiveSync/docs/finance-priority-three-adjudication-manifest-20261125.json';Blob='3ba609a9b9200ee18093104fb29dd205acaecd68'}
 )
 $tests=@(
@@ -96,14 +96,14 @@ if($p.ExitCode -ne 0){throw "GIT_STAGE_FAILED=$spec $stderr"}
 }finally{$p.Dispose()}
 HashMatches $dest $item.Blob
 }
-Write-Host '===FINANCE_OFFLINE_TESTS_116==='
+Write-Host '===FINANCE_OFFLINE_TESTS_117==='
 foreach($name in $tests){
 CheckWindow
 & $py -B (Join-Path $dir ('tests\'+$name)) -q
 if($LASTEXITCODE -ne 0){throw "FINANCE_OFFLINE_TEST_FAILED=$name"}
 Write-Host "TEST_FILE_PASS=$name"
 }
-Write-Host 'FINANCE_OFFLINE_116_TESTS_PASS'
+Write-Host 'FINANCE_OFFLINE_117_TESTS_PASS'
 $task2=Get-ScheduledTask -TaskName 'AStockDataTools-ParquetLiveSync' -TaskPath '\' -ErrorAction Stop
 if($task2.State -ne 'Ready'){throw 'TASK_BECAME_BUSY_STOP'}
 CheckWindow

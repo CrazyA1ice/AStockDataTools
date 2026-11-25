@@ -87,6 +87,28 @@ def replay_one(u, code, raw, expected, calibration, day: date):
     diff = folded_open - official_open
     threshold = max(.006 * max(abs(official_open), abs(folded_open)), .04)
     fits = math.isclose(folded_open, official_open, rel_tol=.006, abs_tol=.04)
+    # The production verifier stops at the FIRST error. Show all other
+    # independent OHLCVA comparisons without treating them as accepted.
+    materialized = {
+        'open': folded_open,
+        'high': max(float(x['high']) for x in converted),
+        'low': min(float(x['low']) for x in converted),
+        'close': float(converted[-1]['close']),
+        'volume': sum(float(x['volume']) for x in converted),
+        'amount': sum(float(x['amount']) for x in converted),
+    }
+    official = {field: float(expected[field]) for field in FILES}
+    checks = {}
+    for field in FILES:
+        rel = .03 if field in ('volume', 'amount') else .006
+        absolute = 200 if field == 'volume' else 1000 if field == 'amount' else .04
+        checks[field] = {
+            'absolute_difference': round(materialized[field] - official[field], 10),
+            'within_existing_tolerance': math.isclose(
+                materialized[field], official[field], rel_tol=rel, abs_tol=absolute),
+        }
+    outside_envelope = (materialized['high'] > official['high'] + .005 or
+                        materialized['low'] < official['low'] - .005)
     return {
         'symbol': u.L.normal_symbol(code),
         'date': day.isoformat(),
@@ -104,6 +126,10 @@ def replay_one(u, code, raw, expected, calibration, day: date):
         'open_isclose': fits,
         'official_day_close': float(expected['close']),
         'folded_day_close': float(converted[-1]['close']),
+        'official_day_ohlcva': official,
+        'folded_day_ohlcva': materialized,
+        'field_comparisons': checks,
+        'outside_official_high_low_envelope': outside_envelope,
         'folded_ohlc_validation_error': fold_error,
         'full_original_validation_error': full_error,
         'all_data_changes_committed': False,

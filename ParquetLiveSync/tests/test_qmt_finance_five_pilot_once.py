@@ -210,7 +210,8 @@ class LedgerTests(unittest.TestCase):
 
 
 class PilotTests(unittest.TestCase):
-    def _run(self, changed=None, changed_ledger=False, drift_after_evidence=None):
+    def _run(self, changed=None, changed_ledger=False, drift_after_evidence=None,
+             inject_noncapital_duplicate=False):
         tmp = tempfile.TemporaryDirectory()
         base = Path(tmp.name)
         ledger = workspace(base)
@@ -229,6 +230,11 @@ class PilotTests(unittest.TestCase):
                 wanted = dict((a, b) for a, b, _ in A.CASES)
                 if table == wanted[code]:
                     return "2026-11-17", FakeF._rows([old[code]])
+                if inject_noncapital_duplicate and code == "002188.SZ" and table == "Balance":
+                    row = {"m_timetag": 20260331, "total_assets": 77}
+                    # Genuine repeated *raw* source row, not multiple
+                    # m_quarter Capital variants, must remain quarantined.
+                    return "2026-11-17", FakeF._rows([row, row])
                 return None, None
 
             @staticmethod
@@ -297,6 +303,19 @@ class PilotTests(unittest.TestCase):
         self.assertEqual(result["blocked"], 1)
         self.assertEqual(result["review_only"], 4)
         self.assertIn("SPECIAL_RECORD_FINGERPRINT_CHANGED", out)
+
+    def test_noncapital_historical_duplicate_origin_is_reported(self):
+        result, out = self._run(inject_noncapital_duplicate=True)
+        self.assertEqual(result["blocked"], 1)
+        self.assertEqual(result["review_only"], 4)
+        diagnostics = [json.loads(line.split("=", 1)[1])
+                       for line in out.splitlines()
+                       if line.startswith("PILOT_HISTORY_MULTIPLICITY=")]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0]["symbol"], "002188.SZ")
+        self.assertEqual(diagnostics[0]["table"], "Balance")
+        self.assertEqual(diagnostics[0]["extra_raw_multiplicity"], 1)
+        self.assertFalse(diagnostics[0]["automatic_deduplication"])
 
     def test_ledger_mutation_is_detected_even_after_worker(self):
         _, out = self._run(changed_ledger=True)

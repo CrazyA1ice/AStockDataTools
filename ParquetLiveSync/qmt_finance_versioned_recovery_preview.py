@@ -446,11 +446,19 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     holder_duplicate_proof = None
     pinned_002188 = (code, table, mode) == (
         "002188.SZ", "Capital", "CAPITAL_ADDITIVE")
-    if duplicate_evidence is not None and not pinned_002188:
-        refuse("PINNED_HOLDER_EVIDENCE_UNSCOPED")
+    # Keep the original Capital-only synthetic/no-duplicate pathway intact.
+    # This pinned exception only activates when the historical Top10Holder
+    # Counter actually contains a repeated raw record, and then ONLY with
+    # the fully pinned snapshot and nine-row evidence.
+    top10 = historical["Top10Holder"]
+    has_repeats = (isinstance(top10, Counter)
+                   and any(type(n) is int and n > 1 for n in top10.values()))
+    use_pinned = pinned_002188 and has_repeats
+    if duplicate_evidence is not None and not use_pinned:
+        refuse("PINNED_HOLDER_EVIDENCE_UNSCOPED_OR_UNNEEDED")
     old_by_table = {}
     for t in F.E.FIN_TABLES:
-        if t == "Top10Holder" and pinned_002188:
+        if t == "Top10Holder" and use_pinned:
             old_by_table[t], holder_duplicate_proof = _pinned_002188_historical(
                 historical[t], current_source[t], F,
                 duplicate_evidence, ledger_sha256)

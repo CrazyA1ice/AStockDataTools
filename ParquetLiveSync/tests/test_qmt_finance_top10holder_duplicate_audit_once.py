@@ -144,6 +144,18 @@ class PureEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["current_extra_raw_occurrences"], 1)
         self.assertEqual(summary["new_current_occurrences"], 1)
 
+    def test_duplicate_only_in_second_selected_day_is_attributed(self):
+        old = {
+            "2026-11-17": [row("0")],
+            "2026-11-18": [row("0"), row("1")],
+        }
+        summary, groups, _, _ = D.examine(old, [row("0")], F)
+        self.assertEqual(summary["historical_extra_raw_occurrences"], 1)
+        self.assertEqual([x["raw_row_occurrences"] for x in
+                          groups[0]["selected_snapshot_days"]], [1, 2])
+        self.assertEqual(groups[0]["current_cache_count"], 1)
+        self.assertFalse(groups[0]["allow_deduplication"])
+
     def test_missing_days_rejected(self):
         with self.assertRaisesRegex(ValueError, "DAYS_INVALID"):
             D.examine({}, [], F)

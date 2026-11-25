@@ -82,6 +82,34 @@ class CacheProbeTests(unittest.TestCase):
             (root/'update_market.py').write_text('# changed',encoding='utf-8')
             with self.assertRaisesRegex(p.TriageError,'BLOB_CHANGED_STOP'):
                 p.validate_source(root)
+    def test_crlf_checkout_matches_pinned_canonical_git_blob(self):
+        original=b'print("verified")\nprint("second")\n'
+        pinned=p.hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            path=root/'update_market.py'
+            path.write_bytes(original.replace(b'\n',b'\r\n'))
+            self.assertNotEqual(path.read_bytes(),original)
+            with mock.patch.object(p,'ORIGINAL_UPDATE_MARKET_BLOB',pinned):
+                self.assertEqual(p.validate_source(root),root)
+            self.assertEqual(p.git_blob_sha(path),pinned)
+
+    def test_unrelated_content_change_still_rejected_with_crlf(self):
+        original=b'print("verified")\n'
+        pinned=p.hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/'update_market.py').write_bytes(b'print("tampered")\r\n')
+            with mock.patch.object(p,'ORIGINAL_UPDATE_MARKET_BLOB',pinned):
+                with self.assertRaisesRegex(p.TriageError,'BLOB_CHANGED_STOP'):
+                    p.validate_source(root)
+
+    def test_lone_carriage_return_rejected_not_cleaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/'update_market.py').write_bytes(b'print("a")\rprint("b")\n')
+            with self.assertRaisesRegex(p.TriageError,'UNEXPECTED_CARRIAGE_RETURN'):
+                p.validate_source(root)
     def test_opt_in_required_before_import_or_provider(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(p.main(['--module-root',tmp]),3)

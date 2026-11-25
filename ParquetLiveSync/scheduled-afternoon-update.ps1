@@ -300,11 +300,27 @@ try {
         $stepText=[string]$verification.notification_text
         # Stage exit 0 does NOT imply verification passed. Report PARTIAL
         # whenever current evidence identifies real quality issues.
+        # Only explicit, receipt-backed finance/adjustment rotation is a
+        # successful *execution*. Preserve validation PARTIAL and UNVERIFIED.
+        # Old verifiers omit routine_continuation and fail closed as before.
+        $routineFlagPresent=($verification.PSObject.Properties.Name -contains 'routine_continuation')
+        $routineFlag=$false
+        if($routineFlagPresent){$routineFlag=($verification.routine_continuation -eq $true)}
+        $routineContinuation=($outcome -eq 'SUCCESS' -and
+                              $routineFlag -and
+                              $verification.execution -eq 'PASS' -and
+                              $verification.data_validation -eq 'PARTIAL' -and
+                              $verification.cross_validation -ne 'FAIL')
         if($outcome -eq 'SUCCESS' -and
            ($verification.data_validation -in @('FAIL','PARTIAL') -or
             $verification.cross_validation -eq 'FAIL')){
-            $outcome='PARTIAL'
-            $result.status=$outcome
+            if($routineContinuation){
+                $result['operational_classification']='ROUTINE_CONTINUATION'
+                Write-Host 'MARKET_2005_ROUTINE_ROTATION_COMPLETED_NO_ERROR=TRUE'
+            }else{
+                $outcome='PARTIAL'
+                $result.status=$outcome
+            }
         }
         Write-Host ('MARKET_1630_DATA_VALIDATION='+$verification.data_validation)
         Write-Host ('MARKET_1630_CROSS_VALIDATION='+$verification.cross_validation)

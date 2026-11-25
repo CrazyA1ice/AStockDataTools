@@ -165,6 +165,52 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(D.blob_sha256(p), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
 
+
+class ReceiptTests(unittest.TestCase):
+    def _receipt(self, folder, content, encoding):
+        path = Path(folder) / "work" / "last-afternoon-unified.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding=encoding)
+        return path
+
+    def test_bom_receipt_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._receipt(tmp, json.dumps({
+                "china_start": "2026-11-24T23:10:47.8181089",
+                "status": "PARTIAL",
+                "validation": {"execution": "PASS", "data_validation": "PARTIAL",
+                               "cross_validation": "UNVERIFIED"}
+            }), "utf-8-sig")
+            with patch("builtins.print") as out:
+                D.receipt_summary(Path(tmp))
+            line = out.call_args[0][0]
+            self.assertTrue(line.startswith("RUN_RECEIPT="))
+            parsed = json.loads(line[len("RUN_RECEIPT="):])
+            self.assertEqual(parsed["status"], "PARTIAL")
+            self.assertEqual(parsed["execution"], "PASS")
+
+    def test_plain_utf8_receipt_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._receipt(tmp, json.dumps({"status": "SUCCESS", "validation": {
+                "routine_continuation": True
+            }}), "utf-8")
+            with patch("builtins.print") as out:
+                D.receipt_summary(Path(tmp))
+            self.assertIn('"routine_continuation": true', out.call_args[0][0])
+
+    def test_missing_receipt_is_optional(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("builtins.print") as out:
+                D.receipt_summary(Path(tmp))
+            out.assert_called_once_with("RUN_RECEIPT=MISSING")
+
+    def test_malformed_receipt_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._receipt(tmp, "{", "utf-8-sig")
+            with self.assertRaises(json.JSONDecodeError):
+                D.receipt_summary(Path(tmp))
+
+
 class EndToEndOfflineTests(unittest.TestCase):
     def _workspace(self):
         tmp = tempfile.TemporaryDirectory()

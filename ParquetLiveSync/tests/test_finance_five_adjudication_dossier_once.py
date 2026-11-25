@@ -317,9 +317,17 @@ class RunAdmissionTests(unittest.TestCase):
     def test_no_source_manifest_file_bytes_changed_by_validation(self):
         names = [*P.FREEZE_INPUT_NAMES.values(), P.DOSSIER_FILE]
         before = {n: (DOCS / n).read_bytes() for n in names}
-        P.run(DOCS)
+        with redirect_stdout(io.StringIO()):
+            P.run(DOCS)
         after = {n: (DOCS / n).read_bytes() for n in names}
         self.assertEqual(before, after)
+
+    def test_historical_ledger_does_not_pretend_to_be_live_preflight(self):
+        dossier, old = inputs()
+        report = P.validate(dossier, old)
+        self.assertTrue(report["historical_only"])
+        self.assertFalse(report["live_state_reverified"])
+        self.assertEqual(report["source_epoch_ledger_sha256"], G.LEDGER)
 
     def test_invalid_directory_fail_closed(self):
         with tempfile.TemporaryDirectory() as td:

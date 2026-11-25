@@ -166,7 +166,8 @@ def run(base, manifest, E, F, P):
                     or preview.get("allow_apply") is not False
                     or preview.get("allow_auto_clear") is not False
                     or preview.get("pinned_top10holder_duplicate_proof") is None
-                    or preview["proof"].get("added_report_keys") != ["20261119"]):
+                    or P._verify_pinned_002188_capital_scope(
+                        preview.get("proof")) is not True):
                 raise RuntimeError("PINNED_002188_UNSAFE_PREVIEW_RESULT")
             # Do not publish review result until the final ledger hash is known.
             result = {

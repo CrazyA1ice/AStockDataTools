@@ -213,6 +213,12 @@ class NineTableTests(unittest.TestCase):
         with self.assertRaisesRegex(R.ReviewBlocked, "MODE_TABLE_CONFLICT"):
             plan("Capital", [old], [dict(old, type="自然人")])
 
+    def test_known_utf8_failure_symbol_never_gets_preview(self):
+        old = make_old()
+        with self.assertRaisesRegex(R.ReviewBlocked, "KNOWN_PROVIDER_UTF8_QUARANTINE"):
+            plan("Top10Holder", [old], [dict(old, type="自然人")],
+                 code="688259.SH")
+
     def test_special_stock_cannot_route_to_generic_metadata(self):
         old = make_old()
         with self.assertRaisesRegex(R.ReviewBlocked, "SPECIAL_CASE_CANNOT"):

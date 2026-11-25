@@ -1,6 +1,6 @@
 # P6 — Five-symbol evidence freeze and case-by-case human adjudication
 
-**Status:** source-controlled historical evidence freeze, one offline-only pure validator and 41 tests, Draft PR, NO LIVE MUTATIONS, NO approvals. This P6 freezes results proven by the owner's Windows runs in earlier Draft PR #248 and #250; these were performed against the **2026-11-24 ledger epoch**. This packet is not a fresh check of the private live source. Do not substitute it for a future active-state CAS and full nine-table revalidation.
+**Status:** source-controlled historical evidence freeze, one offline-only pure validator and 45 tests, Draft PR, NO LIVE MUTATIONS, NO approvals. This P6 freezes results proven by the owner's Windows runs in earlier Draft PR #248 and #250; these were performed against the **2026-11-24 ledger epoch**. This packet is not a fresh check of the private live source. Do not substitute it for a future active-state CAS and full nine-table revalidation.
 
 ## Verified evidence timeline
 
@@ -24,13 +24,13 @@ Important: the five REVIEW_REQUIRED classifications mean only that **the specifi
 ### Evidence artifacts
 
 - finance-five-review-freeze-20261125.json — **frozen final five-case human HOLD decisions**, one preview hash per case, original unresolved issue codes, original ledger and source-stage receipts; explicitly five review-only / zero approved, and every data-write/auto-clear/dedup flag false.
-- finance-five-pilot-review-evidence-20261125.json — original four review cases + 002188's former blocked outcome, retained unmodified to preserve provenance.
+- finance-five-pilot-review-evidence-20261125.json — original four review cases + 002188's former blocked outcome, with the original prior-block result preserved; the 002388.SZ preview SHA was restored from the full 64-character owner log after finding its previously truncated 54-character archive value.
 - finance-priority-three-adjudication-manifest-20261125.json — three issuer-documented holder disputes and exact historical/current row hashes, including 002328's original/current numeric values.
 - finance-002188-top10holder-raw-multiplicity-pin-20261125.json — exact nine repeated raw SHA256 fingerprints, report period 20200930, original selected snapshot filenames/full-file hashes and Counter(MAX) union; no dedup flags.
 
 P6 validator finance_five_review_freeze_once.py checks all four JSON sources, the fixed 5-case scope, both stages of owner evidence, identical source ledger epoch, all five review hashes, exact 002188 nine-row fingerprints and snapshot hashes, three issuer dispute states, 002328 original 57896 vs 57900 mismatch, and literal false approval/write/clear flags. It only returns a deterministic hashed **historical decision packet**. It does not access QMT, production ledger, Parquet or external URLs. Review packet printing occurs *after* all checks, so malformed source evidence never produces a fake valid receipt.
 
-The P6 Windows PowerShell runner stages six reviewed Git blobs to TEMP, runs **41 new offline tests**, and validates the frozen packet. It does not re-run 222 old tests or any previous QMT scan, does not touch the 20:05 task, and does not require the ledger still be at the audited hash (which could have legitimately advanced). A successful packet still states live_source_revalidation_complete=false, eligible_to_apply=false and human_approved=0. If Git production HEAD has changed, it refuses the pinned command rather than switching production branch.
+The P6 Windows PowerShell runner stages six reviewed Git blobs to TEMP, runs **45 new offline tests**, and validates the frozen packet. It does not re-run 222 old tests or any previous QMT scan, does not touch the 20:05 task, and does not require the ledger still be at the audited hash (which could have legitimately advanced). A successful packet still states live_source_revalidation_complete=false, eligible_to_apply=false and human_approved=0. If Git production HEAD has changed, it refuses the pinned command rather than switching production branch.
 
 ## Future writer admission design — NOT IMPLEMENTED IN P6
 
@@ -49,3 +49,9 @@ The only person operating this repository can make the explicit final decision; 
 ## Invariants
 
 Do not touch active Parquet, QMT cached data, historical selected snapshots, live financial pending ledger (54 entries as last observed), production importer, PR #243, 20:05 scheduled Windows task or add GitHub Actions. PR #251 should remain Draft. The offline packet is a research/decision artifact and must never be reinterpreted as a production command. If the scheduled task has naturally advanced the ledger, retain its new state and plan a new proof rather than reverting anything.
+
+
+## Historical 002388 SHA256 archive correction, NOT a live change
+
+The originally committed PR #249 archived pilot JSON mistakenly stored 002388.SZ preview_sha256 as the 54-character prefix f0e0601ff35d1eb683a8401aca16bc9e3800eec6f37f0c984ed05c. The owner's PR #248 QMT preview output actually contained the complete 64-character SHA256 f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c. The P6 branch repairs the archived field and adds a dedicated archival_correction record preserving the previous value, verification origin and no-write flags. This changes neither the owner-reported classification nor any source row, ledger state, recovery preview or pending status. The P6 validator now requires the complete 64-character SHA plus the correction provenance; a truncated hash must fail all future evidence-freeze checks.
+

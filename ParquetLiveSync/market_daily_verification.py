@@ -135,6 +135,8 @@ def assess(stage: str, exit_code, log_text: str, *, expected_sources=()):
         result["pending_total"] = pending
         result["remaining_unvisited"] = remaining
         result["daily_sweep_reached_end"] = scanned
+        result["source_completeness_verified"] = receipt.get("source_completeness_verified")
+        result["batch_status"] = receipt.get("status")
         incomplete = (receipt.get("source_completeness_verified") is not True)
         if not ran:
             result["data_validation"] = "FAIL"
@@ -216,8 +218,25 @@ def routine_continuation(run: dict, sections: dict, execution: str,
         return False
     finance = sections["FINANCIAL_DAILY"]
     adjust = sections["ADJUSTMENTS_ROTATING"]
+    # An exhausted batch with no pending rows can still be UNVERIFIED,
+    # because the vendor never certified historical source completeness.
+    # Permit that as routine only with an explicit, fully bounded receipt;
+    # a missing or malformed finance log cannot satisfy this exception.
+    finance_uncertified_exhausted = (
+        finance["data_validation"] == "UNVERIFIED"
+        and finance.get("batch_status") == "SOURCE_UNIVERSE_EXHAUSTED"
+        and finance.get("source_completeness_verified") is False
+        and type(finance.get("pending_total")) is int
+        and finance["pending_total"] == 0
+        and type(finance.get("remaining_unvisited")) is int
+        and finance["remaining_unvisited"] == 0
+        and type(finance.get("processed")) is int
+        and finance["processed"] >= 0
+        and finance.get("daily_sweep_reached_end") is True)
     if (finance["data_validation"] not in ("PASS", "PARTIAL")
-            or adjust["data_validation"] not in ("PASS", "PARTIAL")
+            and not finance_uncertified_exhausted):
+        return False
+    if (adjust["data_validation"] not in ("PASS", "PARTIAL")
             or not (finance["data_validation"] == "PARTIAL"
                     or adjust["data_validation"] == "PARTIAL")):
         return False

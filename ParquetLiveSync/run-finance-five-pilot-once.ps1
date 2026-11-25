@@ -26,8 +26,8 @@ $files=@(
 @{Path='ParquetLiveSync/tests/test_finance_priority_three_disclosure_proof.py';Blob='ca2113db8c262eca5cad6375aa380303077437d3'}
 @{Path='ParquetLiveSync/qmt_finance_versioned_recovery_preview.py';Blob='e1b0411354e304b4380006a85b05e204d69eb51e'}
 @{Path='ParquetLiveSync/tests/test_qmt_finance_versioned_recovery_preview.py';Blob='748f03a3c259595992dd7d330f4cecc125da0e51'}
-@{Path='ParquetLiveSync/qmt_finance_five_pilot_once.py';Blob='1ad0fb3e4023ad0e5cd50cb0a8954f48bdcb3dbd'}
-@{Path='ParquetLiveSync/tests/test_qmt_finance_five_pilot_once.py';Blob='66a96230b3da28bb66c201aca9ce0d27ffadd4e1'}
+@{Path='ParquetLiveSync/qmt_finance_five_pilot_once.py';Blob='ac376c8d3afe3463a6c642a8dcdd93a48277445d'}
+@{Path='ParquetLiveSync/tests/test_qmt_finance_five_pilot_once.py';Blob='93a041b6c557394eb75a8522f44ef3acbe09e96d'}
 @{Path='ParquetLiveSync/docs/finance-priority-three-adjudication-manifest-20261125.json';Blob='3ba609a9b9200ee18093104fb29dd205acaecd68'}
 )
 $tests=@(

@@ -1,6 +1,6 @@
 # Five-stock source-versioned recovery preview P2 (cache-only)
 
-**Status:** implementation committed, 14 new offline tests **not yet executed** on owner's Windows environment. This is not a recovery/repair process or a data import. No approved version is selected and no pending record is removed.
+**Status:** implementation committed, 15 offline pilot tests **not yet confirmed passing on owner Windows after fix** on owner's Windows environment. This is not a recovery/repair process or a data import. No approved version is selected and no pending record is removed.
 
 The owner's 2026-11-25 102/102 offline suite succeeded with FINANCE_LEDGER_UNCHANGED_VERIFIED. This follow-up derives from the versioned recovery pure preview developed in PR #245, with a narrow QMT cache-only pilot.
 
@@ -26,7 +26,7 @@ Known UTF-8-invalid 688259.SH is **never read** in this pilot.
 
 1. Under the scheduled-task idle check and existing runner mutex, verify current deployed PR #243 code file blobs and canonical branch HEAD; enforce China 18:30-23:35 guard.
 2. Stage Git-blobs of seven prior audit/preview sources, two new pilot files and the signed-by-Git-content (but **not human-signed**) 3-case evidence manifest into a unique temporary folder. Verify each staged blob SHA. This does not require switching the canonical branch or discarding the deployed PR #243 working-tree hotfix.
-3. Run 116 **offline** unit/integration tests (27+21+8+46+14). A failure stops before QMT calls.
+3. Run 117 **offline** unit/integration tests (27+21+8+46+15). A failure stops before QMT calls.
 4. Verify the historical 54-stock pending ledger SHA256 and exact five target-table reasons. Preserve the 688259 known provider decode pending entry.
 5. One existing QMT cache-only worker call for five symbols, nine tables each, with a 120-second timeout. No download API. Fetch the union of selected historical snapshots via the production F._prior_rows reader that verifies snapshot identity/file hashes.
 6. Call pure P.preview_cohort to validate all nine tables. A strong review-only result is not approval or import authorization; blocked conditions remain blocked.
@@ -43,9 +43,15 @@ Known UTF-8-invalid 688259.SH is **never read** in this pilot.
 
 ## Expected output and interpretation
 
-- FINANCE_OFFLINE_116_TESTS_PASS: all synthetic offline tests finished successfully.
+- FINANCE_OFFLINE_117_TESTS_PASS: all synthetic offline tests finished successfully.
 - PILOT_REVIEW: code reached a narrowly scoped evidence review outcome only. No approval granted.
 - PILOT_BLOCKED: code did not meet the input/source evidence gates; keep it quarantined. A pilot containing blocked entries can still be diagnostically complete.
 - PILOT_SUMMARY: reports five outcomes plus reproducible audit hash. No Parquet write.
 - FINANCE_246_FIVE_STOCK_PREVIEW_COMPLETE_NO_DEPLOY: test and diagnostic runner completed without runner error, not evidence of successful production data import.
 - FINANCE_LEDGER_UNCHANGED_VERIFIED: preserved ledger SHA256. It does not prove absence of unrelated background modifications in other systems.
+
+## 2026-11-25 owner-run test failure and fix
+
+The first owner-side 116-test run passed the old 102 tests and 13/14 pilot tests. The deliberate ledger-tamper test, `test_ledger_mutation_is_detected_even_after_worker`, raised its expected integrity exception but found that `FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT` had been printed **before** the final `finally` ledger SHA256 comparison. The PowerShell wrapper correctly stopped **before any live QMT cache read**, and confirmed the actual ledger unchanged. This is an execution-status ordering bug, NOT evidence of market-data corruption and NOT proof that the live five-stock preview passed.
+
+Fixed: now the Python success-completion message and normal return occur **after** the `finally` integrity check; if the ledger hash changed, it raises and never emits the success marker. Added a separate assertion that verified-ledger output precedes the completion marker; also adjusted the previously misleading source-drift test to mutate one numeric QMT field **after** freezing the expected manifest, verifying the actual source-row SHA256 gate. Pilot tests now number **15**; total offline suite now **117**. The owner has not yet reported the rerun after this fix. No data was changed or repaired by this commit.

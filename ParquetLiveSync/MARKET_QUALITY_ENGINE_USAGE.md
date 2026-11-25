@@ -81,3 +81,30 @@
 PR #256～#262 原问题回执、只读 QMT 实机证据、首成交临时候选及七股缓存补取门禁继续保留。所有涉 QMT 有副作用操作仍要求显式权限；`--approve-qmt-cache-write-exact-seven-nov25` 仅适用于那条旧专项试验路径，不得作为新通用规则的默认参数，也不能隐式授权修改生产行情。
 
 通用接口后续必须支持任意经独立证明的范围，并在真实修复后更新规则而非只处理 2026-11-25。根设计 PR #263 单独面向 `main`；本代码 PR 与原行情草稿分支堆叠，二者未合并前不能宣称长久设计已在生产强制生效。
+
+
+## 已接入的首个真实生产格式适配器（P1 只读，不修复）
+
+新增 `market_quality_receipt_adapter.py`，直接读取**任意给定的有界日期范围**内现有 `ParquetLiveSync/work/market_update/daily/YYYY-MM-DD.json + 同名 .parquet`。使用 `--module-root` 指定正式生产目录，而不是审计工作树内没有生产数据的目录：
+
+```powershell
+& "D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe" -B "D:\ChatGPT\AStockDataTools\work\审计工作树\ParquetLiveSync\market_quality_receipt_adapter.py" --module-root "D:\ChatGPT\AStockDataTools\ParquetLiveSync" --start-day 2026-11-25 --end-day 2026-11-25
+```
+
+上述日期**只是调用示例**；实际范围可以换成任意不超过 180 个自然日的现有回执区间。不会猜测两个回执日期之间缺少的自然日是否为应有交易日；这些需要交易日历/股票集合等更高层的独立证据。
+
+适配器使用**标准库**读取回执 JSON（拒绝重复键、非法日期/证券/数量/身份）并按固定 4 MiB 分块计算物理候选 Parquet SHA，与回执 SHA 比对。它只检查候选文件与回执的字节一致性，**不打开 Arrow 表验证 schema、真实数据内容或正式月文件**。接受的股票数 `stock_days_accepted` 与 `rows=accepted×240`、隔离数量 `expected-accepted` 也要与元数据自洽；这是当前 QMT 每日暂存生产格式专属规则，不属于通用内核的八周期假定。
+
+对每个 `quarantined` 原因生成一个 `producer_quarantined=true` 的通用质量 case，以 `PRODUCER_QUARANTINED` 保留原隔离事实；当前明确已知的 QMT 原始分钟空结果标记为 `observed_bars=0`，但**不会仅凭同一个 QMT 暂存回执就证明官方 DAY 当日应有成交**；已知的独立官方 DAY 物化开盘失败只标记 `open=false`，其他五个字段未由这份回执证实，不能被标为通过。错误原因不向输出复制本机私有路径或长文本。
+
+输出有两个明确不同的哈希：
+- `producer_receipt_bytes_sha256`：从本机 JSON 回执实际字节计算；
+- `accepted_candidate_parquet_sha256`：从本机已接收候选文件实际字节计算并与回执匹配；
+
+两者**都不等于隔离股票的原始 241 根 QMT 行情 SHA，更不等于独立官方 DAY 原始来源 SHA**。因此 `quarantined_raw_qmt_sha_verified=false`、`official_day_reference_independently_verified=false`，整个报告保持 `data_quality_cleared=false`、`production_merge_authorized=false`、`qmt_cache_write_authorized=false`。
+
+本适配器只是 P1 第一个标准回执插件；真正的官方 DAY 独立源引用、QMT/其他供应商源权限与校准、持久待处理队列、版本化修复候选、GUI/定时任务接入，以及经审批的正式 Parquet/H5 事务，仍为后续阶段，**未在本轮上线**。
+
+### 离线回归
+
+本轮实测：原通用内核 31 项、新每日回执适配器 21 项、先前专项审计 69 项，合计 **121/121 PASS**。对照 GitHub 远端 blob：内核 `09d3c8171c8b029ec42a4949922a11d9dd003338`，适配器 `8fc3994f952ee6e7c49ee4d24096b140e7172b34`，原内核测试 `1bf7cd99ab6a896087add421b64261949d29264e`，适配器测试 `c4f6fe8cacce5c75a76ca45220817fafc7614f2f`。本机 Windows 对**新分支**的验收仍待执行；此前 `schannel` TLS 握手失败发生在下载 PR #262 时，且与本次通用内核逻辑无关。

@@ -134,11 +134,24 @@ class RoutineFinanceExitPolicyTests(unittest.TestCase):
         _, incomplete = report_for(completed=["EIGHT_PERIODS"])
         self.assertFalse(incomplete["routine_continuation"])
 
-    def test_no_source_completeness_proof_is_not_false_pass(self):
+    def test_exhausted_finance_still_uncertified_but_adjustment_rotation_is_routine(self):
         _, v = report_for(logs={"FINANCIAL_DAILY":
             finance_log(pending=0, remaining=0, scanned=True)})
-        self.assertFalse(v["routine_continuation"])
+        self.assertTrue(v["routine_continuation"])
         self.assertEqual(v["sections"]["FINANCIAL_DAILY"]["data_validation"], "UNVERIFIED")
+        self.assertEqual(v["data_validation"], "PARTIAL")
+
+    def test_missing_or_contradictory_exhaustion_evidence_not_routine(self):
+        for status, scanned in (("PREVIEW", True), ("SOURCE_UNIVERSE_EXHAUSTED", None)):
+            doc = {
+                "mode": "daily", "apply": True, "status": status,
+                "source_completeness_verified": False, "processed": 71,
+                "pending_total": 0, "daily_remaining_unvisited": 0,
+                "daily_sweep_reached_end": scanned,
+            }
+            _, v = report_for(logs={"FINANCIAL_DAILY": tagged(
+                "QMT_FINANCIAL_CACHE_IMPORT_SUMMARY=", doc)})
+            self.assertFalse(v["routine_continuation"])
 
     def test_canonical_scheduler_has_explicit_marker_and_fail_closed_default(self):
         # Static contract only. The PowerShell file is parsed separately on Windows.

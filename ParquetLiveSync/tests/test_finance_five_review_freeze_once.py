@@ -192,6 +192,30 @@ class FreezeTamperTests(unittest.TestCase):
                 "status"] = "CAPITAL_ADDITIVE_REVIEW_REQUIRED"
         reject(modify, "PR248_002188_PRIOR_BLOCK_ERASED")
 
+    def test_full_002388_review_hash_restored_from_owner_receipt(self):
+        d = evidence()
+        archived = next(x for x in d["prior"]["cases"]
+                        if x["symbol"] == "002388.SZ")
+        final = case(d, "002388.SZ")
+        self.assertEqual(len(archived["preview_sha256"]), 64)
+        self.assertEqual(archived["preview_sha256"], final["preview_sha256"])
+        self.assertEqual(archived["preview_sha256"], G.CASES["002388.SZ"][2])
+
+    def test_missing_hash_correction_provenance_blocks(self):
+        reject(lambda d: d["prior"].pop("archival_correction"),
+               "PR248_ARCHIVAL_HASH_CORRECTION_NOT_ATTESTED")
+
+    def test_hash_correction_not_silent_approval(self):
+        reject(lambda d: d["prior"]["archival_correction"]
+               .update({"authorizes_live_mutation": True}),
+               "PR248_ARCHIVAL_HASH_CORRECTION_NOT_ATTESTED")
+
+    def test_prior_truncated_002388_hash_cannot_be_accepted(self):
+        def change(d):
+            next(x for x in d["prior"]["cases"] if x["symbol"] == "002388.SZ")[
+                "preview_sha256"] = d["prior"]["archival_correction"]["incorrect_previous_value"]
+        reject(change, "PR248_PRIOR_REVIEW_PROOF_CHANGED_002388.SZ")
+
     def test_prior_002310_hash_must_stay_pinned(self):
         def modify(d):
             next(x for x in d["prior"]["cases"] if x["symbol"] == "002310.SZ")[

@@ -8,10 +8,10 @@ $ErrorActionPreference='Stop'
 $expectedProductionHead='2b5c1bd28f8df4d4512dd933e50b1be50741f6a6'
 $python=Join-Path $RepoRoot '.venv\Scripts\python.exe'
 $files=@(
-@{Path='ParquetLiveSync/finance_five_review_freeze_once.py';Blob='dcd0d38d0dffbd2bc1fff25d3785766804dbff00'}
-@{Path='ParquetLiveSync/tests/test_finance_five_review_freeze_once.py';Blob='c27d64455da09fe47b3d55cb89e616c4a0cba94f'}
+@{Path='ParquetLiveSync/finance_five_review_freeze_once.py';Blob='20932f82d972441ec16379939d841d5447e24af0'}
+@{Path='ParquetLiveSync/tests/test_finance_five_review_freeze_once.py';Blob='2d9c2efc1bf7090f12c3608f7627a7ccd7a3900e'}
 @{Path='ParquetLiveSync/docs/finance-five-review-freeze-20261125.json';Blob='31b1bec53afae2598ab2e09d1d18f9bb984ae63e'}
-@{Path='ParquetLiveSync/docs/finance-five-pilot-review-evidence-20261125.json';Blob='3b9e08c925a36c4e5b3971aeb0d151c705017e93'}
+@{Path='ParquetLiveSync/docs/finance-five-pilot-review-evidence-20261125.json';Blob='5a39ec2777cde87b686146156ca7f56fdf4b1374'}
 @{Path='ParquetLiveSync/docs/finance-priority-three-adjudication-manifest-20261125.json';Blob='3ba609a9b9200ee18093104fb29dd205acaecd68'}
 @{Path='ParquetLiveSync/docs/finance-002188-top10holder-raw-multiplicity-pin-20261125.json';Blob='b9f4aeab54b46ea652711455e770c7046dec6a2e'}
 )
@@ -50,10 +50,10 @@ try {
         if($LASTEXITCODE -ne 0 -or $verified.Trim() -ne $file.Blob){throw "REVIEW_STAGED_BLOB_BAD=$spec"}
     }
     $base=Join-Path $stage 'ParquetLiveSync'
-    Write-Host '===FINANCE_FIVE_REVIEW_FREEZE_OFFLINE_TESTS_41==='
+    Write-Host '===FINANCE_FIVE_REVIEW_FREEZE_OFFLINE_TESTS_45==='
     & $python -B (Join-Path $base 'tests\test_finance_five_review_freeze_once.py') -q
-    if($LASTEXITCODE -ne 0){throw 'REVIEW_FREEZE_41_OFFLINE_TESTS_FAILED'}
-    Write-Host 'FINANCE_FIVE_REVIEW_FREEZE_41_TESTS_PASS'
+    if($LASTEXITCODE -ne 0){throw 'REVIEW_FREEZE_45_OFFLINE_TESTS_FAILED'}
+    Write-Host 'FINANCE_FIVE_REVIEW_FREEZE_45_TESTS_PASS'
     Write-Host '===FINANCE_FIVE_FROZEN_HISTORICAL_EVIDENCE_NO_QMT==='
     & $python -B (Join-Path $base 'finance_five_review_freeze_once.py') --directory (Join-Path $base 'docs')
     if($LASTEXITCODE -ne 0){throw 'FINANCE_FIVE_FROZEN_EVIDENCE_VALIDATION_FAILED'}

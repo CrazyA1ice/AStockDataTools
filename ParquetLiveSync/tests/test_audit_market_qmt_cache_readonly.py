@@ -1,5 +1,10 @@
 """Offline simulated QMT cache triage; NEVER calls xtquant or a network."""
 from datetime import date
+import contextlib
+import io
+import json
+from types import ModuleType
+from unittest import mock
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -83,5 +88,35 @@ class CacheProbeTests(unittest.TestCase):
     def test_wrong_receipt_sha_refused_before_import(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(p.main(['--module-root',tmp,'--confirm-qmt-cache-query','--expected-run-sha256','f'*64]),3)
+    def test_actual_entry_queries_batch_once_without_any_history_download(self):
+        fake_audit=ModuleType('audit_market_quarantine_readonly')
+        fake_audit.audit=MagicMock(return_value={**report(), 'quarantined':9,
+                                                     'accepted':5206,'expected':9})
+        fake_xtquant=ModuleType('xtquant')
+        fake_xtquant.xtdata=MagicMock()
+        fake_xtquant.xtdata.get_market_data_ex.return_value={}
+        self.u._reference_for_day.return_value=self.ref
+        self.u.S._json.side_effect=[{'calibration_passed':True,'providers':{'SZ':{},'SH_OTHER':{},'STAR':{}}},
+                                    {'qmt_calibration_sha256':'PINNED'}]
+        self.u.P.sha_bytes.return_value='PINNED'
+        fake_stdout=io.StringIO()
+        with mock.patch.object(p,'source_modules',return_value=self.u), \
+             mock.patch.dict(sys.modules,{'audit_market_quarantine_readonly':fake_audit,'xtquant':fake_xtquant}), \
+             contextlib.redirect_stdout(fake_stdout):
+            code=p.main(['--module-root','C:/dummy','--confirm-qmt-cache-query'])
+        self.assertEqual(code,0)
+        fake_audit.audit.assert_called_once()
+        self.assertTrue(fake_audit.audit.call_args.kwargs['verify_parquet'])
+        fake_xtquant.xtdata.get_market_data_ex.assert_called_once()
+        args=fake_xtquant.xtdata.get_market_data_ex.call_args.kwargs
+        self.assertEqual(args['stock_list'],[s[2:]+'.'+s[:2] for s in NINE])
+        self.assertEqual(args['start_time'],'20261125')
+        self.assertEqual(args['end_time'],'20261125')
+        self.assertEqual(args['fill_data'],False)
+        fake_xtquant.xtdata.download_history_data.assert_not_called()
+        out=json.loads(fake_stdout.getvalue())
+        self.assertEqual(out['still_no_qmt_bars'],9)
+        self.assertFalse(out['market_data_written'])
+
 
 if __name__=='__main__':unittest.main()

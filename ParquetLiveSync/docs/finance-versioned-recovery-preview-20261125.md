@@ -65,3 +65,8 @@ The completed 53-stock QMT audit does not need to be rerun merely to review this
 ### Batch-level strict preview
 
 The same pure module now exports preview_cohort, accepting a complete explicit list of (symbol, mode, table) descriptors, all nine-table verified historical Counters for each symbol, and already-supplied current cache data. It rejects missing/extra symbols and duplicate entries, enforces an optional expected cohort size, preserves per-symbol BLOCKED reasons rather than granting clearance, and returns a stable cohort_sha256 for comparison. It performs **zero** QMT requests itself. Future use on 53 real stocks requires a separately guarded cache-read driver and approval evidence; that execution has **not** occurred in this phase.
+
+
+### Single Windows offline test entry point (no QMT access)
+
+The added run-finance-recovery-offline-suite-once.ps1 stages seven exact Git blobs from a pinned commit to an isolated temporary directory using raw-byte git cat-file (not the Windows PowerShell 5.1 UTF-16 text redirection), re-hashes each staged file, and runs **all 102** existing offline tests: 27 complete-audit + 21 three-symbol + 8 issuer-fingerprint + 46 versioned-preview tests. It checks the canonical branch head, scheduler-idle state and Beijing 18:45-23:35 protection period. It does not invoke live QMT methods or perform data imports. It checks the financial pending ledger SHA256 is unchanged and removes the temporary staging directory at completion. A failed test stops without executing any other production workflow. The new 46 preview tests have NOT been run by the owner yet; no pass claim is made by merely adding this runner.

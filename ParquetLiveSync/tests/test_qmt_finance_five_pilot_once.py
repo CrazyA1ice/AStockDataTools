@@ -210,7 +210,7 @@ class LedgerTests(unittest.TestCase):
 
 
 class PilotTests(unittest.TestCase):
-    def _run(self, changed=None, changed_ledger=False):
+    def _run(self, changed=None, changed_ledger=False, drift_after_evidence=None):
         tmp = tempfile.TemporaryDirectory()
         base = Path(tmp.name)
         ledger = workspace(base)
@@ -218,6 +218,9 @@ class PilotTests(unittest.TestCase):
         if changed:
             changed(old, new)
         doc = evidence_document(old, new)
+        # Freeze the expected source hashes before simulating provider drift.
+        if drift_after_evidence:
+            drift_after_evidence(old, new)
         manifest = base / "evidence.json"
         manifest.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
         class WorkingF(FakeF):
@@ -289,16 +292,22 @@ class PilotTests(unittest.TestCase):
 
     def test_shareholder_count_drift_fails_special_row_hash(self):
         def mutate(old, new):
-            # Create evidence before this drift in a separate test below;
-            # this test instead breaks the nine-table current shape.
-            new["002328.SZ"].append(dict(new["002328.SZ"][0]))
-        result, out = self._run(changed=mutate)
+            new["002328.SZ"][0]["shareholder"] = 57901.0
+        result, out = self._run(drift_after_evidence=mutate)
         self.assertEqual(result["blocked"], 1)
         self.assertEqual(result["review_only"], 4)
+        self.assertIn("SPECIAL_RECORD_FINGERPRINT_CHANGED", out)
 
     def test_ledger_mutation_is_detected_even_after_worker(self):
         _, out = self._run(changed_ledger=True)
         self.assertNotIn("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT", out)
+        self.assertNotIn("FINANCE_LEDGER_UNCHANGED_VERIFIED", out)
+
+    def test_success_marker_only_after_final_sha_check(self):
+        _, out = self._run()
+        checked = out.index("FINANCE_LEDGER_UNCHANGED_VERIFIED")
+        complete = out.index("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT")
+        self.assertLess(checked, complete)
 
 
 if __name__ == "__main__":

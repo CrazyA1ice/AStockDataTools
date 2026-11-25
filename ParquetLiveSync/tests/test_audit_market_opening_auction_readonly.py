@@ -24,7 +24,8 @@ try:
 except ModuleNotFoundError:
     sys.modules['audit_market_quarantine_readonly']=SimpleNamespace(audit=lambda *a,**kw:None)
 from audit_market_opening_auction_readonly import (replay_one, run_audit,
-    verify_dependencies, STOCKS, PINNED_MODULE_BLOBS, TriageError)
+    first_traded_open_candidate, verify_dependencies, STOCKS,
+    PINNED_MODULE_BLOBS, TriageError)
 
 CN=timezone(timedelta(hours=8))
 GRID=([(9,m) for m in range(30,60)]+[(10,m) for m in range(60)]+[(11,m) for m in range(31)]
@@ -138,6 +139,73 @@ class AuctionTests(unittest.TestCase):
         self.u.B._calibration.return_value={'offset_ms':1.5,'volume_factor':1.,'amount_factor':1.}
         with self.assertRaisesRegex(TriageError,'UNEXPECTED_OFFSET'):
             replay_one(self.u,'605336.SH',rows(True),self.expected,{},self.day)
+
+    def test_first_trade_open_at_0933_strict_candidate_not_admitted(self):
+        native=rows(False)
+        native[1]['volume']=native[1]['amount']=0
+        native[2]['volume']=native[2]['amount']=0
+        native[3]['open']=7.62
+        official={**self.expected,'close':7.7}
+        preview=first_traded_open_candidate(native,official)
+        self.assertEqual(preview['first_positive_label'],'09:33')
+        self.assertEqual(preview['zero_prefix_bars'],3)
+        self.assertEqual(preview['first_positive_open'],7.62)
+        self.assertEqual(preview['status'],
+                         'FIRST_TRADE_OPEN_COMPATIBLE_CANDIDATE_ONLY')
+        self.assertTrue(preview['strict_official_open_match'])
+        self.assertFalse(preview['admission_authorized'])
+
+    def test_first_traded_open_mismatch_is_not_a_repair(self):
+        preview=first_traded_open_candidate(rows(False),self.expected)
+        self.assertEqual(preview['first_positive_label'],'09:31')
+        self.assertFalse(preview['strict_official_open_match'])
+        self.assertEqual(preview['status'],'FIRST_TRADE_OPEN_NOT_CERTIFIED')
+
+    def test_first_trade_requires_hlc_in_both_trade_and_tail(self):
+        native=rows(False)
+        native[1]['open']=7.62
+        official={**self.expected,'close':7.95}
+        preview=first_traded_open_candidate(native,official)
+        self.assertTrue(preview['strict_official_open_match'])
+        self.assertFalse(preview['traded_hlc_match'])
+        self.assertFalse(preview['post_prefix_hlc_match'])
+        self.assertEqual(preview['status'],'FIRST_TRADE_OPEN_NOT_CERTIFIED')
+
+    def test_unpaired_first_traded_volume_amount_rejected(self):
+        native=rows(False)
+        native[1]['amount']=0
+        with self.assertRaisesRegex(TriageError,'VOLUME_AMOUNT_PAIR_INVALID'):
+            first_traded_open_candidate(native,self.expected)
+
+    def test_no_trading_minute_never_becomes_candidate(self):
+        native=rows(False)
+        for bar in native:
+            bar['volume']=bar['amount']=0
+        preview=first_traded_open_candidate(native,self.expected)
+        self.assertEqual(preview['status'],'NO_GENUINE_TRADED_MINUTE')
+        self.assertEqual(preview['zero_prefix_bars'],241)
+        self.assertFalse(preview['admission_authorized'])
+
+    def test_real_0930_auction_is_not_zero_prefix_candidate(self):
+        preview=first_traded_open_candidate(rows(True),self.expected)
+        self.assertEqual(preview['status'],'REAL_0930_AUCTION_NOT_ZERO_PREFIX')
+        self.assertEqual(preview['first_positive_label'],'09:30')
+        self.assertFalse(preview['admission_authorized'])
+
+    def test_full_replay_discloses_first_trade_without_changing_raw(self):
+        native=rows(False)
+        native[1]['volume']=native[1]['amount']=0
+        native[2]['volume']=native[2]['amount']=0
+        native[3]['open']=7.62
+        before=str(native)
+        official={**self.expected,'close':7.7}
+        result=replay_one(self.u,'605336.SH',native,official,{},self.day)
+        preview=result['first_positive_trade_diagnostic']
+        self.assertEqual(preview['status'],
+                         'FIRST_TRADE_OPEN_COMPATIBLE_CANDIDATE_ONLY')
+        self.assertEqual(str(native),before)
+        self.assertFalse(result['all_data_changes_committed'])
+
     def test_pins_accept_only_all_exact_git_blobs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

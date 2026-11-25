@@ -44,6 +44,86 @@ def _maybe_error(call):
         return type(exc).__name__ + ': ' + str(exc)[:220]
 
 
+
+def first_traded_open_candidate(raw, official):
+    """2026-11-14 first-positive-trade logic, *diagnostic only*.
+
+    This is not the original SHA-pinned native-DAT admission receipt and
+    cannot certify a new 240-minute market bar. Never modify raw/official.
+    """
+    if len(raw) != 241:
+        raise TriageError('FIRST_TRADE_REQUIRES_241_NATIVE_BARS')
+    for row in raw:
+        volume, amount = float(row['volume']), float(row['amount'])
+        if (not math.isfinite(volume) or not math.isfinite(amount)
+                or volume < 0 or amount < 0
+                or (volume > 0) != (amount > 0)):
+            raise TriageError('FIRST_TRADE_VOLUME_AMOUNT_PAIR_INVALID')
+        if any(not math.isfinite(float(row[k])) or float(row[k]) <= 0
+               for k in ('open', 'high', 'low', 'close')):
+            raise TriageError('FIRST_TRADE_PRICE_INVALID')
+    indexed = [(idx, row) for idx, row in enumerate(raw)
+               if float(row['volume']) > 0]
+    if not indexed:
+        return {
+            'status': 'NO_GENUINE_TRADED_MINUTE',
+            'first_positive_label': None,
+            'first_positive_open': None,
+            'zero_prefix_bars': 241,
+            'strict_official_open_match': False,
+            'traded_hlc_match': False,
+            'post_prefix_hlc_match': False,
+            'admission_authorized': False,
+        }
+    first_idx, first = indexed[0]
+    if first_idx == 0:
+        return {
+            'status': 'REAL_0930_AUCTION_NOT_ZERO_PREFIX',
+            'first_positive_label': first['datetime_cn'][11:16],
+            'first_positive_open': float(first['open']),
+            'zero_prefix_bars': 0,
+            'strict_official_open_match': False,
+            'traded_hlc_match': False,
+            'post_prefix_hlc_match': False,
+            'admission_authorized': False,
+        }
+    if any(float(r['volume']) != 0 or float(r['amount']) != 0
+           for r in raw[:first_idx]):
+        raise TriageError('FIRST_TRADE_NONZERO_PREFIX')
+    strict = math.isclose(float(first['open']), float(official['open']),
+                          rel_tol=0, abs_tol=.0002)
+    active = [bar for _, bar in indexed]
+    tail = raw[first_idx:]
+    traded_hlc = {
+        'high': max(float(r['high']) for r in active),
+        'low': min(float(r['low']) for r in active),
+        'close': float(active[-1]['close']),
+    }
+    tail_hlc = {
+        'high': max(float(r['high']) for r in tail),
+        'low': min(float(r['low']) for r in tail),
+        'close': float(raw[-1]['close']),
+    }
+    def hlc_matches(values):
+        return all(math.isclose(float(values[k]), float(official[k]),
+                                rel_tol=.006, abs_tol=.04)
+                   for k in ('high', 'low', 'close'))
+    traded_ok = hlc_matches(traded_hlc)
+    tail_ok = hlc_matches(tail_hlc)
+    return {
+        'status': ('FIRST_TRADE_OPEN_COMPATIBLE_CANDIDATE_ONLY'
+                   if strict and traded_ok and tail_ok
+                   else 'FIRST_TRADE_OPEN_NOT_CERTIFIED'),
+        'first_positive_label': first['datetime_cn'][11:16],
+        'first_positive_open': float(first['open']),
+        'zero_prefix_bars': first_idx,
+        'strict_official_open_match': strict,
+        'traded_hlc_match': traded_ok,
+        'post_prefix_hlc_match': tail_ok,
+        'admission_authorized': False,
+    }
+
+
 def replay_one(u, code, raw, expected, calibration, day: date):
     """Use the production _fold_241_day and normal_qmt_day, in memory only."""
     if len(raw) != 241:
@@ -128,6 +208,7 @@ def replay_one(u, code, raw, expected, calibration, day: date):
         'folded_day_close': float(converted[-1]['close']),
         'official_day_ohlcva': official,
         'folded_day_ohlcva': materialized,
+        'first_positive_trade_diagnostic': first_traded_open_candidate(raw, official),
         'field_comparisons': checks,
         'outside_official_high_low_envelope': outside_envelope,
         'folded_ohlc_validation_error': fold_error,

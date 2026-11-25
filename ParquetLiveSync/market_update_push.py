@@ -106,9 +106,15 @@ def _checked_config(path: Path) -> dict:
 def _report_text(run: dict) -> str:
     started = str(run.get("china_start") or run.get("started_local") or "未知")
     outcome = str(run.get("status") or "UNKNOWN")
+    verification = run.get("validation")
+    routine = (outcome == "SUCCESS" and
+               run.get("operational_classification") == "ROUTINE_CONTINUATION"
+               and type(verification) is dict
+               and verification.get("routine_continuation") is True)
     lines = [
         "A股每日数据更新报告",
-        "状态：" + {"SUCCESS": "已执行完成", "PARTIAL": "部分完成",
+        "状态：" + {"SUCCESS": ("本轮执行完成（财务/除权正常轮换，仍有待审）"
+                           if routine else "已执行完成"), "PARTIAL": "部分完成",
                    "FAILED": "失败"}.get(outcome, outcome),
         "中国时间启动：" + started,
         "结束：" + str(run.get("finished_local") or "未记录"),
@@ -119,7 +125,6 @@ def _report_text(run: dict) -> str:
         records = {}
     completed = run.get("steps_completed")
     completed = completed if type(completed) is list else []
-    verification = run.get("validation")
     sections = (verification.get("sections") if type(verification) is dict else None)
     sections = sections if type(sections) is dict else {}
     for stage in STAGES:

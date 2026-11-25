@@ -29,9 +29,11 @@
 
 ## 离线验证
 
-本轮本地已运行 12/12 unittest PASS、Python py_compile PASS。曾发现测试文件在仓库 tests 子目录下进行真正 unittest discover 时导入路径缺失，已经复现失败并修复 sys.path；最终再按与 Windows 相同的目录布局执行 12/12 PASS。GitHub 远端两个 Blob SHA 与实际测试文件匹配：
+本轮本地已运行 13/13 unittest PASS、Python py_compile PASS。曾发现测试文件在仓库 tests 子目录下进行真正 unittest discover 时导入路径缺失，已经复现失败并修复 sys.path；最终再按与 Windows 相同的目录布局执行 13/13 PASS。GitHub 远端两个 Blob SHA 与实际测试文件匹配：
 
 - audit_market_qmt_cache_readonly.py：40942866ae7366bade0305956df0b2d296d61b3e
-- tests/test_audit_market_qmt_cache_readonly.py：bf7364dda6c17abb6eb27af4341a0f9f66ff189b
+- tests/test_audit_market_qmt_cache_readonly.py：8a30948a0f8374a3b5c41cbcad43770e71cd83d1
 
 真实 Windows QMT 缓存查询尚未执行。先在 detached 审计工作树执行 12 项离线回归，再在经 SHA 固定的 canonical 工作目录上运行本工具，反馈完整 9 只 current_qmt_cache_status。本工具独立于 PR #243 和 PR #255，后续确认安全修复方案前不得合并或自动上线。
+
+新增端到端主入口离线模拟验证：在回执与校准均已满足的条件下，恰好一次调用 get_market_data_ex、股票列表正好9只、fill_data=false，download_history_data 零调用，市场数据文件零写入。该测试也已在真实 tests 子目录布局通过。

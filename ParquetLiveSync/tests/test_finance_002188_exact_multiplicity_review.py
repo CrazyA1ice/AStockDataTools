@@ -268,7 +268,7 @@ class NineTablePinnedIntegrationTests(unittest.TestCase):
     """779/788 in-memory synthetic rows; Parquet filenames contain JSON fixtures."""
 
     def _fixture(self, root, *, missing_one_cache_repeat=False,
-                 mutate_ledger_during_worker=False):
+                 mutate_ledger_during_worker=False, new_capital_key=20261119):
         import hashlib
         root = Path(root)
         private = root / "private"
@@ -298,7 +298,7 @@ class NineTablePinnedIntegrationTests(unittest.TestCase):
         old_capital += [capital(20200101 + i, 2, 50) for i in range(2)]
         new_capital = [dict(capital(20200101 + i, 1, 50),
                             _index=str(i)) for i in range(108)]
-        new_capital.append(dict(capital(20261119, 3, 55), _index="108"))
+        new_capital.append(dict(capital(new_capital_key, 3, 55), _index="108"))
 
         def store(table, day, rows):
             dest = private / "financial" / table / D.CODE / "snapshots"
@@ -364,12 +364,13 @@ class NineTablePinnedIntegrationTests(unittest.TestCase):
 
     def _call(self, *, missing_one_cache_repeat=False,
               mutate_ledger_during_worker=False,
-              tamper_active_snapshot=False):
+              tamper_active_snapshot=False, new_capital_key=20261119):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             ledger, manifest, snaps, duplicates, union_sha, W = self._fixture(
                 root, missing_one_cache_repeat=missing_one_cache_repeat,
-                mutate_ledger_during_worker=mutate_ledger_during_worker)
+                mutate_ledger_during_worker=mutate_ledger_during_worker,
+                new_capital_key=new_capital_key)
             if tamper_active_snapshot:
                 folder = root / "private" / "financial" / "Top10Holder" / D.CODE / "snapshots"
                 selected_file = folder / snaps["2026-11-18"]["filename"]
@@ -422,6 +423,20 @@ class NineTablePinnedIntegrationTests(unittest.TestCase):
         self.assertLess(output.index("PINNED_002188_LEDGER_UNCHANGED_VERIFIED"),
                         output.index("PINNED_002188_REVIEW="))
 
+    def test_pinned_e2e_string_date_keeps_raw_date_type(self):
+        result, output = self._call(new_capital_key="20261119")
+        self.assertEqual(result["capital"]["added_report_keys"],
+                         ['"20261119"'])
+        self.assertIn("PINNED_002188_REVIEW_COMPLETE_NO_COMMIT", output)
+        self.assertFalse(result["allow_apply"])
+
+    def test_pinned_e2e_whole_float_date_keeps_raw_date_type(self):
+        result, output = self._call(new_capital_key=20261119.0)
+        self.assertEqual(result["capital"]["added_report_keys"],
+                         ["20261119.0"])
+        self.assertIn("PINNED_002188_REVIEW_COMPLETE_NO_COMMIT", output)
+        self.assertFalse(result["allow_deduplication"])
+
     def test_pinned_cache_missing_one_repeat_never_completes(self):
         _, output = self._call(missing_one_cache_repeat=True)
         self.assertNotIn("PINNED_002188_REVIEW=", output)
@@ -436,6 +451,94 @@ class NineTablePinnedIntegrationTests(unittest.TestCase):
         _, output = self._call(tamper_active_snapshot=True)
         self.assertNotIn("PINNED_002188_REVIEW=", output)
         self.assertNotIn("PINNED_002188_REVIEW_COMPLETE", output)
+
+
+
+
+class ExactCapitalReportKeyScopeTests(unittest.TestCase):
+    """No normalization or fuzzy date comparison on audited QMT source."""
+
+    def setup_proof(self, key="20261119"):
+        return {
+            "old_report_keys": 108,
+            "current_report_keys": 109,
+            "historical_raw_variants_retained": 110,
+            "removed_report_keys": 0,
+            "economic_fields_unchanged_on_shared_keys": True,
+            "added_report_keys": [key],
+        }
+
+    def test_exact_int_date_key_accepted(self):
+        self.assertTrue(P._verify_pinned_002188_capital_scope(
+            self.setup_proof("20261119")))
+
+    def test_exact_string_date_key_accepted(self):
+        self.assertTrue(P._verify_pinned_002188_capital_scope(
+            self.setup_proof('"20261119"')))
+
+    def test_exact_integral_float_date_key_accepted(self):
+        self.assertTrue(P._verify_pinned_002188_capital_scope(
+            self.setup_proof("20261119.0")))
+
+    def test_wrong_new_date_fails(self):
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "ADDED_KEY_VALUE_OR_TYPE_CHANGED"):
+            P._verify_pinned_002188_capital_scope(
+                self.setup_proof("20261120"))
+
+    def test_unexpected_date_format_fails_not_normalized(self):
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "ADDED_KEY_VALUE_OR_TYPE_CHANGED"):
+            P._verify_pinned_002188_capital_scope(
+                self.setup_proof('"2026-11-19"'))
+
+    def test_date_string_with_spaces_fails(self):
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "ADDED_KEY_VALUE_OR_TYPE_CHANGED"):
+            P._verify_pinned_002188_capital_scope(
+                self.setup_proof('" 20261119 "'))
+
+    def test_historical_report_count_drift_fails(self):
+        proof = self.setup_proof()
+        proof["old_report_keys"] = 109
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "HISTORICAL_KEY_COUNT_DRIFT"):
+            P._verify_pinned_002188_capital_scope(proof)
+
+    def test_current_report_count_drift_fails(self):
+        proof = self.setup_proof()
+        proof["current_report_keys"] = 110
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "CURRENT_KEY_COUNT_DRIFT"):
+            P._verify_pinned_002188_capital_scope(proof)
+
+    def test_raw_variant_count_drift_fails(self):
+        proof = self.setup_proof()
+        proof["historical_raw_variants_retained"] = 111
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "HISTORICAL_RAW_VERSION_COUNT_DRIFT"):
+            P._verify_pinned_002188_capital_scope(proof)
+
+    def test_removed_old_report_key_fails(self):
+        proof = self.setup_proof()
+        proof["removed_report_keys"] = 1
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "REMOVED_REPORT_KEY"):
+            P._verify_pinned_002188_capital_scope(proof)
+
+    def test_shared_economic_difference_fails(self):
+        proof = self.setup_proof()
+        proof["economic_fields_unchanged_on_shared_keys"] = False
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "SHARED_ECONOMIC_FIELD_DRIFT"):
+            P._verify_pinned_002188_capital_scope(proof)
+
+    def test_additional_new_date_fails(self):
+        proof = self.setup_proof()
+        proof["added_report_keys"].append("20261120")
+        with self.assertRaisesRegex(P.ReviewBlocked,
+                                    "ADDED_KEY_COUNT_DRIFT"):
+            P._verify_pinned_002188_capital_scope(proof)
 
 
 

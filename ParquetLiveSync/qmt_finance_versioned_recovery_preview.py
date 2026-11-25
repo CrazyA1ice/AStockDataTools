@@ -489,7 +489,7 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
         unaffected_additions[t] = sum((recent - prior).values())
     if mode == "CAPITAL_ADDITIVE":
         proof = _capital(old_by_table[table], new_by_table[table], F)
-        if pinned_002188:
+        if use_pinned:
             # The 2026-11-25 Capital observation was old=108, new=109,
             # exactly one new report key 20261119. Do not broaden this
             # duplicate-bound exception to later/other Capital revisions.

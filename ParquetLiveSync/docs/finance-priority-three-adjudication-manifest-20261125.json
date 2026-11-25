@@ -1,0 +1,99 @@
+{
+  "schema": "astock_finance_source_disclosure_proof_v1",
+  "purpose": "EVIDENCE_ONLY_NOT_AN_IMPORT_APPROVAL",
+  "produced_on": "2026-11-25",
+  "audit_ledger_daily_date": "2026-11-24",
+  "ledger_sha256_unchanged": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "default_action": "HOLD_PENDING_NO_COMMIT",
+  "allow_auto_clear": false,
+  "allow_snapshot_mutation": false,
+  "allow_provider_cache_mutation": false,
+  "evidence_scope": "Only 3 previously verified unique report-date 20260930 source row pairs",
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "endDate": "20260930",
+      "case_state": "REVIEW_REQUIRED_TYPE_TAXONOMY",
+      "prior_snapshot_days": [
+        "2026-11-17"
+      ],
+      "prior_record_sha256": "c2b442dca1bf0ffd1661265f14d07f91ec6d2817776b8f723273d49f0595c11c",
+      "current_record_sha256": "321c20366de0b7a57e9892786249c5cf9099449c27495f621ecf04f848bf5660",
+      "stable_projection_sha256": "18b587917958bd4b45b45d9ecd7820d9fe6e5f39515a7a43ef7db968bdf1e7b6",
+      "pairing_unambiguous": true,
+      "changed_fields": [
+        "name",
+        "type"
+      ],
+      "prior_name_sha256": "6f5502052dc88881981db2be07a676fc51cacbf2629923a58c796ee6cbbfb3a3",
+      "current_name_sha256": "29e3154f8732d1b0603648d1dc87918fc2e24d053550458536120750dcce862c",
+      "name_relation": "ONE_ASCII_SPACE_DELETED_AFTER_MORGAN",
+      "prior_type": "QFII机构",
+      "current_type": "公司",
+      "issuer_type": "境外法人",
+      "issuer_source": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12678209&stockid=002178",
+      "issuer_name_corresponds_to": "prior",
+      "issuer_confirmation": "NAME_ONLY_TYPE_TAXONOMY_UNVERIFIED",
+      "manual_approval_required": true
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "endDate": "20260930",
+      "case_state": "REVIEW_REQUIRED_PUNCTUATION",
+      "prior_snapshot_days": [
+        "2026-11-17"
+      ],
+      "prior_record_sha256": "d3d56a12a7c6bddab22e0c15bab2f44c3625d253babd1fc2ea6b05f799889f4f",
+      "current_record_sha256": "217c7c183571f1ca9e5b0500903bd788ab5d3339ae74ac8368f3b167e93759e5",
+      "stable_projection_sha256": "43971bbc601132025fe5789aa1c839e4c5d393240d0dc737e9c3e7307b60c2f2",
+      "pairing_unambiguous": true,
+      "changed_fields": [
+        "name"
+      ],
+      "prior_name_sha256": "ee1477b0b158cd0482a0e105eed893936d3b68b60edd2b307beb208285fffef3",
+      "current_name_sha256": "e14ebf59a2359a032c152b480b841e1772a394971c6d31404b2f2c40de775151",
+      "name_relation": "ONE_CHARACTER_ASCII_HYPHEN_U002D_TO_HAN_ONE_U4E00",
+      "issuer_source": "https://static.cninfo.com.cn/finalpage/2026-10-30/1225641410.PDF",
+      "issuer_confirmation": "ISSUER_NAME_USES_DASH_NOT_HAN_ONE",
+      "manual_approval_required": true
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "endDate": "20260930",
+      "case_state": "REVIEW_REQUIRED_QUANTITATIVE_PROVIDER_CONFLICT",
+      "prior_snapshot_days": [
+        "2026-11-17"
+      ],
+      "prior_record_sha256": "508baba6526d751329c1e11cfd5521e309d5ef62ae48528a75748a8114353ee2",
+      "current_record_sha256": "928f9a72c4604a25f20a42ae8fede8d9ae7b5f0db7ec245696515b3dabfe2a99",
+      "stable_projection_sha256": "1dde2f4782821d53b5273e8bbff4c4aa4211c52327e199fbad3823ddd4bc881e",
+      "pairing_unambiguous": true,
+      "changed_fields": [
+        "declareDate",
+        "shareholder",
+        "shareholderA"
+      ],
+      "prior": {
+        "declareDate": "20261029",
+        "shareholder": 57896,
+        "shareholderA": 57896
+      },
+      "current": {
+        "declareDate": "20261012",
+        "shareholder": 57900,
+        "shareholderA": 57900
+      },
+      "issuer_report_endDate": "20260930",
+      "issuer_report_declared_date": "20261029",
+      "issuer_ordinary_shareholder_count": 57896,
+      "issuer_source": "https://static.cninfo.com.cn/finalpage/2026-10-29/1225633534.PDF",
+      "issuer_confirmation": "PRIOR_SHAREHOLDER_AND_QUARTER_REPORT_DATE_CORROBORATED",
+      "current_57900_source_explanation": "UNVERIFIED_ROUNDING_ONLY_HYPOTHESIS",
+      "shareholderA_semantics": "NOT_INDEPENDENTLY_PROVEN",
+      "manual_approval_required": true
+    }
+  ]
+}

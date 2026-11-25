@@ -1,0 +1,158 @@
+{
+  "schema": "astock_finance_public_primary_source_crosscheck_readonly_v1",
+  "observed_on": "2026-11-25",
+  "source_p7_packet_sha256": "d461cf2b3dc38e17fb055b0385fc95bdb759250dae8642f531be6ebeb0ba6bd0",
+  "source_p6_packet_sha256": "5cc5aca739e19b9426ae2fc1fa398e5b9c11af5fc8a0344d0be8abfa58988dc3",
+  "historical_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "provenance_method": "Manual read of online public pages (web text + PDF screenshot). Source URLs, observations and page locations only; raw external file SHA256 was not independently captured.",
+  "live_qmt_reread": false,
+  "live_ledger_rechecked": false,
+  "case_count": 5,
+  "unresolved_case_count": 5,
+  "approved_count": 0,
+  "data_write_authorized": false,
+  "pending_clear_authorized": false,
+  "duplicate_collapse_authorized": false,
+  "public_verifications_not_human_approval": true,
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "baseline_preview_sha256": "1e43a595a91fa23963d947a2959ce591891facc3bebbf233c544d6e24c4367fe",
+      "source_status": "SECONDARY_TRANSCRIPTION_REVIEW_ONLY",
+      "observations": [
+        {
+          "id": "002178_SINA_2026Q3_NAME_AND_NATURE",
+          "source_type": "SECONDARY_PUBLISHER_HTML",
+          "url": "https://vip.stock.finance.sina.com.cn/corp/view/vCB_AllBulletinDetail.php?id=12678209&stockid=002178",
+          "document_period": "2026Q3",
+          "location": "Shareholder information; first ten shareholders",
+          "observed_fields": {
+            "holder_display_name": "J.P.Morgan Securities PLC-自有资金",
+            "issuer_described_nature": "境外法人"
+          },
+          "limits": [
+            "This is Sina-hosted disclosure text, not independently downloaded issuer PDF bytes",
+            "Name presentation cannot by itself establish QMT type taxonomy mapping or exact holder-row hash equality"
+          ]
+        }
+      ],
+      "newly_supported": [
+        "SECONDARY_DISCLOSURE_NAME_AND_NATURE_VISIBLE"
+      ],
+      "not_verified": [
+        "QMT_QFII_VS_COMPANY_TYPE_MAPPING",
+        "SOURCE_ROW_NAME_WHITESPACE_IDENTITY"
+      ],
+      "hold_required": true
+    },
+    {
+      "symbol": "002188.SZ",
+      "table": "Capital",
+      "baseline_preview_sha256": "426ffd9ad947bf320625f337e59b3e21baa47fd196fe6a3e1403a40536e0a25d",
+      "source_status": "NO_NEW_INDEPENDENT_PUBLIC_SOURCE",
+      "observations": [],
+      "newly_supported": [],
+      "not_verified": [
+        "NINE_IDENTICAL_HOLDER_RAW_ROWS_DISTINCT_OWNER_SEMANTICS",
+        "NEW_20261119_CAPITAL_SOURCE_AUTHORITY"
+      ],
+      "hold_required": true
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "baseline_preview_sha256": "6ffba8c7c21a7810a1c02dd8e89aa81d563763f11892b32064630c96fee42401",
+      "source_status": "PRIMARY_ISSUER_REPORT_LOCATED_ROW_MATCH_UNPROVEN",
+      "observations": [
+        {
+          "id": "002310_CNINFO_2026Q3_REPORT",
+          "source_type": "PRIMARY_ISSUER_PDF",
+          "url": "https://static.cninfo.com.cn/finalpage/2026-10-30/1225641410.PDF",
+          "document_period": "2026Q3",
+          "location": "PDF page 4-5 (1-based), shareholder tables",
+          "observed_fields": {
+            "stock_code": "002310",
+            "report_end_date": "20260930",
+            "has_shareholder_name_table": true
+          },
+          "limits": [
+            "Specific conflicting QMT holder row was NOT independently mapped to a PDF row by stable ID",
+            "PDF extraction and fonts cannot establish ASCII hyphen vs U+4E00 exact byte identity without targeted verification",
+            "No authority to normalize provider shareholder names"
+          ]
+        }
+      ],
+      "newly_supported": [
+        "PRIMARY_Q3_DISCLOSURE_REPORT_AND_SHAREHOLDER_TABLE_LOCATED"
+      ],
+      "not_verified": [
+        "ASCII_HYPHEN_VS_HAN_ONE_TARGETED_ROW_EQUIVALENCE"
+      ],
+      "hold_required": true
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "baseline_preview_sha256": "6f87d4ef0aaaa4fa93c39ef55aa9794b441f57bfc257a9fea791c9189256892e",
+      "source_status": "PRIMARY_ISSUER_COUNT_AND_QMT_FIELD_LABEL_VERIFIED_CONFLICT_UNRESOLVED",
+      "observations": [
+        {
+          "id": "002328_CNINFO_2026Q3_57896",
+          "source_type": "PRIMARY_ISSUER_PDF",
+          "url": "https://static.cninfo.com.cn/finalpage/2026-10-29/1225633534.PDF",
+          "document_period": "2026Q3",
+          "location": "PDF page 4 (1-based), shareholders section, period-end ordinary shareholder count",
+          "observed_fields": {
+            "stock_code": "002328",
+            "report_end_date": "20260930",
+            "ordinary_shareholders": 57896
+          },
+          "limits": [
+            "Issuer Q3 figure is not a QMT provider processing-log audit",
+            "No PDF text indicates QMT 57900 is a rounded value"
+          ]
+        },
+        {
+          "id": "XUNT0U_STOCK_DICTIONARY_HOLDERNUM",
+          "source_type": "QMT_PROVIDER_FIELD_DICTIONARY",
+          "url": "https://dict.thinktrader.net/dictionary/stock.html",
+          "document_period": "undated documentation accessed 2026-11-25",
+          "location": "股东数 / Holdernum fields table",
+          "observed_fields": {
+            "shareholder": "股东总数",
+            "shareholderA": "A股东户数"
+          },
+          "limits": [
+            "General QMT schema definition only",
+            "It does not establish which exact issuer population QMT counted on 20260930",
+            "It does not prove shareholderA and shareholder should match on this stock"
+          ]
+        }
+      ],
+      "newly_supported": [
+        "ISSUER_20260930_ORDINARY_SHAREHOLDERS_57896_DIRECTLY_VERIFIED",
+        "QMT_HOLDERNUM_SHAREHOLDERA_MEANS_A_SHAREHOLDER_ACCOUNTS"
+      ],
+      "not_verified": [
+        "QMT_57900_ORIGIN_OR_APPROVED_ROUNDING",
+        "ACTUAL_STOCK_SHAREHOLDER_VS_SHAREHOLDERA_DATA_SCOPE_EQUIVALENCE"
+      ],
+      "hold_required": true
+    },
+    {
+      "symbol": "002388.SZ",
+      "table": "Top10FlowHolder",
+      "baseline_preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
+      "source_status": "NO_NEW_INDEPENDENT_PUBLIC_SOURCE",
+      "observations": [],
+      "newly_supported": [],
+      "not_verified": [
+        "TARGETED_HOLDER_DECLAREDATE_AND_TYPE_OFFICIAL_DISPOSITION",
+        "CROSS_CAPITAL_MQUARTER_VERSION_ORIGIN"
+      ],
+      "hold_required": true
+    }
+  ],
+  "notice": "A field dictionary definition is not evidence of equal row-level populations; an issuer report value does not authorize overwriting provider data; unverified punctuation is not resolved; no signing, apply, dedup, or pending-clear tokens."
+}

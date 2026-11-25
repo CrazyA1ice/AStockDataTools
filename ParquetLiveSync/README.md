@@ -2,6 +2,14 @@
 
 核心目的：先把本地 Parquet 数据库的日线更新到最新，暂停任何 H5 写入。工具处于 AStockDataTools/ParquetLiveSync 独立目录。
 
+## 长期方向：通用行情质量治理（设计阶段）
+
+本模块属于 AStockDataTools 的**长期行情管理、清洗、隔离、证据复核、可追溯修复与八周期增量维护**体系，不能仅针对单个日期或特定股票编写一次性补丁。设计基线见[仓库级《行情数据管理与质量修复体系设计规范》](https://github.com/CrazyA1ice/AStockDataTools/blob/design/market-data-quality-reusable-policy-20261125/docs/MARKET_DATA_QUALITY_DESIGN.md)，其独立设计 PR #263 与本行情开发分支分别审核；设计 PR 还未合并时，文档链接需待后续进入统一分支才会生效。
+
+当前新增的 `market_quality_engine.py` 是**纯 Python、来源无关、日期无关的只读质量规则内核（P0）**。输入来自经验证的适配器结构化证据，不在内核里猜测交易日历、交易时标、241/240 形态、量额倍率或可信来源。它可以对任意合法交易日/证券、八周期、不同来源同时标记缺口、网格、参考报价、首成交开盘候选、OHLCVA 六字段冲突、校准不足、来源冲突与收据损坏，生成默认 `READ_ONLY_TRIAGE_NO_IO` 的建议动作。**它不是 Parquet/H5 写入器，也不会请求 QMT 历史、自动修复、自动解除隔离或给正式行情签发认证。**
+
+接口和示例文件：`ParquetLiveSync/MARKET_QUALITY_ENGINE_USAGE.md`。同时新增首个来源适配器 `market_quality_receipt_adapter.py`：对**任意有界日期范围**内现有 QMT 每日暂存 JSON/Parquet 双文件做实际 SHA 和数量一致性审计，将原 `quarantined` 原因转换为通用质量分类，保持全部原隔离与来源未独立认证状态。这是 P1 的**只读回执接入起点**，不是实时行情下载器或数据库修复器。本阶段尚未接入正式定时任务/GUI，下一步继续完成独立官方源证据、跨日待复核队列及分离授权的私有候选/原子事务。此前 2026-11-25 九只股票仅作为一组测试事实，不允许在通用内核中写死。
+
 ## 已核实的上游来源
 
 参照 simonlin1212/a-stock-data v3.10.4 (2026-11-04) 的 SKILL.md §1.3，Apache-2.0。

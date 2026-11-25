@@ -1,6 +1,6 @@
 # 通用行情质量规则内核（P0）使用与验收
 
-> 设计依据：[《行情数据管理与质量修复体系设计规范》](../docs/MARKET_DATA_QUALITY_DESIGN.md)，仓库级设计 PR #263。**P0 是规则预览，不等于完整诊断/修复系统已上线。**
+> 设计依据：[《行情数据管理与质量修复体系设计规范》](https://github.com/CrazyA1ice/AStockDataTools/blob/design/market-data-quality-reusable-policy-20261125/docs/MARKET_DATA_QUALITY_DESIGN.md)，仓库级设计 PR #263。**P0 是规则预览，不等于完整诊断/修复系统已上线。**
 
 ## 用途和边界
 

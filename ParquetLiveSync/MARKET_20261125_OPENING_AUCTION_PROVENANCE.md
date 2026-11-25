@@ -10,8 +10,8 @@
 
 - audit_market_opening_auction_readonly.py：显式需 --confirm-two-stock-cache-query。在接触 QMT 前校验原交易日运行 SHA、候选物理 Parquet SHA、两只预期隔离股票、5215只官方日线参考、购买分钟校准 SHA、固定生产模块 Git Blob。仅调用一次 xtdata.get_market_data_ex 读取 605336.SH、300462.SZ 的 20261125 现有缓存分钟数据，count=-1, fill_data=False, dividend_type=none，绝不调用历史下载或市场写入。
 - 只在内存中，以原 market_month_storage._fold_241_day 函数折叠 241→240 分钟，随后用原 update_market.verify_materialized_ohlc 与完整 normal_qmt_day 交叉校验。任何结果不同，返回 FOLD_AND_PRODUCTION_VALIDATION_DIVERGED，不作推测。
-- 每只输出：09:30 / 09:31 原始 open、09:30 原始成交量/成交额、折叠类型（REAL_AUCTION_FOLDED_TO_0931 或 ZERO_PLACEHOLDER）、真实折叠后 open、官方 DAY open、差值、当下实际容差（rel=0.006、abs=0.04）、原生产拒绝原因。输出官方 DAY 源 SHA 绑定；绝不把「校验一致」当作已修复。
-- 测试：14/14 离线 mock 通过，覆盖真实成交折叠、零成交占位、容差、时区和时间网格、代码漂移、证据不匹配、恰好一次限定股票查询、禁止历史下载、禁止项目数据写入；语法检查通过。源/测试 Git Blob 均与本轮已执行测试文件一致。
+- 每只输出：09:30 / 09:31 原始 open、09:30 原始成交量/成交额、折叠类型（REAL_AUCTION_FOLDED_TO_0931 或 ZERO_PLACEHOLDER）、真实折叠后 open、官方 DAY open、差值、当下实际容差（rel=0.006、abs=0.04）、所有六项 OHLCVA 的实际差值及各自既有容差判断（不因 open 先报错就遗漏其他问题）、原生产拒绝原因。输出官方 DAY 源 SHA 绑定；绝不把「校验一致」当作已修复。
+- 测试：15/15 离线 mock 通过，覆盖真实成交折叠、零成交占位、容差、时区和时间网格、代码漂移、证据不匹配、恰好一次限定股票查询、禁止历史下载、禁止项目数据写入；语法检查通过。源/测试 Git Blob 均与本轮已执行测试文件一致。
 
 ## 重要边界
 
@@ -28,3 +28,5 @@
 - 若折叠与完整验证不一致：保留隔离，先审计算法及版本漂移，绝不继续修复。
 
 目前无写库修复授权流程，只有只读取证流程。
+
+额外完成一项回归测试：原程序仅报告第一项 open 失败时，审计还会显示后续 high、low、close、volume、amount 的不一致与官方 DAY 高低价外包络约束，并明确这些均为诊断数据、不是通过认证。最新 15/15 mock 测试通过，实际 Windows 09:30 输入仍待查询。

@@ -31,6 +31,14 @@ def git_blob_sha(path):
     if path.is_symlink() or not path.is_file():
         raise TriageError('WRITER_SOURCE_MISSING_OR_SYMLINK')
     data = path.read_bytes()
+    # Windows core.autocrlf / text eol=crlf may checkout a canonical
+    # LF Git blob as CRLF. Hash the strictly Git-normalized source bytes,
+    # not the checkout's raw CRLF bytes. Refuse standalone CR (unknown
+    # transformation) and all other changes. No source file is rewritten.
+    if b'\r' in data:
+        if b'\r' in data.replace(b'\r\n', b''):
+            raise TriageError('WRITER_UNEXPECTED_CARRIAGE_RETURN')
+        data = data.replace(b'\r\n', b'\n')
     return hashlib.sha1(b'blob ' + str(len(data)).encode('ascii') + b'\0' + data).hexdigest()
 
 

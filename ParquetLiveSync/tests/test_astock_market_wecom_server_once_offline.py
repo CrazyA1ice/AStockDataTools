@@ -3,6 +3,8 @@ import importlib.util
 from datetime import datetime
 import json
 from pathlib import Path
+from types import SimpleNamespace
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -52,6 +54,7 @@ class ServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(s,'OUTBOX',Path(tmp)/'out'), \
                 mock.patch.object(s,'load_config',return_value=CONFIG), \
                 mock.patch.object(s,'preflight',return_value='token'), \
+                mock.patch.object(s,'secure_directory'), \
                 mock.patch.object(s,'api',return_value={'errcode':0}) as api:
             self.assertEqual(s.send_once(REQUEST),0)
             self.assertEqual(api.call_count,1)
@@ -65,6 +68,7 @@ class ServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(s,'OUTBOX',Path(tmp)/'out'), \
                 mock.patch.object(s,'load_config',return_value=CONFIG), \
                 mock.patch.object(s,'preflight',return_value='token'), \
+                mock.patch.object(s,'secure_directory'), \
                 mock.patch.object(s,'api',return_value={'errcode':0,'invaliduser':'self'}):
             self.assertEqual(s.send_once(REQUEST),4)
             self.assertEqual(json.loads((s.OUTBOX/'2026-11-26.json').read_text())['status'],'PROVIDER_REJECTED_OR_PARTIAL')
@@ -73,6 +77,7 @@ class ServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(s,'OUTBOX',Path(tmp)/'out'), \
                 mock.patch.object(s,'load_config',return_value=CONFIG), \
                 mock.patch.object(s,'preflight',return_value='token'), \
+                mock.patch.object(s,'secure_directory'), \
                 mock.patch.object(s,'api',side_effect=TimeoutError('timeout')) as api:
             self.assertEqual(s.send_once(REQUEST),4)
             self.assertEqual(json.loads((s.OUTBOX/'2026-11-26.json').read_text())['status'],'UNKNOWN_NO_RETRY')
@@ -87,6 +92,25 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(s.Refused):
                 s.send_once(REQUEST)
             self.assertFalse(s.OUTBOX.exists())
+
+    def test_posix_directory_owner_and_permissions_still_fail_closed(self):
+        # Windows lacks os.getuid(). Emulate POSIX stat, not weaker prod checks.
+        good = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=1000)
+        wrong_owner = SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=1001)
+        world_readable = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=1000)
+        with mock.patch.object(s.os, 'getuid', create=True, return_value=1000):
+            s.secure_directory(SimpleNamespace(lstat=lambda: good))
+            for bad in (wrong_owner, world_readable):
+                with self.assertRaisesRegex(s.Refused, 'UNTRUSTED_PRIVATE_DIRECTORY'):
+                    s.secure_directory(SimpleNamespace(lstat=lambda bad=bad: bad))
+
+    def test_posix_file_owner_and_permissions_still_fail_closed(self):
+        good = SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_uid=1000, st_nlink=1)
+        bad = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=1000, st_nlink=1)
+        with mock.patch.object(s.os, 'getuid', create=True, return_value=1000):
+            s.secure_file(SimpleNamespace(lstat=lambda: good))
+            with self.assertRaisesRegex(s.Refused, 'UNTRUSTED_PRIVATE_FILE'):
+                s.secure_file(SimpleNamespace(lstat=lambda: bad))
 
     def test_no_redirect_and_fixed_api_paths(self):
         with self.assertRaises(s.Refused):

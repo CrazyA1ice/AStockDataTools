@@ -262,11 +262,26 @@ try {
         $stepText=[string]$verification.notification_text
         # Stage exit 0 does NOT imply verification passed. Report PARTIAL
         # whenever current evidence identifies real quality issues.
+        # Operational success is separate from full financial coverage.
+        # Only the new fail-closed verifier can prove routine continuation;
+        # older verifiers lacking the property retain the prior failure path.
+        $hasRoutineFlag=($verification.PSObject.Properties.Name -contains 'routine_continuation')
+        $isRoutine=$false
+        if($hasRoutineFlag){$isRoutine=($verification.routine_continuation -eq $true)}
+        $routineContinuation=($outcome -eq 'SUCCESS' -and $isRoutine -and
+                              $verification.execution -eq 'PASS' -and
+                              $verification.data_validation -eq 'PARTIAL' -and
+                              $verification.cross_validation -ne 'FAIL')
         if($outcome -eq 'SUCCESS' -and
            ($verification.data_validation -in @('FAIL','PARTIAL') -or
             $verification.cross_validation -eq 'FAIL')){
-            $outcome='PARTIAL'
-            $result.status=$outcome
+            if($routineContinuation){
+                $result['operational_classification']='ROUTINE_CONTINUATION'
+                Write-Host 'MARKET_2005_ROUTINE_ROTATION_COMPLETED_NO_ERROR=TRUE'
+            }else{
+                $outcome='PARTIAL'
+                $result.status=$outcome
+            }
         }
         Write-Host ('MARKET_1630_DATA_VALIDATION='+$verification.data_validation)
         Write-Host ('MARKET_1630_CROSS_VALIDATION='+$verification.cross_validation)

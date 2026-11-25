@@ -192,7 +192,9 @@ def receipt_summary(base):
     if not path.is_file():
         print("RUN_RECEIPT=MISSING")
         return
-    o = json.loads(path.read_text(encoding="utf-8"))
+    # PowerShell 5.1 (and some Windows writers) may emit UTF-8 with BOM.
+    # Accept both BOM and plain UTF-8 without changing any on-disk bytes.
+    o = json.loads(path.read_text(encoding="utf-8-sig"))
     val = o.get("validation") or {}
     print("RUN_RECEIPT=" + json.dumps({
         "china_start": o.get("china_start"), "status": o.get("status"),

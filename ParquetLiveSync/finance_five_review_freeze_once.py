@@ -90,6 +90,17 @@ def validate(freeze, prior, issuer, duplicate):
     """Validate a frozen historical decision packet, not the live finance DB."""
     if any(not isinstance(v, dict) for v in (freeze, prior, issuer, duplicate)):
         block("NON_MAPPING_EVIDENCE")
+    # Do not let an extra approval-looking field survive on a frozen packet.
+    if set(freeze) != {
+            "schema", "produced_from_observations", "asof_ledger_daily_date",
+            "asof_ledger_sha256", "historical_evidence_only",
+            "live_data_state_revalidated_for_apply",
+            "source_observation_receipts", "source_documents", "case_count",
+            "review_required_count", "approved_count",
+            "pending_ledger_entry_count_unchanged", "known_quarantine_symbol",
+            "default_decision", "allowed_live_mutations", "automated_approval",
+            "cases", "note"}:
+        block("UNEXPECTED_FROZEN_TOP_LEVEL_FIELD")
     if (freeze.get("schema") != FORMAT
             or freeze.get("produced_from_observations") != "2026-11-25"
             or freeze.get("asof_ledger_daily_date") != "2026-11-24"

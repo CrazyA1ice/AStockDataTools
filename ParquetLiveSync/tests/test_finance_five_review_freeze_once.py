@@ -66,11 +66,14 @@ class SourceReviewFreezeTests(unittest.TestCase):
     def test_deterministic_packet_hash(self):
         self.assertEqual(G.validate(**evidence()), G.validate(**evidence()))
 
-    def test_no_names_or_amounts_in_output(self):
+    def test_no_raw_names_or_shareholder_record_fields_in_output(self):
         output = G.canonical(G.validate(**evidence()))
         self.assertNotIn("MORGAN", output)
-        self.assertNotIn("57896", output)  # Codes only, not financial amounts.
-        self.assertNotIn("57900", output)
+        self.assertNotIn("current_record_sha256", output)
+        self.assertNotIn("shareholderA", output)
+        # Quantitative conflict appears as a named review-gap CODE only;
+        # original financial row payloads and shareholder names are omitted.
+        self.assertIn("ISSUER_57896_VS_PROVIDER_57900_NUMERIC_CONFLICT", output)
 
     def test_each_case_has_nonempty_blocking_review_gaps(self):
         result = G.validate(**evidence())

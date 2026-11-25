@@ -161,6 +161,9 @@ def build_backlog(quality_batch):
         "case_count": len(cases),
         "findings_observed_including_repeats": original_observations,
         "unique_incidents": len(issues),
+        "affected_stock_days": len({(i["scope"]["trading_day"], i["scope"]["symbol"],
+                                      i["scope"]["period"]) for i in issues}),
+        "issue_counts_by_priority": dict(sorted(Counter(i["priority"] for i in issues).items())),
         "issue_counts_by_state": dict(sorted(Counter(i["state"] for i in issues).items())),
         "issues_requiring_revision_review": sum(i["revision_review_required"] for i in issues),
         "issues": issues,
@@ -188,6 +191,11 @@ def from_daily_receipts(root, *, start_day, end_day, reader=None):
             receipt.get("production_merge_authorized") is False,
             "DAILY_ADAPTER_AUTHORITY_CHANGED_STOP")
     output = build_backlog(receipt["quality_cases"])
+    require(receipt.get("producer_quarantines_preserved") ==
+            output["case_count"], "PRODUCER_QUARANTINE_COUNT_CHANGED")
+    # Include verified producer receipt and accepted-candidate SHA digests;
+    # neither digest authenticates the quarantined native QMT stock-days.
+    output["source_receipts"] = receipt.get("source_receipts", [])
     output["daily_receipts_checked"] = receipt["existing_day_receipts_checked"]
     output["original_producer_quarantines_preserved"] = receipt["producer_quarantines_preserved"]
     output["accepted_stock_days_reported_not_independently_verified"] = receipt[
@@ -205,6 +213,7 @@ def main(argv=None):
     p.add_argument("--start-day")
     p.add_argument("--end-day")
     p.add_argument("--quality-json", type=Path)
+    p.add_argument("--summary-only", action="store_true")
     args = p.parse_args(argv)
     try:
         if args.quality_json is not None:
@@ -229,7 +238,11 @@ def main(argv=None):
             result = from_daily_receipts(args.module_root,
                                          start_day=args.start_day,
                                          end_day=args.end_day)
-        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True,
+        # The full in-memory backlog is already canonical-SHA sealed. A
+        # summary display avoids dumping potentially hundreds of findings.
+        shown = ({k: v for k, v in result.items() if k != "issues"}
+                 if args.summary_only else result)
+        print(json.dumps(shown, ensure_ascii=False, indent=2, sort_keys=True,
                          allow_nan=False))
         return 0
     except (BacklogError, OSError, ValueError, TypeError, KeyError) as exc:

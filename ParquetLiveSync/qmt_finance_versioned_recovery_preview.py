@@ -309,3 +309,60 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     # Content-addressed reproducible plan only; no actual file snapshot exists.
     out["preview_sha256"] = digest(F.E.canonical_json(out))
     return out
+
+
+def preview_cohort(case_specs, historical_by_code, current_by_code, F, *,
+                   evidence=None, ledger_sha256=None, expected_count=None):
+    """Fail closed per stock; compile *only* review/quarantine outcomes.
+
+    The caller supplies previously verified histories and existing cache data.
+    No QMT calls, no re-fetch, no files, no mutations; any blocked stock
+    remains blocked and is listed with a bounded, non-sensitive reason.
+    """
+    if not isinstance(case_specs, list) or not 1 <= len(case_specs) <= 10000:
+        refuse("INVALID_COHORT_SIZE")
+    if not isinstance(historical_by_code, dict) or not isinstance(current_by_code, dict):
+        refuse("INVALID_COHORT_SOURCES")
+    if expected_count is not None and len(case_specs) != expected_count:
+        refuse("EXPECTED_COHORT_SIZE_CHANGED")
+    codes = []
+    for case in case_specs:
+        if not isinstance(case, dict) or set(case) != {"symbol", "mode", "table"}:
+            refuse("INVALID_CASE_DESCRIPTOR")
+        codes.append(case["symbol"])
+    if any(not isinstance(code, str) for code in codes) or len(set(codes)) != len(codes):
+        refuse("DUPLICATE_OR_INVALID_COHORT_SYMBOL")
+    if set(codes) != set(historical_by_code) or set(codes) != set(current_by_code):
+        refuse("COHORT_CACHE_OR_HISTORY_SCOPE_MISMATCH")
+    passed = []
+    blocked = []
+    for case in sorted(case_specs, key=lambda item: item["symbol"]):
+        code = case["symbol"]
+        try:
+            p = preview_symbol(
+                code, case["mode"], case["table"], historical_by_code[code],
+                current_by_code[code], F,
+                evidence=evidence, ledger_sha256=ledger_sha256)
+            passed.append({
+                "symbol": code, "table": case["table"],
+                "classification": p["classification"],
+                "preview_sha256": p["preview_sha256"],
+            })
+        except ReviewBlocked as exc:
+            blocked.append({"symbol": code, "table": case["table"],
+                            "reason": str(exc)[:160]})
+    out = {
+        "format": FORMAT + "_cohort_v1",
+        "symbols": len(codes),
+        "review_only": len(passed),
+        "blocked": len(blocked),
+        "evidence_only": passed,
+        "quarantined": blocked,
+        "ledger_before_sha256": ledger_sha256,
+        "allow_auto_clear": False,
+        "allow_apply": False,
+        "records_modified": False,
+        "snapshots_modified": False,
+    }
+    out["cohort_sha256"] = digest(F.E.canonical_json(out))
+    return out

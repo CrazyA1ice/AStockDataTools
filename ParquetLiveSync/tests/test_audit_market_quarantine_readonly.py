@@ -73,10 +73,11 @@ class AuditTests(unittest.TestCase):
         with self.assertRaisesRegex(a.EvidenceError,'OUTSIDE_WORK'):
             self.run_audit()
     def test_symlink_log_rejected(self):
-        other=self.work/'real.log';other.write_text('x')
-        self.log.unlink();self.log.symlink_to(other)
-        with self.assertRaisesRegex(a.EvidenceError,'STAGE_LOG_OUTSIDE_WORK'):
-            self.run_audit()
+        # Mock symlink detection: Windows symlink creation needs elevated rights.
+        original = Path.is_symlink
+        with patch.object(Path, 'is_symlink', lambda p: p == self.log or original(p)):
+            with self.assertRaisesRegex(a.EvidenceError,'STAGE_LOG_OUTSIDE_WORK'):
+                self.run_audit()
     def test_quarantine_count_mismatch_rejected(self):
         self.stage['quarantine']=1
         self.log.write_text(a.MARKER+json.dumps(self.stage)+'\n')

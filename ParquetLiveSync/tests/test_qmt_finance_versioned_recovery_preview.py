@@ -371,5 +371,64 @@ class IssuerTests(unittest.TestCase):
                  code="002310.SZ", evidence=ev)
 
 
+
+
+class CohortTests(unittest.TestCase):
+    def _set(self):
+        specs = [
+            {"symbol": "002388.SZ", "mode": "HOLDER_METADATA", "table": "Top10Holder"},
+            {"symbol": "002389.SZ", "mode": "HOLDER_METADATA", "table": "Top10Holder"},
+        ]
+        old1, old2 = make_old(name="甲"), make_old(name="乙")
+        historical = {"002388.SZ": history("Top10Holder", old1),
+                      "002389.SZ": history("Top10Holder", old2)}
+        current = {"002388.SZ": fresh("Top10Holder", dict(old1, type="机构投资账户")),
+                   "002389.SZ": fresh("Top10Holder", dict(old2, declareDate="20261027"))}
+        return specs, historical, current
+
+    def test_two_cases_are_review_only_and_no_writes(self):
+        specs, hist, current = self._set()
+        result = R.preview_cohort(specs, hist, current, F, expected_count=2,
+                                  ledger_sha256="a" * 64)
+        self.assertEqual(result["review_only"], 2)
+        self.assertEqual(result["blocked"], 0)
+        self.assertFalse(result["allow_apply"])
+        self.assertFalse(result["allow_auto_clear"])
+        self.assertFalse(result["records_modified"])
+        self.assertFalse(result["snapshots_modified"])
+
+    def test_one_business_change_is_quarantined_not_approved(self):
+        specs, hist, current = self._set()
+        current["002389.SZ"]["Top10Holder"][0]["shares"] += 1
+        result = R.preview_cohort(specs, hist, current, F)
+        self.assertEqual(result["review_only"], 1)
+        self.assertEqual(result["blocked"], 1)
+        self.assertEqual(result["quarantined"][0]["symbol"], "002389.SZ")
+
+    def test_missing_source_symbol_fails_closed(self):
+        specs, hist, current = self._set()
+        del current["002388.SZ"]
+        with self.assertRaisesRegex(R.ReviewBlocked, "COHORT_CACHE_OR_HISTORY_SCOPE"):
+            R.preview_cohort(specs, hist, current, F)
+
+    def test_repeated_spec_is_rejected(self):
+        specs, hist, current = self._set()
+        specs[1] = dict(specs[0])
+        with self.assertRaisesRegex(R.ReviewBlocked, "DUPLICATE_OR_INVALID_COHORT"):
+            R.preview_cohort(specs, hist, current, F)
+
+    def test_requested_cohort_count_must_match(self):
+        specs, hist, current = self._set()
+        with self.assertRaisesRegex(R.ReviewBlocked, "EXPECTED_COHORT_SIZE_CHANGED"):
+            R.preview_cohort(specs, hist, current, F, expected_count=53)
+
+    def test_cohort_hash_deterministic(self):
+        specs, hist, current = self._set()
+        a = R.preview_cohort(specs, hist, current, F)
+        b = R.preview_cohort(list(reversed(specs)), hist, current, F)
+        self.assertEqual(a, b)
+        self.assertRegex(a["cohort_sha256"], "^[0-9a-f]{64}$")
+
+
 if __name__ == "__main__":
     unittest.main()

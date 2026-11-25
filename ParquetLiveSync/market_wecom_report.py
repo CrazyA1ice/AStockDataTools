@@ -55,7 +55,16 @@ def receipt_date(receipt):
         dt = datetime.fromisoformat(stamp)
     except ValueError as exc:
         raise UnsafeReport("CHINA_START_INVALID") from exc
-    if dt.tzinfo is None or dt.utcoffset() != timedelta(hours=8):
+    if dt.tzinfo is None:
+        # The canonical 20:05 PowerShell writer sets $chinaNow using
+        # TimeZoneInfo.ConvertTimeFromUtc(..., 'China Standard Time').
+        # That API returns an Unspecified DateTime; ToString('o') therefore
+        # emits a bare wall-clock timestamp, as observed on 2026-11-25.
+        # Interpret this *producer-specific* field as China +08:00. Caller
+        # also requires Scheduled/full-scope contract and a matching Windows
+        # Task Scheduler LastRunTime, so a stale/manual receipt cannot pass.
+        dt = dt.replace(tzinfo=CHINA)
+    elif dt.utcoffset() != timedelta(hours=8):
         raise UnsafeReport("CHINA_START_OFFSET_NOT_PLUS8")
     return dt
 
@@ -146,11 +155,20 @@ def format_message(receipt, task, day):
              "跨源验证：" + str(v.get("cross_validation", "UNVERIFIED")),
              "正常轮换：" + ("是" if v.get("routine_continuation") is True else "未确认"),
              "运行分类：" + str(receipt.get("operational_classification", "未分类"))]
+    sections = v.get("sections") if isinstance(v.get("sections"), dict) else {}
     for name in STAGES:
         record = stage.get(name)
         code = record.get("exit_code") if isinstance(record, dict) else None
-        lines.append(name + "：" + (str(code) if type(code) is int else "未执行"))
-    sections = v.get("sections") if isinstance(v.get("sections"), dict) else {}
+        evidence = sections.get(name)
+        evidence = evidence if isinstance(evidence, dict) else {}
+        quality = evidence.get("data_validation", "UNVERIFIED")
+        cross = evidence.get("cross_validation", "UNVERIFIED")
+        lines.append(name + "：退出" + (str(code) if type(code) is int else "未执行")
+                     + "；数据" + str(quality) + "；跨源" + str(cross))
+    # A successful subprocess is *not* an all-clear for quarantined stocks.
+    eight = sections.get("EIGHT_PERIODS")
+    if isinstance(eight, dict) and eight.get("data_validation") == "PARTIAL":
+        lines.append("八周期：部分股票被隔离，仍需核查")
     finance = sections.get("FINANCIAL_DAILY")
     if isinstance(finance, dict):
         details = []

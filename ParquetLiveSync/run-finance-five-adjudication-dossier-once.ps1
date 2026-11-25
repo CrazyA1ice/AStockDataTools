@@ -10,7 +10,7 @@ $python=Join-Path $RepoRoot '.venv\Scripts\python.exe'
 $files=@(
 @{Path='ParquetLiveSync/finance_five_review_freeze_once.py';Blob='20932f82d972441ec16379939d841d5447e24af0'}
 @{Path='ParquetLiveSync/finance_five_adjudication_dossier_once.py';Blob='902f94a034864fb597e6a67f27a5a7e5fb96c719'}
-@{Path='ParquetLiveSync/tests/test_finance_five_adjudication_dossier_once.py';Blob='02eed620054ae4f9c999e9a042e6f1ee0b8fe8d8'}
+@{Path='ParquetLiveSync/tests/test_finance_five_adjudication_dossier_once.py';Blob='91d85624d7a3efffb380ab78a365933225644c16'}
 @{Path='ParquetLiveSync/docs/finance-five-review-freeze-20261125.json';Blob='31b1bec53afae2598ab2e09d1d18f9bb984ae63e'}
 @{Path='ParquetLiveSync/docs/finance-five-pilot-review-evidence-20261125.json';Blob='5a39ec2777cde87b686146156ca7f56fdf4b1374'}
 @{Path='ParquetLiveSync/docs/finance-priority-three-adjudication-manifest-20261125.json';Blob='3ba609a9b9200ee18093104fb29dd205acaecd68'}

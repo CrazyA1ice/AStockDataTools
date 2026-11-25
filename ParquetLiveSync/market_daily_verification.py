@@ -195,8 +195,13 @@ def routine_continuation(run: dict, sections: dict, execution: str,
     raw = run.get("stage_records")
     completed = run.get("steps_completed")
     if (execution != "PASS" or quality != "PARTIAL" or cross == "FAIL"
+            or run.get("status") != "SUCCESS"
+            or run.get("format") != "qmt_daily_single_trigger_v3"
+            or run.get("mode") != "UNIFIED_SINGLE_RUN"
             or type(raw) is not dict or type(completed) is not list
-            or len(completed) != len(STAGES) or set(completed) != set(STAGES)
+            or len(completed) != len(STAGES)
+            or any(type(x) is not str for x in completed)
+            or set(completed) != set(STAGES)
             or run.get("errors") != []):
         return False
     for stage in STAGES:

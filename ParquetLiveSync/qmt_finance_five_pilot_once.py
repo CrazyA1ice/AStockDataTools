@@ -169,34 +169,39 @@ def run(base, manifest_path, E, F, P, *, expected_ledger_sha=KNOWN_LEDGER_SHA256
                     or report.get("snapshots_modified") is not False
                     or report.get("review_only", -1) + report.get("blocked", -1) != 5):
                 raise RuntimeError("PILOT_UNSAFE_PREVIEW_RESULT")
+            # Build review-only output in memory. Do not publish a seemingly
+            # completed preview if the ledger's final integrity gate fails.
+            verified_lines = []
             for item in report["evidence_only"]:
                 code = item["symbol"]
-                print("PILOT_REVIEW=" + json.dumps({
+                verified_lines.append("PILOT_REVIEW=" + json.dumps({
                     **item,
                     "target_historical_versions":
                         versions[code][next(t for c, t, m in CASES if c == code)]["raw_versions"],
                     "nine_table_selected_union_sha256": hashlib.sha256(
                         E.canonical_json(versions[code]).encode("utf-8")).hexdigest(),
                     "approval_granted": False,
-                }, ensure_ascii=True, sort_keys=True), flush=True)
+                }, ensure_ascii=True, sort_keys=True))
             for item in report["quarantined"]:
-                print("PILOT_BLOCKED=" + json.dumps(item, sort_keys=True), flush=True)
-            print("PILOT_SUMMARY=" + json.dumps({
+                verified_lines.append(
+                    "PILOT_BLOCKED=" + json.dumps(item, sort_keys=True))
+            verified_lines.append("PILOT_SUMMARY=" + json.dumps({
                 "review_only": report["review_only"],
                 "blocked": report["blocked"],
                 "cohort_sha256": report["cohort_sha256"],
                 "ledger_before_sha256": before,
                 "allow_apply": False, "allow_auto_clear": False,
                 "no_data_commit": True
-            }, sort_keys=True), flush=True)
+            }, sort_keys=True))
     finally:
         after = digest_file(ledger)
         if after != before:
             raise RuntimeError("PILOT_FINANCE_LEDGER_CHANGED_DURING_RUN_STOP")
         print("FINANCE_LEDGER_UNCHANGED_VERIFIED sha256=" + after, flush=True)
-    # A successful preview is not complete until the final ledger integrity
-    # check has returned successfully. Never print a success marker from the
-    # try body; a finally exception must prevent it.
+    # Published case outcomes and the completion marker come AFTER the final
+    # ledger check. A failed finally or failed source read publishes neither.
+    for line in verified_lines:
+        print(line, flush=True)
     print("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT", flush=True)
     return report
 

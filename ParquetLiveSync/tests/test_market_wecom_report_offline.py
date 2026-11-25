@@ -101,10 +101,48 @@ class MarketWecomReportTests(unittest.TestCase):
         with self.assertRaises(m.UnsafeReport):
             m.check_contract(self.d,'2026-11-26',self.now + timedelta(hours=15))
 
-    def test_no_offset_rejected(self):
-        self.d['china_start'] = '2026-11-26T20:05:05'
-        with self.assertRaises(m.UnsafeReport):
+    def test_real_powershell_china_wall_clock_timestamp_is_accepted(self):
+        # Observed same-run canonical 20:05 receipt:
+        # 2026-11-25T20:05:02.9370848 (no timezone suffix).
+        self.d['china_start'] = '2026-11-26T20:05:02.9370848'
+        dt = m.check_contract(self.d,'2026-11-26',self.now)
+        self.assertEqual(dt.utcoffset(),timedelta(hours=8))
+        self.assertEqual(dt.minute,5)
+
+    def test_naive_timestamp_must_still_match_real_windows_task(self):
+        self.d['china_start'] = '2026-11-26T20:05:02.9370848'
+        task={'state':'Ready','last_result':1,'last_run':'2026-11-26T20:05:05+08:00'}
+        m.validate_task_completion(task,m.receipt_date(self.d))
+        task['last_run']='2026-11-25T20:05:05+08:00'
+        with self.assertRaisesRegex(m.UnsafeReport,'DIVERGED'):
+            m.validate_task_completion(task,m.receipt_date(self.d))
+
+    def test_wrong_explicit_timezone_rejected(self):
+        self.d['china_start'] = '2026-11-26T20:05:05+09:00'
+        with self.assertRaisesRegex(m.UnsafeReport,'OFFSET_NOT_PLUS8'):
             m.check_contract(self.d,'2026-11-26',self.now)
+
+    def test_real_partial_report_exposes_quarantine_financial_and_adjustment(self):
+        self.d['china_start'] = '2026-11-26T20:05:02.9370848'
+        self.d['status'] = 'PARTIAL'
+        self.d['validation'] = {
+            'execution':'PASS','data_validation':'PARTIAL',
+            'cross_validation':'UNVERIFIED','routine_continuation':False,
+            'sections':{
+                'EIGHT_PERIODS':{'execution':'PASS','data_validation':'PARTIAL','cross_validation':'PASS'},
+                'FINANCIAL_DAILY':{'execution':'PASS','data_validation':'PARTIAL','cross_validation':'UNVERIFIED','processed':177,'pending_total':77,'remaining_unvisited':4526},
+                'SECTORS':{'execution':'PASS','data_validation':'PASS','cross_validation':'UNVERIFIED'},
+                'ADJUSTMENTS_ROTATING':{'execution':'PASS','data_validation':'PARTIAL','cross_validation':'UNVERIFIED','processed':80,'next_batch_required':True}
+            }}
+        msg = m.format_message(self.d, {'last_result':1},'2026-11-26')
+        self.assertIn('运行结果：PARTIAL',msg)
+        self.assertIn('八周期：部分股票被隔离，仍需核查',msg)
+        self.assertIn('EIGHT_PERIODS：退出0；数据PARTIAL；跨源PASS',msg)
+        self.assertIn('待审77只',msg)
+        self.assertIn('未遍历4526只',msg)
+        self.assertIn('除权：后续仍需轮换',msg)
+        self.assertIn('正常轮换：未确认',msg)
+        self.assertLessEqual(len(msg.encode('utf-8')),2048)
 
     def test_incomplete_stages_report_failure_honestly(self):
         self.d['status'] = 'FAILED'; self.d['stage_records']={}; self.d['steps_completed']=[]

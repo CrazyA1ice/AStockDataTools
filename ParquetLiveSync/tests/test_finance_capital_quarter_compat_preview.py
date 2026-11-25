@@ -179,5 +179,50 @@ class CapitalQuarterCompatTests(unittest.TestCase):
         self.assertFalse(p["allow_apply"])
 
 
+    def test_unscoped_symbol_cannot_use_mquarter_exception(self):
+        old = [financial("20260331", 1.0)]
+        new = [financial("20260331", 2.0)]
+        with self.assertRaisesRegex(R.ReviewBlocked, "CROSS_CAPITAL_UNREVIEWED_SYMBOL_TABLE_SCOPE"):
+            setup_with_capital(old, new, code="002389.SZ")
+
+    def test_scoped_issuer_name_case_passes_only_to_manual_review(self):
+        old_cap = financial("20260331", 1.0)
+        new_cap = financial("20260331", 2.0)
+        a = {"endDate": "20260930", "name": "旧名", "shares": 111}
+        b = dict(a, name="新名")
+        hist = history("Top10Holder", a)
+        hist["Capital"] = Counter({R.encode(old_cap, F): 1})
+        cur = current("Top10Holder", b)
+        cur["Capital"] = [dict(new_cap, _index="0")]
+        old_raw = R.encode(a, F)
+        new_raw = R.encode(b, F)
+        key = R._projection(a, frozenset(("name",)), F)
+        evidence = {
+            "format": "astock_finance_source_disclosure_proof_v1",
+            "allow_auto_clear": False,
+            "default_action": "HOLD_PENDING_NO_COMMIT",
+            "cases": [{
+                "symbol": "002310.SZ", "table": "Top10Holder",
+                "endDate": "20260930", "changed_fields": ["name"],
+                "manual_approval_required": True, "pairing_unambiguous": True,
+                "prior_record_sha256": R.digest(old_raw),
+                "current_record_sha256": R.digest(new_raw),
+                "stable_projection_sha256": R.digest(key),
+            }],
+        }
+        p = R.preview_symbol("002310.SZ", "ISSUER_DISPUTED", "Top10Holder",
+                             hist, cur, F, evidence=evidence)
+        self.assertEqual(p["classification"], "ISSUER_DISPUTED_REVIEW_REQUIRED")
+        self.assertEqual(p["cross_table_capital_quarter_proof"]["raw_mismatch_report_keys"], 1)
+        self.assertFalse(p["allow_apply"])
+
+    def test_unscoped_symbol_exact_capital_is_still_allowed(self):
+        cap = financial("20260331", 1.0)
+        p = setup_with_capital([cap], [cap], code="002389.SZ")
+        self.assertEqual(p["cross_table_capital_quarter_proof"]["raw_mismatch_report_keys"], 0)
+        self.assertFalse(p["allow_apply"])
+
+
+
 if __name__ == "__main__":
     unittest.main()

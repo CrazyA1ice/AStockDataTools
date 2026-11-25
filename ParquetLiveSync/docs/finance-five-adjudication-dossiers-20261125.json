@@ -1,0 +1,172 @@
+{
+  "schema": "astock_finance_five_adjudication_dossiers_hold_only_v1",
+  "observation_date": "2026-11-25",
+  "source_pr251_packet_sha256": "5cc5aca739e19b9426ae2fc1fa398e5b9c11af5fc8a0344d0be8abfa58988dc3",
+  "source_epoch_ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "historical_only": true,
+  "live_state_reverified": false,
+  "manual_approval_count": 0,
+  "case_count": 5,
+  "approval_records_supported": false,
+  "may_trigger_live_write": false,
+  "may_clear_pending": false,
+  "may_deduplicate": false,
+  "default_decision": "HOLD_PENDING",
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "source_preview_sha256": "1e43a595a91fa23963d947a2959ce591891facc3bebbf233c544d6e24c4367fe",
+      "source_document_names": [
+        "finance-priority-three-adjudication-manifest-20261125.json",
+        "finance-five-review-freeze-20261125.json"
+      ],
+      "review_gaps": [
+        {
+          "code": "NAME_SPACING_AND_TYPE_TAXONOMY_UNRESOLVED",
+          "independent_evidence_required": [
+            "ISSUER_HOLDER_NAME_ALIGNMENT",
+            "PROVIDER_QFII_VS_COMPANY_CLASSIFICATION_ORIGIN",
+            "ISSUER_FOREIGN_LEGAL_PERSON_TAXONOMY_MAPPING"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        }
+      ],
+      "human_decision": "HOLD_PENDING",
+      "reviewer_verdict": "UNRECORDED",
+      "approval_reference": null,
+      "allow_apply": false,
+      "allow_pending_clear": false,
+      "allow_deduplication": false
+    },
+    {
+      "symbol": "002188.SZ",
+      "table": "Capital",
+      "source_preview_sha256": "426ffd9ad947bf320625f337e59b3e21baa47fd196fe6a3e1403a40536e0a25d",
+      "source_document_names": [
+        "finance-002188-top10holder-raw-multiplicity-pin-20261125.json",
+        "finance-five-review-freeze-20261125.json"
+      ],
+      "review_gaps": [
+        {
+          "code": "PROVIDER_IDENTICAL_HOLDER_ROWS_DISTINCT_IDENTITY_UNPROVEN",
+          "independent_evidence_required": [
+            "NINE_RAW_SHA256_COUNT_TWO_ORIGIN",
+            "PROVIDER_DUPLICATE_ROW_IDENTITY_SEMANTICS",
+            "ISSUER_OR_PROVIDER_DISTINCT_HOLDER_PROOF"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        },
+        {
+          "code": "NEW_CAPITAL_REPORT_KEY_NO_WRITE_AUTHORIZATION",
+          "independent_evidence_required": [
+            "QMT_STRING_KEY_20261119_ORIGIN",
+            "NEW_CAPITAL_ROW_SHA256_PROVENANCE",
+            "SEPARATE_IMMUTABLE_VERSION_WRITER_APPROVAL"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        }
+      ],
+      "human_decision": "HOLD_PENDING",
+      "reviewer_verdict": "UNRECORDED",
+      "approval_reference": null,
+      "allow_apply": false,
+      "allow_pending_clear": false,
+      "allow_deduplication": false
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "source_preview_sha256": "6ffba8c7c21a7810a1c02dd8e89aa81d563763f11892b32064630c96fee42401",
+      "source_document_names": [
+        "finance-priority-three-adjudication-manifest-20261125.json",
+        "finance-five-review-freeze-20261125.json"
+      ],
+      "review_gaps": [
+        {
+          "code": "NAME_PUNCTUATION_ISSUER_SOURCE_DISPUTE",
+          "independent_evidence_required": [
+            "ISSUER_ASCII_HYPHEN_SOURCE_EVIDENCE",
+            "QMT_HAN_ONE_SOURCE_EVIDENCE",
+            "EXACT_HOLDER_IDENTITY_DISPOSITION"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        }
+      ],
+      "human_decision": "HOLD_PENDING",
+      "reviewer_verdict": "UNRECORDED",
+      "approval_reference": null,
+      "allow_apply": false,
+      "allow_pending_clear": false,
+      "allow_deduplication": false
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "source_preview_sha256": "6f87d4ef0aaaa4fa93c39ef55aa9794b441f57bfc257a9fea791c9189256892e",
+      "source_document_names": [
+        "finance-priority-three-adjudication-manifest-20261125.json",
+        "finance-five-review-freeze-20261125.json"
+      ],
+      "review_gaps": [
+        {
+          "code": "ISSUER_57896_VS_PROVIDER_57900_NUMERIC_CONFLICT",
+          "independent_evidence_required": [
+            "ISSUER_20260930_COUNT_57896_EVIDENCE",
+            "QMT_20260930_COUNT_57900_PROVENANCE",
+            "FOUR_COUNT_DIFFERENCE_EXPLANATION_AND_ADJUDICATION"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        },
+        {
+          "code": "SHAREHOLDERA_SEMANTICS_UNPROVEN",
+          "independent_evidence_required": [
+            "SHAREHOLDERA_OFFICIAL_FIELD_SEMANTICS",
+            "SHAREHOLDER_VS_SHAREHOLDERA_COMPARABILITY_PROOF"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        }
+      ],
+      "human_decision": "HOLD_PENDING",
+      "reviewer_verdict": "UNRECORDED",
+      "approval_reference": null,
+      "allow_apply": false,
+      "allow_pending_clear": false,
+      "allow_deduplication": false
+    },
+    {
+      "symbol": "002388.SZ",
+      "table": "Top10FlowHolder",
+      "source_preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec618083b0ec6f37f0c984ed05c",
+      "source_document_names": [
+        "finance-five-review-freeze-20261125.json",
+        "finance-five-pilot-review-evidence-20261125.json"
+      ],
+      "review_gaps": [
+        {
+          "code": "HOLDER_DISCLOSURE_DATE_AND_TYPE_REVISION_UNADJUDICATED",
+          "independent_evidence_required": [
+            "TOP10FLOWHOLDER_ISSUER_DISCLOSURE_DATE",
+            "PROVIDER_HOLDER_TYPE_TAXONOMY_MAPPING",
+            "CROSS_CAPITAL_MQUARTER_HISTORY_PRESERVATION"
+          ],
+          "evidence_received": false,
+          "gap_resolved": false
+        }
+      ],
+      "human_decision": "HOLD_PENDING",
+      "reviewer_verdict": "UNRECORDED",
+      "approval_reference": null,
+      "allow_apply": false,
+      "allow_pending_clear": false,
+      "allow_deduplication": false
+    }
+  ],
+  "notice": "This file lists unresolved evidence requests only. It contains no signatures, approval slots, executable remediation instructions, or live-state validation. No field can turn a review into approval."
+}

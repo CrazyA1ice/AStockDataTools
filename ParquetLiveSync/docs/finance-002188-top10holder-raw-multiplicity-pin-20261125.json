@@ -1,0 +1,57 @@
+{
+  "format": "qmt_002188_top10holder_exact_multiplicity_pin_v1",
+  "symbol": "002188.SZ",
+  "table": "Top10Holder",
+  "report_endDate": "20200930",
+  "ledger_date": "2026-11-24",
+  "ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "historical_union_sha256": "664618c29fbdc510fc2155c0657a8cb8c843be45c0e5bfa2affa68f364756359",
+  "historical_distinct_raw_records": 779,
+  "historical_rows_with_multiplicity": 788,
+  "historical_duplicate_raw_groups": 9,
+  "historical_extra_occurrences": 9,
+  "current_qmt_distinct_raw_records": 779,
+  "current_qmt_rows_with_multiplicity": 788,
+  "duplicate_row_sha256": [
+    "0af63f0ca22c9222cee71f3b87152653914b0aa90af5ac0ac03848e555cdfd0a",
+    "29c7349378b4754a430a640b6307090820c296cc8f3e485d02a904ad6f038f8d",
+    "3893ebdb22db1e4dff0106363191cf471b15f5c1b7437ae68f83bed76cf20937",
+    "41a5dfa1b63bb8d0b8941f6960f194ba0b6fed417237e15ab2c105c3d4d9183d",
+    "4a8dc870c9d33c3353b1a6f83bad99362d3b3909d36842e412070c10b81c1c45",
+    "5ffc33f692ae321b6cbbd1312859734e0c9b371a30b4f1e435b6bf21abe514aa",
+    "92b1e49b01714a2e7a780ec680c88946492654d2fcc3a7a15d75b70e006a2f6d",
+    "9344e0a4aa1010559542b1ee1a0c086c849864c832286cac20aa009ece0311f0",
+    "af7c88014be7c6565946de3a9eae8968f0aa425f0cb5b2442996ca0451879fe9"
+  ],
+  "each_duplicate_historical_count": 2,
+  "each_duplicate_current_count": 2,
+  "selected_snapshots": {
+    "2026-11-17": {
+      "filename": "2026-11-17-060479650601cca4.parquet",
+      "sha256": "a596176479eb6c99716e6cb56e8cb50bad5885dcf9ea54a818a0992227870113",
+      "rows": 779,
+      "distinct_raw_records": 779,
+      "extra_raw_occurrences": 0
+    },
+    "2026-11-18": {
+      "filename": "2026-11-18-6728bc156bde7c85.parquet",
+      "sha256": "ebab890780d46e20dc1d7eaa239bda66e7b8a00c2f119229bba41565e905ba9a",
+      "rows": 788,
+      "distinct_raw_records": 779,
+      "extra_raw_occurrences": 9
+    }
+  },
+  "capital_additive_review_scope": {
+    "historical_report_keys": 108,
+    "current_report_keys": 109,
+    "exact_new_report_key": "20261119",
+    "historical_capital_raw_versions": 110,
+    "removed_report_keys": 0,
+    "shared_economic_changed_keys": 0
+  },
+  "allow_deduplication": false,
+  "allow_apply": false,
+  "allow_pending_clear": false,
+  "human_approval_granted": false,
+  "note": "Git-pinned read-only evidence from owner 2026-11-25 13:06 QMT existing-cache and selected immutable snapshots; duplicate equality is NOT an independently verified separate-holder identity, and no write/clear is authorized."
+}

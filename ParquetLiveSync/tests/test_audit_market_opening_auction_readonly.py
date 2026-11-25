@@ -72,7 +72,7 @@ def fake_update():
         check(result,expected)
     u.normal_qmt_day=mock.Mock(side_effect=complete)
     u.LIVE=SimpleNamespace(read_state=mock.Mock(return_value={'days':{'2026-11-25':{'sha256':'a'*64,'receipt_sha256':'b'*64}}}))
-    u._reference_for_day=mock.Mock(return_value={**{'SH000001':{}} ,**{s:{'open':7.62,'close':7.95} for s in STOCKS},
+    u._reference_for_day=mock.Mock(return_value={**{'SH000001':{}} ,**{s:{'open':7.62,'high':7.8,'low':7.60,'close':7.95,'volume':490.,'amount':4900.} for s in STOCKS},
                                        **{f'SZ{i:06}':{} for i in range(5212)}})
     u.P.sha_bytes=lambda v:'pinned'
     u.P.canonical=lambda v:b'calibration'
@@ -82,7 +82,7 @@ def fake_update():
 class AuctionTests(unittest.TestCase):
     def setUp(self):
         self.u=fake_update()
-        self.expected={'open':7.62,'close':7.95}
+        self.expected={'open':7.62,'high':7.8,'low':7.60,'close':7.95,'volume':490.,'amount':4900.}
         self.day=date(2026,11,25)
     def test_true_auction_uses_0930_open(self):
         out=replay_one(self.u,'605336.SH',rows(True),self.expected,{},self.day)
@@ -93,6 +93,17 @@ class AuctionTests(unittest.TestCase):
         self.assertEqual(out['folded_minus_official'],.07)
         self.assertFalse(out['open_isclose'])
         self.assertIn('discrepancy: open',out['full_original_validation_error'])
+        self.assertFalse(out['all_data_changes_committed'])
+    def test_full_ohlcva_report_does_not_hide_later_field_failures(self):
+        out=replay_one(self.u,'605336.SH',rows(True),self.expected,{},self.day)
+        fields=out['field_comparisons']
+        self.assertEqual(set(fields), {'open','high','low','close','volume','amount'})
+        self.assertFalse(fields['open']['within_existing_tolerance'])
+        self.assertTrue(fields['high']['within_existing_tolerance'])
+        self.assertFalse(fields['close']['within_existing_tolerance'])
+        self.assertEqual(out['folded_day_ohlcva']['open'],7.69)
+        self.assertEqual(out['official_day_ohlcva']['open'],7.62)
+        self.assertFalse(out['outside_official_high_low_envelope'])
         self.assertFalse(out['all_data_changes_committed'])
     def test_placeholder_uses_0931_open(self):
         out=replay_one(self.u,'605336.SH',rows(False),self.expected,{},self.day)

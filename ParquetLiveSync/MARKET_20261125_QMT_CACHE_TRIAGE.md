@@ -37,3 +37,10 @@
 真实 Windows QMT 缓存查询尚未执行。先在 detached 审计工作树执行 12 项离线回归，再在经 SHA 固定的 canonical 工作目录上运行本工具，反馈完整 9 只 current_qmt_cache_status。本工具独立于 PR #243 和 PR #255，后续确认安全修复方案前不得合并或自动上线。
 
 新增端到端主入口离线模拟验证：在回执与校准均已满足的条件下，恰好一次调用 get_market_data_ex、股票列表正好9只、fill_data=false，download_history_data 零调用，市场数据文件零写入。该测试也已在真实 tests 子目录布局通过。
+
+
+## 2026-11-25 真实 Windows 初次查询的 CRLF 哈希误判
+
+用户实机 detached worktree 上 13/13 离线测试通过，但实际 QMT 缓存读取前报 CANONICAL_MARKET_WRITER_BLOB_CHANGED_STOP。后续用户只读执行 git hash-object 验证发现工作树和 canonical 文件的 Git Blob 均为 2c510563ad387ab79188ca1d736b63496d187d1b，git diff --no-index 为空。旧审计工具自己对 Python Path.read_bytes() 原始字节计算 Blob SHA；当 Git Windows 配置 core.autocrlf 或换行属性将检出的 LF 文本写成 CRLF 时，Git 对干净的 LF Blob 仍返回固定哈希，但原始 CRLF bytes 的 Python SHA 与它不一致，从而产生误拦截。隔离环境已复现 Git 与原始字节哈希的差异；具体用户本地换行格式尚待新验收确认。
+
+修复仅在 git_blob_sha() 中对已验证没有孤立 CR 的 CRLF 作 CRLF→LF 规范化；实际代码任何其他字节变化仍使固定 Blob 检查失败。新增三项测试验证标准 Windows CRLF 通过、内容修改被拒、孤立 CR 被拒。预计总单测 **16项**，等待用户 Windows 真实复验；不会重写 update_market.py，不放宽最初 11月25日运行回执 SHA 或 QMT 购买校准哈希。

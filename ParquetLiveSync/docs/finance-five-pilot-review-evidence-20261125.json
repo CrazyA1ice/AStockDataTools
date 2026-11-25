@@ -1,0 +1,55 @@
+{
+  "format": "finance_five_pilot_non_authorizing_observation_v1",
+  "date": "2026-11-25",
+  "phase": "PR248_162_CASES_WIN_QMT_CACHE",
+  "ledger_daily_date": "2026-11-24",
+  "ledger_sha256": "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1",
+  "offline_tests_passed": 162,
+  "qmt_cache_symbols_present": 5,
+  "overall_preview_sha256": "124bff95dfde683beb282dba89d3bc5ed71cd9c65909183823f86b7fe92fb540",
+  "readiness": "REVIEW_ONLY_NO_APPLY_AUTHORIZATION",
+  "allow_apply": false,
+  "allow_auto_clear": false,
+  "has_human_approval": false,
+  "original_snapshots_immutable": true,
+  "cases": [
+    {
+      "symbol": "002178.SZ",
+      "table": "Top10Holder",
+      "status": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "1e43a595a91fa23963d947a2959ce591891facc3bebbf233c544d6e24c4367fe",
+      "original_discrepancy": "name whitespace and unresolved provider type"
+    },
+    {
+      "symbol": "002188.SZ",
+      "table": "Capital",
+      "status": "BLOCKED_HISTORICAL_DUPLICATE_OR_MALFORMED_MULTIPLICITY",
+      "duplicate_cause_table": "Top10Holder",
+      "historical_distinct_raw_rows": 779,
+      "historical_extra_raw_occurrences": 9,
+      "next_step": "selected snapshot exact raw fingerprint and multiplicity provenance, no deduplication"
+    },
+    {
+      "symbol": "002310.SZ",
+      "table": "Top10Holder",
+      "status": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "6ffba8c7c21a7810a1c02dd8e89aa81d563763f11892b32064630c96fee42401",
+      "original_discrepancy": "holder name hyphen versus ideographic one; cross-table Capital quarter-only historical variants"
+    },
+    {
+      "symbol": "002328.SZ",
+      "table": "HolderNum",
+      "status": "ISSUER_DISPUTED_REVIEW_REQUIRED",
+      "preview_sha256": "6f87d4ef0aaaa4fa93c39ef55aa9794b441f57bfc257a9fea791c9189256892e",
+      "original_discrepancy": "issuer 57896 vs QMT 57900 for 20260930; cross-table Capital quarter-only historical variants; issuer field semantics require review"
+    },
+    {
+      "symbol": "002388.SZ",
+      "table": "Top10FlowHolder",
+      "status": "HOLDER_METADATA_REVIEW_REQUIRED",
+      "preview_sha256": "f0e0601ff35d1eb683a8401aca16bc9e3800eec6f37f0c984ed05c",
+      "original_discrepancy": "Top10FlowHolder date/type revisions; cross-table Capital quarter-only historical variants"
+    }
+  ],
+  "notes": "These hashes are read-only observations from user's completed live cache pilot. They are not signed authorization, not exact CAS ledger transition instructions, and not permission to normalize/delete any source records."
+}

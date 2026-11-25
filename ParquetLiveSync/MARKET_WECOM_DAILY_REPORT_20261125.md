@@ -2,6 +2,14 @@
 
 ## 验证状态与边界
 
+## 2026-11-25 Windows 首轮验收与实机兼容修复
+
+- Owner 在固定 HEAD `034fc98fb5db34369be6f60dd3f76d75c07acc08` 上复测：Windows observer 17/17、Ubuntu mock sender 12/12，合计 **29/29 PASS**；两份 Windows PowerShell AST 检查 PASS，输出 `PR255_WINDOWS_OFFLINE_29_TESTS_AND_AST_PASS_NO_SEND`。这只是离线/语法验收，没有真实推送。
+- 同一次正式 20:05 任务的 `china_start=2026-11-25T20:05:02.9370848` **没有时区后缀**。核对 `scheduled-afternoon-update.ps1`：`TimeZoneInfo.ConvertTimeFromUtc(..., China Standard Time)` 的 DateTime Kind=Unspecified，经 `ToString('o')` 会产生无偏移量的中国墙上时钟；旧版 observer 要求 `+08:00` 会误拒合法生产回执。
+- 后续修复：仅对 `china_start` 的无偏移量输入按明确的生产者合同解释为北京时间 UTC+08；带显式偏移量但非 +08 仍拒绝；同样必须满足 `Scheduled`、四阶段、窗口、`LastRunTime` 与回执差不超过30分钟的严格关联。新增实际格式回归测试、不同偏移量拒绝测试和真实 PARTIAL 明示隔离/财务/除权明细测试。
+- 2026-11-25 实机当前为 4 个 stage exit=0 但 `EIGHT_PERIODS.data_validation=PARTIAL`（部分股票隔离），财务 pending=77 / remaining=4526，除权处理80并需轮换；`validation.routine_continuation=false`、Windows Task LastTaskResult=1。**不能强行改为 ROUTINE_CONTINUATION，必须继续定位隔离来源**。新企微组件即便遇到这类情况也应如实推送 PARTIAL/隔离警告，不伪报成功。
+- 这组**最新兼容补丁**尚需重新在用户 Windows 离线测试。只有测试完成且 Ubuntu 限制密钥/脚本部署通过后才能注册独立计划任务；现阶段无需重复发送 11月25日报告。
+
 2026-11-25 用户临时监视器首次真实发送返回 WECOM_API_ACK_NOT_DEVICE_PROOF、PROVIDER_CODE=0、WECOM_REMOTE_EXIT=0：这是企微 API 接受，不证明手机实收。旧监视器依赖人工 SSH 密码；本草稿新增独立无人值守候选，**尚未部署，没有再次向企微发送**。
 
 本分支只新增文件，不覆盖 scheduled-afternoon-update.ps1、market_daily_verification.py、install-schedule.ps1、QMT、PR #243 或新闻系统。新 Windows 客户端拒绝 2026-11-25 及此前日期的再次发送；首次切换日为 2026-11-26。

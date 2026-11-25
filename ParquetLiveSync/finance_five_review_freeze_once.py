@@ -154,6 +154,22 @@ def validate(freeze, prior, issuer, duplicate):
         block("PR248_EVIDENCE_MISMATCH")
     for flag in ("allow_apply", "allow_auto_clear", "has_human_approval"):
         require_bool_false(prior.get(flag), "PR248_WRITER_FLAG_" + flag)
+    # The original source-controlled archive accidentally truncated 002388's
+    # preview SHA256 to 54 hex digits. P6 records an explicit correction
+    # from the user's full PR248 run rather than treating a guessed prefix
+    # as cryptographic provenance.
+    if prior.get("archival_correction") != {
+            "case": "002388.SZ / Top10FlowHolder",
+            "field": "preview_sha256",
+            "incorrect_previous_value":
+                "f0e0601ff35d1eb683a8401aca16bc9e3800eec6f37f0c984ed05c",
+            "verified_full_value": CASES["002388.SZ"][2],
+            "verification":
+                "Owner supplied successful PR248 162/162 offline and five QMT existing-cache preview output on 2026-11-25",
+            "changes_historical_review_outcome": False,
+            "authorizes_live_mutation": False,
+        }:
+        block("PR248_ARCHIVAL_HASH_CORRECTION_NOT_ATTESTED")
     if prior.get("original_snapshots_immutable") is not True:
         block("PR248_SNAPSHOT_IMMUTABILITY_CHANGED")
     old_cases = prior.get("cases")
@@ -167,7 +183,9 @@ def validate(freeze, prior, issuer, duplicate):
         item = old[code]
         expected = CASES[code]
         if (item.get("table") != expected[0] or item.get("status") != expected[1]
-                or item.get("preview_sha256") != expected[2]):
+                or not isinstance(item.get("preview_sha256"), str)
+                or HEX.fullmatch(item["preview_sha256"]) is None
+                or item["preview_sha256"] != expected[2]):
             block("PR248_PRIOR_REVIEW_PROOF_CHANGED_" + code)
     if (old["002188.SZ"].get("table") != "Capital"
             or old["002188.SZ"].get("status") !=

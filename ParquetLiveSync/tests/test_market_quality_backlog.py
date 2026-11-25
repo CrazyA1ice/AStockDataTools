@@ -201,6 +201,29 @@ class BacklogTests(unittest.TestCase):
             self.assertEqual(p.read_bytes(),before)
             self.assertEqual([x.name for x in Path(root).iterdir()],['cases.json'])
 
+    def test_summary_only_preserves_full_backlog_digest_without_listing_all_issues(self):
+        with tempfile.TemporaryDirectory() as root:
+            p=Path(root)/'cases.json'
+            p.write_text(json.dumps(batch([case()])),encoding='utf-8')
+            out=StringIO()
+            with contextlib.redirect_stdout(out):
+                code=B.main(['--quality-json',str(p),'--summary-only'])
+            self.assertEqual(code,0)
+            result=json.loads(out.getvalue())
+            self.assertNotIn('issues',result)
+            self.assertEqual(result['unique_incidents'],3)
+            self.assertEqual(result['affected_stock_days'],1)
+            self.assertEqual(result['backlog_sha256'],B.build_backlog(batch([case()]))['backlog_sha256'])
+
+    def test_quarantine_count_inconsistent_with_cases_fails_closed(self):
+        doc={'status':'READ_ONLY_DAILY_QUARANTINE_QUALITY_TRIAGE',
+             'project_market_files_modified':False,'data_quality_cleared':False,
+             'production_merge_authorized':False,'quality_cases':batch([case()]),
+             'producer_quarantines_preserved':2}
+        with self.assertRaisesRegex(B.BacklogError,'PRODUCER_QUARANTINE_COUNT_CHANGED'):
+            B.from_daily_receipts('/synthetic',start_day='2025-01-01',
+                                  end_day='2025-01-01',reader=Mock(return_value=doc))
+
     def test_missing_cli_args_fail_without_download(self):
         out=StringIO()
         with contextlib.redirect_stdout(out):

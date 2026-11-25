@@ -189,13 +189,16 @@ def run(base, manifest_path, E, F, P, *, expected_ledger_sha=KNOWN_LEDGER_SHA256
                 "allow_apply": False, "allow_auto_clear": False,
                 "no_data_commit": True
             }, sort_keys=True), flush=True)
-        print("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT", flush=True)
-        return report
     finally:
         after = digest_file(ledger)
         if after != before:
             raise RuntimeError("PILOT_FINANCE_LEDGER_CHANGED_DURING_RUN_STOP")
         print("FINANCE_LEDGER_UNCHANGED_VERIFIED sha256=" + after, flush=True)
+    # A successful preview is not complete until the final ledger integrity
+    # check has returned successfully. Never print a success marker from the
+    # try body; a finally exception must prevent it.
+    print("FINANCE_FIVE_STOCK_PREVIEW_COMPLETE_NO_COMMIT", flush=True)
+    return report
 
 
 def main(argv=None):

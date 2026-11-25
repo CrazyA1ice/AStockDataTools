@@ -26,6 +26,35 @@ HOLDER_FIELDS = {
 MODES = frozenset(("HOLDER_METADATA", "CAPITAL_ADDITIVE", "ISSUER_DISPUTED"))
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 MAX_PAIRS = 256
+
+# Audit-only 002188 Top10Holder exception: exact records seen in BOTH
+# selected immutable history and current existing-cache QMT, 2026-11-25.
+# A count=2 is preserved, NEVER collapsed. No other symbol/table can opt in.
+PINNED_002188_LEDGER_SHA256 = "4b90a4eaa1a12ff8f6ac6ebc132b59f6d3dba41a2a0b424d493b2e8d0fa5f2b1"
+PINNED_002188_UNION_SHA256 = "664618c29fbdc510fc2155c0657a8cb8c843be45c0e5bfa2affa68f364756359"
+PINNED_002188_RAW_SHA256 = frozenset((
+    "29c7349378b4754a430a640b6307090820c296cc8f3e485d02a904ad6f038f8d",
+    "92b1e49b01714a2e7a780ec680c88946492654d2fcc3a7a15d75b70e006a2f6d",
+    "5ffc33f692ae321b6cbbd1312859734e0c9b371a30b4f1e435b6bf21abe514aa",
+    "9344e0a4aa1010559542b1ee1a0c086c849864c832286cac20aa009ece0311f0",
+    "41a5dfa1b63bb8d0b8941f6960f194ba0b6fed417237e15ab2c105c3d4d9183d",
+    "af7c88014be7c6565946de3a9eae8968f0aa425f0cb5b2442996ca0451879fe9",
+    "0af63f0ca22c9222cee71f3b87152653914b0aa90af5ac0ac03848e555cdfd0a",
+    "4a8dc870c9d33c3353b1a6f83bad99362d3b3909d36842e412070c10b81c1c45",
+    "3893ebdb22db1e4dff0106363191cf471b15f5c1b7437ae68f83bed76cf20937",
+))
+PINNED_002188_SNAPSHOTS = {
+    "2026-11-17": {
+        "filename": "2026-11-17-060479650601cca4.parquet",
+        "sha256": "a596176479eb6c99716e6cb56e8cb50bad5885dcf9ea54a818a0992227870113",
+        "rows": 779, "distinct_raw_records": 779, "extra_raw_occurrences": 0,
+    },
+    "2026-11-18": {
+        "filename": "2026-11-18-6728bc156bde7c85.parquet",
+        "sha256": "ebab890780d46e20dc1d7eaa239bda66e7b8a00c2f119229bba41565e905ba9a",
+        "rows": 788, "distinct_raw_records": 779, "extra_raw_occurrences": 9,
+    },
+}
 # Evidence is currently sufficient only for these exact observed
 # (symbol, target-table) combinations; this is NOT a generic bypass.
 CROSS_CAPITAL_SCOPED_REVIEW = frozenset((
@@ -68,6 +97,99 @@ def _historical(prior, F):
             refuse("HISTORICAL_RAW_IDENTITY_CHANGED")
         results.append(parsed)
     return results
+
+
+def _check_pinned_002188_multiset(prior, current, F, *,
+                                  expected_raw_sha256, expected_union_sha256,
+                                  expected_distinct, expected_extra):
+    """Pure multiset proof; every occurrence survives and counts must match.
+
+    Public helper with explicit expectations for synthetic regression tests.
+    The caller for real 002188 passes ONLY source-code pinned expectations.
+    """
+    if not isinstance(prior, Counter) or not isinstance(current, list):
+        refuse("PINNED_HOLDER_MULTIPLICITY_INPUT_MALFORMED")
+    if len(prior) != expected_distinct or sum(prior.values()) != (
+            expected_distinct + expected_extra):
+        refuse("PINNED_HOLDER_MULTIPLICITY_COUNT_DRIFT")
+    duplicates = {}
+    parsed = []
+    for raw, count in prior.items():
+        if not isinstance(raw, str) or type(count) is not int or count not in (1, 2):
+            refuse("PINNED_HOLDER_MULTIPLICITY_OUT_OF_SCOPE")
+        try:
+            row = json.loads(raw)
+        except (ValueError, TypeError):
+            refuse("PINNED_HOLDER_INVALID_JSON")
+        if not isinstance(row, dict) or encode(row, F) != raw:
+            refuse("PINNED_HOLDER_RAW_IDENTITY_MISMATCH")
+        if count == 2:
+            if str(row.get("endDate")) != "20200930":
+                refuse("PINNED_HOLDER_DUPLICATE_REPORT_PERIOD_DRIFT")
+            fingerprint = digest(raw)
+            if fingerprint in duplicates:
+                refuse("PINNED_HOLDER_HASH_COLLISION")
+            duplicates[fingerprint] = count
+        parsed.extend([row] * count)
+    if set(duplicates) != set(expected_raw_sha256):
+        refuse("PINNED_HOLDER_DUPLICATE_HASH_SET_CHANGED")
+    if len(duplicates) != expected_extra:
+        refuse("PINNED_HOLDER_DUPLICATE_GROUPS_CHANGED")
+    union_digest = digest(F.E.canonical_json(sorted(prior.items())))
+    if union_digest != expected_union_sha256:
+        refuse("PINNED_HOLDER_HISTORY_UNION_CHANGED")
+    current_rows = _current(current, F)
+    current_counter = _rawc(current_rows, F)
+    if current_counter != prior:
+        refuse("PINNED_HOLDER_QMT_CACHE_MULTIPLICITY_CHANGED")
+    proof = {
+        "table": "Top10Holder",
+        "historical_distinct_raw_rows": len(prior),
+        "historical_and_current_total_rows": sum(prior.values()),
+        "verified_repeated_raw_groups": len(duplicates),
+        "verified_extra_occurrences": expected_extra,
+        "history_and_cache_multiset_equal": True,
+        "historical_union_sha256": union_digest,
+        "duplicate_row_sha256": sorted(duplicates),
+        "duplicate_occurrences_each": 2,
+        "same_day_duplicate_identity_proven": False,
+        "source_rows_changed": False,
+        "allow_deduplication": False,
+        "allow_apply": False,
+        "allow_pending_clear": False,
+    }
+    return parsed, proof
+
+
+def _pinned_002188_historical(prior, current, F, evidence, ledger_sha256):
+    """No waiver unless live-selected file hashes and *all nine* pinned rows match."""
+    if ledger_sha256 != PINNED_002188_LEDGER_SHA256:
+        refuse("PINNED_HOLDER_AUDIT_LEDGER_CHANGED")
+    if (not isinstance(evidence, dict)
+            or evidence.get("format") != "qmt_002188_top10holder_exact_multiplicity_pin_v1"
+            or evidence.get("symbol") != "002188.SZ"
+            or evidence.get("table") != "Top10Holder"
+            or evidence.get("allow_deduplication") is not False
+            or evidence.get("allow_apply") is not False
+            or evidence.get("allow_pending_clear") is not False
+            or evidence.get("ledger_sha256") != PINNED_002188_LEDGER_SHA256
+            or evidence.get("historical_union_sha256") != PINNED_002188_UNION_SHA256
+            or evidence.get("duplicate_row_sha256") != sorted(PINNED_002188_RAW_SHA256)
+            or evidence.get("selected_snapshots") != PINNED_002188_SNAPSHOTS):
+        refuse("PINNED_HOLDER_EVIDENCE_NOT_EXACT")
+    # The launcher must independently obtain this dict by resolving each
+    # active snapshot file and hashing its verified bytes. A supplied
+    # manifest ALONE cannot establish that live files remained unchanged.
+    selected = evidence.get("verified_active_snapshots")
+    if selected != PINNED_002188_SNAPSHOTS:
+        refuse("PINNED_HOLDER_ACTIVE_SNAPSHOT_CHANGED")
+    return _check_pinned_002188_multiset(
+        prior, current, F,
+        expected_raw_sha256=PINNED_002188_RAW_SHA256,
+        expected_union_sha256=PINNED_002188_UNION_SHA256,
+        expected_distinct=779,
+        expected_extra=9,
+    )
 
 
 def _current(fresh, F):
@@ -285,7 +407,7 @@ def _special(changes, code, table, evidence):
 
 
 def preview_symbol(code, mode, table, historical, current_source, F, *,
-                   evidence=None, ledger_sha256=None):
+                   evidence=None, ledger_sha256=None, duplicate_evidence=None):
     """Compile a deterministic *review-only* preview from verified histories.
 
     historical[table] is the selected immutable snapshot union from
@@ -317,8 +439,23 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     if mode == "HOLDER_METADATA" and table not in HOLDER_FIELDS:
         refuse("NOT_A_HOLDER_METADATA_TABLE")
 
-    # Verify all nine histories, not just the table requested for waiver.
-    old_by_table = {t: _historical(historical[t], F) for t in F.E.FIN_TABLES}
+    # Verify all nine histories, not just the target. Exactly one narrowly
+    # pinned non-target Top10Holder multiset is allowed for 002188 Capital,
+    # preserving two copies of each of nine original rows rather than
+    # silently collapsing them. Every other Counter remains count==1.
+    holder_duplicate_proof = None
+    pinned_002188 = (code, table, mode) == (
+        "002188.SZ", "Capital", "CAPITAL_ADDITIVE")
+    if duplicate_evidence is not None and not pinned_002188:
+        refuse("PINNED_HOLDER_EVIDENCE_UNSCOPED")
+    old_by_table = {}
+    for t in F.E.FIN_TABLES:
+        if t == "Top10Holder" and pinned_002188:
+            old_by_table[t], holder_duplicate_proof = _pinned_002188_historical(
+                historical[t], current_source[t], F,
+                duplicate_evidence, ledger_sha256)
+        else:
+            old_by_table[t] = _historical(historical[t], F)
     new_by_table = {t: _current(current_source[t], F) for t in F.E.FIN_TABLES}
     unaffected_additions = {}
     cross_table_capital_proof = None
@@ -344,6 +481,15 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
         unaffected_additions[t] = sum((recent - prior).values())
     if mode == "CAPITAL_ADDITIVE":
         proof = _capital(old_by_table[table], new_by_table[table], F)
+        if pinned_002188:
+            # The 2026-11-25 Capital observation was old=108, new=109,
+            # exactly one new report key 20261119. Do not broaden this
+            # duplicate-bound exception to later/other Capital revisions.
+            if (proof["old_report_keys"] != 108
+                    or proof["current_report_keys"] != 109
+                    or proof["added_report_keys"] != ["20261119"]
+                    or proof["historical_raw_variants_retained"] != 110):
+                refuse("PINNED_CAPITAL_ADDITIVE_SCOPE_CHANGED")
         classification = "CAPITAL_ADDITIVE_REVIEW_REQUIRED"
     else:
         if mode == "HOLDER_METADATA":
@@ -381,6 +527,7 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
         "current_source_record_count": len(new_by_table[table]),
         "unrelated_table_new_source_rows": dict(sorted(unaffected_additions.items())),
         "cross_table_capital_quarter_proof": cross_table_capital_proof,
+        "pinned_top10holder_duplicate_proof": holder_duplicate_proof,
         "ledger_before_sha256": ledger_sha256,
         "proof": proof,
     }
@@ -390,7 +537,8 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
 
 
 def preview_cohort(case_specs, historical_by_code, current_by_code, F, *,
-                   evidence=None, ledger_sha256=None, expected_count=None):
+                   evidence=None, ledger_sha256=None, expected_count=None,
+                   duplicate_evidence_by_code=None):
     """Fail closed per stock; compile *only* review/quarantine outcomes.
 
     The caller supplies previously verified histories and existing cache data.
@@ -412,6 +560,11 @@ def preview_cohort(case_specs, historical_by_code, current_by_code, F, *,
         refuse("DUPLICATE_OR_INVALID_COHORT_SYMBOL")
     if set(codes) != set(historical_by_code) or set(codes) != set(current_by_code):
         refuse("COHORT_CACHE_OR_HISTORY_SCOPE_MISMATCH")
+    if duplicate_evidence_by_code is not None:
+        if (not isinstance(duplicate_evidence_by_code, dict)
+                or set(duplicate_evidence_by_code) != {"002188.SZ"}
+                or "002188.SZ" not in codes):
+            refuse("PINNED_HOLDER_COHORT_EVIDENCE_UNSCOPED")
     passed = []
     blocked = []
     for case in sorted(case_specs, key=lambda item: item["symbol"]):
@@ -420,7 +573,10 @@ def preview_cohort(case_specs, historical_by_code, current_by_code, F, *,
             p = preview_symbol(
                 code, case["mode"], case["table"], historical_by_code[code],
                 current_by_code[code], F,
-                evidence=evidence, ledger_sha256=ledger_sha256)
+                evidence=evidence, ledger_sha256=ledger_sha256,
+                duplicate_evidence=(
+                    duplicate_evidence_by_code.get(code)
+                    if duplicate_evidence_by_code else None))
             passed.append({
                 "symbol": code, "table": case["table"],
                 "classification": p["classification"],

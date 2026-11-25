@@ -153,6 +153,21 @@ def analyze_single_pair(prior, fresh, expected, F):
     new_stable = canonical({k: v for k, v in new.items() if k not in expected}, F)
     result["stable_projection_equal"] = old_stable == new_stable
     result["stable_projection_sha256"] = hashlib.sha256(old_stable.encode("utf-8")).hexdigest() if old_stable == new_stable else None
+    # A single unmatched row per side is not sufficient evidence of identity
+    # if several historical/current records collapse to the same projection.
+    old_keys = Counter()
+    new_keys = Counter()
+    for raw, multiplicity in prior.items():
+        old_keys[canonical({k: v for k, v in json.loads(raw).items()
+                            if k not in expected}, F)] += multiplicity
+    for raw, multiplicity in current.items():
+        new_keys[canonical({k: v for k, v in json.loads(raw).items()
+                            if k not in expected}, F)] += multiplicity
+    result["candidate_old_projection_count"] = old_keys[old_stable]
+    result["candidate_new_projection_count"] = new_keys[new_stable]
+    if old_stable == new_stable and (old_keys[old_stable] != 1 or new_keys[new_stable] != 1):
+        result["classification"] = "BLOCKED_NONUNIQUE_PAIR"
+        return result
     result["old_record_sha256"] = hashlib.sha256(canonical(old, F).encode("utf-8")).hexdigest()
     result["new_record_sha256"] = hashlib.sha256(canonical(new, F).encode("utf-8")).hexdigest()
     result["report_period_old"] = old.get("endDate")

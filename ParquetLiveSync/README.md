@@ -245,3 +245,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 ```
 
 注意：该命令会先下载 SHA 验证的 TDX 私有 DAY 增量（不写正式 day），随后使用 QMT 的本机缓存，并将新数据写到 Git 忽略的 `ParquetLiveSync/work/qmt_1min_market`；**不会更改 `D:\stock\AllCycleAStockData\1min`、其他周期或 H5**。将 QMT 来源与 2026-10 已购/H5 的实际口径完全统一、证明全市场日线量额守恒及实现可恢复的按月正式原子更新，是下一提交阶段，不会用“下载成功”替代正式验收。详细见 `QMT_1MIN_PROBE.md`。
+
+
+**P1.5 通用待处理清单（只读）**：`market_quality_backlog.py` 可从上述跨日质量分类或本地规范 JSON 产生按 `(交易日, 证券, 周期, 来源, 规则)` 稳定编号的事件、证据版本及优先级；不同版本冲突不自动关闭旧隔离。使用 `--summary-only` 先查看概览。详见 [跨日行情质量问题清单说明](MARKET_QUALITY_BACKLOG_READONLY.md)。此阶段只输出快照，不新建持久库、下载 QMT 或授权市场数据提交。

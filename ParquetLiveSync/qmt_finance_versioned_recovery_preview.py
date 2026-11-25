@@ -183,6 +183,61 @@ def _capital(old, new, F):
     }
 
 
+
+def _cross_table_capital_quarter_proof(old, new, F):
+    """Only read-only evidence for m_quarter variants in an UNCHANGED-key Capital table.
+
+    The strict raw record check must stay on all other eight tables.
+    A current row may replace a historical m_quarter version only for a
+    diagnostic REVIEW, while every previous row remains in immutable snapshots.
+    """
+    by_old = defaultdict(list)
+    by_new = defaultdict(list)
+
+    def k(row):
+        value = row.get("m_timetag")
+        if ("m_quarter" not in row or value is None
+                or isinstance(value, (bool, list, dict))
+                or str(value).strip() in ("", "0")):
+            refuse("CROSS_CAPITAL_KEY_OR_QUARTER_MALFORMED")
+        return F.E.canonical_json(value)
+
+    for row in old:
+        by_old[k(row)].append(row)
+    for row in new:
+        by_new[k(row)].append(row)
+    if set(by_old) != set(by_new):
+        refuse("CROSS_CAPITAL_REPORT_KEYS_CHANGED")
+    if any(len(records) != 1 for records in by_new.values()):
+        refuse("CROSS_CAPITAL_CURRENT_DUPLICATE_KEY")
+    business = frozenset(("m_quarter",))
+    mismatched_raw = 0
+    historical_variants = 0
+    for key, old_rows in by_old.items():
+        old_economics = {_projection(row, business, F) for row in old_rows}
+        if len(old_economics) != 1:
+            refuse("CROSS_CAPITAL_HISTORICAL_ECONOMIC_CONFLICT")
+        if old_economics != {_projection(by_new[key][0], business, F)}:
+            refuse("CROSS_CAPITAL_ECONOMIC_FIELD_CHANGED")
+        if len(old_rows) > 1:
+            historical_variants += len(old_rows) - 1
+        if _rawc(old_rows, F) != _rawc(by_new[key], F):
+            mismatched_raw += 1
+    # A mismatched raw row can only be due to m_quarter after complete
+    # equality of all other fields, including m_timetag, on every key.
+    return {
+        "compatibility": "M_QUARTER_ONLY_IMMUTABLE_HISTORY_REVIEW",
+        "historical_report_keys": len(by_old),
+        "current_report_keys": len(by_new),
+        "historical_raw_variants_extra": historical_variants,
+        "raw_mismatch_report_keys": mismatched_raw,
+        "report_keys_added": 0,
+        "report_keys_removed": 0,
+        "shared_economic_fields_equal": True,
+        "preserve_original_raw_snapshots": True,
+        "review_only": True,
+    }
+
 def _special(changes, code, table, evidence):
     if (not isinstance(evidence, dict)
             or evidence.get("format") != "astock_finance_source_disclosure_proof_v1"
@@ -259,8 +314,18 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
     old_by_table = {t: _historical(historical[t], F) for t in F.E.FIN_TABLES}
     new_by_table = {t: _current(current_source[t], F) for t in F.E.FIN_TABLES}
     unaffected_additions = {}
+    cross_table_capital_proof = None
     for t in F.E.FIN_TABLES:
         if t == table:
+            continue
+        if t == "Capital":
+            # This exception applies ONLY to a non-target Capital table,
+            # after all nine historical Counters have passed strict parsing.
+            # Missing report keys, new report keys, and business changes
+            # still BLOCK; source-history variants remain immutable.
+            cross_table_capital_proof = _cross_table_capital_quarter_proof(
+                old_by_table[t], new_by_table[t], F)
+            unaffected_additions[t] = 0
             continue
         prior = _rawc(old_by_table[t], F)
         recent = _rawc(new_by_table[t], F)
@@ -305,6 +370,7 @@ def preview_symbol(code, mode, table, historical, current_source, F, *,
         "snapshot_state_changed": False,
         "current_source_record_count": len(new_by_table[table]),
         "unrelated_table_new_source_rows": dict(sorted(unaffected_additions.items())),
+        "cross_table_capital_quarter_proof": cross_table_capital_proof,
         "ledger_before_sha256": ledger_sha256,
         "proof": proof,
     }

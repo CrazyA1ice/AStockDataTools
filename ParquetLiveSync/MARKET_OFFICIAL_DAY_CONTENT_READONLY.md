@@ -42,6 +42,10 @@ B. **绑定 PR #266 的原生1m+DAY双来源 manifest**。仅当用户已合法�
 
 ## 实际验证与下一步
 
-本轮在隔离 Python3 环境已执行 22/22 项合成与契约测试 PASS；覆盖 2011/2019/2026 多日期/证券、代码规范、OHLC/量额、非法时间戳、重复/缺失、上限、两种输入模式及字节漂移。源码和测试 Git Blob 与实际执行文件完全一致。
+本轮在隔离 Python3 环境已执行 26 项测试，其中 **24 PASS、2 项依赖 pyarrow 的真实临时 Parquet 测试 SKIPPED**；覆盖 2011/2019/2026 多日期/证券、代码规范、OHLC/量额、非法时间戳、重复/缺失、上限、两种输入模式及字节漂移。源码和测试 Git Blob 与实际执行文件完全一致。
 
 **限制：** 本轮 Python 环境没有 pyarrow，因此尚未执行真实 ParquetFile/Arrow schema 的端到端读取，也未执行用户 Windows 的新分支。此前 PR #266 的 Windows 171 项已通过，但不可把新 22 项写成 Windows 已完成。下一步在本机已有 .venv 中完成实际 pyarrow/Parquet 只读测试；随后再设计官方 DAY 来源身份与全市场集合的独立证明。
+
+## 追加的 Arrow 真实文件验证关卡
+
+新增两项只在装有 pyarrow 的环境中运行的临时 Parquet E2E：一项用真实 Arrow 八列生成合成 DAY 文件，验证 SHA 绑定、ParquetFile 批次读取和目标 OHLCVA；另一项生成不符合 canonical ts:int64 的 Parquet，验证 schema fail-closed。测试文件全部在系统临时目录产生，**不会读写用户正式行情库**。本轮隔离容器没有 pyarrow，运行输出为 **Ran 26 tests; OK (skipped=2)**；完整实测必须在用户 Windows 的现有 .venv 中完成。当前源码 Git Blob ae1950c6d20c7e448101b156fdeae155164ecbf2；测试 blob b021672fdb5ca3c677f457a218d84812457086a2，均与该测试版本的本地文件字节一致。

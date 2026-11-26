@@ -283,6 +283,7 @@ class ReadinessTests(unittest.TestCase):
         bad["quality_cases"]["cases"].append(deepcopy(bad["quality_cases"]["cases"][0]))
         bad["quality_cases"]["case_count"] += 1
         bad["producer_quarantines_preserved"] += 1
+        bad["source_receipts"][0]["reported_quarantined_stock_days"] += 1
         with self.assertRaisesRegex(M.ReadinessError, "DUPLICATE_QUARANTINED_SOURCE_SCOPE"):
             M.inspect(self.root, self.day, self.day, producer_reader=lambda *a, **kw: deepcopy(bad),
                       day_inspector=self.fake_day)

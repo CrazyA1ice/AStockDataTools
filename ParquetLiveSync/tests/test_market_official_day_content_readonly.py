@@ -217,7 +217,6 @@ class ExplicitDayFileTests(unittest.TestCase):
                     D.inspect_explicit(root,'official.parquet',expected,'2025-08-13',
                                        'SZ300888',row_reader=modify_then_rows)
 
-
 class UnrecognizedInstrumentFailClosedTests(unittest.TestCase):
     def test_bad_prices_in_unrecognized_symbol_still_fail(self):
         rows=[record(),record(symbol='IDX000300',high=-1)]

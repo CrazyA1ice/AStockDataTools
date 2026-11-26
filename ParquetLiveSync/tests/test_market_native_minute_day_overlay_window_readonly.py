@@ -212,7 +212,7 @@ class OverlayWindowTests(unittest.TestCase):
         with TemporaryDirectory() as root:
             digest=source(root)
             v=dict(overlay()['target_ohlcva']);v['amount']=float('inf')
-            with self.assertRaisesRegex(PAIR.PairError,'DAY_NONFINITE_AMOUNT'):
+            with self.assertRaisesRegex(X.PAIR.PairError,'DAY_NONFINITE_AMOUNT'):
                 X.inspect(**args(root,digest),
                           overlay_reader=lambda p,d,s:overlay(d,s,target_ohlcva=v))
 
@@ -229,7 +229,7 @@ class OverlayWindowTests(unittest.TestCase):
     def test_private_minute_source_hash_change_rejected(self):
         with TemporaryDirectory() as root:
             digest=source(root)
-            with self.assertRaisesRegex(WINDOW.WindowError,'SHA_MISMATCH'):
+            with self.assertRaisesRegex(X.WINDOW.WindowError,'SHA_MISMATCH'):
                 X.inspect(**args(root,'f'*64),overlay_reader=lambda p,d,s:overlay(d,s))
 
     def test_file_mutation_during_overlay_audit_rejected(self):

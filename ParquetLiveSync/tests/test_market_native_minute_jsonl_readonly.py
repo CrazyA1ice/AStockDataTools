@@ -245,4 +245,17 @@ class NativeMinuteContentTests(unittest.TestCase):
             self.assertNotIn(forbidden,source)
 
 
+    def test_grid_matches_existing_qmt_pipeline_clock_contract_when_available(self):
+        # The production pipeline requires Arrow; isolate the source-free unit
+        # tests when Arrow is unavailable, but check the real contract on Windows.
+        try:
+            import pyarrow  # noqa: F401
+            import qmt_1m_pipeline as P
+        except ImportError:
+            self.skipTest('production Arrow minute pipeline unavailable')
+        self.assertEqual(M.GRID, P.GRID)
+        self.assertEqual(len(M.GRID), 241)
+        self.assertEqual(M.GRID_240, P.GRID - {(9, 30)})
+
+
 if __name__=='__main__': unittest.main()

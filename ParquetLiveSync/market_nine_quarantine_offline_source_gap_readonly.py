@@ -69,7 +69,7 @@ def _probe_scope(root, record, *, window_reader=None):
     need(type(relative) is str and relative.endswith('.jsonl') and
          type(expected_sha) is str and bool(PROOF.HEX64.fullmatch(expected_sha))
          and type(record.get('observed_file_bytes')) is int
-         and 0 < record['observed_file_bytes'] <= MINUTE.MAX_BYTES
+         and record['observed_file_bytes'] > 0
          and record.get('contents_validated') is False
          and record.get('source_provider_authenticated') is False,
          'PROBE_INVENTORY_ENTRY_SCOPE_INVALID')

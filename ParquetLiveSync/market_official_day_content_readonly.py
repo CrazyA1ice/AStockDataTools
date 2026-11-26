@@ -157,14 +157,61 @@ def inspect(root: Path, relative_manifest: str, *, row_reader=None):
     }
 
 
+
+def inspect_explicit(root: Path, relative_day_file: str, expected_sha256: str,
+                     trading_day: str, symbol: str, *, row_reader=None):
+    """One pinned DAY export only; native-minute export need not exist.
+
+    The caller-supplied SHA is NOT an authenticated supplier signature.
+    Useful specifically when the 1m source is missing or quarantined.
+    """
+    import market_quality_source_proofs as P
+    root = Path(root)
+    need(root.is_dir() and not root.is_symlink(), 'EVIDENCE_ROOT_UNAVAILABLE')
+    need(type(expected_sha256) is str and bool(P.HEX64.fullmatch(expected_sha256)),
+         'EXPECTED_DAY_SHA_INVALID')
+    need(type(relative_day_file) is str and relative_day_file.lower().endswith('.parquet'),
+         'OFFICIAL_DAY_EXPECTED_PARQUET_EXPORT')
+    day_path = P._secure_relative(root, relative_day_file)
+    before_hash, before_size = P._hash_stable_file(day_path)
+    need(before_hash == expected_sha256.lower(), 'DAY_FILE_SHA_CHANGED')
+    content = validate_day_rows((row_reader or _parquet_rows)(day_path), trading_day, symbol)
+    after_hash, after_size = P._hash_stable_file(day_path)
+    need(before_hash == after_hash and before_size == after_size,
+         'DAY_FILE_CHANGED_DURING_CONTENT_CHECK')
+    return {
+        **content,
+        'bound_official_day_file_bytes_sha256': before_hash,
+        'bound_source_manifest_bytes_sha256': None,
+        'source_file_bytes_verified': True,
+        'content_check_scope': 'ONE_EXPLICIT_DAY_EXPORT_NOT_COMPLETE_MARKET_UNIVERSE',
+    }
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--evidence-root', type=Path, required=True)
-    p.add_argument('--manifest-relative', required=True)
+    p.add_argument('--manifest-relative')
+    p.add_argument('--day-file-relative')
+    p.add_argument('--expected-day-sha256')
+    p.add_argument('--trading-day')
+    p.add_argument('--symbol')
     a = p.parse_args(argv)
     try:
-        print(json.dumps(inspect(a.evidence_root, a.manifest_relative),
-                         ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False))
+        if a.manifest_relative is not None:
+            need(all(getattr(a, x) is None for x in
+                     ('day_file_relative', 'expected_day_sha256', 'trading_day', 'symbol')),
+                 'SELECT_EXACTLY_ONE_EVIDENCE_INPUT_MODE')
+            result = inspect(a.evidence_root, a.manifest_relative)
+        else:
+            need(all(getattr(a, x) is not None for x in
+                     ('day_file_relative', 'expected_day_sha256', 'trading_day', 'symbol')),
+                 'EXPLICIT_DAY_PROOF_FIELDS_REQUIRED')
+            result = inspect_explicit(
+                a.evidence_root, a.day_file_relative, a.expected_day_sha256,
+                a.trading_day, a.symbol)
+        print(json.dumps(result, ensure_ascii=False, indent=2,
+                         sort_keys=True, allow_nan=False))
         return 0
     except (DayContentError, OSError, RuntimeError, ValueError, KeyError,
             TypeError, ImportError) as exc:

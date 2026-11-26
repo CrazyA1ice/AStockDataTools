@@ -316,5 +316,59 @@ class ReadinessTests(unittest.TestCase):
             self.assertNotIn(string, source)
 
 
+    @unittest.skipUnless(__import__("importlib").util.find_spec("pyarrow") is not None,
+                         "real Arrow Parquet fixture needs pyarrow")
+    def test_real_temporary_day_parquet_receipt_and_quality_readiness(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from datetime import datetime, timezone, timedelta
+        day = "2026-11-25"
+        ticker = "SH600036"
+        self.create_day(day, (ticker,), reasons=(
+            "ValueError: Independent official DAY materialized OHLC discrepancy: open",))
+        overlay_dir = self.root / "work" / "incremental" / "day" / "year=2026"
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+        relative = f"incremental/day/year=2026/{day}.parquet"
+        overlay = overlay_dir / (day + ".parquet")
+        stamp = int(datetime(2026, 11, 25,
+                             tzinfo=timezone(timedelta(hours=8))).timestamp() * 1000)
+        schema = pa.schema([pa.field("ts", pa.int64()),
+                            pa.field("symbol", pa.string())] + [
+            pa.field(k, pa.float64()) for k in
+            ("open", "high", "low", "close", "volume", "amount")])
+        pq.write_table(pa.Table.from_pylist([{
+            "ts": stamp, "symbol": ticker, "open": 10.0, "high": 11.0,
+            "low": 9.0, "close": 10.3, "volume": 200.0, "amount": 2010.0,
+        }], schema=schema), overlay)
+        parquet_sha = sha256(overlay.read_bytes()).hexdigest()
+        receipt = overlay.with_suffix(".json")
+        receipt.write_text(json.dumps({
+            "date": day, "file": relative, "sha256": parquet_sha,
+            "rows": 1, "raw_zip_sha256": "d" * 64,
+            "origin": "entirely_synthetic_temp_tdx_source",
+            "base_dataset_sha256": O.BASE_SHA,
+            "original_Parquet_files_unchanged": True,
+            "source_values_adj": "none", "calibration": {"factor": 1.0},
+        }), encoding="utf-8")
+        (self.root / "work" / "state.json").write_text(json.dumps({
+            "format": O.FORMAT, "base_dataset_sha256": O.BASE_SHA,
+            "base_day": O.BASE_DAY.isoformat(), "production_activated": False,
+            "days": {day: {"file": relative, "sha256": parquet_sha,
+                           "rows": 1,
+                           "receipt_sha256": sha256(receipt.read_bytes()).hexdigest(),
+                           "source_zip_sha256": "d" * 64}},
+        }), encoding="utf-8")
+        result = M.inspect(self.root, day, day)
+        self.assertEqual(result["original_producer_quarantined_stock_days"], 1)
+        self.assertEqual(result["entries"][0]["tdx_day_evidence_state"],
+                         "LOCAL_TDX_DAY_CONTENT_VERIFIED_PROVIDER_UNAUTHENTICATED")
+        self.assertEqual(result["entries"][0]["tdx_day_local_evidence"]["day_parquet_bytes_sha256"],
+                         parquet_sha)
+        self.assertFalse(result["provider_identity_authenticated"])
+        self.assertFalse(result["production_merge_authorized"])
+        self.assertFalse(result["project_market_files_written"])
+        self.assertEqual(result["qmt_history_download_calls"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

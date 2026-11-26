@@ -29,7 +29,7 @@ class DayContentTests(unittest.TestCase):
     def test_legal_day_and_target(self):
         r = D.validate_day_rows([record(), record(symbol='SH600000')],
                                 '2025-08-13', 'SZ300888')
-        self.assertEqual(r['unique_equity_symbols_validated'], 2)
+        self.assertEqual(r['normalized_exchange_symbols_validated'], 2)
         self.assertEqual(r['target_ohlcva']['open'], 10.)
         self.assertFalse(r['complete_official_exchange_universe_certified'])
         self.assertFalse(r['market_admission_authorized'])
@@ -85,11 +85,11 @@ class DayContentTests(unittest.TestCase):
     def test_non_equity_index_is_counted_but_not_used_as_universe(self):
         result=D.validate_day_rows([record(),record(symbol='SH000300')],
                                    '2025-08-13','SZ300888')
-        self.assertEqual(result['unique_equity_symbols_validated'],2)
+        self.assertEqual(result['normalized_exchange_symbols_validated'],2)
         self.assertFalse(result['complete_official_exchange_universe_certified'])
         result=D.validate_day_rows([record(),record(symbol='IDX000300')],
                                    '2025-08-13','SZ300888')
-        self.assertEqual(result['non_equity_rows_not_used_for_stock_universe'],1)
+        self.assertEqual(result['unrecognized_symbol_rows_ignored'],1)
 
     def test_noninteger_timestamp_fails(self):
         with self.assertRaisesRegex(D.DayContentError,'DAY_TIMESTAMP_INVALID'):

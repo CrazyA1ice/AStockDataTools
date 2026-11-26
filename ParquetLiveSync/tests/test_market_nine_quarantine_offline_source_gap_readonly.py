@@ -135,7 +135,7 @@ class GapTests(unittest.TestCase):
             write(root,'probe.jsonl',rows())
             inv=I.inspect(root,'minute')
             inv['files'][0]['observed_local_file_sha256']='f'*64
-            with self.assertRaises(G.GapError):
+            with self.assertRaises(G.WINDOW.WindowError):
                 G.inspect(root,root,audit_reader=audit(),inventory_reader=lambda r,k:inv)
 
     def test_corrupt_jsonl_data_fails_closed(self):

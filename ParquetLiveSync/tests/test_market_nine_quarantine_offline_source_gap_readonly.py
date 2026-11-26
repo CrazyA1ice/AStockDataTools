@@ -186,6 +186,21 @@ class GapTests(unittest.TestCase):
             with self.assertRaisesRegex(G.GapError,'INVENTORY_INVALID'):
                 G.inspect(root,root,audit_reader=audit(),inventory_reader=lambda r,k:a)
 
+    def test_fake_inventory_physical_byte_count_rejected(self):
+        with TemporaryDirectory() as root:
+            write(root,'probe.jsonl',rows())
+            inv=I.inspect(root,'minute')
+            inv['files'][0]['observed_file_bytes']+=1
+            with self.assertRaisesRegex(G.GapError,'WINDOW_CONTENT_OR_SCOPE_UNVERIFIED'):
+                G.inspect(root,root,audit_reader=audit(),inventory_reader=lambda r,k:inv)
+
+    def test_fake_inventory_qmt_cache_mutation_rejected(self):
+        with TemporaryDirectory() as root:
+            inv=I.inspect(root,'minute')
+            inv['qmt_cache_modified']=True
+            with self.assertRaisesRegex(G.GapError,'INVENTORY_INVALID'):
+                G.inspect(root,root,audit_reader=audit(),inventory_reader=lambda r,k:inv)
+
     def test_one_file_beyond_p35_budget_rejected_before_decode(self):
         with TemporaryDirectory() as root:
             write(root,'probe.jsonl',rows())

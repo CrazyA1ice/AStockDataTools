@@ -275,3 +275,5 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P3.3 八周期物理目标的双时间点 SHA 差异比较（只读）**：`market_recovery_target_snapshot_compare.py` 在经过版本化审核的完整事务蓝图基础上，可读取操作者明确指定、实际文件 SHA 固定的旧版蓝图，与本轮相同审核范围的目标观测分类对比；区分文件出现、消失、字节 SHA 变化与“根本没有读取目标文件”，即使哈希相同也不表示已有锁、备份或 CAS 写权限。没有 `--prior-*` 和 `--target-root` 时默认不扫描生产八周期文件、不执行历史比较。见 [只读目标快照比较与非 CAS 门禁](MARKET_RECOVERY_TARGET_SNAPSHOT_COMPARE.md)。
+
+**P3.4 快照完整性补强（只读）**：对于同一审核请求，八周期文件必须归属同一个年/月分片；相同 SHA 与不同字节大小的矛盾记录直接拒绝。比较结果明确统计双时点实际物理 SHA 覆盖、未观察和缺文件数量；完整物理观察仍然不是锁定、备份、CAS 或质量放行。另对未知蓝图字段与布尔值伪装零计数严格拒绝；新增十二项无生产写入回归，Windows 全套目标 404 项尚待验证；详见上述快照比较文档。

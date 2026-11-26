@@ -260,3 +260,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P2.7 DAY 证券日清单跨来源声明对照（只读）**：`market_day_universe_crosscheck.py` 对一份经 state/receipt/Parquet SHA 绑定的 TDX DAY 物理文件与用户明确指定、另行 SHA 固定的证券交易状态参考 JSON 进行可复用差异分桶。它将声明有成交但缺失、声明无成交但有交易、双方匹配、来源未列和未知证据分别记录；不把 5,572 个物理 DAY 记录假设为交易所股票全集，也不因自填来源标签不同而宣称提供商真实独立。详见 [跨来源 DAY 清单对照说明](MARKET_DAY_UNIVERSE_CROSSCHECK.md)。该阶段不获取来源、不自动下载、不写生产库。
+
+
+**P2.8 声明来源 DAY 差异 → 统一质量待办（只读）**：`market_declared_day_backlog_bridge.py` 将已有 SHA 固定的 DAY 跨来源声明差异映射到 `market_quality_engine` 新增的 `DECLARED_DAY_STATE_CONFLICT`（P2：声明互相冲突，但非已认证市场错误）和 `DECLARED_DAY_REFERENCE_UNCERTAIN`（P3：参考覆盖/交易状态证据不足），再交给 `market_quality_backlog` 统一签发跨日稳定事件编号。可显式只读合并当天原 QMT 生产隔离收据，严禁自动关闭旧隔离或将差异对照当作交易所官方全集认证。详见 [DAY 差异入队列说明](MARKET_DECLARED_DAY_BACKLOG_BRIDGE.md)。

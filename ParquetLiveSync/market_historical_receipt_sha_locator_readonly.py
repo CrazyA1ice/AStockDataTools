@@ -25,6 +25,25 @@ MAX_JSON = 128
 MAX_BYTES_TOTAL = 64 * 1024 * 1024
 MAX_READ_BYTES = 24 * 1024 * 1024
 
+# Only stable, source-authored reason codes may appear on the CLI. In
+# particular, never echo an exception message containing a private path.
+SAFE_REVIEW_REASONS = frozenset((
+    'RECEIPT_EXPECTED_FIXED_SHA_REQUIRED',
+    'SEARCH_DEPTH_OUTSIDE_BOUND',
+    'SEARCH_MODULE_ROOT_INVALID',
+    'SEARCH_WORK_ROOT_INVALID',
+    'SEARCH_SUBDIRECTORY_INVALID',
+    'SEARCH_SYMLINK_DIRECTORY_REJECTED',
+    'SEARCH_SUBDIRECTORY_OUTSIDE_WORK_OR_MISSING',
+    'SEARCH_DIRECTORY_ENTRY_BUDGET',
+    'SEARCH_SYMLINK_ENTRY_REJECTED',
+    'SEARCH_PATH_ESCAPED_WORK',
+    'SEARCH_JSON_CANDIDATE_BUDGET',
+    'SEARCH_TOTAL_JSON_BYTES_BUDGET',
+    'SEARCH_FILE_CHANGED_DURING_HASH',
+    'MATCHING_RECEIPT_CHANGED_DURING_SEARCH',
+))
+
 
 class ReceiptLocateError(ValueError):
     pass
@@ -157,8 +176,14 @@ def main(argv=None):
         print(json.dumps(r,indent=2,sort_keys=True,ensure_ascii=False,
                          allow_nan=False))
         return 0
-    except (ReceiptLocateError, AUDIT.EvidenceError, PROOF.ProofError,
-            OSError, ValueError, TypeError, RuntimeError) as exc:
+    except ReceiptLocateError as exc:
+        reason = str(exc)
+        if reason not in SAFE_REVIEW_REASONS:
+            reason = 'SEARCH_DIAGNOSTIC_REASON_WITHHELD'
+        print('PINNED_HISTORICAL_RECEIPT_LOCATION_REVIEW_REQUIRED: ' + reason)
+        return 3
+    except (AUDIT.EvidenceError, PROOF.ProofError, OSError,
+            ValueError, TypeError, RuntimeError) as exc:
         print('PINNED_HISTORICAL_RECEIPT_LOCATION_REVIEW_REQUIRED: '+type(exc).__name__)
         return 3
 

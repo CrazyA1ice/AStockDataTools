@@ -277,3 +277,5 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 **P3.3 八周期物理目标的双时间点 SHA 差异比较（只读）**：`market_recovery_target_snapshot_compare.py` 在经过版本化审核的完整事务蓝图基础上，可读取操作者明确指定、实际文件 SHA 固定的旧版蓝图，与本轮相同审核范围的目标观测分类对比；区分文件出现、消失、字节 SHA 变化与“根本没有读取目标文件”，即使哈希相同也不表示已有锁、备份或 CAS 写权限。没有 `--prior-*` 和 `--target-root` 时默认不扫描生产八周期文件、不执行历史比较。见 [只读目标快照比较与非 CAS 门禁](MARKET_RECOVERY_TARGET_SNAPSHOT_COMPARE.md)。
 
 **P3.4 快照完整性补强（只读）**：对于同一审核请求，八周期文件必须归属同一个年/月分片；相同 SHA 与不同字节大小的矛盾记录直接拒绝。比较结果明确统计双时点实际物理 SHA 覆盖、未观察和缺文件数量；完整物理观察仍然不是锁定、备份、CAS 或质量放行。另对未知蓝图字段与布尔值伪装零计数严格拒绝；新增十二项无生产写入回归，Windows 全套目标 404 项尚待验证；详见上述快照比较文档。
+
+**P3.5 本地 QMT 私有 JSONL 只读取证（原始来源身份仍未认证）**：`market_native_minute_jsonl_readonly.py` 只接受操作者明确指定的、按真实文件 SHA256 绑定的现有探针 JSONL。逐行检查六字段 OHLCVA、严格北京时间与单证券身份，再精确区分目标日 241 根完整标签和缺少 09:30 的 240 根标签；后者必须继续人工审核。其他日行不冒充完整覆盖，未经独立供应商校准/官方证券全集核验，不解除原 9 条隔离、不下载 QMT、不生成候选、不写正式八周期文件。新增 30 项离线测试（29 通过、1 项需要 Windows PyArrow 环境验证），Windows 全套目标 434 项尚待固定提交验收。见 [本地一分钟 JSONL 只读取证说明](MARKET_NATIVE_MINUTE_JSONL_READONLY.md)。

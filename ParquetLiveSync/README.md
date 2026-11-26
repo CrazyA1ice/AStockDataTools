@@ -251,3 +251,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P2 来源文件字节证据（只读）**：`market_quality_source_proofs.py` 对用户显式指定的私有导出文件进行本地 SHA256 字节复核，支持任意日期、证券及八周期；与官方 DAY/购买数据源的真实内容和来源身份认证严格分离。没有隐式 QMT 下载或行情写入。用法、安全边界和多日期回归见 [来源文件字节核验说明](MARKET_QUALITY_SOURCE_PROOFS.md)。
+
+
+**P2.5 官方 DAY 内容验证（只读）**：market_official_day_content_readonly.py 对明确指定且 SHA 固定的 DAY Parquet 检查 Arrow 八字段、日期/代码、去重、OHLCVA 和目标股票活跃成交；允许只提供 DAY 文件而没有缺失的 QMT 分钟文件。独立提供商真实性、完整交易所证券名录及生产准入仍为 false。详见 [DAY 内容验证说明](MARKET_OFFICIAL_DAY_CONTENT_READONLY.md)。

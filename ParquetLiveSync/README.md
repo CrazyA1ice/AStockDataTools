@@ -269,3 +269,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P3.1 原隔离修复的版本化审核方案（只读）**：`market_recovery_review_plan.py` 把已经由实际生产回执及 TDX DAY 来源链核验的 `market_quarantine_recovery_readiness` 证据矩阵转换成可重复生成的审核请求（稳定 request ID + 本次证据版本 SHA），可对一份显式 SHA 固定的旧方案做差异比较；旧范围本次未覆盖也**绝不**自动表示旧隔离已解决。审核方案不是 1min 修复数据，`minute_payload_present=false`、`market_candidate_rows_generated=0`、下载/写库/自动关闭权限均为 false。见 [修复审核方案与版本比较](MARKET_RECOVERY_REVIEW_PLAN.md)。
+
+
+**P3.2 八周期修复事务目标足迹预检（只读、零提交）**：`market_recovery_transaction_preflight.py` 根据经 SHA 校验的完整审核方案和显式布局年，枚举各日期可能触及的八周期月/年度 Parquet 文件；同月多股归并为一个目标文件条目。默认完全不扫描正式数据库；只有明确传入现有 `--target-root` 才对相应目标进行只读 SHA/存在性检查。没有生成修复分钟行、没有私有候选、没有回滚备份，也没有 CAS 或入库权限。见 [事务目标足迹预检与安全门禁](MARKET_RECOVERY_TRANSACTION_PREFLIGHT.md)。

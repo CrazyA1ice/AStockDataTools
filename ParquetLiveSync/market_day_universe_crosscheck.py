@@ -136,6 +136,7 @@ def reconcile(day_snapshot, declared):
     """Compare *assertions* only; missing TDX ≠ exchange-defined missing trade."""
     missing_traded = []
     declared_nontraded_active = []
+    declared_nontraded_zero = []
     traded_but_zero = []
     matched_traded = []
     declared_unknown_present = []
@@ -155,6 +156,8 @@ def reconcile(day_snapshot, declared):
                 declared_nontraded_active.append(symbol)
             elif active is None:
                 declared_nontraded_absent.append(symbol)
+            else:
+                declared_nontraded_zero.append(symbol)
         elif active is not None:
             declared_unknown_present.append(symbol)
         else:
@@ -164,6 +167,7 @@ def reconcile(day_snapshot, declared):
         'declared_traded_missing_in_overlay': missing_traded,
         'declared_traded_zero_in_overlay': traded_but_zero,
         'declared_no_trade_but_active_in_overlay': declared_nontraded_active,
+        'declared_no_trade_and_zero_in_overlay': declared_nontraded_zero,
         'overlay_code_not_in_declared_reference': only_overlay,
         'declared_traded_and_overlay_active': matched_traded,
         'declared_unknown_present_in_overlay': declared_unknown_present,

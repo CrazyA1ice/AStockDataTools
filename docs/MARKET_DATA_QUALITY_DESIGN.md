@@ -330,6 +330,8 @@ P3.10 在 Windows 固定提交 `a9698deb4eccb1ec78b5fc1bb46adfe1c2403baf` 真实
 
 **P3.11 Windows 首轮阻塞与修复（2026-11-26）**：操作者在 `ad6851402033339909542ab2cbc1c4223d647350` 下运行新增 23 项时，22 项通过、1 项失败：一个超限文件负例在清单字段验证时先抛 `PROBE_INVENTORY_ENTRY_SCOPE_INVALID`，而测试要求具体的物理文件限额错误 `PROBE_SIZE_OUTSIDE_NATIVE_BUDGET`。两者均是拒绝路径，且操作没有进入真实九条隔离的物理扫描。固定修复提交 `46534644608bf6fb54e47921cfb13e8ff0362b5a` 仅删除清单字段检查中的重复 MAX_BYTES 上界；保留正整数字段校验及 JSONL 读取前的真实文件大小预算检查。GitHub 比较证实仅改动一行生产源码，测试保持不变。此修复的 Windows 新 23 项、完整 565 项及真实 9 条缺口检查**仍待实机复测**，不能写为通过。
 
+**P3.11 实际 Windows 数据审计阻断（2026-11-26）**：操作者于固定修复提交 `46534644608bf6fb54e47921cfb13e8ff0362b5a`、PyArrow 26.0.0 Windows 下完成专项 23/23、完整 23 模块 **565/565 项测试全部通过**。但接着对真实原 9 条回执 + 指定探针目录执行 `market_nine_quarantine_offline_source_gap_readonly.py` 返回 `NINE_QUARANTINE_OFFLINE_SOURCE_GAP_REVIEW_REQUIRED: EvidenceError`，所以真实九条本地来源缺口**尚无有效结果**。底层 `audit_market_quarantine_readonly.audit` 固定打开 `work/last-afternoon-unified.json` 并钉死 11 月 25 日原回执 SHA；该“last”文件可能在后续运行时轮转，但具体 `EvidenceError` 类型及实时物理哈希未核实，不能把可能轮转写成事实，更不能重造原始回执或放宽 SHA。后续只读定位先独立运行旧审计 CLI 获取具体错误码，及独立核对当前该文件 SHA/mtime；若确有轮转，必须找得到真实已保存且完整 SHA 一致的原始历史回执与关联日志/候选链才能复核。代码测试通过与真实证据取证失败必须分别报告，保持原九条隔离和生产写入禁令。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

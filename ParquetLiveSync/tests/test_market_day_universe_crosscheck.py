@@ -218,7 +218,9 @@ class ComparisonTests(unittest.TestCase):
         self.reference['symbols'] = [item('SH605336'), item('SZ300462', 'NO_TRADE')]
         self.build_overlay()
         self.write_reference()
-        self.assertFalse(self.audit()['has_declared_conflict'])
+        result = self.audit()
+        self.assertFalse(result['has_declared_conflict'])
+        self.assertEqual(result['counts']['declared_no_trade_and_zero_in_overlay'], 1)
 
     def test_declared_traded_zero_in_overlay_is_conflict(self):
         self.rows = [row(), row(symbol='SZ300462', volume=0, amount=0)]

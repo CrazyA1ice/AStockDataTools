@@ -254,3 +254,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P2.5 官方 DAY 内容验证（只读）**：market_official_day_content_readonly.py 对明确指定且 SHA 固定的 DAY Parquet 检查 Arrow 八字段、日期/代码、去重、OHLCVA 和目标股票活跃成交；允许只提供 DAY 文件而没有缺失的 QMT 分钟文件。独立提供商真实性、完整交易所证券名录及生产准入仍为 false。详见 [DAY 内容验证说明](MARKET_OFFICIAL_DAY_CONTENT_READONLY.md)。
+
+
+**P2.6 真实 TDX DAY 覆盖账本来源链（只读）**：`market_live_day_overlay_audit.py` 可针对任意现有已接受的 TDX DAY 覆盖日期及目标证券，从实际 `work/state.json → 单日回执 JSON → 物理 DAY Parquet` 顺序校验身份、行数、真实 SHA 和目标 OHLCVA，并在检查后重新核对状态与回执。仅在明确给出本地 ZIP 相对路径时可额外验证原始 ZIP 的**文件字节**，不据此声称供应商认证。详见 [TDX DAY 覆盖账本只读审计](MARKET_LIVE_DAY_OVERLAY_RECEIPT_AUDIT.md)。

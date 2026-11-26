@@ -227,3 +227,46 @@ class UnrecognizedInstrumentFailClosedTests(unittest.TestCase):
         with self.assertRaises(D.DayContentError):
             D.validate_day_rows([record(amount=10**500)],
                                 '2025-08-13','SZ300888')
+
+
+class RealArrowTemporaryParquetTests(unittest.TestCase):
+    @unittest.skipUnless(__import__('importlib').util.find_spec('pyarrow') is not None,
+                         'requires pyarrow in the local verification environment')
+    def test_real_arrow_parquet_schema_and_row_stream(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        row=record()
+        schema=pa.schema([pa.field('ts',pa.int64()),pa.field('symbol',pa.string())]+[
+            pa.field(key,pa.float64()) for key in D.FIELDS])
+        table=pa.Table.from_pylist([row],schema=schema)
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);file=root/'official_day.parquet'
+            pq.write_table(table,file)
+            import market_quality_source_proofs as P
+            expected=P._hash_stable_file(file)[0]
+            out=D.inspect_explicit(root,'official_day.parquet',expected,
+                                   '2025-08-13','SZ300888')
+            self.assertEqual(out['normalized_exchange_symbols_validated'],1)
+            self.assertEqual(out['bound_official_day_file_bytes_sha256'],expected)
+            self.assertFalse(out['market_admission_authorized'])
+            self.assertEqual(out['qmt_history_download_calls'],0)
+
+    @unittest.skipUnless(__import__('importlib').util.find_spec('pyarrow') is not None,
+                         'requires pyarrow in the local verification environment')
+    def test_real_arrow_wrong_schema_fails_closed(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        row=record()
+        schema=pa.schema([pa.field('ts',pa.int32()),pa.field('symbol',pa.string())]+[
+            pa.field(key,pa.float64()) for key in D.FIELDS])
+        # wrong ts type, but value must fit int32 for file construction
+        row['ts']=100
+        table=pa.Table.from_pylist([row],schema=schema)
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);file=root/'official_day.parquet'
+            pq.write_table(table,file)
+            import market_quality_source_proofs as P
+            expected=P._hash_stable_file(file)[0]
+            with self.assertRaisesRegex(ValueError,'schema'):
+                D.inspect_explicit(root,'official_day.parquet',expected,
+                                   '2025-08-13','SZ300888')

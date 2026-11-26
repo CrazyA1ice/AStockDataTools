@@ -228,7 +228,6 @@ class UnrecognizedInstrumentFailClosedTests(unittest.TestCase):
             D.validate_day_rows([record(amount=10**500)],
                                 '2025-08-13','SZ300888')
 
-
 class RealArrowTemporaryParquetTests(unittest.TestCase):
     @unittest.skipUnless(__import__('importlib').util.find_spec('pyarrow') is not None,
                          'requires pyarrow in the local verification environment')

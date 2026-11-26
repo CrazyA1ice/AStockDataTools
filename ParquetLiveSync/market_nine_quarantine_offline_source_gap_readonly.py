@@ -37,9 +37,12 @@ def need(ok, why):
         raise GapError(why)
 
 
-def verify_original(module_root, *, audit_reader=None):
+def verify_original(module_root, *, audit_reader=None, receipt_relative=None):
     reader = audit_reader if audit_reader is not None else AUDIT.audit
-    result = reader(module_root, DAY, RUN_SHA, verify_parquet=True)
+    options = {'verify_parquet': True}
+    if receipt_relative is not None:
+        options['receipt_relative'] = receipt_relative
+    result = reader(module_root, DAY, RUN_SHA, **options)
     need(type(result) is dict and result.get('status') == 'METADATA_MATCH_QUARANTINE_RETAINED'
          and result.get('day') == DAY
          and result.get('run_receipt_sha256') == RUN_SHA
@@ -123,10 +126,11 @@ def _probe_scope(root, record, *, window_reader=None):
 
 
 def inspect(module_root, minute_root, *, audit_reader=None, inventory_reader=None,
-            window_reader=None):
+            window_reader=None, receipt_relative=None):
     root = Path(minute_root)
     need(root.is_dir() and not root.is_symlink(), 'EXPLICIT_LOCAL_PROBE_ROOT_INVALID')
-    original, receipt = verify_original(module_root, audit_reader=audit_reader)
+    original, receipt = verify_original(module_root, audit_reader=audit_reader,
+                                        receipt_relative=receipt_relative)
     inventory = (inventory_reader or INVENTORY.inspect)(root, 'minute')
     need(type(inventory) is dict and inventory.get('status') == INVENTORY.STATUS
          and inventory.get('kind') == 'minute'
@@ -174,7 +178,8 @@ def inspect(module_root, minute_root, *, audit_reader=None, inventory_reader=Non
             'market_repair_authorized': False,
         })
     # Detect original receipt changes during any external file read.
-    original_again, receipt_again = verify_original(module_root, audit_reader=audit_reader)
+    original_again, receipt_again = verify_original(module_root, audit_reader=audit_reader,
+                                                    receipt_relative=receipt_relative)
     need(original_again == original and receipt_again == receipt,
          'ORIGINAL_QUARANTINE_RECEIPT_CHANGED_DURING_OFFLINE_SCAN')
     scope = {'run_receipt_sha256': RUN_SHA, 'day': DAY,
@@ -184,6 +189,7 @@ def inspect(module_root, minute_root, *, audit_reader=None, inventory_reader=Non
     return {
         'format': FORMAT, 'status': STATUS, 'day': DAY,
         'pinned_run_receipt_sha256': RUN_SHA,
+        'selected_receipt_relative_to_work': receipt_relative or 'last-afternoon-unified.json',
         'probe_directory_explicit_not_recursive': True,
         'existing_probe_files_content_checked': len(sources),
         'existing_probe_source_scopes': sources,
@@ -210,9 +216,11 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--module-root', type=Path, required=True)
     p.add_argument('--minute-evidence-root', type=Path, required=True)
+    p.add_argument('--receipt-relative', default=None)
     a = p.parse_args(argv)
     try:
-        print(json.dumps(inspect(a.module_root, a.minute_evidence_root),
+        print(json.dumps(inspect(a.module_root, a.minute_evidence_root,
+                                 receipt_relative=a.receipt_relative),
                          indent=2, ensure_ascii=False, sort_keys=True,
                          allow_nan=False))
         return 0

@@ -52,7 +52,27 @@ def classify(reason):
     return 'OTHER_QUARANTINE'
 
 
-def audit(module_root, day, expected_run_sha, verify_parquet=False):
+def secure_receipt_in_work(work, relative):
+    """Caller-selected existing local receipt; never follow work path aliases."""
+    if relative is None:
+        relative = 'last-afternoon-unified.json'
+    if (type(relative) is not str or not (0 < len(relative) <= 320)
+            or '\\' in relative or ':' in relative or not relative.endswith('.json')
+            or relative.startswith('/') or
+            any(x in ('', '.', '..') for x in relative.split('/'))):
+        raise EvidenceError('RUN_RECEIPT_RELATIVE_PATH_INVALID')
+    path = work
+    for piece in relative.split('/'):
+        path = path / piece
+        if path.is_symlink():
+            raise EvidenceError('RUN_RECEIPT_SYMLINK_FORBIDDEN')
+    if not path.is_file() or not path.resolve().is_relative_to(work.resolve()):
+        raise EvidenceError('RUN_RECEIPT_OUTSIDE_WORK_OR_MISSING')
+    return path
+
+
+def audit(module_root, day, expected_run_sha, verify_parquet=False,
+          *, receipt_relative=None):
     if not SHA.fullmatch(expected_run_sha):
         raise EvidenceError('EXPECTED_RUN_SHA_REQUIRED')
     try:
@@ -67,7 +87,7 @@ def audit(module_root, day, expected_run_sha, verify_parquet=False):
     work = module_root / 'work'
     if work.is_symlink() or not work.is_dir():
         raise EvidenceError('BAD_WORK_DIR')
-    run_file = work / 'last-afternoon-unified.json'
+    run_file = secure_receipt_in_work(work, receipt_relative)
     raw = bounded_bytes(run_file)
     run_digest = hashlib.sha256(raw).hexdigest()
     if run_digest.lower() != expected_run_sha.lower():
@@ -158,10 +178,12 @@ def main(argv=None):
     p.add_argument('--day', required=True)
     p.add_argument('--expected-run-sha256', required=True)
     p.add_argument('--verify-parquet', action='store_true')
+    p.add_argument('--receipt-relative', default=None)
     args = p.parse_args(argv)
     try:
         print(json.dumps(audit(args.module_root,args.day,args.expected_run_sha256,
-                               args.verify_parquet),ensure_ascii=False,indent=2))
+                               args.verify_parquet,receipt_relative=args.receipt_relative),
+                         ensure_ascii=False,indent=2))
         return 0
     except (EvidenceError, OSError, UnicodeError, ValueError, TypeError) as exc:
         print('MARKET_QUARANTINE_AUDIT_REVIEW_REQUIRED: ' + str(exc))

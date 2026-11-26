@@ -78,10 +78,14 @@ def locate(module_root, *, search_subdir='.', max_depth=2,
     while queue:
         directory, depth = queue.popleft()
         check(not directory.is_symlink(), 'SEARCH_SYMLINK_DIRECTORY_REJECTED')
-        # Deterministic bounded traversal, not os.walk's unbounded expansion.
-        for entry in sorted(directory.iterdir(), key=lambda p: p.name):
+        # Bound the directory enumeration BEFORE sorting. Sorting the raw
+        # directory iterator would first materialize an unbounded file list.
+        bounded_entries = []
+        for entry in directory.iterdir():
             seen += 1
             check(seen <= MAX_ENTRIES, 'SEARCH_DIRECTORY_ENTRY_BUDGET')
+            bounded_entries.append(entry)
+        for entry in sorted(bounded_entries, key=lambda p: p.name):
             check(not entry.is_symlink(), 'SEARCH_SYMLINK_ENTRY_REJECTED')
             check(entry.resolve().is_relative_to(work.resolve()),
                   'SEARCH_PATH_ESCAPED_WORK')

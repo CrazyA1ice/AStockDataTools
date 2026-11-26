@@ -194,8 +194,16 @@ class HypothesisTests(unittest.TestCase):
             H.summarize(x)
 
     def test_no_paired_day_rejected(self):
+        x=valid([paired('2026-11-10')])
+        day=x['days'][0]
+        day['minute_rows']=240
+        day['minute_grid_status']='EXACT_240_WITHOUT_0930_REVIEW_REQUIRED'
+        day['declared_day_overlay_state']='MINUTE_GRID_INCOMPLETE_NOT_COMPARED'
+        day['raw_six_field_difference_without_calibration']=None
+        x['minute_rows_checked']=240
+        x['day_overlay_status_counts']={'MINUTE_GRID_INCOMPLETE_NOT_COMPARED':1}
         with self.assertRaisesRegex(H.HypothesisError,'NO_COMPARABLE'):
-            H.summarize(valid([empty('2026-11-10')]))
+            H.summarize(x)
 
     def test_deterministic_scope_digest_for_identical_evidence(self):
         x=valid()

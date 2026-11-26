@@ -199,7 +199,7 @@ class OverlayWindowTests(unittest.TestCase):
                 with self.subTest(field=field):
                     with self.assertRaisesRegex(X.OverlayPairError,'SCOPE_OR_AUTHORITY'):
                         X.inspect(**args(root,digest),
-                                  overlay_reader=lambda p,d,s:overlay(d,s,**{field:value}))
+                                  overlay_reader=lambda p,d,s:dict(overlay(d,s),**{field:value}))
 
     def test_boolean_download_count_rejected(self):
         with TemporaryDirectory() as root:

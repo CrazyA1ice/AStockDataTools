@@ -302,6 +302,8 @@ P3.8 已由操作者 Windows 固定提交 `7fb265772eb94e5b09dafae76e698803fa58a
 - 输出各日期六字段未经复权/量额换算和时间偏移校准的**原始算术差异**及相对差异，保留对应 DAY 回执 SHA、物理 DAY Parquet SHA 与整个范围的可复算诊断 SHA。即使恰巧 0 差异，仍必须明确 `six_field_quality_passed=false`、`paid_minutes_units_or_timestamp_calibrated=false`、`official_exchange_calendar_and_stock_universe_certified=false`、`qmt_native_provider_authenticated=false`、`production_merge_authorized=false`，不生成修复候选或解除原隔离。
 - P3.9 在独立 Draft PR 中新增 23 项带实际临时 JSONL 字节和合成 DAY 审核回执的测试，累计 **517/517** Windows 测试和用户三份真实本地文件对照仍须固定提交实机验收。缺失真实 DAY overlay 则如实报告阻塞，不创建或下载文件、不访问 QMT 网络、不改生产 Parquet/H5、缓存、回执和定时任务。后续经证实的供应商身份、购买源口径、官方日全集、六字段/八周期正式比较和可回滚 CAS 提交均需要另行授权。
 
+**P3.9 实机验收补记（2026-11-26）**：操作者在固定修复提交 `ecb55c9edc2f648d480e3b1471df465796b3272f`、PyArrow 26.0.0 Windows 环境下已完成目标专项 23/23 和全量 21 模块 517/517 项测试，全部通过，标记为 `P39_WINDOWS_517_TESTS_PASS`。此前 `c59691a` 的两处报错属于测试替身重复传递 `day/symbol` 形参；仅修改测试构造后重新验收通过，生产 Python 源码未变化。**仍未验证**真实 DAY overlay 与三份 QMT JSONL 的逐日六字段数据对比，也未重新实审九条 2026-11-25 原隔离或完成任何独立供应商/复权、量额/时间校准。本验收不自动晋级市场准入。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

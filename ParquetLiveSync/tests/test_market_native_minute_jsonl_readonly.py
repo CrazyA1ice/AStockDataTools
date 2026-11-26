@@ -250,9 +250,9 @@ class NativeMinuteContentTests(unittest.TestCase):
         # tests when Arrow is unavailable, but check the real contract on Windows.
         try:
             import pyarrow  # noqa: F401
-            import qmt_1m_pipeline as P
         except ImportError:
             self.skipTest('production Arrow minute pipeline unavailable')
+        import qmt_1m_pipeline as P
         self.assertEqual(M.GRID, P.GRID)
         self.assertEqual(len(M.GRID), 241)
         self.assertEqual(M.GRID_240, P.GRID - {(9, 30)})

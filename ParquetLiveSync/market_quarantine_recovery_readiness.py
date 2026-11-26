@@ -67,7 +67,8 @@ def _day_evidence(proof, symbol, day):
                 ("live_state_bytes_sha256", "day_overlay_receipt_bytes_sha256",
                  "day_overlay_parquet_bytes_sha256")) and
             isinstance(proof.get("target_ohlcva"), dict) and
-            set(proof["target_ohlcva"]) == {"open", "high", "low", "close", "volume", "amount"},
+            set(proof["target_ohlcva"]) == {"open", "high", "low", "close", "volume", "amount"} and
+            _is_sha(proof.get("receipt_claimed_raw_tdx_zip_sha256")),
             "TDX_DAY_PROOF_EVIDENCE_INCOMPLETE")
     forbidden_true = (
         "whole_exchange_stock_day_universe_certified",
@@ -114,6 +115,8 @@ def _checked_receipt(root, start_day, end_day, reader):
             receipt.get("existing_day_receipts_checked") ==
             len(receipt["source_receipts"]),
             "PRODUCER_QUARANTINE_COUNT_OR_DAYS_CHANGED")
+    require(all(isinstance(r, dict) for r in receipt["source_receipts"]),
+            "PRODUCER_RECEIPT_LIST_INVALID")
     receipt_days = {r.get("day"): r for r in receipt["source_receipts"]}
     require(len(receipt_days) == len(receipt["source_receipts"]) and
             all(isinstance(r, dict) and
@@ -146,7 +149,8 @@ def inspect(root, start_day, end_day, *, max_stock_days=MAX_STOCK_DAYS,
     issues_by_stockday = {}
     for item in backlog["issues"]:
         scope = item["scope"]
-        key = (scope["trading_day"], scope["symbol"])
+        key = (scope["trading_day"], scope["symbol"],
+               scope["period"], scope["source_id"])
         issues_by_stockday.setdefault(key, []).append(item["incident_id"])
 
     entries = []
@@ -198,7 +202,7 @@ def inspect(root, start_day, end_day, *, max_stock_days=MAX_STOCK_DAYS,
             "producer_original_quarantine": True,
             "original_quality_case_sha256": case["input_evidence_json_sha256"],
             "original_quality_incident_ids":
-                sorted(issues_by_stockday.get((day, symbol), [])),
+                sorted(issues_by_stockday.get((day, symbol, period, source_id), [])),
             "existing_quality_detected_rules": causes,
             "producer_receipt_bytes_sha256":
                 receipts[day]["producer_receipt_bytes_sha256"],
@@ -237,6 +241,11 @@ def inspect(root, start_day, end_day, *, max_stock_days=MAX_STOCK_DAYS,
             producer["producer_accepted_stock_days_reported_not_recrossvalidated"],
         "original_producer_quarantined_stock_days":
             producer["producer_quarantines_preserved"],
+        "original_quarantined_source_period_records":
+            len(cases),
+        "distinct_quarantined_stock_days":
+            len({(c["scope"]["trading_day"], c["scope"]["symbol"])
+                 for c in cases}),
         "original_quality_rule_incidents": backlog["unique_incidents"],
         "original_backlog_sha256": backlog["backlog_sha256"],
         "day_local_evidence_states":

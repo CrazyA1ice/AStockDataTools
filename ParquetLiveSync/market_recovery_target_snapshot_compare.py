@@ -106,6 +106,7 @@ def validate_blueprint(blueprint):
     paths = []
     id_counts = Counter()
     id_periods = defaultdict(set)
+    id_shards = defaultdict(set)
     states = {}
     for target in target_files:
         need(type(target) is dict and set(target) == {
@@ -135,6 +136,7 @@ def validate_blueprint(blueprint):
         for x in ids:
             id_counts[x] += 1
             id_periods[x].add(period)
+            id_shards[x].add(name)
         paths.append(path)
         obs = target['file_observation']
         need(type(obs) is dict and obs.get('state') in STATES,
@@ -158,6 +160,12 @@ def validate_blueprint(blueprint):
          for i in id_counts)) or
          (nrequests == 0 and not id_counts and not paths),
          'SNAPSHOT_REVIEW_IDS_EIGHT_PERIOD_CONSERVATION_FAILED')
+    # One review request represents one stock-day and must map to the SAME
+    # year/month shard across all eight periods, not eight unrelated shards.
+    # The blueprint alone cannot prove that shard matches the original day;
+    # that stronger claim belongs to its validated source review plan.
+    need(all(len(shards) == 1 for shards in id_shards.values()),
+         'SNAPSHOT_REVIEW_REQUEST_CROSS_PERIOD_SHARD_MISMATCH')
     return states
 
 
@@ -188,7 +196,11 @@ def compare(prior, current):
             condition = 'FILE_APPEARED_SINCE_PRIOR'
         elif cs == 'ABSENT_BLOCKED':
             condition = 'FILE_DISAPPEARED_SINCE_PRIOR'
-        elif before['bytes_sha256'] == after['bytes_sha256']:
+        elif before['bytes_sha256'].lower() == after['bytes_sha256'].lower():
+            # SHA256 of the same physical bytes necessarily has the same size.
+            # A re-sealed JSON claiming otherwise is contradictory evidence.
+            need(before['bytes'] == after['bytes'],
+                 'SNAPSHOT_IDENTICAL_SHA_DIFFERENT_FILE_SIZE')
             condition = 'OBSERVED_FILE_BYTES_SHA_UNCHANGED_BUT_NOT_LOCKED'
         else:
             condition = 'FILE_BYTES_CHANGED_SINCE_PRIOR'
@@ -201,6 +213,17 @@ def compare(prior, current):
             'atomic_write_or_cas_authorized': False,
         })
     counts = dict(sorted(Counter(d['comparison_state'] for d in differences).items()))
+    physical_pairs = sum(counts.get(k, 0) for k in (
+        'OBSERVED_FILE_BYTES_SHA_UNCHANGED_BUT_NOT_LOCKED',
+        'FILE_BYTES_CHANGED_SINCE_PRIOR'))
+    unobserved_pairs = sum(counts.get(k, 0) for k in (
+        'NEITHER_TIMEPOINT_PHYSICALLY_OBSERVED',
+        'ONE_TIMEPOINT_NOT_OBSERVED_CANNOT_COMPARE'))
+    absent_pairs = sum(counts.get(k, 0) for k in (
+        'ABSENT_AT_BOTH_TIMEPOINTS_STILL_BLOCKED',
+        'FILE_APPEARED_SINCE_PRIOR', 'FILE_DISAPPEARED_SINCE_PRIOR'))
+    need(physical_pairs + unobserved_pairs + absent_pairs == len(differences),
+         'SNAPSHOT_COMPARISON_COVERAGE_INCOMPLETE')
     result = {
         'format': FORMAT, 'status': STATUS,
         'source_review_plan_sha256': current['source_review_plan_sha256'],
@@ -208,6 +231,11 @@ def compare(prior, current):
         'current_blueprint_sha256': current['blueprint_sha256'],
         'compared_target_file_count': len(differences),
         'difference_counts': counts,
+        'physical_sha_pairs_compared': physical_pairs,
+        'not_observed_at_one_or_both_timepoints': unobserved_pairs,
+        'absent_at_one_or_both_timepoints': absent_pairs,
+        'full_physical_sha_pair_coverage': bool(differences) and
+            physical_pairs == len(differences),
         'has_observed_file_drift': any(k in counts for k in DRIFT),
         'all_existing_physical_targets_hash_equal_at_observation_times':
             bool(differences) and all(

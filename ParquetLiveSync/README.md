@@ -263,3 +263,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P2.8 声明来源 DAY 差异 → 统一质量待办（只读）**：`market_declared_day_backlog_bridge.py` 将已有 SHA 固定的 DAY 跨来源声明差异映射到 `market_quality_engine` 新增的 `DECLARED_DAY_STATE_CONFLICT`（P2：声明互相冲突，但非已认证市场错误）和 `DECLARED_DAY_REFERENCE_UNCERTAIN`（P3：参考覆盖/交易状态证据不足），再交给 `market_quality_backlog` 统一签发跨日稳定事件编号。可显式只读合并当天原 QMT 生产隔离收据，严禁自动关闭旧隔离或将差异对照当作交易所官方全集认证。详见 [DAY 差异入队列说明](MARKET_DECLARED_DAY_BACKLOG_BRIDGE.md)。
+
+
+**P3 生产隔离股票日修复准备度（默认只读）**：`market_quarantine_recovery_readiness.py` 在任意有界日期区间读取原 QMT 每日暂存回执及物理候选 SHA，引用通用稳定事件 ID，逐个查看现存 TDX DAY 的物理来源和内容证据，输出还缺少的原生分钟、独立官方证券集合、校准、八周期及事务授权等阻塞项。即使 DAY 真实存在也**绝不**自动生成或接收修复候选，不清除原隔离、不调用 QMT、不写 Parquet/H5。详见 [通用修复准备度证据矩阵](MARKET_QUARANTINE_RECOVERY_READINESS.md)。

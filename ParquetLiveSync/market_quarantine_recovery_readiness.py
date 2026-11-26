@@ -119,14 +119,20 @@ def _checked_receipt(root, start_day, end_day, reader):
             "PRODUCER_RECEIPT_LIST_INVALID")
     receipt_days = {r.get("day"): r for r in receipt["source_receipts"]}
     require(len(receipt_days) == len(receipt["source_receipts"]) and
-            all(isinstance(r, dict) and
+            all(type(r.get("reported_quarantined_stock_days")) is int and
+                type(r.get("reported_accepted_stock_days")) is int and
                 r.get("candidate_physical_sha_matches_receipt") is True and
                 r.get("quarantined_raw_qmt_sha_verified") is False and
                 r.get("official_day_reference_independently_verified") is False and
                 all(_is_sha(r.get(k)) for k in
                     ("producer_receipt_bytes_sha256",
                      "accepted_candidate_parquet_sha256"))
-                for r in receipt["source_receipts"]),
+                for r in receipt["source_receipts"]) and
+            sum(r["reported_quarantined_stock_days"]
+                for r in receipt["source_receipts"]) == issues["case_count"] and
+            sum(r["reported_accepted_stock_days"]
+                for r in receipt["source_receipts"]) ==
+            receipt.get("producer_accepted_stock_days_reported_not_recrossvalidated"),
             "PRODUCER_SOURCE_RECEIPT_EVIDENCE_CHANGED")
     return receipt, issues, receipt_days
 

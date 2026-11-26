@@ -390,4 +390,31 @@ class SnapshotComparisonTests(unittest.TestCase):
         self.assertFalse(out['backup_materialized_or_restoration_tested'])
         self.assertFalse(out['market_files_written'])
 
+
+    def test_unknown_forged_top_level_authority_rejected_after_reseal(self):
+        r = baseline()
+        r['fully_approved_for_market_commit'] = True
+        seal(r)
+        with self.assertRaisesRegex(S.SnapshotError,
+                                    'BLUEPRINT_UNKNOWN_OR_MISSING_FIELDS'):
+            S.validate_blueprint(r)
+
+    def test_unknown_harmless_seeming_field_also_rejected_after_reseal(self):
+        r = baseline()
+        r['new_optional_producer_snapshot'] = None
+        seal(r)
+        with self.assertRaisesRegex(S.SnapshotError,
+                                    'BLUEPRINT_UNKNOWN_OR_MISSING_FIELDS'):
+            S.validate_blueprint(r)
+
+    def test_boolean_false_is_not_valid_integer_zero_evidence(self):
+        for name in ('qmt_history_download_calls',
+                     'staging_bytes_written', 'production_bytes_written'):
+            r = baseline()
+            r[name] = False
+            seal(r)
+            with self.subTest(field=name), self.assertRaisesRegex(
+                    S.SnapshotError, 'UNEXPECTED_MUTATION'):
+                S.validate_blueprint(r)
+
 if __name__ == '__main__':unittest.main()

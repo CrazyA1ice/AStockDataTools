@@ -2,13 +2,13 @@
 
 ## 适配范围与信任边界
 
-项目原有的 \`qmt_1m_probe.py\` 使用 \`write_private\` 输出每股、可跨多日的 JSONL：每行严格包含 \`datetime_cn\`、\`symbol\` 与 \`open/high/low/close/volume/amount\`。本模块 \`market_native_minute_jsonl_readonly.py\` **不会调用原探针的下载方法**，也不会直接访问 QMT 客户端。只读取操作者明确给出的已存在私有 JSONL 文件，不创建、不复制、不修补数据。
+项目原有的 `qmt_1m_probe.py` 使用 `write_private` 输出每股、可跨多日的 JSONL：每行严格包含 `datetime_cn`、`symbol` 与 `open/high/low/close/volume/amount`。本模块 `market_native_minute_jsonl_readonly.py` **不会调用原探针的下载方法**，也不会直接访问 QMT 客户端。只读取操作者明确给出的已存在私有 JSONL 文件，不创建、不复制、不修补数据。
 
 - 提供受限根目录、根目录内的安全相对文件名、实际文件字节 SHA256、目标证券、目标交易日和明确的源文件日期窗口。禁止目录遍历、符号链接、缺失文件、空文件、非 JSONL、大小超预算及文件哈希不符；读取前后重新检查完整 SHA256、大小及物理文件身份。所有失败输出不包含私有绝对路径或行情行。
-- 一份文件可能有多个交易日；**全部行**都要符合当前已有探针的 schema、同一证券、严格递增的北京时间 \`+08:00\` 整分钟、合法交易时段及有限 OHLCVA；不接受非法/重复 JSON 键、非有限值、布尔假数字、负成交、成交量额单边正值或异常 OHLC 包络。其他日期只获得结构/数值检查，**不会假装已经完成那些日期的整日分钟覆盖**。
-- 目标日只认可两种明确的时间标签：\`09:30..11:30 + 13:01..15:00\` 共 **241 根**，或者仅少 \`09:30\` 的 **240 根**。240 根输出 \`EXACT_240_WITHOUT_0930_REVIEW_REQUIRED\`，并不等同于已经取得开盘集合竞价分钟。任何其他少格、额外格、乱序或重复格均阻断。该本地网格与正式 \`qmt_1m_pipeline.GRID\` 在 Windows 有 Arrow 环境时由专门测试对照。
+- 一份文件可能有多个交易日；**全部行**都要符合当前已有探针的 schema、同一证券、严格递增的北京时间 `+08:00` 整分钟、合法交易时段及有限 OHLCVA；不接受非法/重复 JSON 键、非有限值、布尔假数字、负成交、成交量额单边正值或异常 OHLC 包络。其他日期只获得结构/数值检查，**不会假装已经完成那些日期的整日分钟覆盖**。
+- 目标日只认可两种明确的时间标签：`09:30..11:30 + 13:01..15:00` 共 **241 根**，或者仅少 `09:30` 的 **240 根**。240 根输出 `EXACT_240_WITHOUT_0930_REVIEW_REQUIRED`，并不等同于已经取得开盘集合竞价分钟。任何其他少格、额外格、乱序或重复格均阻断。该本地网格与正式 `qmt_1m_pipeline.GRID` 在 Windows 有 Arrow 环境时由专门测试对照。
 - 可以计算目标日**未校准的原始**开/高/低/收、量额合计，供人工查看；这不是购买源量纲确认、复权与时间偏移确认，也不是与官方 DAY 六字段或八周期数据比较成功。
-- \`physical_local_source_file_sha256\` 仅证明**这一次读取的本地字节**与操作者给出的 SHA 一致。即使本地确实存在文件，该 SHA 也不证明文件来自 QMT、已取得供应商授权、独立官方全市场证券日、真实被隔离生产分钟的原始字节或可靠的恢复备份。文件的出现不自动关闭原有隔离或改变 \`PARTIAL\`。
+- `physical_local_source_file_sha256` 仅证明**这一次读取的本地字节**与操作者给出的 SHA 一致。即使本地确实存在文件，该 SHA 也不证明文件来自 QMT、已取得供应商授权、独立官方全市场证券日、真实被隔离生产分钟的原始字节或可靠的恢复备份。文件的出现不自动关闭原有隔离或改变 `PARTIAL`。
 
 预算：单文件最多 32 MiB、单行 8 KiB、整文件最多 20,000 行、日期窗口至多 64 个自然日。超限直接拒绝，不截断为“成功”。只支持当前原探针的沪深证券代码格式；未实现 BJ/跨证券文件或其他第三方导出格式，不能偷换格式后宣称认证。
 
@@ -16,9 +16,9 @@
 
 下面**只是参数范例**，其中相对文件名和 SHA 必须替换为操作者实际拥有并已核对的文件信息，不得把某个“已接收候选”的 SHA 冒充原始被隔离分钟字节 SHA：
 
-\`\`\`powershell
+```powershell
 & "D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe" -B "D:\ChatGPT\AStockDataTools\work\PINNED_MINUTE_JSONL_WORKTREE\ParquetLiveSync\market_native_minute_jsonl_readonly.py" --evidence-root "D:\YourExistingPrivateQMTProbeRoot" --file-relative "EXISTING_PROBE_FILE.jsonl" --expected-file-sha256 "YOUR_ACTUAL_FILE_SHA256" --symbol "300119.SZ" --target-day "2026-11-25" --start-day "2026-11-20" --end-day "2026-11-25"
-\`\`\`
+```
 
 只有文件物理内容符合时才输出 JSON 内容审计；没有对应文件时如实失败，**不能自动调用 QMT 查询或下载来制造证据**。原先 2026-10..11 私有探针文件可能只覆盖自己的日期范围，不能把示例 2026-11-25 当作已在盘上的事实。
 

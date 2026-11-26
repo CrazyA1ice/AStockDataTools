@@ -2,35 +2,14 @@
 from __future__ import annotations
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
-import re
 import sys
 import tempfile
-import types
 import unittest
-from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 
-# No real QMT/paywalled source or PyArrow is needed for testing the provenance
-# receipt chain; the existing generic DAY content validator stays real.
-P = types.ModuleType('market_quality_source_proofs')
-P.HEX64 = re.compile(r'[0-9a-fA-F]{64}')
-P.SYMBOL = re.compile(r'^(SH|SZ|BJ)[0-9]{6}$')
-def checked(root,relative):
-    if not isinstance(relative,str) or '\\' in relative or relative.startswith('/') or any(x in ('','..','.') for x in relative.split('/')):
-        raise ValueError('BAD_PATH')
-    path=Path(root)
-    for part in relative.split('/'):
-        path = path / part
-        if path.is_symlink(): raise ValueError('LINKED_PATH')
-    if not path.is_file(): raise ValueError('MISSING_FILE')
-    return path
-P._secure_relative = checked
-P._hash_stable_file = lambda p:(sha256(p.read_bytes()).hexdigest(),p.stat().st_size)
-sys.modules['market_quality_source_proofs'] = P
 import market_live_day_overlay_audit as O
 from market_official_day_content_readonly import DayContentError
 
@@ -195,7 +174,7 @@ class OverlayAuditTests(unittest.TestCase):
         self.receipt.unlink()
         try:self.receipt.symlink_to(backup)
         except (OSError,NotImplementedError):self.skipTest('symlink unavailable')
-        with self.assertRaisesRegex(ValueError,'LINKED_PATH'):
+        with self.assertRaisesRegex(ValueError,'ARTIFACT_SYMLINK_FORBIDDEN'):
             self.audit()
 
     def test_explicit_existing_zip_bytes_verified_but_provider_remains_unproven(self):
@@ -233,7 +212,7 @@ class OverlayAuditTests(unittest.TestCase):
 
     def test_no_state_file_refuses_not_silently_empty(self):
         (self.work/'state.json').unlink()
-        with self.assertRaisesRegex(ValueError,'MISSING_FILE'):
+        with self.assertRaisesRegex(ValueError,'ARTIFACT_MISSING_OR_NONFILE'):
             self.audit()
 
     def test_production_activated_flag_fails_closed(self):

@@ -7,7 +7,7 @@ signed backups, locks, rollback images or verified complete market data.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -105,6 +105,7 @@ def validate_blueprint(blueprint):
 
     paths = []
     id_counts = Counter()
+    id_periods = defaultdict(set)
     states = {}
     for target in target_files:
         need(type(target) is dict and set(target) == {
@@ -133,6 +134,7 @@ def validate_blueprint(blueprint):
              'SNAPSHOT_TARGET_REVIEW_IDS_INVALID')
         for x in ids:
             id_counts[x] += 1
+            id_periods[x].add(period)
         paths.append(path)
         obs = target['file_observation']
         need(type(obs) is dict and obs.get('state') in STATES,
@@ -151,9 +153,10 @@ def validate_blueprint(blueprint):
              'SNAPSHOT_OBSERVATION_SCOPE_INCONSISTENT')
         states[path] = obs
     need(paths == sorted(set(paths)), 'SNAPSHOT_DUPLICATED_OR_UNSORTED_TARGETS')
-    need((len(id_counts) == nrequests and all(c == len(TX.PERIODS)
-                                               for c in id_counts.values()))
-         or (nrequests == 0 and not id_counts and not paths),
+    need((len(id_counts) == nrequests and all(
+         id_counts[i] == len(TX.PERIODS) and id_periods[i] == set(TX.PERIODS)
+         for i in id_counts)) or
+         (nrequests == 0 and not id_counts and not paths),
          'SNAPSHOT_REVIEW_IDS_EIGHT_PERIOD_CONSERVATION_FAILED')
     return states
 

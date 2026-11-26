@@ -93,6 +93,28 @@ def validate_report(report):
             require(isinstance(sym, str) and bool(Q.SYMBOL.fullmatch(sym)) and
                     sym not in seen, "CROSSCHECK_SYMBOL_DUPLICATED_OR_INVALID")
             seen.add(sym)
+    # Every reference symbol belongs to exactly one declaration bucket;
+    # every recognized DAY code belongs to one physically present bucket.
+    reference_count = report.get("reference_symbol_count")
+    overlay_count = report.get("normalized_exchange_code_count")
+    rows = report.get("rows_checked")
+    not_in_reference = len(groups["overlay_code_not_in_declared_reference"])
+    present_groups = (
+        "overlay_code_not_in_declared_reference",
+        "declared_traded_zero_in_overlay",
+        "declared_no_trade_but_active_in_overlay",
+        "declared_traded_and_overlay_active",
+        "declared_no_trade_and_zero_in_overlay",
+        "declared_unknown_present_in_overlay",
+    )
+    require(type(reference_count) is int and reference_count > 0 and
+            reference_count == len(seen) - not_in_reference,
+            "REFERENCE_SYMBOL_COUNT_DISAGREES_WITH_BUCKETS")
+    require(type(overlay_count) is int and overlay_count > 0 and
+            overlay_count == sum(len(groups[k]) for k in present_groups),
+            "OVERLAY_SYMBOL_COUNT_DISAGREES_WITH_BUCKETS")
+    require(type(rows) is int and overlay_count <= rows <= U.DAY.MAX_ROWS,
+            "OVERLAY_ROW_COUNT_INVALID")
     conflict = any(groups[k] for k in CONFLICT_GROUPS)
     require(report.get("has_declared_conflict") is conflict,
             "CROSSCHECK_CONFLICT_SUMMARY_CHANGED")

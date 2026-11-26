@@ -229,3 +229,39 @@ class OverlayAuditTests(unittest.TestCase):
             self.audit()
 
 if __name__=='__main__':unittest.main()
+
+class RealParquetStateReceiptTests(unittest.TestCase):
+    @unittest.skipUnless(__import__('importlib').util.find_spec('pyarrow') is not None,
+                         'requires pyarrow for actual Arrow/Parquet end-to-end proof')
+    def test_actual_temporary_arrow_day_state_receipt_and_parquet(self):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td)/'ParquetLiveSync';work=root/'work'
+            folder=work/'incremental'/'day'/'year=2026'
+            folder.mkdir(parents=True)
+            day='2026-11-25';sym='SH605336'
+            rel=f'incremental/day/year=2026/{day}.parquet'
+            fields=[pa.field('ts',pa.int64()),pa.field('symbol',pa.string())]+[
+                pa.field(k,pa.float64()) for k in ('open','high','low','close','volume','amount')]
+            table=pa.Table.from_pylist([row()],schema=pa.schema(fields))
+            file=folder/(day+'.parquet')
+            pq.write_table(table,file)
+            data_sha=sha256(file.read_bytes()).hexdigest()
+            receipt={'date':day,'file':rel,'sha256':data_sha,'rows':1,
+                     'raw_zip_sha256':'b'*64,'origin':'synthetic-local-test',
+                     'base_dataset_sha256':O.BASE_SHA,
+                     'original_Parquet_files_unchanged':True,
+                     'source_values_adj':'none','calibration':{'factor':1.0}}
+            rec=file.with_suffix('.json');rec.write_text(json.dumps(receipt))
+            state={'format':O.FORMAT,'base_dataset_sha256':O.BASE_SHA,
+                   'base_day':O.BASE_DAY.isoformat(),'production_activated':False,
+                   'days':{day:{'file':rel,'sha256':data_sha,'rows':1,
+                                'receipt_sha256':sha256(rec.read_bytes()).hexdigest(),
+                                'source_zip_sha256':'b'*64}}}
+            (work/'state.json').write_text(json.dumps(state))
+            output=O.inspect(root,day,sym)
+            self.assertEqual(output['day_overlay_rows_verified'],1)
+            self.assertEqual(output['day_overlay_parquet_bytes_sha256'],data_sha)
+            self.assertFalse(output['market_files_written'])
+            self.assertFalse(output['provider_identity_authenticated'])

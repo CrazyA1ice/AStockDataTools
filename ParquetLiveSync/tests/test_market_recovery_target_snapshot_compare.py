@@ -301,4 +301,93 @@ class SnapshotComparisonTests(unittest.TestCase):
                           'os.replace(', 'shutil.copyfile(', 'CreateFile('):
             self.assertNotIn(forbidden,src)
 
+
+    def test_resigned_one_request_spread_across_month_shards_is_rejected(self):
+        report = baseline()
+        target = next(x for x in report['target_files']
+                      if x['relative_path'].startswith('1min/'))
+        target['relative_path'] = '1min/2026-10.parquet'
+        report['target_files'].sort(key=lambda x: x['relative_path'])
+        seal(report)
+        with self.assertRaisesRegex(S.SnapshotError, 'CROSS_PERIOD_SHARD_MISMATCH'):
+            S.validate_blueprint(report)
+
+    def test_resigned_one_request_spread_across_year_shards_is_rejected(self):
+        report = TX.build_blueprint(
+            R.build_review_plan(fixture(day='2019-02-15')), layout_year=2026)
+        target = next(x for x in report['target_files']
+                      if x['relative_path'].startswith('day/'))
+        target['relative_path'] = 'day/2018.parquet'
+        report['target_files'].sort(key=lambda x: x['relative_path'])
+        seal(report)
+        with self.assertRaisesRegex(S.SnapshotError, 'CROSS_PERIOD_SHARD_MISMATCH'):
+            S.validate_blueprint(report)
+
+    def test_different_requests_may_legitimately_use_different_shards(self):
+        report = baseline()
+        others = deepcopy(report['target_files'])
+        for target in others:
+            target['relative_path'] = target['relative_path'].replace(
+                '/2026-11.parquet', '/2026-10.parquet')
+            target['affected_review_request_ids'] = ['b' * 64]
+        report['target_files'].extend(others)
+        report['target_files'].sort(key=lambda x: x['relative_path'])
+        report['recovery_review_request_count'] = 2
+        report['eight_period_target_file_count'] = 16
+        seal(report)
+        self.assertEqual(len(S.validate_blueprint(report)), 16)
+
+    def test_same_digest_but_different_declared_byte_sizes_fails_closed(self):
+        prior = observed(baseline(), sha='a' * 64, nbytes=400)
+        current = observed(baseline(), sha='a' * 64, nbytes=401)
+        with self.assertRaisesRegex(S.SnapshotError,
+                                    'IDENTICAL_SHA_DIFFERENT_FILE_SIZE'):
+            S.compare(prior, current)
+
+    def test_sha_case_only_change_does_not_claim_physical_drift(self):
+        prior = observed(baseline(), sha='a' * 64)
+        current = observed(baseline(), sha='A' * 64)
+        out = S.compare(prior, current)
+        self.assertEqual(out['difference_counts'],
+                         {'OBSERVED_FILE_BYTES_SHA_UNCHANGED_BUT_NOT_LOCKED': 8})
+        self.assertFalse(out['has_observed_file_drift'])
+        self.assertFalse(out['compare_and_swap_authorized'])
+
+    def test_no_physical_observation_has_zero_sha_pairs_not_a_pass(self):
+        out = S.compare(baseline(), baseline())
+        self.assertEqual(out['physical_sha_pairs_compared'], 0)
+        self.assertEqual(out['not_observed_at_one_or_both_timepoints'], 8)
+        self.assertEqual(out['absent_at_one_or_both_timepoints'], 0)
+        self.assertFalse(out['full_physical_sha_pair_coverage'])
+
+    def test_appeared_files_do_not_count_as_two_physical_observations(self):
+        out = S.compare(missing(baseline()), observed(baseline()))
+        self.assertEqual(out['physical_sha_pairs_compared'], 0)
+        self.assertEqual(out['absent_at_one_or_both_timepoints'], 8)
+        self.assertFalse(out['full_physical_sha_pair_coverage'])
+        self.assertTrue(out['has_observed_file_drift'])
+
+    def test_mixed_absent_and_real_sha_pairs_are_counted_separately(self):
+        old = missing(baseline())
+        new = observed(baseline(), sha='c' * 64)
+        old['target_files'][0]['file_observation'] = deepcopy(
+            new['target_files'][0]['file_observation'])
+        seal(old)
+        out = S.compare(old, new)
+        self.assertEqual(out['physical_sha_pairs_compared'], 1)
+        self.assertEqual(out['absent_at_one_or_both_timepoints'], 7)
+        self.assertEqual(out['not_observed_at_one_or_both_timepoints'], 0)
+        self.assertFalse(out['full_physical_sha_pair_coverage'])
+
+    def test_full_sha_pair_coverage_can_still_contain_drift_no_commit(self):
+        old = observed(baseline(), sha='a' * 64)
+        new = observed(baseline(), sha='b' * 64)
+        out = S.compare(old, new)
+        self.assertTrue(out['full_physical_sha_pair_coverage'])
+        self.assertEqual(out['physical_sha_pairs_compared'], 8)
+        self.assertTrue(out['has_observed_file_drift'])
+        self.assertFalse(out['physical_source_lock_held'])
+        self.assertFalse(out['backup_materialized_or_restoration_tested'])
+        self.assertFalse(out['market_files_written'])
+
 if __name__ == '__main__':unittest.main()

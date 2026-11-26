@@ -38,6 +38,19 @@ NO_AUTHORITY = (
     'market_quality_cleared', 'production_merge_authorized',
 )
 
+# Known v1 schema only. A recomputed diagnostic SHA is not an approval
+# signature: a newly injected top-level authority field must never be passed
+# through for another consumer to mistake for an approved capability.
+BLUEPRINT_FIELDS = frozenset(NO_AUTHORITY) | frozenset((
+    'format', 'status', 'source_review_plan_sha256',
+    'original_backlog_sha256', 'declared_layout_year',
+    'recovery_review_request_count', 'eight_period_target_file_count',
+    'physical_target_checks_requested', 'physical_target_files_checked',
+    'target_files', 'transaction_gates_missing', 'transaction_status',
+    'staging_bytes_written', 'production_bytes_written',
+    'qmt_history_download_calls', 'blueprint_sha256',
+))
+
 
 class SnapshotError(ValueError):
     pass
@@ -69,6 +82,8 @@ def validate_blueprint(blueprint):
     need(type(blueprint) is dict and blueprint.get('format') == TX.FORMAT
          and blueprint.get('status') == TX.STATUS,
          'SNAPSHOT_FORMAT_OR_STATUS_INVALID')
+    need(set(blueprint) == BLUEPRINT_FIELDS,
+         'SNAPSHOT_BLUEPRINT_UNKNOWN_OR_MISSING_FIELDS')
     seal = blueprint.get('blueprint_sha256')
     need(valid_sha(seal) and
          REVIEW.digest({k: v for k, v in blueprint.items()
@@ -76,7 +91,7 @@ def validate_blueprint(blueprint):
          'SNAPSHOT_BLUEPRINT_DIGEST_CHANGED')
     need(all(blueprint.get(k) is False for k in NO_AUTHORITY),
          'SNAPSHOT_FORGED_MARKET_AUTHORITY')
-    need(all(blueprint.get(k) == 0 for k in
+    need(all(type(blueprint.get(k)) is int and blueprint[k] == 0 for k in
              ('staging_bytes_written', 'production_bytes_written',
               'qmt_history_download_calls')) and
          blueprint.get('transaction_status') ==

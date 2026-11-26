@@ -222,7 +222,7 @@ def main(argv=None):
     except (OverlayPairError, MINUTE.NativeMinuteError, WINDOW.WindowError,
             OVERLAY.OverlayError, DAY.DayContentError, PROOF.ProofError,
             ValueError, OSError, TypeError, KeyError, OverflowError,
-            ImportError) as exc:
+            ImportError, RuntimeError) as exc:
         print('MINUTE_DAY_OVERLAY_PAIR_REVIEW_REQUIRED: ' + type(exc).__name__)
         return 3
 

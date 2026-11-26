@@ -258,4 +258,22 @@ class NativeMinuteContentTests(unittest.TestCase):
         self.assertEqual(M.GRID_240, P.GRID - {(9, 30)})
 
 
+    def test_physical_file_oversize_rejected_before_hash(self):
+        with TemporaryDirectory() as td:
+            p=Path(td)/'huge.jsonl'
+            with p.open('wb') as f:
+                f.truncate(M.MAX_BYTES+1)
+            with mock.patch.object(M.PROOF, '_hash_stable_file', side_effect=AssertionError('hashed oversized data')):
+                with self.assertRaisesRegex(M.NativeMinuteError, 'BYTE_BUDGET_EXCEEDED'):
+                    M.inspect(td,'huge.jsonl','a'*64,'300119.SZ',
+                              '2026-11-25','2026-11-25','2026-11-25')
+
+    def test_file_hash_uppercase_input_equivalent(self):
+        with TemporaryDirectory() as td:
+            name,digest=write_file(td,series())
+            result=M.inspect(td,name,digest.upper(),'300119.SZ','2026-11-25',
+                             '2026-11-25','2026-11-25')
+            self.assertEqual(result['physical_local_source_file_sha256'],digest)
+
+
 if __name__=='__main__': unittest.main()

@@ -30,6 +30,7 @@ BOOLEAN_FIELDS = (
     "calibration_drift_confirmed", "receipt_integrity_valid",
     "source_conflict", "cross_period_consistent", "zero_prefix_verified",
     "traded_hlc_verified", "tail_hlc_verified", "producer_quarantined",
+    "declared_day_state_conflict", "declared_day_reference_uncertain",
 )
 ACTIONS = {
     "SOURCE_UNAVAILABLE": "inspect_provider_access_and_retry_policy",
@@ -46,6 +47,8 @@ ACTIONS = {
     "SOURCE_PROVENANCE_UNVERIFIED": "collect_verified_raw_source_and_reference_sha",
     "OFFICIAL_DAY_EVIDENCE_MISSING": "confirm_independent_day_universe",
     "PRODUCER_QUARANTINED": "retain_original_provider_quarantine_and_replay",
+    "DECLARED_DAY_STATE_CONFLICT": "verify_claimed_day_trade_states_with_independent_source_before_market_decision",
+    "DECLARED_DAY_REFERENCE_UNCERTAIN": "acquire_authenticated_complete_day_instrument_scope_and_trade_state",
 }
 MAX_CASES = 10000
 
@@ -146,6 +149,12 @@ def analyze_case(raw):
     if obj.get("producer_quarantined") is True:
         finding("PRODUCER_QUARANTINED", "DETECTED",
                 "ORIGINAL_PRODUCER_QUARANTINE_NOT_RESOLVED")
+    if obj.get("declared_day_state_conflict") is True:
+        finding("DECLARED_DAY_STATE_CONFLICT", "DETECTED",
+                "CLAIMED_SOURCES_DISAGREE_NOT_AN_AUTHENTICATED_MARKET_FAILURE")
+    if obj.get("declared_day_reference_uncertain") is True:
+        finding("DECLARED_DAY_REFERENCE_UNCERTAIN", "INSUFFICIENT_EVIDENCE",
+                "REFERENCE_COVERAGE_OR_TRADING_STATE_NOT_INDEPENDENTLY_VERIFIED")
     state = obj["source_state"]
     bars, expected = obj.get("observed_bars"), obj.get("expected_bars")
     official = obj.get("official_stock_day")

@@ -165,7 +165,6 @@ class DayContentTests(unittest.TestCase):
 
 if __name__=='__main__':unittest.main()
 
-
 class ExplicitDayFileTests(unittest.TestCase):
     def test_official_day_only_succeeds_without_native_minute_file(self):
         with tempfile.TemporaryDirectory() as td:

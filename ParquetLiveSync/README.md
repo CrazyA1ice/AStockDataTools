@@ -266,3 +266,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P3 生产隔离股票日修复准备度（默认只读）**：`market_quarantine_recovery_readiness.py` 在任意有界日期区间读取原 QMT 每日暂存回执及物理候选 SHA，引用通用稳定事件 ID，逐个查看现存 TDX DAY 的物理来源和内容证据，输出还缺少的原生分钟、独立官方证券集合、校准、八周期及事务授权等阻塞项。即使 DAY 真实存在也**绝不**自动生成或接收修复候选，不清除原隔离、不调用 QMT、不写 Parquet/H5。详见 [通用修复准备度证据矩阵](MARKET_QUARANTINE_RECOVERY_READINESS.md)。
+
+
+**P3.1 原隔离修复的版本化审核方案（只读）**：`market_recovery_review_plan.py` 把已经由实际生产回执及 TDX DAY 来源链核验的 `market_quarantine_recovery_readiness` 证据矩阵转换成可重复生成的审核请求（稳定 request ID + 本次证据版本 SHA），可对一份显式 SHA 固定的旧方案做差异比较；旧范围本次未覆盖也**绝不**自动表示旧隔离已解决。审核方案不是 1min 修复数据，`minute_payload_present=false`、`market_candidate_rows_generated=0`、下载/写库/自动关闭权限均为 false。见 [修复审核方案与版本比较](MARKET_RECOVERY_REVIEW_PLAN.md)。

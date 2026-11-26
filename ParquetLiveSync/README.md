@@ -248,3 +248,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P1.5 通用待处理清单（只读）**：`market_quality_backlog.py` 可从上述跨日质量分类或本地规范 JSON 产生按 `(交易日, 证券, 周期, 来源, 规则)` 稳定编号的事件、证据版本及优先级；不同版本冲突不自动关闭旧隔离。使用 `--summary-only` 先查看概览。详见 [跨日行情质量问题清单说明](MARKET_QUALITY_BACKLOG_READONLY.md)。此阶段只输出快照，不新建持久库、下载 QMT 或授权市场数据提交。
+
+
+**P2 来源文件字节证据（只读）**：`market_quality_source_proofs.py` 对用户显式指定的私有导出文件进行本地 SHA256 字节复核，支持任意日期、证券及八周期；与官方 DAY/购买数据源的真实内容和来源身份认证严格分离。没有隐式 QMT 下载或行情写入。用法、安全边界和多日期回归见 [来源文件字节核验说明](MARKET_QUALITY_SOURCE_PROOFS.md)。

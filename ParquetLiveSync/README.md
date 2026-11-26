@@ -257,3 +257,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P2.6 真实 TDX DAY 覆盖账本来源链（只读）**：`market_live_day_overlay_audit.py` 可针对任意现有已接受的 TDX DAY 覆盖日期及目标证券，从实际 `work/state.json → 单日回执 JSON → 物理 DAY Parquet` 顺序校验身份、行数、真实 SHA 和目标 OHLCVA，并在检查后重新核对状态与回执。仅在明确给出本地 ZIP 相对路径时可额外验证原始 ZIP 的**文件字节**，不据此声称供应商认证。详见 [TDX DAY 覆盖账本只读审计](MARKET_LIVE_DAY_OVERLAY_RECEIPT_AUDIT.md)。
+
+
+**P2.7 DAY 证券日清单跨来源声明对照（只读）**：`market_day_universe_crosscheck.py` 对一份经 state/receipt/Parquet SHA 绑定的 TDX DAY 物理文件与用户明确指定、另行 SHA 固定的证券交易状态参考 JSON 进行可复用差异分桶。它将声明有成交但缺失、声明无成交但有交易、双方匹配、来源未列和未知证据分别记录；不把 5,572 个物理 DAY 记录假设为交易所股票全集，也不因自填来源标签不同而宣称提供商真实独立。详见 [跨来源 DAY 清单对照说明](MARKET_DAY_UNIVERSE_CROSSCHECK.md)。该阶段不获取来源、不自动下载、不写生产库。

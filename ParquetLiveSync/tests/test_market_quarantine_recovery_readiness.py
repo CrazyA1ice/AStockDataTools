@@ -95,7 +95,7 @@ class ReadinessTests(unittest.TestCase):
         for item in out["entries"]:
             self.assertEqual(item["readiness"], "BLOCKED_REVIEW_ONLY_NO_REPAIR")
             self.assertEqual(item["tdx_day_local_evidence"]["target_day_open"], 10.0)
-            self.assertFalse(item["provider_identity_authenticated"] if "provider_identity_authenticated" in item else item["source_independence_authenticated"])
+            self.assertFalse(item["source_independence_authenticated"])
             self.assertFalse(item["minute_market_candidate_approved"])
             self.assertFalse(item["producer_quarantine_cleared"])
             self.assertIn("ORIGINAL_PRODUCER_QUARANTINE_RETAINED",
@@ -140,7 +140,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(sha, M.BACKLOG.digest(result))
 
     def test_second_distinct_day_and_stock_is_reused(self):
-        day = "2026-11-25"
+        day = "2025-07-18"
         self.create_day(day, ("BJ920021",), reasons=("QMT returned no original OHLCVA 1m",))
         out = M.inspect(self.root, self.day, day, day_inspector=self.fake_day)
         self.assertEqual(out["original_producer_quarantined_stock_days"], 3)

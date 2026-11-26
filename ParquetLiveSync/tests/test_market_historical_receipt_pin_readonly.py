@@ -183,8 +183,14 @@ class PinnedHistoryTests(unittest.TestCase):
         self.assertTrue(r['parquet_content_sha_verified'])
 
     def test_p311_nine_gap_scan_with_authenticated_local_receipt_bytes_still_blocked_admission(self):
-        r=GAP.inspect(self.module,self.probes,
-                      receipt_relative='history/original-20261125.json')
+        # Only this synthetic-fixture test substitutes its temporary receipt hash.
+        # Production GAP.RUN_SHA remains the pinned actual 2026-11-25 digest.
+        production_sha = GAP.RUN_SHA
+        with mock.patch.object(GAP, 'RUN_SHA', self.expected):
+            r=GAP.inspect(self.module,self.probes,
+                          receipt_relative='history/original-20261125.json')
+            self.assertEqual(r['pinned_run_receipt_sha256'], self.expected)
+        self.assertEqual(GAP.RUN_SHA, production_sha)
         self.assertEqual(r['original_quarantined_stock_days'],9)
         self.assertEqual(r['selected_receipt_relative_to_work'],'history/original-20261125.json')
         self.assertEqual(r['existing_probe_files_content_checked'],0)

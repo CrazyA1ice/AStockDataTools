@@ -37,6 +37,7 @@ AStockDataTools 是持续管理、清洗、跨源审计与维护八周期行情�
 - `declared_traded_missing_in_overlay`：参考声明有成交，但 TDX 覆盖没有该代码。
 - `declared_traded_zero_in_overlay`：参考声明有成交，TDX 却是零成交。
 - `declared_no_trade_but_active_in_overlay`：参考声明未成交，TDX 有正成交。
+- `declared_no_trade_and_zero_in_overlay`：参考声明未成交，TDX 也有零量零额的占位日线；与数据缺失分开。
 - `overlay_code_not_in_declared_reference`：TDX 有规范代码，但参考清单没列；**不等同于非法证券、股票多出或 TDX 错误**。
 - `declared_traded_and_overlay_active`：双方对“有成交”这一声明一致；仍不是市场行情准确性认证。
 - `declared_unknown_present_in_overlay`、`declared_unknown_absent_from_overlay`、`declared_no_trade_absent_from_overlay`：单独记录未知和无成交，不把证据不足误判成没有交易。

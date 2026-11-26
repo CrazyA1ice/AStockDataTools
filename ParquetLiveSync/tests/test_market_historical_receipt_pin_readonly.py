@@ -218,6 +218,37 @@ class PinnedHistoryTests(unittest.TestCase):
         self.assertEqual(status,3)
         self.assertNotIn('sensitive-absolute-path',out.getvalue())
 
+    def test_locator_cli_reports_entry_budget_code_without_private_path(self):
+        output=StringIO()
+        with mock.patch.object(LOC,'MAX_ENTRIES',1):
+            with contextlib.redirect_stdout(output):
+                status=LOC.main(['--module-root',str(self.module),'--max-depth','3'])
+        self.assertEqual(status,3)
+        self.assertIn('SEARCH_DIRECTORY_ENTRY_BUDGET',output.getvalue())
+        self.assertNotIn(str(self.module),output.getvalue())
+        self.assertNotIn('ReceiptLocateError',output.getvalue())
+
+    def test_locator_cli_reports_json_budget_code_without_private_path(self):
+        output=StringIO()
+        with mock.patch.object(LOC,'MAX_JSON',1):
+            with contextlib.redirect_stdout(output):
+                status=LOC.main(['--module-root',str(self.module),'--max-depth','2'])
+        self.assertEqual(status,3)
+        self.assertIn('SEARCH_JSON_CANDIDATE_BUDGET',output.getvalue())
+        self.assertNotIn(str(self.module),output.getvalue())
+
+    def test_locator_cli_refuses_to_echo_nonallowlisted_exception_message(self):
+        output=StringIO()
+        with mock.patch.object(
+                LOC,'locate',side_effect=LOC.ReceiptLocateError(
+                    'PRIVATE_PATH=C:/secret/source.json')):
+            with contextlib.redirect_stdout(output):
+                status=LOC.main(['--module-root',str(self.module)])
+        self.assertEqual(status,3)
+        self.assertIn('SEARCH_DIAGNOSTIC_REASON_WITHHELD',output.getvalue())
+        self.assertNotIn('secret',output.getvalue())
+        self.assertNotIn(str(self.module),output.getvalue())
+
     def test_new_modules_do_not_write_market_data_or_call_qmt(self):
         import inspect
         for obj in (LOC,GAP):

@@ -40,9 +40,10 @@ AStockDataTools 是长期跨日期、证券、数据源与八周期的行情清�
 本阶段专门修正两个“诊断摘要可以重新计算，但输入在语义上自相矛盾”的边界案例：
 
 - **同一审核请求的八周期目标必须采用相同的年/月分片名**。例如同一个 `review_request_id` 同时被分配到 `1min/2026-10.parquet` 和 `5min/2026-11.parquet`，即使各自路径合法、八周期数量为八且内部蓝图 SHA 已重新计算，也必须报 `SNAPSHOT_REVIEW_REQUEST_CROSS_PERIOD_SHARD_MISMATCH` 并停止。不同股票日的不同请求仍可以合法属于不同月。此处仅检查蓝图的跨周期守恒，不能替代原审核请求里交易日与目标分片的来源证明。
+- **蓝图 v1 采用严格字段清单**：新插入的所谓批准、备份或供应商认证字段即便重算诊断 SHA 也必须被拒绝。零次下载、零字节写入等计数必须为真正的整数 `0`，Python 布尔值 `False` 不得借 `False == 0` 冒充计数证据。
 - **相同文件 SHA 却记录不同字节长度属于自相矛盾的来源记录**，即使重新计算蓝图 SHA 也要报 `SNAPSHOT_IDENTICAL_SHA_DIFFERENT_FILE_SIZE`，不能称作“字节未变”。纯十六进制字母大小写差异不构成 SHA 内容漂移。
 - **增加物理比较覆盖口径**：`physical_sha_pairs_compared`、`not_observed_at_one_or_both_timepoints`、`absent_at_one_or_both_timepoints` 三个互斥统计之和必须等于目标文件数；`full_physical_sha_pair_coverage` 只在非空目标集合每个文件在两个时间点都有合法物理 SHA 时为 true。即使为 true，仍然没有源文件锁、CAS、备份、数据校准或生产写入权限。
 
 本补强在已有 `market_recovery_target_snapshot_compare.py` 内进行，不增加磁盘写入，也不扩大默认文件读取范围。原 2026-11-25 未提供旧快照或 `--target-root` 的验收状态及八目标足迹 SHA 必须保持不变。
 
-新增九项不依赖真实市场数据的跨日期、跨周期、同 SHA 不同大小、物理覆盖和无授权回归。其完整 Windows 验收目标是此前 392 项加九项，即 **401 项方法**。在用户 Windows 执行前，不能宣称 401/401 已通过；也不能把新增代码提交等同于交易数据质量认证。
+新增十二项不依赖真实市场数据的跨日期、跨周期、同 SHA 不同大小、物理覆盖和无授权回归。其完整 Windows 验收目标是此前 392 项加十二项，即 **404 项方法**。在用户 Windows 执行前，不能宣称 404/404 已通过；也不能把新增代码提交等同于交易数据质量认证。

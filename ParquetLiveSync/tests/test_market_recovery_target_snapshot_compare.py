@@ -203,6 +203,16 @@ class SnapshotComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(S.SnapshotError, 'EIGHT_PERIOD_CONSERVATION_FAILED'):
             S.validate_blueprint(r)
 
+    def test_same_request_must_cover_all_distinct_eight_periods(self):
+        report = baseline()
+        # Replace a 5min target by another 1min file in an adjacent month.
+        target = next(t for t in report['target_files'] if t['relative_path'].startswith('5min/'))
+        target['relative_path'] = '1min/2026-10.parquet'
+        report['target_files'].sort(key=lambda t:t['relative_path'])
+        seal(report)
+        with self.assertRaisesRegex(S.SnapshotError, 'EIGHT_PERIOD_CONSERVATION_FAILED'):
+            S.validate_blueprint(report)
+
     def test_source_sha_and_layout_identities_are_preserved(self):
         r = observed(baseline()); out = S.compare(r, r)
         self.assertEqual(out['source_review_plan_sha256'], r['source_review_plan_sha256'])
@@ -251,7 +261,7 @@ class SnapshotComparisonTests(unittest.TestCase):
             for period in TX.PERIODS:(base/period).mkdir(parents=True)
             f=base/'1min'/'2026-11.parquet';f.write_bytes(b'fake temporary source')
             before=(f.read_bytes(), f.stat().st_mtime_ns)
-            # The actual storage-root contract is used; only known temporary targets read.
+            # Temp layout injected; actual file-byte SHA reader remains unchanged.
             with mock.patch.dict(sys.modules,{'local_layout':types.SimpleNamespace(
                     storage_root=lambda source, require_all=True: base)}):
                 current=TX.build_blueprint(R.build_review_plan(fixture()),

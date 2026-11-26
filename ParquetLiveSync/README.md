@@ -272,3 +272,6 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 
 
 **P3.2 八周期修复事务目标足迹预检（只读、零提交）**：`market_recovery_transaction_preflight.py` 根据经 SHA 校验的完整审核方案和显式布局年，枚举各日期可能触及的八周期月/年度 Parquet 文件；同月多股归并为一个目标文件条目。默认完全不扫描正式数据库；只有明确传入现有 `--target-root` 才对相应目标进行只读 SHA/存在性检查。没有生成修复分钟行、没有私有候选、没有回滚备份，也没有 CAS 或入库权限。见 [事务目标足迹预检与安全门禁](MARKET_RECOVERY_TRANSACTION_PREFLIGHT.md)。
+
+
+**P3.3 八周期物理目标的双时间点 SHA 差异比较（只读）**：`market_recovery_target_snapshot_compare.py` 在经过版本化审核的完整事务蓝图基础上，可读取操作者明确指定、实际文件 SHA 固定的旧版蓝图，与本轮相同审核范围的目标观测分类对比；区分文件出现、消失、字节 SHA 变化与“根本没有读取目标文件”，即使哈希相同也不表示已有锁、备份或 CAS 写权限。没有 `--prior-*` 和 `--target-root` 时默认不扫描生产八周期文件、不执行历史比较。见 [只读目标快照比较与非 CAS 门禁](MARKET_RECOVERY_TARGET_SNAPSHOT_COMPARE.md)。

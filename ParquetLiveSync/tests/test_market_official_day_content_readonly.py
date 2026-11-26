@@ -164,3 +164,56 @@ class DayContentTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class ExplicitDayFileTests(unittest.TestCase):
+    def test_official_day_only_succeeds_without_native_minute_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);d=root/'official.parquet';d.write_bytes(b'fictional-day')
+            expected=sha256(d.read_bytes()).hexdigest()
+            p=types.SimpleNamespace(HEX64=__import__('re').compile(r'[0-9a-fA-F]{64}'),
+                                    _secure_relative=lambda root,rel:root/rel,
+                                    _hash_stable_file=lambda f:(sha256(f.read_bytes()).hexdigest(),f.stat().st_size))
+            with mock.patch.dict(sys.modules, {'market_quality_source_proofs':p}):
+                out=D.inspect_explicit(root,'official.parquet',expected,'2025-08-13',
+                                       'SZ300888',row_reader=lambda _:iter([record()]))
+            self.assertIsNone(out['bound_source_manifest_bytes_sha256'])
+            self.assertEqual(out['bound_official_day_file_bytes_sha256'],expected)
+            self.assertFalse(out['official_provider_identity_authenticated'])
+            self.assertEqual(len(list(root.iterdir())),1)
+
+    def test_unexpected_day_sha_rejected_before_read(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);d=root/'official.parquet';d.write_bytes(b'fictional-day')
+            p=types.SimpleNamespace(HEX64=__import__('re').compile(r'[0-9a-fA-F]{64}'),
+                                    _secure_relative=lambda root,rel:root/rel,
+                                    _hash_stable_file=lambda f:(sha256(f.read_bytes()).hexdigest(),f.stat().st_size))
+            with mock.patch.dict(sys.modules, {'market_quality_source_proofs':p}):
+                read=mock.Mock(return_value=iter([record()]))
+                with self.assertRaisesRegex(D.DayContentError,'DAY_FILE_SHA_CHANGED'):
+                    D.inspect_explicit(root,'official.parquet','f'*64,
+                                       '2025-08-13','SZ300888',row_reader=read)
+                read.assert_not_called()
+
+    def test_cli_requires_just_one_proof_mode(self):
+        b=StringIO()
+        with contextlib.redirect_stdout(b):
+            rc=D.main(['--evidence-root','/missing','--manifest-relative','x',
+                       '--day-file-relative','y.parquet'])
+        self.assertEqual(rc,3)
+        self.assertIn('REVIEW_REQUIRED',b.getvalue())
+
+    def test_source_mutation_during_read_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);d=root/'official.parquet';d.write_bytes(b'fictional-day')
+            expected=sha256(d.read_bytes()).hexdigest()
+            p=types.SimpleNamespace(HEX64=__import__('re').compile(r'[0-9a-fA-F]{64}'),
+                                    _secure_relative=lambda root,rel:root/rel,
+                                    _hash_stable_file=lambda f:(sha256(f.read_bytes()).hexdigest(),f.stat().st_size))
+            def modify_then_rows(_):
+                d.write_bytes(b'changed')
+                return iter([record()])
+            with mock.patch.dict(sys.modules, {'market_quality_source_proofs':p}):
+                with self.assertRaisesRegex(D.DayContentError,'DAY_FILE_CHANGED_DURING_CONTENT_CHECK'):
+                    D.inspect_explicit(root,'official.parquet',expected,'2025-08-13',
+                                       'SZ300888',row_reader=modify_then_rows)

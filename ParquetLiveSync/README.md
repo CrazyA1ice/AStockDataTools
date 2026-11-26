@@ -283,3 +283,5 @@ Set-Location -LiteralPath "D:\ChatGPT\AStockDataTools"; $ErrorActionPreference="
 **P3.6 双本地来源六字段原始差异（非校准/非入库）**：`market_minute_day_raw_pair_readonly.py` 对操作者明确给出的已有 QMT 私有 JSONL 与声明 DAY Parquet 分别作真实文件 SHA、证券/交易日及内容检查，并重新复核两个物理文件的 SHA 后给出未校准 open/high/low/close/volume/amount 原始差异、可重算的组合来源 SHA。它**不验证数据商身份，不证明独立性，不证明购买源量纲和时间偏移，不判定六字段质量通过，不解除原 9 条隔离**。新增 21 项隔离环境测试 PASS；Windows 目标 455 项尚待按固定提交验收。见 [P3.6 原始差异与来源门禁](MARKET_MINUTE_DAY_RAW_PAIR_READONLY.md)。
 
 **P3.7 显式目录的原始来源只读 SHA 索引**：`market_local_evidence_inventory_readonly.py` 只扫描用户主动指定的现存私有证据目录**一层**，列出已有 `.jsonl` 或 `.parquet` 文件的安全相对名、真实 SHA 和大小；设有 256 项/64 匹配文件/256 MiB 预算，超限即拒绝，不输出非完整索引。只说明字节存在，**不证明 QMT/官方 DAY 来源、证券日期覆盖、六字段/购买量额校准或可写权限**。16 项离线测试通过；累计 Windows 目标 471，暂未验收。见 [P3.7 私有来源字节索引说明](MARKET_LOCAL_EVIDENCE_INVENTORY_READONLY.md)。
+
+**P3.8 现有 QMT 探针文件的全日期窗口只读格点审计**：`market_native_minute_window_readonly.py` 重新 SHA 检查指定的既有私有 JSONL，对全文件所有行沿用 P3.5 严格结构/六字段验证，再按操作者声明窗口中的每个自然日区分完整 241、仅缺 09:30 的 240、部分缺格及无行。**没有独立交易所日历时，自然日无记录不能被标成交易日缺失**；不得推断 QMT 出处、下载原生分钟或解除原 9 条隔离。23 项新增合成真实字节测试已在隔离环境通过；累计 Windows 目标 494 项尚待固定提交实机验收。见 [P3.8 分钟日期窗口格点审计](MARKET_NATIVE_MINUTE_WINDOW_READONLY.md)。

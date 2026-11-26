@@ -201,6 +201,7 @@ def inspect(root, relative, expected_sha256, target_symbol, target_day,
     before_stat = path.stat()
     need(0 < before_stat.st_size <= MAX_BYTES, 'MINUTE_JSONL_BYTE_BUDGET_EXCEEDED')
     before_sha, before_size = PROOF._hash_stable_file(path)
+    need(before_size <= MAX_BYTES, 'MINUTE_JSONL_BYTE_BUDGET_EXCEEDED')
     need(before_sha == expected_sha256.lower() and before_size == before_stat.st_size,
          'MINUTE_JSONL_SOURCE_BYTES_SHA_CHANGED')
     reader = row_reader or _file_rows

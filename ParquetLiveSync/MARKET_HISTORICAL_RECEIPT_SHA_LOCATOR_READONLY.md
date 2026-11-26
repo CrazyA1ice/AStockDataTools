@@ -38,8 +38,16 @@ P3.11 `market_nine_quarantine_offline_source_gap_readonly.py` 同样新增 `--re
 
 只有旧审计器以完整回执+日志+候选物理 SHA 验证成功，才可以继续 P3.11 对九条隔离的既存本地分钟文件清单。**绝不能重新创建或覆盖** `last-afternoon-unified.json` 以求通关，也不得伪造新 Nov25 回执、将不同 SHA 强行当作旧回执、修改市场 Parquet/H5、QMT 缓存、生产隔离或调度。
 
+## 深度 3 中途被安全上限拒绝（2026-11-26）
+
+用户已在 `985c39271bc19a9ba9cc360bacfcce0450351e5b` 下真实完成 15/15 原审计器、24/24 新测试、589/589 选择集。深度 2 搜索 `work`：303 条目录项、75 份 JSON、0 命中、无跳过，作用域内完整。随后同一工作树 `--max-depth 3` 返回 `PINNED_HISTORICAL_RECEIPT_LOCATION_REVIEW_REQUIRED: ReceiptLocateError`，脚本退出并标记 `P312_DEPTH3_BOUNDED_SEARCH_REVIEW_REQUIRED`。**无法从这个泛化的异常类别判断是条目、JSON、字节、symlink 还是其它限制，也绝不能当作深度 3 零匹配。**
+
+为避免运维诊断盲目重复搜索，本轮只修改 CLI 错误呈现：对源码中预定义的安全固定代码（例如 `SEARCH_DIRECTORY_ENTRY_BUDGET`、`SEARCH_JSON_CANDIDATE_BUDGET`、`SEARCH_TOTAL_JSON_BYTES_BUDGET`、`SEARCH_SYMLINK_ENTRY_REJECTED`）打印**具体代码**；其它 `ReceiptLocateError` 文本必须替换为 `SEARCH_DIAGNOSTIC_REASON_WITHHELD`。其它异常仍只打印类型，不打印原始路径或异常字符串，绝不返回被扫描 JSON 正文。**扫描限制本身、SHA、正式证据验证和默认路径都没有改变。** 新增 3 个 CLI 安全回归；完整选择集由之前的 589 项提升为 **592 项**（额外 15 个旧审计器测试仍单独跑）。新的 Windows 验收尚未执行。
+
+如果明确错误为 `SEARCH_DIRECTORY_ENTRY_BUDGET`、`SEARCH_JSON_CANDIDATE_BUDGET` 或 `SEARCH_TOTAL_JSON_BYTES_BUDGET`：**不要提高上限**，改用 `--search-subdir` 对已存在的 `work` 下特定一级子目录分别执行 `--max-depth 2`，每次均保留原各项预算。每次无结果只说明该明确子树没有匹配，不得把一系列部分搜索说成所有备份路径均不存在。历史回执在指定范围内的物理 SHA 若被找到，还须原审计器核对其 EIGHT_PERIODS 日志、原候选 Parquet 与 5206/9/5215 隔离信息；找不到就继续阻断。
+
 ## 测试与真实数据阻塞
 
-新增 **24 项** Python 回归用例：最新回执 SHA 不同而历史备份真实存在的完整合成 5206/9/5215 证据链、旧默认不变、显式 SHA/日志/候选文件缺一不可、路径穿越/卷标/symlink 拒绝、查找深度/条目数/字节预算、只读报告与九条清单可关联。P3.11 原 **565/565** 已由 Windows 验收；本 P3.12 提交后累计目标 **589 项（24 模块）**，尚待用户实机运行。所有新测试都使用临时合成源文件，不是用户私有回执，必须通过固定提交并在实际用户目录内查到同 SHA 原件后才可宣告历史证据链恢复。
+最初新增 **24 项** Python 回归用例：最新回执 SHA 不同而历史备份真实存在的完整合成 5206/9/5215 证据链、旧默认不变、显式 SHA/日志/候选文件缺一不可、路径穿越/卷标/symlink 拒绝、查找深度/条目数/字节预算、只读报告与九条清单可关联。P3.11 原 **565/565** 已由 Windows 验收；本 P3.12 初始提交已在用户 Windows 实机通过 **589/589**；安全错误码补充后新增 3 个测试，最新累计目标 **592 项（24 模块）**，待新固定提交复测。所有新测试都使用临时合成源文件，不是用户私有回执，必须通过固定提交并在实际用户目录内查到同 SHA 原件后才可宣告历史证据链恢复。
 
 若扫描结果无匹配，应如实报告“这一明确扫描范围无匹配”，停止历史证据复核。下一阶段只可在用户进一步指定已存在的其他备份目录后扩展**只读**定位范围；不因目标文件找不到就解禁九条隔离。

@@ -46,7 +46,10 @@ def normal_symbol(raw):
 
 def finite_number(x, name, *, positive=False):
     need(type(x) in (int, float), 'INVALID_' + name.upper())
-    v = float(x)
+    try:
+        v = float(x)
+    except (ValueError, OverflowError) as exc:
+        raise DayContentError('INVALID_' + name.upper()) from exc
     need(math.isfinite(v) and (v > 0 if positive else v >= 0),
          'NONFINITE_OR_INVALID_' + name.upper())
     return v
@@ -77,10 +80,8 @@ def validate_day_rows(rows, trading_day: str, target_symbol: str):
             raise DayContentError('DAY_TIMESTAMP_INVALID') from exc
         need(actual_day == day, 'DAY_EXPORT_MIXED_OR_WRONG_DATES')
         symbol = normal_symbol(row['symbol'])
-        if symbol is None:
-            non_equities += 1
-            continue
-        need(symbol not in found, 'DUPLICATE_NORMALIZED_OFFICIAL_DAY_SYMBOL')
+        # Reject malformed numeric records even when the exchange-code shape
+        # is not a recognized stock candidate (index/instrument ambiguity).
         vals = {key: finite_number(row[key], key, positive=key in FIELDS[:4])
                 for key in FIELDS}
         need(vals['low'] <= min(vals['open'], vals['close'])
@@ -88,6 +89,10 @@ def validate_day_rows(rows, trading_day: str, target_symbol: str):
              and vals['low'] <= vals['high'], 'DAY_OHLC_ENVELOPE_INVALID')
         need((vals['volume'] > 0) == (vals['amount'] > 0),
              'DAY_VOLUME_AMOUNT_PAIR_INCONSISTENT')
+        if symbol is None:
+            non_equities += 1
+            continue
+        need(symbol not in found, 'DUPLICATE_NORMALIZED_OFFICIAL_DAY_SYMBOL')
         found[symbol] = vals
     need(total > 0, 'DAY_EXPORT_EMPTY')
     need(target_symbol in found, 'TARGET_EQUITY_NOT_IN_DAY_EXPORT')

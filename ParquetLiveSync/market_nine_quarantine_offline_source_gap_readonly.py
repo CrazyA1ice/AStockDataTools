@@ -68,6 +68,8 @@ def _probe_scope(root, record, *, window_reader=None):
     relative, expected_sha = record['relative_path'], record['observed_local_file_sha256']
     need(type(relative) is str and relative.endswith('.jsonl') and
          type(expected_sha) is str and bool(PROOF.HEX64.fullmatch(expected_sha))
+         and type(record.get('observed_file_bytes')) is int
+         and 0 < record['observed_file_bytes'] <= MINUTE.MAX_BYTES
          and record.get('contents_validated') is False
          and record.get('source_provider_authenticated') is False,
          'PROBE_INVENTORY_ENTRY_SCOPE_INVALID')
@@ -93,6 +95,7 @@ def _probe_scope(root, record, *, window_reader=None):
     need(type(checked) is dict and checked.get('status') == WINDOW.STATUS
          and checked.get('declared_symbol') == symbol
          and checked.get('physical_local_file_sha256') == expected_sha
+         and checked.get('physical_local_file_bytes') == record['observed_file_bytes']
          and checked.get('source_file_bytes_verified') is True
          and checked.get('rows_structurally_and_numerically_validated') == count
          and type(checked.get('days')) is list
@@ -132,6 +135,9 @@ def inspect(module_root, minute_root, *, audit_reader=None, inventory_reader=Non
          and inventory['file_count'] == len(inventory['files'])
          and inventory['file_count'] <= MAX_PROBES
          and inventory.get('market_files_written') is False
+         and inventory.get('production_quarantine_cleared') is False
+         and inventory.get('qmt_cache_modified') is False
+         and type(inventory.get('qmt_download_calls')) is int
          and inventory.get('qmt_download_calls') == 0
          and inventory.get('qmt_native_origin_authenticated') is False,
          'EXPLICIT_PROBE_INVENTORY_INVALID')

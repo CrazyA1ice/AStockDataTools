@@ -5,6 +5,7 @@ from hashlib import sha256
 from io import StringIO
 import contextlib
 import inspect as inspect_module
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -49,6 +50,39 @@ class DenseDirectJsonTests(unittest.TestCase):
         self.assertTrue(r['direct_only_no_recursion'])
         self.assertFalse(r['producer_receipt_stage_log_verified'])
         self.assertFalse(r['producer_quarantine_cleared'])
+
+    def test_windows_scandir_stat_identity_disagrees_but_direct_path_metadata_is_authoritative(self):
+        # Windows DirEntry.stat may return zero st_ino/st_dev while Path.stat
+        # reports real file identity. Do not treat this API difference as a
+        # changed file; still preserve the physical file and directory checks.
+        self.write('stable.json', self.payload)
+        native_scandir = os.scandir
+
+        class EntryWithUnreliableCachedStat:
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+                self.name = wrapped.name
+                self.path = wrapped.path
+
+            def is_symlink(self):
+                return self._wrapped.is_symlink()
+
+            def is_file(self, *, follow_symlinks=True):
+                return self._wrapped.is_file(follow_symlinks=follow_symlinks)
+
+            def stat(self, *, follow_symlinks=True):
+                raise AssertionError('DirEntry cached stat not a stable identity source')
+
+        @contextlib.contextmanager
+        def wrapped_scandir(path):
+            with native_scandir(path) as iterator:
+                yield (EntryWithUnreliableCachedStat(x) for x in iterator)
+
+        with mock.patch.object(S.os, 'scandir', side_effect=wrapped_scandir):
+            result = self.inspect()
+        self.assertEqual(result['matching_file_count'], 1)
+        self.assertEqual(result['physically_hashed_json_files'], 1)
+        self.assertTrue(result['scope_exhaustive'])
 
     def test_original_sha_match_is_only_physical_candidate_not_admission(self):
         self.write('receipt-original.json', self.payload)

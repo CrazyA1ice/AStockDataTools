@@ -357,6 +357,8 @@ P3.12 建立以下安全层：
 
 **P3.12 深度 3 分区首次结果（11/12）（2026-11-26）**：操作者在原固定 SHA `66d62a2a0e3a184db559bdc2c3ac3e76129f1889` 下，根目录 `.` 及一级子树共 12 个范围，**11 个完全搜索**，报告合计检查 381 个目录项、111 个 JSON、0 个 Nov25 原历史回执精确 SHA 命中、0 个未哈希 JSON（已完成的范围）。`backups` 33/0，`deploy-backups` 8/0，`downloads` 32/0，`incremental` 64/31，`market_update` 83/21，`minute_source_trials` 13/12，`qmt_1m_probe` 3/0，`qmt_extra` 32/11，`rollover` 1/0，`transactions` 8/5，根目录 104/31（前者为目录项，后者为 JSON）。唯一未完成 `qmt_1min_market` 子树返回 `SEARCH_DIRECTORY_ENTRY_BUDGET`；**并未形成全部深度 3 的无匹配证明**。下一步仅对该未完成子树执行自身 `--max-depth 0`，并对它的既存直接子目录按 `--search-subdir qmt_1min_market/<child> --max-depth 1` 细分。每次保持 768 项/128 JSON/64 MiB 上限、拒绝 symlink，不扩大范围到整个硬盘；任何继续超限的分区仍须显式记为未覆盖，不得无条件宣布原 Nov25 SHA 不存在。不改变生产最新回执、正式候选、QMT 缓存及 9 条隔离。
 
+**P3.12 当前唯一未完成密集子树（2026-11-27）**：用户在 `qmt_1min_market` 独立按深度搜索，目录自身（6 项/0 JSON）及 `calibration`（1/1）、`eltdx_1m_probe`（10/6）、`logs`（7/0）、`repair_evidence`（1/0）、`tdx_1m_crosscheck`（2/1）全部完成且没有原始回执 SHA 命中；原记录汇总为 6 个完成范围、27 项、8 JSON、无跳过。唯一仍阻断 `qmt_1min_market/20261014_20261112`（`SEARCH_DIRECTORY_ENTRY_BUDGET`）。这属于原计划 `work` 深度 3 的最后未覆盖区域，不能称全域查完。接下来只读有界检查该子树的直接文件/目录形状（最多 769 项抽样，至多 129 JSON 名单、129 直接子目录）和原定位器 `--max-depth 0`；存在安全直接子目录时，以每个 `--max-depth 0` 单独验证整体深度 3 的其余位置。若大量直接非 JSON 行情文件导致预算阻塞，不提高预算、不生成历史回执、不能把抽样未找到当作整体无 JSON；应先确认具体后再增设带单位测试的只读 JSON 专用证据规则。正式九条隔离和 SHA/日志/Parquet 约束继续有效。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

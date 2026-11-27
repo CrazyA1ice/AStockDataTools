@@ -125,10 +125,20 @@ class CurrentLedgersTests(unittest.TestCase):
         with self.assertRaisesRegex(S.ProgressError,
                                     'FINANCIAL_PENDING_ENTRY_INVALID'):
             S.inspect(self.module, self.stock)
+        self.write('financial-cache-progress.json', self.cache(
+            pending={'': {'reason': 'NO_CACHE', 'attempts': 1}}))
+        with self.assertRaisesRegex(S.ProgressError,
+                                    'FINANCIAL_PENDING_ENTRY_INVALID'):
+            S.inspect(self.module, self.stock)
 
     def test_08_bad_pending_attempts_refused(self):
         self.write('progress.json', self.supplementary(
             financial_pending={'000001.SZ': {'table': 'Capital', 'attempts': 0}}))
+        with self.assertRaisesRegex(S.ProgressError,
+                                    'SUPPLEMENTARY_PENDING_MALFORMED'):
+            S.inspect(self.module, self.stock)
+        self.write('progress.json', self.supplementary(
+            financial_pending={'': {'table': 'Capital', 'attempts': 1}}))
         with self.assertRaisesRegex(S.ProgressError,
                                     'SUPPLEMENTARY_PENDING_MALFORMED'):
             S.inspect(self.module, self.stock)

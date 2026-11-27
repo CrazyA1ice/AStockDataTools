@@ -381,6 +381,16 @@ P3.12 建立以下安全层：
 
 **证据流仍阻断**：没有找到原历史回执字节，因此原定时调用、真实 `EIGHT_PERIODS` 日志、原候选 Parquet 的连锁验证以及 P3.11 九条来源缺口审计都没有重新得到通过结论。原 5206 accepted、9 quarantine、5215 expected 是之前的历史记录，不是此次重新验证的新审计。不得替换最新 `last-afternoon-unified.json`，不得重新生成或猜测 11-25 原回执，不得取消原九条隔离、改 H5/Parquet 或调用 QMT 下载。下一阶段如果继续找原件，必须从事先确定的**其他已有备份/归档的具体路径**进行隔离、限额、只读取证，必要时额外验证压缩档成员；不能无限扫描磁盘或声称全局丢失。P3.12 #283 和 P3.13 #284 都保持 Draft，不能未经审核合并 main。
 
+## 8U. P3.14 实际备份候选根目录清单与定时回执覆盖机制（2026-11-27）
+
+P3.13 用户 Windows 实机已证实旧 15/15、新 23/23、选定 25 模块 615/615 通过；最后密集目录 5,039/5,039 JSON 均按 256 个上限受控分片完成 SHA 计算、原 Nov25 固定哈希零命中。结合此前非重叠深度≤3分区 124 JSON，按分时取证统计共 5,163 JSON，但不是同一时刻的目录原子快照。
+
+下一步操作者完成仅元数据的归档位置检查：`D:\ChatGPT\AStockDataTools` 根直接 10 项无显式归档候选文件；其 `work` 直接 65 项，其中存在名为 `market-quarantine-audit-20261125`、`market-extended-forensics-20261125`、`market-first-trade-audit-20261125`、`market-qmt-cache-audit-20261125`、`market-quality-backlog-verify-20261125`、`market-quality-general-verify-20261125`、`market-wecom-report-audit-20261125` 的既有审计工作树（**名称不是历史回执字节证据**）。`ParquetLiveSync/work/backups` 含 `day`、`week`；`deploy-backups` 含两份 `finance-routine-243-20261125-110040` 和 `finance-routine-243-20261125-110651-2ae39da0`；`rollover` 为 `2025`，`transactions` 为 `day`、`week`、`month`。目前这些目录的内部字节尚未经过原 SHA 验证，不能据目录名断言存在旧收据。财务部署备份名称时间为 11:00，先于计划每日 20:05 北京时间更新，因此优先级低于可能留存当天审计输出的已有工作树。
+
+同时只读核对仓库固定提交 `a6c112a35d4812bf8cd6c16562c0a9ecb5119cb`（此处以 PR #284 已固定完整 SHA `a6c112a35d4812bf8cd6c16562c0c09ecb5119cb` 为准）内 `ParquetLiveSync/scheduled-afternoon-update.ps1`：正常非 `HistoryOnly` 定时更新写入的是 `work/last-afternoon-unified.json`；在 `$status+'.part'` 上写入本次 JSON 后使用 `Move-Item -Force` 覆盖当前状态文件，所查脚本没有在覆盖前自动生成日期化的历史回执副本。阶段日志和总日志则使用 `afternoon-YYYYMMDD-HHmmss*.log` 命名。该代码可以解释新运行令最新回执 SHA 与旧固定 SHA 不同，**不能证明没有其他备份机制保存原始字节**。
+
+下一阶段只读检查**既已列明的具体工作树与备份根目录**，优先核对是否有 `ParquetLiveSync/work` 中的实际旧回执或单独归档副本，并单独列出当前工作目录中的 `afternoon-20261125*.log`。仅对实际存在、非 symlink、受文件数/单文件尺寸限制的候选 JSON 做原始物理 SHA；日志内容不替代被替换的历史回执。禁止遍历整个盘、自动扩大预算、重建旧回执、覆盖最新状态、清理隔离或将已有工作树目录名当做通过凭据。所有 PR 保持 Draft。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

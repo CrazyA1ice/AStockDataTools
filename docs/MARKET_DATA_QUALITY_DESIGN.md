@@ -397,6 +397,16 @@ P3.13 用户 Windows 实机已证实旧 15/15、新 23/23、选定 25 模块 615
 
 **P3.14 11-25 阶段日志、元数据及 Parquet 三重物理 SHA 已核验（2026-11-27）**：用户通过 Windows 严格只读命令对存活的 `afternoon-20261125-200502-EIGHT_PERIODS.log`、`market_update/daily/2026-11-25.json`、`market_update/daily/2026-11-25.parquet` 实际交叉核对成功，产生 `STAGE_METADATA_PARQUET_EVIDENCE_ONLY`。`EIGHT_PERIODS` 在目标日的 `MARKET_DAILY_STAGED=` 记录**恰好 1 条**，日志物理 SHA `974b2c55b46109fb998459a6d97b9955e8e359ac4c3b0a049c0adc1bbd70dd6a`，私有元数据 SHA `eeed821ed64202d8c8b243443f2c9622785e3a0c715c333414e48c70353768a4`，候选 Parquet 物理 SHA `de113cbd202ea68590780e5509755d843ebc6363a2857399094c09982e6f7eff`；阶段声明与私有元数据及真实候选文件 SHA 相等。数量 `accepted=5206`、`quarantined=9`、`expected=5215`、`rows=1249440` 一致；七条 `QMT_RAW_ONE_MINUTE_MISSING` 是 `SZ300119`–`SZ300125`，两条 `OFFICIAL_DAY_OHLC_MISMATCH` 是 `SH605336` 和 `SZ300462`，其余隔离不被增删。现场返回 `original_run_receipt_authenticated=false`、`original_run_stage_link_verified=false`、`original_quarantines_cleared=false`、`market_files_written=false`。此证据**重新验证了三份真实文件的字节级关系**，不再只是未经核验地引用历史数字，但没有找回原 2026-11-25 定时回执的固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837`。因此旧 `audit_market_quarantine_readonly` 和 P3.11 `verify_original` 的回执首先校验、阶段日志原链接及 exit code 认证**仍阻断**，不能由阶段日志自行生成替代回执。若继续调查既有 QMT probe，仅可独立只读取证并明确源供应商未认证、九条仍隔离，不能绕过正式 P3.11 准入。
 
+## 8V. P3.15 仅核对本地九条分钟探针，不冒充原定时回执（2026-11-27）
+
+用户的 P3.14 实机仅检查了已存在的原 2026-11-25 `EIGHT_PERIODS` 阶段日志及当日私有元数据、Parquet 三份物理字节，单一目标阶段记录和数量 `accepted=5206`、`quarantined=9`、`expected=5215`、`rows=1249440` 一致，真实 SHA 分别为 `974b2c55b46109fb998459a6d97b9955e8e359ac4c3b0a049c0adc1bbd70dd6a`、`eeed821ed64202d8c8b243443f2c9622785e3a0c715c333414e48c70353768a4` 和 `de113cbd202ea68590780e5509755d843ebc6363a2857399094c09982e6f7eff`，且原九条隔离都保留。但仍未找回固定原定时回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837`，正式 P3.11 生产回执优先校验不可绕过。
+
+操作者第一次试探 P3.15 时，通过 Windows PowerShell 5.1 直接向 Python `-c` 转发包含很多字符串字面量的源码变量，命令里的引用引号在原生参数传递时被剥离：`v["status"]` 变为 `v[status]`、`"minute"` 变成 `minute`，导致解析阶段 `SyntaxError` 并退出；**尚未运行任何分钟探针 IO**。这不是源数据或代码逻辑核验失败，也不改变 P3.14 的三重 SHA 结果。
+
+新增 **独立 Draft PR #285**（基于 P3.13 #284）中的 `market_nine_stage_only_local_probe_readonly.py`，彻底取消 Python `-c` 传递：只接受安装模块根目录，扫描既存 `work/qmt_1m_probe` 固定明确目录、不递归、不写文件；复用 P3.11 已有单探针内容校验 `GAP._probe_scope`，但**从不调用 `GAP.verify_original`、`GAP.inspect` 或 `AUDIT.audit` 来伪造缺失的历史回执证据**。保留最多 16 个物理 JSONL 和累计 64MiB，单文件必须通过稳定 SHA、逐行 OHLCVA 与分钟交易时钟、日期窗口原约束；开始和结束分别重新哈希整个已列明本地文件集合并比较。用原固定九条 symbol/reason 映射出没有文件、日期停在 11-12、存在 11-25 的 241/240/部分网格、多文件同票冲突的局部状态；即使有完美 241 分钟网格，也只视为**未认证来源的本地文件**，绝不解除九条隔离。
+
+输出硬编码 `original_run_receipt_authenticated=false`、`original_run_stage_link_verified=false`、`local_files_provider_authenticated=false`、`original_quarantines_cleared=false`、`production_merge_authorized=false`、`market_files_written=false`、`qmt_download_calls=0`。P3.15 只添加一个独立读程序、合成临时文件 **15 项回归**及文档。此前 P3.13 25 模块 615/615 已经实机通过；**P3.15 的新目标为 26 模块 630 项，另原审计器旧 15 项，不是已经通过的实机结果**。需固定 PR 提交，在真实 Windows 上依次跑新 15、原旧 15、全选 630，全部通过后才能只读查看真实 qmt_1m_probe。审计无法证明 QMT 供应商独立来源、DAY 一致或市场准入；所有 PR Draft，不更新 H5/Parquet、不重建回执、不下 QMT 资料。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

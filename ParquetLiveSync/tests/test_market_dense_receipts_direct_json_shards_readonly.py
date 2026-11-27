@@ -21,6 +21,7 @@ class DenseDirectJsonTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.module = Path(self.tmp.name)
         self.directory = self.module / 'work'
+        self.directory.mkdir()
         for part in S.DIRECT_SUBDIR.split('/'):
             self.directory = self.directory / part
             self.directory.mkdir()

@@ -78,7 +78,12 @@ def _snapshot(directory):
                 continue
             need(not item.is_symlink() and item.is_file(follow_symlinks=False),
                  'DENSE_JSON_LINK_OR_NONREGULAR')
-            info = item.stat(follow_symlinks=False)
+            # On Windows, scandir DirEntry.stat can omit file identity
+            # fields (notably st_ino) that pathlib.Path.stat populates.
+            # Re-stat the same JSON path with os.stat so the initial
+            # snapshot and all pre/post-hash checks use matching semantics.
+            # NOFOLLOW plus the regular-file gate still reject link swaps.
+            info = os.stat(item.path, follow_symlinks=False)
             need(stat.S_ISREG(info.st_mode), 'DENSE_JSON_LINK_OR_NONREGULAR')
             json_files.append((item.name, _identity(info)))
             need(len(json_files) <= MAX_DIRECT_JSON_METADATA,

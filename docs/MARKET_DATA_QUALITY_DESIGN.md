@@ -411,6 +411,14 @@ P3.13 用户 Windows 实机已证实旧 15/15、新 23/23、选定 25 模块 615
 
 **下阶段明确可用的原始辅助证据**：核对固定提交 `ParquetLiveSync/scheduled-afternoon-update.ps1` 可知它成功保存当次可变 `last-afternoon-unified.json` 后将 `MARKET_1630_SUMMARY=` + `ConvertTo-Json -Compress -Depth 12` 单行 JSON 写入正在录制的 `afternoon-YYYYMMDD-HHmmss.log`。用户前一步已证实 11-25 对应总日志 `afternoon-20261125-200502.log` 物理存在。因此应优先只读限定 **这一个总日志** 提取唯一摘要，检查 `invocation=Scheduled`、`china_start`、`stage_records.EIGHT_PERIODS.log_path/exit_code` 与已经验过的真实 `EIGHT_PERIODS` 日志和当日元数据是否一致；若有 `verification-input-20261125-200502.json`，仅作为独立早期态的旁证。**绝不将总日志的一行 JSON 或早期态生成新“原始回执”文件，也不能由日志重新演算出已缺失固定回执 SHA**。只输出关键枚举和明确未认证标记，始终保留原九条隔离。
 
+## 8W. P3.16 原定时总日志摘要与 EIGHT_PERIODS 真实日志关联成功（2026-11-27）
+
+用户 Windows 严格只读核查仍然存在的 `ParquetLiveSync/work/afternoon-20261125-200502.log`，其中 `MARKET_1630_SUMMARY=` **恰好 1 条**，总日志物理 SHA `5e10efe1b9ef646c22c143cc5bccf64da2ea7dbbbb02550550c8685110911e27`。该 JSON 的 `format=qmt_daily_single_trigger_v3`、`invocation=Scheduled`、`run_scope=ALL_FOUR_SECTIONS`、`history_only=false`、`china_start` 为 2026-11-25；`stage_records.EIGHT_PERIODS.log_path` 严格等于已验证的 `afternoon-20261125-200502-EIGHT_PERIODS.log` 实际路径，该阶段 `exit_code=0` 且实际日志 SHA 重新确认 `974b2c55b46109fb998459a6d97b9955e8e359ac4c3b0a049c0adc1bbd70dd6a`。唯一 `MARKET_2005_RUN_RESULT=PARTIAL` 行与摘要 `scheduled_run_status=PARTIAL` 相符。四阶段 `steps_completed=[EIGHT_PERIODS,SECTORS,ADJUSTMENTS_ROTATING,FINANCIAL_DAILY]`。同一运行标识 `verification-input-20261125-200502.json` 物理存在，其 SHA `49b353f855296b7b162781ce06a6d8d74257f2b50a2dae1f3b22cccfa1af5d26`，**文件内容尚未验证**。
+
+只读核对原 `scheduled-afternoon-update.ps1` 后可确定它仅在某个阶段退出码 `0` 时才将阶段名放入 `steps_completed`；因此本次四个阶段均为进程成功结束（单独意义），**不等于质量通过**。原 `market_daily_verification.py` 的 `assess('EIGHT_PERIODS',...)` 在 `MARKET_DAILY_STAGED` 中存在 `quarantine>0` 时把质量标为 `PARTIAL`，而调度入口在质量 `PARTIAL/FAIL` 或跨源 FAIL 时会把最初执行成功的结果降为整轮 `PARTIAL`。P3.14 已证实当日 9 隔离，因此 `PARTIAL` 与当前策略一致；**尚未实际读取 `verification-20261125-200502.json`，不能认定只有九条隔离一个原因，也不能推断财务/除权/跨源具体验证结果**。
+
+P3.14 三重 SHA 已分别复核 `EIGHT_PERIODS` 日志、私有元数据、私有候选 Parquet 的字节关联。现在的 P3.16 额外提供了原总日志对阶段日志绝对路径与退出码的**独立旁证**，但总日志中压缩的 `MARKET_1630_SUMMARY=` 文本**不是原定时写出的 `last-afternoon-unified.json` 原物理字节**；仍不能匹配/重造已缺失的 11-25 运行回执原 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837`，也不能等同原 `audit_market_quarantine_readonly` 的回执身份已通过。下阶段仅继续按同一已知 `20261125-200502` 运行标识，**只读**检验 `verification-input` 与若确实存在的 `verification` 报告；核对报告中 `execution/data_validation/cross_validation` 与总日志 `validation` 一致，输出四个阶段的实际质量标签/原因。禁止任何更改原回执、数据、定时任务及隔离名单；全部 PR 仍保持 Draft。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

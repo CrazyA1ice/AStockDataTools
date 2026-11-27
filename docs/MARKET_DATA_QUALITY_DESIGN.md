@@ -373,6 +373,8 @@ P3.12 建立以下安全层：
 
 **P3.13 实机首轮全部在 setUp 失败（2026-11-27）**：用户 Windows 固定原 SHA `df10a861a8bd60f7ae114ab23c77e4e684dd7a3d` 旧审计器 **15/15 PASS**，但 P3.13 新增 22 项均在统一临时目录 `setUp()` 阶段因 Windows `FileNotFoundError [WinError 3]` 失败：测试先尝试创建临时 `work/qmt_1min_market`，没有提前创建临时 `work` 父目录。所有 22 项的测试断言**尚未进入**，不是分片算法或实际行情数据故障。修复 `a4931867ad01defd6ecfd17b99171bc53b6b8deb` 仅在临时测试夹具中为 `self.module / 'work'` 增加 `self.directory.mkdir()` 一行，其他子目录创建照旧，全部 22 测试方法与生产源码未变；GitHub 比较证实只 +1 行测试文件。此 SHA **待重新实机运行新 22 和选定 614 项**；实际 `receipts` SHA 物理检查仍未发生，不能宣称已恢复 Nov25 回执或原 9 隔离证据链。
 
+**P3.13 Windows DirEntry.stat 快照差异导致误报（2026-11-27）**：固定 `a4931867ad01defd6ecfd17b99171bc53b6b8deb` 进行第二次 Windows 实机测试，旧审计器仍 **15/15 PASS**，P3.13 新 22 项中 **4 ERROR、5 FAIL、13 PASS**；所有非通过情况均在 JSON 物理读取前由 `DENSE_FILE_CHANGED_DURING_HASH` 拒绝，不存在已完成的 614 项全量回归或实际密集 receipts SHA 结果。检查发现初始快照用 `os.scandir.DirEntry.stat(follow_symlinks=False)`，后续使用 `pathlib.Path.stat()`，Windows 上两者的缓存/物理文件身份字段（可能包括 st_ino）可能不一致，即使没有外部修改也会误判。修复 `2d81fdcbbdd2a02efa706627912c562a31327405`：初始快照改为同语义 `os.stat(item.path,follow_symlinks=False)`，依旧保留 `stat.S_ISREG`、路径 symlink 拒绝、读取前后完整物理身份与哈希校验、目录 JSON 清单重验。新增专门模拟 DirEntry 不可靠 stat 的测试 `650811170353a396c1cc4aa691b27716c0e53d71`，所以新专项总数 **23 项**、选定 25 模块 **615 项**，另原审计器 15 项。上述根因是跨 API 字段一致性的技术判断，**必须经新 Windows 测试验证，不得先宣告已修复或证据取证完成**。保持全部旧数据保护、9 条隔离、不可写市场及 QMT 禁令。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

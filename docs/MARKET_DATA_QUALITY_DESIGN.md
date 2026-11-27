@@ -391,6 +391,10 @@ P3.13 用户 Windows 实机已证实旧 15/15、新 23/23、选定 25 模块 615
 
 下一阶段只读检查**既已列明的具体工作树与备份根目录**，优先核对是否有 `ParquetLiveSync/work` 中的实际旧回执或单独归档副本，并单独列出当前工作目录中的 `afternoon-20261125*.log`。仅对实际存在、非 symlink、受文件数/单文件尺寸限制的候选 JSON 做原始物理 SHA；日志内容不替代被替换的历史回执。禁止遍历整个盘、自动扩大预算、重建旧回执、覆盖最新状态、清理隔离或将已有工作树目录名当做通过凭据。所有 PR 保持 Draft。
 
+**P3.14 五份 2026-11-25 原始运行日志实际留存（2026-11-27）**：操作者继续检查 11 个显式存在的历史工作树/部署备份目录下指定的直接层级，`candidate_roots_existing=11`、`scopes_completed=11`、`json_sha256_checked=0`、`matching_original_sha_files=[]`、`blocked_scopes=[]`。这是**已指定层级没有直接 JSON 候选**，不是已递归搜索 11 个工作树的所有内容，更不是旧回执 SHA 找到或整个磁盘缺失证明。同步只读枚举实际 `ParquetLiveSync/work` 下存在五份同一运行标识 `20261125-200502` 的阶段日志：`afternoon-20261125-200502.log`、`afternoon-20261125-200502-EIGHT_PERIODS.log`、`afternoon-20261125-200502-SECTORS.log`、`afternoon-20261125-200502-ADJUSTMENTS_ROTATING.log`、`afternoon-20261125-200502-FINANCIAL_DAILY.log`，不再需要猜测日志是否留存。
+
+经 GitHub 只读核对原 `audit_market_quarantine_readonly.py`，其独立证据字段是 `EIGHT_PERIODS` 阶段日志中目标日期必须恰好一条 `MARKET_DAILY_STAGED=` JSON，包含 `date/accepted/quarantine/rows/sha256`；与 `market_update/daily/2026-11-25.json` 中的 `format/date/sha256/stock_days_accepted/expected_stock_days/rows/quarantined` 关联；再与私有 `2026-11-25.parquet` 的真实物理 SHA 对照。但原审计程序**首先要求按原 11-25 SHA 验证当次 `Scheduled` 回执和它明确声明的 EIGHT_PERIODS 日志绝对路径及 exit code**，回执原字节至今未找到，因此不能调用旧原审计并称通过。下一步只针对既存上述 EIGHT_PERIODS 实际文件做“**阶段日志→日线元数据→Parquet 字节 SHA 独立残留证据核对**”，结果必须明确 `original_run_receipt_authenticated=false`、`original_run_stage_link_verified=false`、`quarantines_cleared=false`，即使阶段数字与候选字节一致也不能补造回执或直接继续 P3.11 九条准入。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

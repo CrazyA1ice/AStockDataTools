@@ -419,6 +419,16 @@ P3.13 用户 Windows 实机已证实旧 15/15、新 23/23、选定 25 模块 615
 
 P3.14 三重 SHA 已分别复核 `EIGHT_PERIODS` 日志、私有元数据、私有候选 Parquet 的字节关联。现在的 P3.16 额外提供了原总日志对阶段日志绝对路径与退出码的**独立旁证**，但总日志中压缩的 `MARKET_1630_SUMMARY=` 文本**不是原定时写出的 `last-afternoon-unified.json` 原物理字节**；仍不能匹配/重造已缺失的 11-25 运行回执原 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837`，也不能等同原 `audit_market_quarantine_readonly` 的回执身份已通过。下阶段仅继续按同一已知 `20261125-200502` 运行标识，**只读**检验 `verification-input` 与若确实存在的 `verification` 报告；核对报告中 `execution/data_validation/cross_validation` 与总日志 `validation` 一致，输出四个阶段的实际质量标签/原因。禁止任何更改原回执、数据、定时任务及隔离名单；全部 PR 仍保持 Draft。
 
+## 8X. P3.17 原校验前后状态 SUCCESS → PARTIAL 证实（2026-11-27）
+
+操作者针对同一 `20261125-200502` 原始总日志和原始 `verification-input`、`verification` 报告实施严格只读复核，返回 `SURVIVING_PRE_AND_POST_VERIFICATION_REPORT_CORROBORATED`。校验输入物理 SHA `49b353f855296b7b162781ce06a6d8d74257f2b50a2dae1f3b22cccfa1af5d26`，报告 SHA `97082450ab86c1d3c7d1fa13387443ce8f62c0e054f08da8e53662e238878343`；总日志、四阶段路径及 0 退出码、校验输入及报告的身份字段一致。原输入 `pre_verification_status=SUCCESS`，实际最终 `PARTIAL`，脚本中校验结果降级条件成立，`verification_execution=PASS`、`verification_data_validation=PARTIAL`、`verification_cross_validation=UNVERIFIED`，并非四阶段执行失败。
+
+每阶段实机报告具体如下：`EIGHT_PERIODS` 执行 PASS / 数据 PARTIAL / 抽样跨源 PASS，原因是原九条隔离，独立已配置分钟抽样一致不代表全市场认证；`SECTORS` 执行 PASS / 数据 PASS / 跨源 UNVERIFIED，报告成员记录 **904992**；`ADJUSTMENTS_ROTATING` 执行 PASS / 数据 PARTIAL / 跨源 UNVERIFIED，本批 **80** 只，仍有后续批次；`FINANCIAL_DAILY` 执行 PASS / 数据 PARTIAL / 跨源 UNVERIFIED，本批 **177** 只、当次待审 **77**、未遍历 **4526**，历史完整性未验证。总报告里的三个 PARTIAL 源于不同独立维度：隔离股票、除权轮转进度和财务日更进度，不得仅将 `PARTIAL` 归因于九条隔离。数字全部严格属于 **2026-11-25 20:05:02 当次快照**，不得认为它们是后来/当前尚存待处理数量。
+
+原历史定时回执原始物理 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` **至今未认证**，虽然总日志的摘要、同源校验前后态、阶段日志、私有日元数据与候选 Parquet 已提供多条相符的独立物理证据，也不能替代原收据的真正字节。因此旧正式 `audit_market_quarantine_readonly` 和 P3.11 `verify_original` 的历史回执首关仍未通过，九条隔离保持，不自动准入、不回填/下载、不修改日更计划与生产行情，PR #283、#284、#285 保持 Draft。
+
+**P3.18 下一步**：只读研究 `ParquetLiveSync/work/qmt_extra/progress.json`（原除权/板块等游标）和 `financial-cache-progress.json`（日线财务 `daily_cursor`、`daily_sweep_reached_end`、`pending`、`pending_retry_cursor`）。原仓库表明两套状态独立、读取不必调用 QMT。新阶段应固定限制这些真实文件的实际字节、字段类型、来源根路径，输出经核验的游标和数量但不比较不同历史日期时的“已完工百分比”，不隐式更改 pending/游标。**当前无法从 P3.17 的 177/77/4526 推断这两份实际进度文件的现状。**
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

@@ -429,6 +429,16 @@ P3.14 三重 SHA 已分别复核 `EIGHT_PERIODS` 日志、私有元数据、私�
 
 **P3.18 下一步**：只读研究 `ParquetLiveSync/work/qmt_extra/progress.json`（原除权/板块等游标）和 `financial-cache-progress.json`（日线财务 `daily_cursor`、`daily_sweep_reached_end`、`pending`、`pending_retry_cursor`）。原仓库表明两套状态独立、读取不必调用 QMT。新阶段应固定限制这些真实文件的实际字节、字段类型、来源根路径，输出经核验的游标和数量但不比较不同历史日期时的“已完工百分比”，不隐式更改 pending/游标。**当前无法从 P3.17 的 177/77/4526 推断这两份实际进度文件的现状。**
 
+## 8Y. P3.18 当前财务与除权两套进度账本的物理 SHA 只读取证（2026-11-27）
+
+P3.17 已有真实 Windows 只读证据确认：原 11-25 20:05:02 `verification-input` 物理 SHA `49b353f855296b7b162781ce06a6d8d74257f2b50a2dae1f3b22cccfa1af5d26`，原 `verification` 报告 SHA `97082450ab86c1d3c7d1fa13387443ce8f62c0e054f08da8e53662e238878343`。当次进程执行 PASS、四个阶段均成功退出；数据层 PARTIAL、整体跨源 UNVERIFIED，使初始 `SUCCESS` 合法降级为最终 `PARTIAL`。分段本轮八周期 9 隔离、板块 904992 条成员、除权旋转本批 80 只仍有更多、财务 177 只处理/77 待审/4526 未访问。**这些数字专属历史当轮，不能当作后续/当下账本余额**。
+
+核对仓库现行源码，`qmt_extra_data.py` 将 `WORK` 定为模块 `work/qmt_extra`，旧补充模块状态路径为 `progress.json`，`cursor.adjustments` 是高水位游标、`financial_pending` 为其旧式财务挂起队列。与此完全独立，`qmt_extra_financial_cache_import.py` 的 `STATE_FILE` 为 `financial-cache-progress.json`，具有 `daily_date`、`daily_cursor`、`daily_sweep_start`、`daily_sweep_reached_end`、`daily_sweep_finished`、`pending_retry_cursor`、`pending`。当前缓存日日更报告中的 `daily_remaining_unvisited` 需要该轮实际经过的完整股票全集计算，不能拿单个 `daily_cursor` 值或对两个独立 `pending` 账本相加伪造当前数字。除权轮转的 `next_batch_required` 也须在当次完整除权股票全集下计算，不能由游标代码独自得出已完成。
+
+新增 **Draft PR #286**（基于 P3.15 #285）的 `market_finance_adjustment_progress_readonly.py`，仅通过显式 `--module-root` 与 `--stock-root` 验证既有根目录身份，只读取 `work/qmt_extra/progress.json` 与 `financial-cache-progress.json`，不调用 QMT、不调用写入主脚本；严格允许单文件最多 8 MiB、两文件合计最多 16 MiB，固定文件名、无符号链接、正规非空文件、真实物理 SHA、`os.stat/fstat` 前后身份核对、第二次完整字节复核及目录身份复查。对缺失文件只报告 `present=false`，**不创建或默认 pending=0**；验证 `format/root`、日期和股票游标、pending 原因/表和次数的类型，并只输出哈希、文件大小、数量分类和游标，不输出完整股票名单。两个文件之间未取得写锁，报告恒定 `state_cross_file_atomic_snapshot_certified=false`；`finance_full_history_coverage_certified=false`、`adjustments_universe_exhaustion_certified=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。
+
+新增合成临时数据 **16 项专项**；P3.15 旧验证 26 模块 630/630 已实机通过，此次叠加为 **27 模块 646 项**、另旧原审计器单跑 15 项，**本 P3.18 的新 16、646 和用户当前真实两份进度账本还没有 Windows 实机复验**。只有固定 PR 提交测试通过后才能输出实际保存的账本计数、游标和各文件 SHA；不凭代码或 11-25 报告臆断现时余额。P3.11 原 11-25 固定回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍无法认证，独立历史阶段/运行旁证不构成恢复回执。禁止主线合并、旧回执合成、现时定时器修改、QMT 下载、行情写盘或解除原九条隔离。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

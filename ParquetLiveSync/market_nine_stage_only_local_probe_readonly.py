@@ -47,7 +47,7 @@ def _explicit_root(module_root):
 
 def _validated_inventory(root):
     # Existing P3.11 local inventory is a separate byte-level check; it does
-    # NOT authenticate a producer or bypass GAP.verify_original().
+    # NOT authenticate a producer or override the receipt-first gate.
     result = INVENTORY.inspect(root, 'minute')
     need(type(result) is dict and result.get('status') == INVENTORY.STATUS
          and result.get('kind') == 'minute'

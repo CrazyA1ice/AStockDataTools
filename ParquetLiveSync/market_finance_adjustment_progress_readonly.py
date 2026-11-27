@@ -135,6 +135,8 @@ def _supplementary(v, expected_root):
          'SUPPLEMENTARY_PENDING_MALFORMED')
     tables = Counter()
     for code, entry in pending.items():
+        need(type(code) is str and bool(code),
+             'SUPPLEMENTARY_PENDING_MALFORMED')
         _code_or_empty(code)
         need(type(entry) is dict and
              entry.get('table') in EXTRA.FIN_TABLES and
@@ -174,6 +176,8 @@ def _cache(v, expected_root):
     need(len(pending) <= 10000, 'FINANCIAL_PENDING_BUDGET')
     reasons = Counter()
     for code, entry in pending.items():
+        need(type(code) is str and bool(code),
+             'FINANCIAL_PENDING_ENTRY_INVALID')
         _code_or_empty(code)
         need(type(entry) is dict and
              entry.get('reason') in

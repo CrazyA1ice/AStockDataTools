@@ -375,6 +375,12 @@ P3.12 建立以下安全层：
 
 **P3.13 Windows DirEntry.stat 快照差异导致误报（2026-11-27）**：固定 `a4931867ad01defd6ecfd17b99171bc53b6b8deb` 进行第二次 Windows 实机测试，旧审计器仍 **15/15 PASS**，P3.13 新 22 项中 **4 ERROR、5 FAIL、13 PASS**；所有非通过情况均在 JSON 物理读取前由 `DENSE_FILE_CHANGED_DURING_HASH` 拒绝，不存在已完成的 614 项全量回归或实际密集 receipts SHA 结果。检查发现初始快照用 `os.scandir.DirEntry.stat(follow_symlinks=False)`，后续使用 `pathlib.Path.stat()`，Windows 上两者的缓存/物理文件身份字段（可能包括 st_ino）可能不一致，即使没有外部修改也会误判。修复 `2d81fdcbbdd2a02efa706627912c562a31327405`：初始快照改为同语义 `os.stat(item.path,follow_symlinks=False)`，依旧保留 `stat.S_ISREG`、路径 symlink 拒绝、读取前后完整物理身份与哈希校验、目录 JSON 清单重验。新增专门模拟 DirEntry 不可靠 stat 的测试 `650811170353a396c1cc4aa691b27716c0e53d71`，所以新专项总数 **23 项**、选定 25 模块 **615 项**，另原审计器 15 项。上述根因是跨 API 字段一致性的技术判断，**必须经新 Windows 测试验证，不得先宣告已修复或证据取证完成**。保持全部旧数据保护、9 条隔离、不可写市场及 QMT 禁令。
 
+**P3.13 实机 615 项与最后 5039 JSON 完整取证通过（2026-11-27）**：操作者在固定提交 `a6c112a35d4812bf8cd6c16562c0c09ecb5119cb`（P3.13 Draft PR #284）真实 Windows 实机执行：旧原审计器兼容测试 15/15 通过；新专项 23/23 通过；选定的 25 模块完整回归 **615/615 通过**。此结果确认此前 Windows `DirEntry.stat` 与 `Path.stat` 的误判在该固定提交下已被消除，无须修改任何生产行情或市场数据文件。
+
+继而只读对之前唯一仍阻塞的 `ParquetLiveSync/work/qmt_1min_market/20261014_20261112/receipts` **直接 JSON** 进行全量 SHA256 核验：`entries=5039`，`json_candidates=5039`，`json_physically_verified=5039`，`shards=256`，`bytes_hashed=32069975`，`manifest_sha=62b389eea00bd695978e4e80654fa47832837aa459b3a826f243874e64704479`，`matches=0`，`exhaustive=true`。前面 P3.12 其余互不重叠的全部显式深度 ≤3 分区共确认额外 111+8+5=124 个直接 JSON 零命中且无遗漏；相加共 **5163 份已由多轮只读取证逐区验证的 JSON**。**此合计不是全 `work` 目录同一时刻的原子快照**，更不证明深度 >3、其他目录/工作树、历史备份、压缩归档、被轮换/删除文件中不可能保有真原件。当前只能得出已明确枚举并完成的 `work` 深度 ≤3 所有 JSON 在其各自扫描时都未匹配 Nov25 固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837`。
+
+**证据流仍阻断**：没有找到原历史回执字节，因此原定时调用、真实 `EIGHT_PERIODS` 日志、原候选 Parquet 的连锁验证以及 P3.11 九条来源缺口审计都没有重新得到通过结论。原 5206 accepted、9 quarantine、5215 expected 是之前的历史记录，不是此次重新验证的新审计。不得替换最新 `last-afternoon-unified.json`，不得重新生成或猜测 11-25 原回执，不得取消原九条隔离、改 H5/Parquet 或调用 QMT 下载。下一阶段如果继续找原件，必须从事先确定的**其他已有备份/归档的具体路径**进行隔离、限额、只读取证，必要时额外验证压缩档成员；不能无限扫描磁盘或声称全局丢失。P3.12 #283 和 P3.13 #284 都保持 Draft，不能未经审核合并 main。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

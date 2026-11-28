@@ -1,5 +1,13 @@
 # ParquetLiveSync：a-stock-data 本地 Parquet 增量更新器
 
+## 唯一 GUI：增量更新中心（2026-11-28）
+
+**正式保留：`market_update_dashboard.py`。** 旧 `gui.py` 与 `gui_simple.py` 已在独立清理分支中删除，`run-gui.ps1` 和 `start-market-update-dashboard.cmd` 现在是指向**同一 GUI** 的兼容启动入口，不存在三套界面可选。GUI 只显示回执/阶段日志/原有私有游标，人工补更仍借用同一个 `scheduled-afternoon-update.ps1` 独占锁与授权前置约束；不允许从 detached worktree 执行生产 Apply。首次拉取新代码不会改变已注册的 Windows 计划任务，也不会删除真实市场数据。
+
+**过往 GUI 章节及 21:30 文案是历史开发记录，不再是当前操作说明。** 当前仓库计划脚本目标为**北京时间 20:05**，实际本机任务配置须只读查询 Windows 任务计划程序。不要为了统一 GUI 重新注册调度任务。新增 [原购买 1min Parquet 240/241 根数及 09:30 标签只读审计](MARKET_SINGLE_GUI_AND_PURCHASED_MINUTE_CENSUS.md)；其输出只证明本机所选原购买月文件在所选日的每股记录数与时间标签，不能仅靠 240/241 判断是否丢失集合竞价成交。
+
+
+
 核心目的：先把本地 Parquet 数据库的日线更新到最新，暂停任何 H5 写入。工具处于 AStockDataTools/ParquetLiveSync 独立目录。
 
 ## 长期方向：通用行情质量治理（设计阶段）

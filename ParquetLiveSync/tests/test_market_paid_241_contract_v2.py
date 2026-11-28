@@ -245,7 +245,7 @@ class Paid241DailyStageTests(unittest.TestCase):
                            side_effect=AssertionError("MUST_NOT_READ_QMT_OR_WRITE"))):
             with self.assertRaisesRegex(
                     ValueError,"EXISTING_240_MONTH_REQUIRES_EXPLICIT"):
-                U.bootstrap(self.root,apply=True,progress=lambda _: None)
+                U.bootstrap("D:/stock",apply=True,progress=lambda _: None)
 
 
 if __name__ == "__main__":

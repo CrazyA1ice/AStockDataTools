@@ -8,6 +8,7 @@ import inspect as introspect
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -229,7 +230,7 @@ class PendingDATPhysicalSHAOnlyTests(unittest.TestCase):
         self.add()
         ledger, meta = self.pins()
         with mock.patch.object(S, "_read_scoped",
-                               side_effect=PhysicalError(
+                               side_effect=S.PhysicalError(
                                    "FINANCE_DAT_PHYSICAL_METADATA_MANIFEST_DIFFERS")):
             with self.assertRaisesRegex(
                     S.PhysicalError,
@@ -285,6 +286,40 @@ class PendingDATPhysicalSHAOnlyTests(unittest.TestCase):
             self.assertNotIn(forbidden, code)
         self.assertEqual(S.STATUS,
             "PENDING_FINANCE_DAT_LOCAL_PHYSICAL_BYTES_VERIFIED_NO_SOURCE_DECODE")
+
+
+    def test_19_windows_crt_fstat_zero_ino_still_matches_kernel_handles(self):
+        self.add(payload=b"existing four bytes")
+        original_fstat = os.fstat
+
+        def crt_style(fd):
+            info = original_fstat(fd)
+            return SimpleNamespace(
+                st_mode=info.st_mode, st_dev=0, st_ino=0,
+                st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
+
+        def stable_kernel_id(fd):
+            info = original_fstat(fd)
+            return info.st_dev, info.st_ino
+
+        with mock.patch.object(S, "_is_windows", return_value=True):
+            with mock.patch.object(S.os, "fstat", side_effect=crt_style):
+                with mock.patch.object(S, "_windows_handle_id",
+                                       side_effect=stable_kernel_id):
+                    out = self.run_scan()
+        self.assertEqual(out["scoped_DAT_files_double_hashed"], 1)
+        self.assertEqual(out["total_DAT_content_bytes_read_two_passes"], 38)
+
+    def test_20_windows_different_kernel_handles_fail_closed(self):
+        self.add(payload=b"aaaa")
+        ids = iter(((55, 100), (55, 101)))
+        with mock.patch.object(S, "_is_windows", return_value=True):
+            with mock.patch.object(S, "_windows_handle_id",
+                                   side_effect=lambda fd: next(ids)):
+                with self.assertRaisesRegex(
+                        S.PhysicalError,
+                        "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ"):
+                    self.run_scan()
 
 
 if __name__ == "__main__":

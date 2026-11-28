@@ -511,6 +511,16 @@ P3.22 的 **31 模块 721 项 Windows 验收和真实原生产旧读取器重算
 
 此时 P3.23 文档已界定真实外部依赖：只有存在具体已知本地路径/独立来源说明、日期/股票九表完整性和物理 SHA 的新鲜财务候选文件，才能在受限纯内存里继续 `saved-current` 的多重集严格比对；单有旧 `financial-cache-progress.json` 的错误文字不能当新数据。下一阶段应首先发现/声明真正的证据候选来源与不变性门槛，**不得**自己假定本机存在 QMT 端缓存或读取 QMT SDK，更不能无来源凭证新建“当前数据”文件。
 
+## 8AE. P3.24 固定财务待审股票的 Finance DAT 文件名元数据普查（2026-11-28）
+
+P3.22 用户已在 Windows 固定提交 `b97386c994b60b33eb40f919324e465663d287ff` 通过**31 模块 721/721**，原 `qmt_extra_financial_cache_import._prior_rows` 与独立 P3.21 审计的旧历史 `Counter` 完整一致：76 个来源冲突作用域、91 份原有旧财务不可变 Parquet、48,754 原始行、46,478 条不同和 46,485 条含重复旧历史并集，SHA `6d0fad5f54cb97730f2a9da8231c376491ba8a9c57d4e140133f0910f16b1cd5`。这说明旧来源读取语义已可靠，但**并未说明今天的新 QMT 财务缓存源还保留这些旧原始记录**。另 1 项旧保存 `CACHE_DECODE_ERROR` 与 76 项 `SOURCE_HISTORY_CONFLICT` 均保持待审，原九条市场隔离独立保持。
+
+源码进一步核实生产 `run-qmt-financial-daily.ps1` 的确写有默认 `FinanceDir=D:\software\JHQMT\datadir\Finance`，原 `qmt_extra_financial_cache_import._stock_universe` 对直接 `SH/SZ/BJ/86400` 子目录仅根据 `<6位证券代码>_7xxx.DAT` 文件名补充股票范围，不读取、反解私有 DAT。原 `_worker_batch` 的九表缓存财务 JSON 放在 `TemporaryDirectory` 下、worker 返回后自动回收，故不能推断已经保留完整 fresh 九表原始 JSON 文件。用户 Windows 本次尚未验证实际 Finance 根是否仍存在，而即使 DAT 文件名存在，也不能凭其字段表编码推测完整九表、日期或真实有效内容。
+
+P3.24 新增 stacked **Draft PR #291**：只读 `market_finance_pending_dat_filename_readonly.py` 仅从已经 P3.18～P3.22 物理核验过的 `financial-cache-progress.json` SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a` 内取得真实 77 个 pending 股票及 reason，不枚举其他证券的实际属性；在用户显式配置的上述 Finance 根中，只枚举三个市场的直接 `86400` 目录，不读 DAT 内容、不追随符号链接或 Windows junction/reparse、不递归扫描、不调用 QMT SDK/worker。规定单市场最多 10 万个直接目录项，全范围 25 万个直接目录项，与当前 pending 代码相符的文件最多 10 万；否则停止。两次扫描与对目录、合法待审文件名、大小、修改时间和元数据身份的不可逆 SHA 比对，不能被误称为 DAT 真实字节 SHA；目录缺失只输出缺失不创建；文件名匹配但大小为零单独列示。输出按 76 条历史冲突与 1 条缓存解码异常分组的“有名字/非零/没有名字”股票数、文件数与总字节数，绝不输出逐股票清单。报告永久 `finance_dat_contents_read=false`、`finance_dat_file_sha256_verified=false`、`finance_dat_table_mapping_certified=false`、`source_financial_nine_table_coverage_certified=false`、`fresh_finance_original_rows_available=false`、`fresh_finance_records_compared_to_old_union=false`、`finance_dat_metadata_proves_provider_origin=false`、`financial_pending_resolved=false`、`financial_repair_authorized=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`，无跨文件原子快照锁。
+
+新增**18 项合成测试**涵盖不同原因待审、有效/无效 DAT 文件名、空文件、市场目录缺失、符号链接和改动、前后元数据差异、直接项目上限、固定账本 SHA、无 QMT 及私有数据泄漏。前一阶段真实 31 模块 721 项已通过；P3.24 完整选定目标 **32 模块 739 项**另旧审计器 15 项；**新 18 项和真实本地 Finance DAT 目录普查尚未在 Windows 验收**。如实际 Finance 根缺失必须报告，不凭目录名臆造来源。P3.23 的“真实新财务原始九表来源字节、时间/来源身份和保全完整性”准入条件不因本阶段而改变。原 2026-11-25 定时运行回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍缺失，全部 Draft PR 不合并 main、不写生产行情/缓存、不解除原九条行情隔离或财务 76+1 项待审。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

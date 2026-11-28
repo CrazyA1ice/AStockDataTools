@@ -63,6 +63,9 @@ def inspect(path, day, *, timezone_hours=8):
     minute0930 = 9 * 60 + 30
     minute0931 = minute0930 + 1
     counts = Counter()
+    # A count of 241 must not silently arise from a duplicated timestamp.
+    seen_timestamps = defaultdict(set)
+    duplicate_symbol_timestamp_rows = 0
     first = {}
     last = {}
     at0930 = Counter()
@@ -86,6 +89,9 @@ def inspect(path, day, *, timezone_hours=8):
             # market timezone; do not infer exchange sessions from counts.
             mm = ((ts + timezone_hours * 3600000) % DAY_MS) // 60000
             counts[symbol] += 1
+            if ts in seen_timestamps[symbol]:
+                duplicate_symbol_timestamp_rows += 1
+            seen_timestamps[symbol].add(ts)
             first[symbol] = min(ts, first.get(symbol, ts))
             last[symbol] = max(ts, last.get(symbol, ts))
             matches += 1
@@ -101,6 +107,8 @@ def inspect(path, day, *, timezone_hours=8):
                     at0930_unpaired += 1
             if mm == minute0931:
                 at0931[symbol] += 1
+    if matches == 0:
+        raise ValueError("PURCHASED_DAY_NOT_OBSERVED_OR_TIMESTAMP_UNVERIFIED")
     histogram = Counter(counts.values())
     earliest = Counter(datetime.fromtimestamp(stamp/1000, tz=tz)
                        .strftime("%H:%M") for stamp in first.values())
@@ -114,6 +122,8 @@ def inspect(path, day, *, timezone_hours=8):
         "timezone_hours": timezone_hours,
         "purchased_file_rows_metadata": src.metadata.num_rows,
         "matching_rows_for_day": matches,
+        "duplicate_stock_timestamp_rows": duplicate_symbol_timestamp_rows,
+        "all_symbol_timestamp_keys_unique": duplicate_symbol_timestamp_rows == 0,
         "stock_days_observed": len(counts),
         "per_stock_day_bar_count_histogram": dict(sorted(histogram.items())),
         "stock_days_240_bars": histogram.get(240, 0),

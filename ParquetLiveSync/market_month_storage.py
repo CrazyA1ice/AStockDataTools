@@ -399,8 +399,54 @@ def _verify_writer(temp, expected_rows):
     return L.hash_file(temp)
 
 
+def _verify_paid_241_physical_month(path, month):
+    """Validate exact 241 timestamp keys for every stock-day before commit.
+
+    Only two key columns are read in bounded batches. A 240 day, duplicate
+    key, uncalibrated minute offset, or mixed-version physical month fails.
+    The old physical file and its ledger are not touched by this check.
+    """
+    grid = {h * 60 + m: index for index, (h, m) in
+            enumerate(sorted(B.P.GRID))}
+    if len(grid) != 241:
+        raise ValueError("PAID_241_INTERNAL_CLOCK_GRID_CHANGED")
+    seen = {}
+    reader = pq.ParquetFile(path)
+    try:
+        if reader.metadata.num_rows > 241 * 15000 * 31:
+            raise ValueError("PAID_241_MONTH_SCAN_BUDGET")
+        for batch in reader.iter_batches(batch_size=BATCH,
+                                         columns=["ts", "symbol"],
+                                         use_threads=False):
+            ts_column, sym_column = (batch.column(0).to_pylist(),
+                                    batch.column(1).to_pylist())
+            for ts, symbol in zip(ts_column, sym_column):
+                if type(ts) is not int or type(symbol) is not str or not symbol:
+                    raise ValueError("PAID_241_PHYSICAL_INVALID_MINUTE_KEY")
+                day = L.market_ts_day(ts)
+                if day.strftime("%Y-%m") != month:
+                    raise ValueError("PAID_241_PHYSICAL_CROSS_MONTH_KEY")
+                minute = ((ts + CN_MS) // 60000) % 1440
+                index = grid.get(minute) if (ts + CN_MS) % 60000 == 0 else None
+                if index is None:
+                    raise ValueError("PAID_241_PHYSICAL_OFF_GRID_LABEL")
+                key = (symbol, day)
+                bit = 1 << index
+                before = seen.get(key, 0)
+                if before & bit:
+                    raise ValueError("PAID_241_PHYSICAL_DUPLICATE_STOCK_MINUTE_KEY")
+                seen[key] = before | bit
+        if not seen or any(bits != (1 << 241) - 1 for bits in seen.values()):
+            raise ValueError("PAID_241_PHYSICAL_INCOMPLETE_OR_MIXED_STOCK_DAY")
+        if len(seen) * 241 != reader.metadata.num_rows:
+            raise ValueError("PAID_241_PHYSICAL_COUNT_INCONSISTENT")
+        return len(seen)
+    finally:
+        reader.close()
+
+
 def install_month(root, month, chunks, *, source_id, days, state=None,
-                  workspace=STATE_DIR, progress=print):
+                  workspace=STATE_DIR, progress=print, minute_contract=None):
     """Transaction: idempotent append into existing original monthly file.
 
     Existing months can only be changed by THIS ledger; entirely new month
@@ -413,6 +459,11 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
     work.mkdir(parents=True, exist_ok=True)
     ledger = state if state is not None else state_for(root, workspace=work)
     current = ledger["periods"]["1min"].get(month)
+    if minute_contract is not None and minute_contract != PAID_241_CONTRACT:
+        raise ValueError("UNKNOWN_PAID_MINUTE_CONTRACT")
+    if minute_contract == PAID_241_CONTRACT and current is not None and (
+            current.get("minute_grid_contract") != PAID_241_CONTRACT):
+        raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
     if target.exists() and current is None:
         raise ValueError("Existing physical month has no updater ledger; refuse takeover")
     if current is not None:
@@ -478,6 +529,8 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
         if accepted_days != expected_days:
             raise ValueError("Market increment missing promised date(s)")
         digest = _verify_writer(scratch, old_rows + new_rows)
+        if minute_contract == PAID_241_CONTRACT:
+            _verify_paid_241_physical_month(scratch, month)
         if current and L.hash_file(target) != original_sha:
             raise ValueError("Physical month changed during staging")
         if current:
@@ -499,6 +552,7 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
             backup = None
         next_entry = {"sha256": digest, "rows": old_rows + new_rows,
                       "symbol_style": target_style,
+                      "minute_grid_contract": minute_contract,
                       "days": sorted(present | accepted_days),
                       "sources": sorted(set(current["sources"] if current else []) | {source_id}),
                       "previous_sha256": original_sha,

@@ -103,6 +103,7 @@ class PriorRawContentTests(unittest.TestCase):
         self.assertTrue(out["old_selected_historical_counter_union_computed"])
         self.assertTrue(out["all_physical_old_snapshot_manifest_rechecked"])
         self.assertFalse(out["new_and_old_finance_records_compared"])
+        self.assertFalse(out["full_history_coverage_certified"])
         self.assertFalse(out["original_quarantines_cleared"])
 
     def test_02_two_dates_union_uses_max_multiplicity_not_sum(self):

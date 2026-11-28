@@ -47,7 +47,9 @@ def _mtime_month(ns):
 
 
 def _skew_bucket(values):
-    if len(values) <= 1 or min(values) == max(values):
+    if not values:
+        return "no_file"
+    if len(values) == 1 or min(values) == max(values):
         return "0d"
     span = max(values) - min(values)
     if span <= DAY_NS:

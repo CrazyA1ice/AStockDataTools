@@ -1,5 +1,9 @@
 # ParquetLiveSync：a-stock-data 本地 Parquet 增量更新器
 
+## 已验原购买 1min=241 与新 QMT 240 增量待核（2026-11-28）
+
+用户 Windows 对原购买 `D:\\stock\\AllCycleAStockData\\1min\\2026-09.parquet` 2026-09-30 的实机只读验收：**5,650 只股票全部 241 根**，09:30～15:00，09:30 量额同时为正 5,456、双零 194、重复键零；GUI 5、既有 Dashboard 11、审计 10 项新测试均 PASS。**该数据仅限所验交易日，不能推及每一个历史交易日。** 当前代码仍将 QMT 原生 241 根折叠为“购买版兼容”240 根，实际购买原件为 241，故日内分钟粒度口径尚**未认证兼容**；这不自动证明既有新月成交量损失。新增 [P3 只读 241 vs 240 实物新月核对](MARKET_PURCHASED_241_INCREMENTAL_GRID_RECONCILIATION.md)，比较原购买日与新月实际分钟标签、重复键和数量，不修改任何行情。**任何后续 241 标准转换和已有新月调整，都必须在真实 09:30/09:31 业务口径及跨周期校准通过后才允许候选/提交，严禁直接覆盖原购买库。**
+
 ## 唯一 GUI：增量更新中心（2026-11-28）
 
 **正式保留：`market_update_dashboard.py`。** 旧 `gui.py` 与 `gui_simple.py` 已在独立清理分支中删除，`run-gui.ps1` 和 `start-market-update-dashboard.cmd` 现在是指向**同一 GUI** 的兼容启动入口，不存在三套界面可选。GUI 只显示回执/阶段日志/原有私有游标，人工补更仍借用同一个 `scheduled-afternoon-update.ps1` 独占锁与授权前置约束；不允许从 detached worktree 执行生产 Apply。首次拉取新代码不会改变已注册的 Windows 计划任务，也不会删除真实市场数据。

@@ -151,6 +151,7 @@ class PendingDATProfileTests(unittest.TestCase):
         out = self.run_scan()
         c = out["by_pending_reason"]["SOURCE_HISTORY_CONFLICT"]
         self.assertEqual(c["file_count_histogram_0"], 1)
+        self.assertEqual(c["stock_metadata_mtime_spread_no_file"], 1)
         self.assertEqual(out["matching_DAT_filenames"], 0)
         self.assertFalse(out["new_finance_raw_rows_read"])
 

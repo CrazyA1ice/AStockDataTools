@@ -122,8 +122,11 @@ class Paid241PhysicalMonthTests(unittest.TestCase):
     def test_08_first_paid_241_month_commits_with_version_marker(self):
         result = self._install(source_rows())
         self.assertEqual(result["status"], "COMMITTED")
-        self.assertEqual(pq.ParquetFile(
-            self.base/"1min"/"2026-11.parquet").metadata.num_rows, 241)
+        reader=pq.ParquetFile(self.base/"1min"/"2026-11.parquet")
+        try:
+            self.assertEqual(reader.metadata.num_rows,241)
+        finally:
+            reader.close()
         state = S.state_for(self.root, workspace=self.workspace)
         self.assertEqual(
             state["periods"]["1min"][MONTH]["minute_grid_contract"],
@@ -204,7 +207,11 @@ class Paid241DailyStageTests(unittest.TestCase):
                     reader=object(),progress=lambda _:None)
             self.assertEqual(doc["rows"],241)
             self.assertEqual(doc["minute_grid_contract"],S.PAID_241_CONTRACT)
-            self.assertEqual(pq.ParquetFile(path).metadata.num_rows,241)
+            reader=pq.ParquetFile(path)
+            try:
+                self.assertEqual(reader.metadata.num_rows,241)
+            finally:
+                reader.close()
             self.assertEqual(pq.read_table(path,columns=["volume"])["volume"][0].as_py(),3.)
             self.assertFalse(doc["production_merge_authorized"])
 

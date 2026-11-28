@@ -18,8 +18,10 @@
 
 工具 `audit_purchased_1min_bars_readonly.py` 只读取用户明确指定的原购买 `1min/2026-09.parquet`，按中国市场 `UTC+8` 对 `2026-09-30` 日期过滤，对每只股票输出精确行数的汇总直方图，240 / 241 / 其它根数的股票日数量、09:30 / 09:31 标签覆盖与 09:30 量额正正 / 零零 / 异常的**总量**；不会上传证券代码、逐股原始行情、单个文件数据，不修改源文件。只输出当天汇总计数，不打印每只股票的价格。
 
+为防止主分支尚未合并时错误调用旧文件，下例使用本文所述**新独立 worktree** 的脚本路径；需先从下方 PR 固定提交建立该工作树。如果日后按验收流程合并到正式检出，再将脚本路径指向正式 `ParquetLiveSync` 即可。
+
 ```powershell
-& 'D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe' -B 'D:\ChatGPT\AStockDataTools\ParquetLiveSync\audit_purchased_1min_bars_readonly.py' --file 'D:\stock\AllCycleAStockData\1min\2026-09.parquet' --day 2026-09-30
+& 'D:\ChatGPT\AStockDataTools\.venv\Scripts\python.exe' -B 'D:\ChatGPT\AStockDataTools\work\market-single-gui-minute-audit-20261128\ParquetLiveSync\audit_purchased_1min_bars_readonly.py' --file 'D:\stock\AllCycleAStockData\1min\2026-09.parquet' --day 2026-09-30
 ```
 
 **注意：** 默认价格时间戳按真实 UTC epoch 毫秒加 `UTC+8` 解释；若输出首次标签完全不在 A 股常规分钟时段，先排查数据商时标，不能把这种输出认定为 240/241 业务答案。本工具只认明确输入的原月份/原年度 Parquet，不追随当前工具生成的 2026-10/11 目标月文件，也不会补零、对齐或修复价格。源采购仓库不可见的事实需要用户 Windows 执行该命令才能确认；本项目 GitHub 开发环境不能代替真实数据盘。

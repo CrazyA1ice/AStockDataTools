@@ -43,6 +43,69 @@ def _hex(value, status):
     return value.lower()
 
 
+def _is_windows():
+    return os.name == "nt"
+
+
+def _windows_handle_id(fd):
+    """Fail closed when Windows volume + file index is unavailable.
+
+    CRT os.fstat() on Windows may use inode metadata unlike path stat;
+    compare kernel handles rather than discarding file identity.
+    """
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class HandleInfo(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    get_info = ctypes.WinDLL("kernel32", use_last_error=True).GetFileInformationByHandle
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(HandleInfo)]
+    get_info.restype = wintypes.BOOL
+    info = HandleInfo()
+    need(bool(get_info(msvcrt.get_osfhandle(fd), ctypes.byref(info))),
+         "FINANCE_DAT_WINDOWS_HANDLE_ID_UNAVAILABLE")
+    need(not (info.dwFileAttributes & 0x400),
+         "FINANCE_DAT_WINDOWS_REPARSE_HANDLE")
+    return (info.dwVolumeSerialNumber,
+            (info.nFileIndexHigh << 32) | info.nFileIndexLow)
+
+
+def _assert_open_identity(path, fd, ref, status):
+    """Match pinned path metadata and opened kernel file, Unix or Windows."""
+    opened = os.fstat(fd)
+    need(stat.S_ISREG(opened.st_mode) and not DAT._reparse(opened)
+         and opened.st_size == ref[2] and opened.st_mtime_ns == ref[3],
+         status)
+    current = os.stat(path, follow_symlinks=False)
+    need(stat.S_ISREG(current.st_mode) and not DAT._reparse(current)
+         and not path.is_symlink() and DAT._id(current) == ref,
+         status)
+    if not _is_windows():
+        need(DAT._id(opened) == ref, status)
+    else:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        verifier = os.open(path, flags)
+        try:
+            need(_windows_handle_id(fd) == _windows_handle_id(verifier),
+                 status)
+        finally:
+            os.close(verifier)
+    return opened
+
+
 def _hash_once(path, ref):
     """Read only a regular, nonlinked native DAT; never deserialize bytes."""
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
@@ -50,11 +113,8 @@ def _hash_once(path, ref):
     fd = None
     try:
         fd = os.open(path, flags)
-        before = os.fstat(fd)
-        need(stat.S_ISREG(before.st_mode)
-             and not DAT._reparse(before)
-             and DAT._id(before) == ref,
-             "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ")
+        before = _assert_open_identity(
+            path, fd, ref, "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ")
         need(0 <= before.st_size <= MAX_SINGLE_DAT_BYTES,
              "FINANCE_DAT_SINGLE_PHYSICAL_READ_BUDGET")
         remaining = before.st_size
@@ -65,8 +125,8 @@ def _hash_once(path, ref):
             h.update(block)
             remaining -= len(block)
         need(not os.read(fd, 1), "FINANCE_DAT_PHYSICAL_GREW_DURING_READ")
-        need(DAT._id(os.fstat(fd)) == ref,
-             "FINANCE_DAT_FILE_IDENTITY_CHANGED_AFTER_READ")
+        _assert_open_identity(
+            path, fd, ref, "FINANCE_DAT_FILE_IDENTITY_CHANGED_AFTER_READ")
         return h.hexdigest()
     except PhysicalError:
         raise

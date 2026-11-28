@@ -216,7 +216,7 @@ class HigherMinuteTests(unittest.TestCase):
             invalid[0]={**invalid[0],"amount":0.}
             D._anchor_complete_buckets(
                 invalid,"5min",one_minute_offset_ms=0)
-        with self.assertRaisesRegex(ValueError,"1minute trading grid mismatch"):
+        with self.assertRaisesRegex(ValueError,"Duplicate/unsorted|1minute trading grid mismatch"):
             invalid=paid.copy()
             invalid[1]={**invalid[1],"ts":invalid[1]["ts"]+60000}
             D._anchor_complete_buckets(

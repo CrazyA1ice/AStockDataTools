@@ -56,7 +56,7 @@ def _dir(directory, *, optional=False):
     return True
 
 
-def _read_file(path, limit):
+def _read_file(path, limit, *, with_data=False):
     need(not path.is_symlink(), 'PRIOR_SNAPSHOT_SYMLINK_FORBIDDEN')
     info = os.stat(path, follow_symlinks=False)
     need(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= limit,
@@ -68,6 +68,7 @@ def _read_file(path, limit):
                  'PRIOR_SNAPSHOT_FILE_CHANGED')
             h = sha256()
             consumed = 0
+            buffer = bytearray() if with_data else None
             while True:
                 blob = reader.read(1024 * 1024)
                 if not blob:
@@ -75,6 +76,8 @@ def _read_file(path, limit):
                 consumed += len(blob)
                 need(consumed <= limit, 'PRIOR_SNAPSHOT_FILE_BUDGET_EXCEEDED')
                 h.update(blob)
+                if with_data:
+                    buffer.extend(blob)
             closed = os.fstat(reader.fileno())
         after = os.stat(path, follow_symlinks=False)
     except OSError as exc:
@@ -84,7 +87,8 @@ def _read_file(path, limit):
          == _identity(closed) == _identity(after)
          and not path.is_symlink(),
          'PRIOR_SNAPSHOT_FILE_CHANGED')
-    return h.hexdigest(), consumed
+    return (h.hexdigest(), consumed, bytes(buffer)) if with_data else (
+        h.hexdigest(), consumed)
 
 
 def _snapshot_names(folder):
@@ -117,11 +121,12 @@ def _active_pin(folder, stock, table, day, files):
     need(not pin.is_symlink(), 'PRIOR_SNAPSHOT_ACTIVE_PIN_LINK')
     if not pin.exists():
         return 'LEGACY_UNPINNED_UNIQUE' if len(files) == 1 else 'MULTIPLE_VERSIONS_NO_PIN_REVIEW'
-    digest, size = _read_file(pin, MAX_PIN_FILE_BYTES)
+    digest, size, raw_pin = _read_file(
+        pin, MAX_PIN_FILE_BYTES, with_data=True)
     need(0 < size <= MAX_PIN_FILE_BYTES and len(digest) == 64,
          'PRIOR_SNAPSHOT_ACTIVE_PIN_BYTES_INVALID')
     try:
-        data = json.loads(pin.read_text(encoding='utf-8-sig'))
+        data = json.loads(raw_pin.decode('utf-8-sig'))
     except (UnicodeError, ValueError, OSError) as exc:
         raise SnapshotError('PRIOR_SNAPSHOT_ACTIVE_PIN_INVALID_JSON') from exc
     need(type(data) is dict

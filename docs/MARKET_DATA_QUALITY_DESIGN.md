@@ -445,6 +445,16 @@ P3.17 已有真实 Windows 只读证据确认：原 11-25 20:05:02 `verification
 
 后续 P3.19 只允许对已读 `financial-cache-progress.json` 的**实际待审对象**作只读分布审计（按 `reason`、可能的 `table`、尝试次数、`asof`、白名单化原因片段），不输出股票名单、不推断源语义已经通过，不用外部 QMT 调用；源真实性/全量完整性及原 11-25 收据认证仍是阻断。原回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 没有找回，九条行情隔离不得解除，全部 PR 继续 Draft。
 
+## 8Z. P3.19 76 个财务历史来源冲突的固定 SHA 只读分类（2026-11-28）
+
+P3.18 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 已真实 Windows 验收：旧 15/15，新 16/16，27 模块 646/646 PASS；用户通过独立双账本物理 SHAs 分别确认现存 `progress.json` 旧财务 pending=0、除权 cursor=`002966.SZ`；真正财务缓存 `financial-cache-progress.json` SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a`、大小 13,556 B、pending **77**，其中历史源冲突 **76**、缓存解码失败 **1**；财务日扫 `daily_sweep_reached_end=false`。两个状态文件并非跨文件原子快照，P3.17 原 11-25 报告待审=77 只是数目巧合，不能据此断言还是同 77 个股票或再现 4526 未遍历。进度文件 `daily_date=2026-11-25` 表明账本标签日期，并不认证 QMT 实时状态。
+
+源码 `qmt_extra_financial_cache_import.py` `_plan_symbol` 对九张表的不可变历史财务快照**并集**与新原始数据逐表比对，旧历史行缺失/修订时生成 `SOURCE_HISTORY_CONFLICT symbol table=<table> removed_or_revised=<n>`；`Capital` 的 `m_quarter` scoped semantic 审阅只属高度受限试点，不影响其他表，不允许因文字看起来是元数据便批量豁免。另 `CACHE_DECODE_ERROR` 是供应商源/缓存 UTF-8 解码失败，不代表数据空值或可以忽略。当前未知实际 76 个冲突分别落在哪张表、修订原因和重试次数；不能臆造它们都属于 `Capital`。
+
+新 **Draft PR #287**（叠加 P3.18 #286）创建独立 `market_finance_pending_reason_triage_readonly.py`。必须显式给出安装模块根、`D:\stock` 根和实际已核验的固定进度 SHA；只读取 `work/qmt_extra/financial-cache-progress.json`，复用 P3.18 已验的 8MiB 文件限制、符号链接保护、记录根身份、真 SHA 和二次身份复核，绝不创建默认 pending、不读任意其他文件、更不调用 QMT。报告在**不公开任何待审股票 ID、原始异常详情**的条件下对单个账本的 `pending` 按 `reason`、重试次数段、`asof` 月份/范围、严格已知 `SOURCE_HISTORY_CONFLICT` `detail` 的财务表和 `Capital` scoped 证明类别做统计。仅当详情同时符合完整代码固定语法、嵌入股票代码等于 pending 对象自身键时才计为已分类，其他全部 `UNCLASSIFIED_DETAIL`，不放宽源校验/不自动处理。结果将始终 `financial_repair_authorized=false`、`full_history_coverage_certified=false`、`financial_source_provider_authenticated=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。
+
+本阶段新增 17 个合成测试，固定 PR Windows 预期选定从 27 模块 646 项升到 **28 模块 663 项**，另旧原审计器 15 项单独复测，**尚未实际 Windows 执行新测试或读取真实 77 条具体 pending 内容**。原定时 11-25 回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍没有真实原件；九条原行情隔离不变，禁止重新生成回执/无依据续抓 QMT/改行情或合并 main。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

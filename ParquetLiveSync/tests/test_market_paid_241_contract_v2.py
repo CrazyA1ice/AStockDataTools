@@ -209,5 +209,22 @@ class Paid241DailyStageTests(unittest.TestCase):
             self.assertFalse(doc["production_merge_authorized"])
 
 
+    def test_16_zero_0930_price_is_used_for_first_purchased_5m(self):
+        # A zero-turnover opening quote is still a distinct purchased K.
+        # Historical TDX 240 folds would drop it; our paid 241 path must
+        # retain its opening OHLC in the first 5m reconstruction.
+        rows=source_rows(opening_volume=0.)
+        rows[0].update({"open":9.6,"high":10.4,"low":9.5,"close":9.6})
+        first_before=dict(rows[0])
+        made=D.aggregate_stock_day(rows,"5min",one_minute_offset_ms=0)
+        self.assertEqual(len(made),48)
+        self.assertEqual(made[0]["open"],9.6)
+        self.assertEqual(made[0]["high"],10.4)
+        self.assertEqual(made[0]["low"],9.5)
+        self.assertAlmostEqual(made[0]["volume"],10.)
+        self.assertAlmostEqual(made[0]["amount"],1000.)
+        self.assertEqual(rows[0],first_before)
+
+
 if __name__ == "__main__":
     unittest.main()

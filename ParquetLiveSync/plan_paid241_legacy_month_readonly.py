@@ -55,10 +55,12 @@ def summarize(old_days, source_entries, month):
     }
 
 
-def inspect(root, stage, month):
+def inspect(root, stage, month, *, workspace=None):
     if month != "2026-11":
         raise ValueError("MIGRATION_ONLY_NOVEMBER_PILOT_SUPPORTED")
-    old_state = S.state_for(root)
+    if workspace is None or not Path(workspace).is_dir():
+        raise ValueError("MIGRATION_CANONICAL_LEDGER_WORKSPACE_REQUIRED")
+    old_state = S.state_for(root, workspace=workspace)
     old = old_state["periods"]["1min"].get(month)
     if (not isinstance(old, dict) or
             not isinstance(old.get("sha256"), str) or
@@ -103,11 +105,13 @@ def inspect(root, stage, month):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--stage", type=Path, default=B.P.BASE / "20261014_20261112")
+    parser.add_argument("--stage", type=Path, required=True)
+    parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--month", choices=("2026-11",), default="2026-11")
     args = parser.parse_args(argv)
     try:
-        print(json.dumps(inspect(args.root, args.stage, args.month),
+        print(json.dumps(inspect(args.root, args.stage, args.month,
+                                 workspace=args.workspace),
                          ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception:

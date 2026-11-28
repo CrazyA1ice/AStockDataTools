@@ -248,5 +248,14 @@ class Paid241DailyStageTests(unittest.TestCase):
                 U.bootstrap("D:/stock",apply=True,progress=lambda _: None)
 
 
+    def test_18_quote_only_0930_is_audited_in_first_higher_window(self):
+        rows=source_rows(opening_volume=0.)
+        rows[0]["high"]=10.35
+        alerts=U.quote_only_bucket_advisories(rows)
+        for period in ("5min","15min","30min","60min"):
+            self.assertEqual(alerts.get(period),1)
+        self.assertEqual(len(rows),241)
+
+
 if __name__ == "__main__":
     unittest.main()

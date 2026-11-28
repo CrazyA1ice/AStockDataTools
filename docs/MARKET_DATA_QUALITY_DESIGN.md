@@ -459,6 +459,16 @@ P3.18 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 已真实 Windows 
 
 下一阶段如果继续深入，必须**保持固定的保存进度文件 SHA、严格限制现存 `qmt_extra/financial/<table>/<stock>/snapshots` 原始不可变财务快照文件**，可先只读汇总按冲突表名/存在的历史快照数量/原数据 SHA，而不能调用 QMT 新源、导入后写盘或自动放行。获取原历史快照的物理证据，也**不能单凭旧来源证明新旧源一致**，后续真实比较仍需受控的正式数据源渠道与完整逐字段审阅。财务 76+1 项 pending、独立市场原九条隔离均原样保留；11-25 原定时回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 没有找到实物，原回执首关仍未验证。Draft PR #287 对本阶段代码只读验收成立，未合入 main。
 
+## 8AA. P3.20 固定账本驱动的历史不可变财务快照与 active 指针 SHA 普查（2026-11-28）
+
+真实用户 Windows 的 P3.19 固定提交 `60f99dad06580036f996ca6d6a036f93c1c4ec8b` 已通过原审计器 15/15、新专项 17/17、选定 28 模块 663/663；来自同一原始保存 SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a` 的财务缓存进度仍为 pending 77：76 项历史来源冲突（分别是 `Top10Holder=34`、`Top10FlowHolder=25`、`HolderNum=3` 的原历史 raw 缺失/修订合计 62，以及 `Capital=14` 的 `REPORT_KEYS_ADDED_OR_REMOVED`），另 1 项 `CACHE_DECODE_ERROR`。这只是已保存进度日志字符串经真实物理 SHA 核查后的保守分类；不能直接推断供应商实时数据、新源旧源对比、变更业务含义或已经解决。
+
+源码 `qmt_extra_financial_cache_import._prior_rows` 对历史各日期已选择的不可变源快照取并集，而原 `qmt_extra_data._financial_snapshot_file` 对同一日期多版本快照有强制 `active/<YYYY-MM-DD>.json` 指针和真实物理 SHA 的严格绑定。其 `snapshots/YYYY-MM-DD-<16hexdigits>.parquet` 名称中的 16 位 hash 由规范化 row 内容生成，**不能当成 Parquet 文件字节 SHA256 前缀**。不能通过时间戳“最新”或文件名字典序“最大”判断当年生产真实选中的源版本。
+
+新 Draft PR **#288**（叠加 #287）只读 `market_finance_prior_snapshot_census_readonly.py`，必须从当前已通过物理 SHA 的固定财务 pending 账本中读取完全匹配的 76 条实际来源冲突，限定其 `table+stock` 后**只枚举这些既存的本地不可变快照对应直接目录**，拒绝模糊/截断详情和意外文件，不访问未提及股票或递归搜索。范围上限 128 个 table-stock，单目录最多 256 条、全任务最多 4096 个物理 Parquet 文件，单个最大 24MiB、全部 SHA 计算读取最大 512MiB；`os.stat/fstat` 及文件夹前后元数据比对、固定进度账本 SHA 二次验证、拒绝符号链接或超预算；旧目录缺失只统计缺失、不隐式创建。对每个存在的历史日期，如果 `active` 指针存在，要求其 `format/symbol/table/asof/filename/sha256` 与所见真实 Parquet 字节物理 SHA 一致；一个未指针旧版本为 `LEGACY_UNPINNED_UNIQUE`，多版本无 active 为 `MULTIPLE_VERSIONS_NO_PIN_REVIEW`（不自动选择）。只输出表级数目、存在/缺失的旧目录、已物理 SHA 读取的文件数/字节数、active 状态和不可逆 manifest SHA，不披露待审股票身份或历史 raw JSON 数据。
+
+**仅凭旧快照字节仍无法判断新 QMT 财务源是否恢复了此前观测**：本阶段不解析 Parquet raw 行内容/不核对九表历史并集，不运行新 QMT/get_financial_data，也不批准 Capital 的 `m_quarter` 例外。输出固定 `new_finance_source_consulted=false`、`parquet_row_or_history_union_verified=false`、`all_source_history_conflicts_resolved=false`、`financial_repair_authorized=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。新增 **19 项合成测试**，此前真实 Windows 28 模块 663 项通过，新目标 **29 模块 682 项**另旧原审计器 15 项；**P3.20 新 19 和完整 682 尚未 Windows 执行，76 个真实快照目录也尚未扫描**。如本地旧快照超预算/active 无效，应直接阻断，不放宽认证或改写任何行情、账本、定时任务。原定时回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 和原九条行情隔离继续独立保持未认证/锁定，所有 PR 保持 Draft。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

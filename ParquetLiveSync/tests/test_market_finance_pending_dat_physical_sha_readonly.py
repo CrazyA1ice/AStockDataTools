@@ -289,7 +289,11 @@ class PendingDATPhysicalSHAOnlyTests(unittest.TestCase):
 
 
     def test_19_windows_crt_fstat_zero_ino_still_matches_kernel_handles(self):
-        self.add(payload=b"existing four bytes")
+        # Only simulate the DAT reader. Global os.fstat mocking around
+        # inspect() also corrupts the independent P3.21 ledger safety gate.
+        path = self.add(payload=b"existing four bytes")
+        stats = path.stat()
+        scandir_pin = (0, 0, stats.st_size, stats.st_mtime_ns, stats.st_mode)
         original_fstat = os.fstat
 
         def crt_style(fd):
@@ -306,9 +310,8 @@ class PendingDATPhysicalSHAOnlyTests(unittest.TestCase):
             with mock.patch.object(S.os, "fstat", side_effect=crt_style):
                 with mock.patch.object(S, "_windows_handle_id",
                                        side_effect=stable_kernel_id):
-                    out = self.run_scan()
-        self.assertEqual(out["scoped_DAT_files_double_hashed"], 1)
-        self.assertEqual(out["total_DAT_content_bytes_read_two_passes"], 38)
+                    digest = S._hash_two_passes(path, scandir_pin)
+        self.assertEqual(digest, sha256(b"existing four bytes").hexdigest())
 
     def test_20_windows_different_kernel_handles_fail_closed(self):
         self.add(payload=b"aaaa")
@@ -320,6 +323,54 @@ class PendingDATPhysicalSHAOnlyTests(unittest.TestCase):
                         S.PhysicalError,
                         "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ"):
                     self.run_scan()
+
+
+    def test_21_windows_scandir_zero_dev_inode_keeps_pinned_metadata(self):
+        path = self.add(payload=b"aaaa")
+        actual = path.stat()
+        pinned = (0, 0, actual.st_size, actual.st_mtime_ns, actual.st_mode)
+        # os.stat(path) can have real IDs, unlike Windows DirEntry.stat().
+        distinct = SimpleNamespace(
+            st_dev=12345, st_ino=98765, st_size=actual.st_size,
+            st_mtime_ns=actual.st_mtime_ns, st_mode=actual.st_mode)
+        with mock.patch.object(S, "_is_windows", return_value=True):
+            self.assertTrue(S._pinned_path_match(distinct, pinned))
+            drift = SimpleNamespace(
+                st_dev=12345, st_ino=98765, st_size=actual.st_size + 1,
+                st_mtime_ns=actual.st_mtime_ns, st_mode=actual.st_mode)
+            self.assertFalse(S._pinned_path_match(drift, pinned))
+        with mock.patch.object(S, "_is_windows", return_value=False):
+            self.assertFalse(S._pinned_path_match(distinct, pinned))
+
+    def test_22_two_pass_same_bytes_different_native_identity_denied(self):
+        path = self.add(payload=b"aaaa")
+        stat_result = path.stat()
+        pinned = (0, 0, stat_result.st_size, stat_result.st_mtime_ns,
+                  stat_result.st_mode)
+        # Two checks (opened+verifier) before and after *each* read pass.
+        ids = iter([(42, 100)] * 4 + [(42, 101)] * 4)
+        with mock.patch.object(S, "_is_windows", return_value=True):
+            with mock.patch.object(S, "_windows_handle_id",
+                                   side_effect=lambda fd: next(ids)):
+                with self.assertRaisesRegex(
+                        S.PhysicalError,
+                        "FINANCE_DAT_PHYSICAL_TWO_PASSES_FILE_IDENTITY_CHANGED"):
+                    S._hash_two_passes(path, pinned)
+
+    def test_23_original_pinned_metadata_drift_remains_denied(self):
+        path = self.add(payload=b"abcd")
+        st = path.stat()
+        pinned = (0, 0, st.st_size, st.st_mtime_ns, st.st_mode)
+        with mock.patch.object(S, "_is_windows", return_value=True):
+            with mock.patch.object(S, "_windows_handle_id",
+                                   return_value=(12, 34)):
+                # Even with matching forged kernel ID, the DAT byte budget
+                # and old P3.24 size/time/mode cannot silently be bypassed.
+                bad = (0, 0, st.st_size + 1, st.st_mtime_ns, st.st_mode)
+                with self.assertRaisesRegex(
+                        S.PhysicalError,
+                        "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ"):
+                    S._hash_two_passes(path, bad)
 
 
 if __name__ == "__main__":

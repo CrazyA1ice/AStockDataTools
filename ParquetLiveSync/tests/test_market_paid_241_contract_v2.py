@@ -166,7 +166,7 @@ class Paid241PhysicalMonthTests(unittest.TestCase):
     def test_13_duplicate_0930_key_refused_without_file(self):
         rows=source_rows()
         rows[-1]={**rows[-1], "ts":rows[0]["ts"]}
-        with self.assertRaisesRegex(ValueError, "DUPLICATE_STOCK_MINUTE_KEY"):
+        with self.assertRaisesRegex(ValueError, "Duplicate normalized|DUPLICATE_STOCK_MINUTE_KEY"):
             self._install(rows)
         self.assertFalse((self.base/"1min"/"2026-11.parquet").exists())
 

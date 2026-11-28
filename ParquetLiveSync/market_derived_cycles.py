@@ -163,8 +163,8 @@ def _collect_anchor_minutes(original, sealed):
     """Keep actual purchased 238-241 bars without inventing any minute.
 
     The real 2026-09-30 paid anchors are 241: 09:30 through 15:00,
-    including a separate auction label. In contrast, canonical updated
-    New QMT physical stock-days retain all 241 opening and END labels.
+    including a separate auction label. New QMT physical stock-days
+    retain the same 241 opening and END labels.
     Incomplete purchased anchors are used for *calibration only* and only
     through their fully observed aggregation buckets.
     """
@@ -180,8 +180,8 @@ def _collect_anchor_minutes(original, sealed):
 def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
     """Calibrate from ONLY genuinely observed entire 5/15/30/60m windows.
 
-    Production consumes 241 physical source minutes; this temporary 240
-    interval view is used only for higher-period aggregation and calibration.
+    Production consumes 241 physical source minutes and directly includes
+    the separate 09:30 in the first higher-minute aggregation bucket.
     """
     n=BARS[period]
     if (type(one_minute_offset_ms) is not int
@@ -189,22 +189,12 @@ def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
         raise ValueError("Unverified purchased source minute offset")
     if len(rows)<238 or len(rows)>241:
         raise ValueError("Purchased anchor needs 238-241 genuine minute bars")
-    # 09:30 is a real source label, NOT an extra 09:31 interval. Where the
-    # purchase has all 241 labels, apply the same proved auction folding
-    # rule as the QMT physical 1m writer. Never silently discard traded
-    # volume/amount or substitute a synthetic minute.
+    # Complete purchased 241 anchors use an unchanged 09:30 in the
+    # first higher-minute bucket. Partial 238..240 inputs below are used
+    # only for fully observed continuous-trading windows.
     if len(rows)==241:
-        # Directly match the paid 5/15/30/60 opening window containing
-        # the separate 09:30, even when its own turnover is zero.
         return aggregate_stock_day(
             rows,period,one_minute_offset_ms=one_minute_offset_ms)
-        ordered=sorted(rows,key=lambda r:r["ts"])
-        for raw in ordered:
-            if type(raw["ts"]) is not int or (
-                    raw["ts"]+CN_MS-one_minute_offset_ms)%60000:
-                raise ValueError("Purchased minute anchor sub-minute timestamp drift")
-        rows,_=S._fold_241_day(
-            ordered,one_minute_offset_ms,REFERENCE.strftime("%Y-%m"))
     canonical={}
     stamp_seen=set()
     label_seen=set()

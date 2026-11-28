@@ -177,9 +177,14 @@ def inspect(module_root, stock_root, expected_ledger_sha256,
     payload_bytes_total = 0
     source_union_manifest = sha256()
     base = extra / "financial"
+    if scopes:
+        PRIOR._dir(base)
     for table_name, stock in scopes:
-        folder = base / table_name / stock / "snapshots"
-        PRIOR._dir(folder)
+        table_root = base / table_name
+        stock_root_path = table_root / stock
+        folder = stock_root_path / "snapshots"
+        for directory in (table_root, stock_root_path, folder):
+            PRIOR._dir(directory)
         names, directory_identity = PRIOR._snapshot_names(folder)
         need(bool(names), "PRIOR_FINANCE_EMPTY_OLD_SNAPSHOT_SCOPE")
         by_day = defaultdict(list)

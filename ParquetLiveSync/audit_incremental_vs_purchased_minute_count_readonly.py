@@ -63,8 +63,17 @@ def compare(purchased_file, purchased_day, incremental_file,
     # generated update must have that identical per-stock count.
     shape = (len(ref_hist) == 1 and len(new_hist) == 1
              and next(iter(ref_hist)) == next(iter(new_hist)))
-    same_opening_label = ref_separate == new_separate
-    compatible_shape = bool(shape and same_opening_label
+    same_opening_label = (ref_separate == new_separate
+                          and (left_result["stocks_with_0931_label"] ==
+                               left_result["stock_days_observed"]) ==
+                              (right_result["stocks_with_0931_label"] ==
+                               right_result["stock_days_observed"]))
+    same_endpoints = (
+        set(left_result["earliest_label_local_histogram"]) ==
+        set(right_result["earliest_label_local_histogram"])
+        and set(left_result["latest_label_local_histogram"]) ==
+        set(right_result["latest_label_local_histogram"]))
+    compatible_shape = bool(shape and same_opening_label and same_endpoints
                             and left_result["stock_days_other_bar_counts"] == 0
                             and right_result["stock_days_other_bar_counts"] == 0)
     return {
@@ -82,6 +91,14 @@ def compare(purchased_file, purchased_day, incremental_file,
         "incremental_stock_days": right_result["stock_days_observed"],
         "incremental_bar_count_histogram": new_hist,
         "incremental_0930_present_for_all": new_separate,
+        "purchased_reference_first_label_times":
+            sorted(left_result["earliest_label_local_histogram"]),
+        "purchased_reference_last_label_times":
+            sorted(left_result["latest_label_local_histogram"]),
+        "incremental_first_label_times":
+            sorted(right_result["earliest_label_local_histogram"]),
+        "incremental_last_label_times":
+            sorted(right_result["latest_label_local_histogram"]),
         "bar_count_and_opening_label_profile_match": compatible_shape,
         "purchased_09_30_auction_trades_source_certified": False,
         "incremental_09_30_auction_trades_source_certified": False,

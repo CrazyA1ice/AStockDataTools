@@ -469,6 +469,10 @@ P3.18 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 已真实 Windows 
 
 **仅凭旧快照字节仍无法判断新 QMT 财务源是否恢复了此前观测**：本阶段不解析 Parquet raw 行内容/不核对九表历史并集，不运行新 QMT/get_financial_data，也不批准 Capital 的 `m_quarter` 例外。输出固定 `new_finance_source_consulted=false`、`parquet_row_or_history_union_verified=false`、`all_source_history_conflicts_resolved=false`、`financial_repair_authorized=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。新增 **19 项合成测试**，此前真实 Windows 28 模块 663 项通过，新目标 **29 模块 682 项**另旧原审计器 15 项；**P3.20 新 19 和完整 682 尚未 Windows 执行，76 个真实快照目录也尚未扫描**。如本地旧快照超预算/active 无效，应直接阻断，不放宽认证或改写任何行情、账本、定时任务。原定时回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 和原九条行情隔离继续独立保持未认证/锁定，所有 PR 保持 Draft。
 
+**P3.20 固定 Windows 682 项通过：76 个旧快照目录与 91 个 active 物理 SHA 全匹配（2026-11-28）**：用户真实 Windows 固定 `e7f55afcf0acbee20ab6f81064dde9e930f79ece` 上执行原审计器 **15/15 PASS**、P3.20 合成专项 **19/19 PASS**、选定 29 模块 **682/682 PASS**，随后针对固定保存的财务待审进度账本 SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a` 严格**只读**物理扫描，确认 76 个来源冲突的全部既有快照目录存在（缺失 0），91 个旧不可变 Parquet 文件均获得物理 SHA，合计 **1,310,172 B**，所有 91 个历史日期的 `active` 指针均与所选版本的实际文件 SHA 一致，无本阶段可见的旧快照目录缺失/多版本不确定选择。真实清单哈希 `12be02042231302b6e1334797eb5751c52971e6497f1b42d5be03ae97095bcb8`。分布为 `Capital` 14 个作用域／28 份旧快照；`HolderNum` 3／3；`Top10FlowHolder` 25／25；`Top10Holder` 34／35，共 76／91。这是旧文件的真实**物理字节和版本指针证据**，不等于已解析 Arrow schema、历史 JSON payload、旧历史版本并集、任何**新** QMT 财务原始数据或供应商来源认证，更不是财务冲突已解除。
+
+下一步 P3.21 必须坚持旧固定账本 SHA 和 P3.20 原物理快照清单 SHA 双重锁定，再在同一确切的 76 个作用域、91 个已核验文件中只读取存活 Parquet Arrow schema、原始行 `asof/symbol/item/index/payload_json` 和 payload 内部数据；仅当真实行身份、不可变文件名内容指纹均验证通过，才只读计算“每个已选择历史日期取规范化原始行 Counter 并集”的统计和摘要，**不能拿这条旧历史 Counter 与尚未读取的新来源比较或称冲突已解决**。不能更改九条行情隔离、76+1 财务 pending 或原 11-25 运行回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 的未认证状态；不调用 QMT、不改定时器/H5/Parquet、不合并 main。历史 682 项仅是 P3.20 已完成验收，不是 P3.21 回归结果。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

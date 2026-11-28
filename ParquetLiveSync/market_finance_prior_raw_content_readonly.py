@@ -152,9 +152,11 @@ def inspect(module_root, stock_root, expected_ledger_sha256,
          and original["conflict_scopes_with_snapshot_directory"]
          == original["scopes_from_exact_conflict_details"],
          "PRIOR_FINANCE_MISSING_OLD_SNAPSHOT_SCOPE")
-    need(original["asof_active_pin_resolution_status_counts"] ==
-         {"ACTIVE_PIN_SELECTED_BYTES_MATCH":
-          original["physical_snapshot_files_sha_verified"]},
+    files_declared = original["physical_snapshot_files_sha_verified"]
+    required_pins = ({"ACTIVE_PIN_SELECTED_BYTES_MATCH": files_declared}
+                     if files_declared else {})
+    need(original["asof_active_pin_resolution_status_counts"]
+         == required_pins,
          "PRIOR_FINANCE_OLD_SNAPSHOT_ACTIVE_PIN_NOT_UNIQUE")
 
     work, extra_string = LEDGER._roots(module_root, stock_root)

@@ -507,6 +507,10 @@ P3.23 将上述真实性阻断整理到新增 [`ParquetLiveSync/MARKET_FINANCE_F
 
 P3.22 的 **31 模块 721 项 Windows 验收和真实原生产旧读取器重算仍待操作者执行**；P3.23 只是明确科学证据“下一步能证明什么/不能证明什么”的外部依赖。历史 11-25 原定时收据 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 不变，独立原生产数据和全部 Draft PR 暂不合并 main。
 
+**P3.22 Windows 721 项实际验收：原生产旧读取器与独立旧历史 Counter 完全一致（2026-11-28）**：操作者固定 Draft PR #290 的真实提交 `b97386c994b60b33eb40f919324e465663d287ff` 在 Windows 完成选定 **31 模块 721/721 PASS**，随后对原生产 `qmt_extra_financial_cache_import._prior_rows` 执行实际 P3.22 原始旧来源重读一致性验证，通过 `PRODUCTION_READER_OLD_HISTORICAL_UNION_MATCHED_FRESH_NOT_CHECKED`。精确锁定财务缓存账本物理 SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a`、旧 91 文件物理清单 SHA `12be02042231302b6e1334797eb5751c52971e6497f1b42d5be03ae97095bcb8`、旧内容并集 SHA `6d0fad5f54cb97730f2a9da8231c376491ba8a9c57d4e140133f0910f16b1cd5`；76 个严格来源历史冲突作用域、91 份旧文件、48,754 行旧原始记录；原生产读取器与独立 P3.21 旧读法均得 **46,478** 条不同及 **46,485** 条含重复 Counter 并集，`Capital=14 scopes/1686 distinct+multiset`、`HolderNum=3/440/440`、`Top10FlowHolder=25/17676/17676`、`Top10Holder=34/26676/26683`；原历史重复次数被保留。P3.22 真正证实了原生产**旧历史**读取语义与独立已验旧源数据内容相同，不代表 `fresh_qmt_or_finance_source_queried` 或 `fresh_finance_raw_records_compared` 成功，这两项仍是 `false`。财务原 **76 个 SOURCE_HISTORY_CONFLICT + 1 个 CACHE_DECODE_ERROR** 未解除、原九条市场隔离未解除、没有市场/H5/Parquet 写入或 QMT 下载。原 11 月 25 日定时保存回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 原始物理字节仍不可认证；全部 PR 保留 Draft，不并入 main。
+
+此时 P3.23 文档已界定真实外部依赖：只有存在具体已知本地路径/独立来源说明、日期/股票九表完整性和物理 SHA 的新鲜财务候选文件，才能在受限纯内存里继续 `saved-current` 的多重集严格比对；单有旧 `financial-cache-progress.json` 的错误文字不能当新数据。下一阶段应首先发现/声明真正的证据候选来源与不变性门槛，**不得**自己假定本机存在 QMT 端缓存或读取 QMT SDK，更不能无来源凭证新建“当前数据”文件。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

@@ -1,4 +1,4 @@
-"""2026-11-18 zero-volume price boundary regressions; synthetic inputs only.
+"""2026-11-18 zero-volume OHLC regressions on the paid 241 grid; synthetic inputs only.
 
 No QMT network calls, live market writes, or production file access.
 """
@@ -57,7 +57,7 @@ class ZeroVolumeOhlcGateTests(unittest.TestCase):
         rows[-1].update({"open": 10., "high": 10., "low": 10.,
                          "close": 10., "volume": 0., "amount": 0.})
         accepted = U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
-        self.assertEqual(accepted.num_rows, 240)
+        self.assertEqual(accepted.num_rows, 241)
         self.assertAlmostEqual(accepted["close"][-1].as_py(), 10.)
         self.assertAlmostEqual(accepted["volume"][-1].as_py(), 0.)
 
@@ -80,7 +80,7 @@ class ZeroVolumeOhlcGateTests(unittest.TestCase):
         accepted = U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
         counts = U.quote_only_bucket_advisories(accepted.to_pylist())
         self.assertGreater(counts.get("5min", 0), 0)
-        self.assertEqual(accepted.num_rows, 240)
+        self.assertEqual(accepted.num_rows, 241)
 
     def test_bad_zero_volume_terminal_close_cannot_pass_using_last_trade(self):
         # Previously traded[-1].close agreed while persisted close disagreed.
@@ -93,9 +93,21 @@ class ZeroVolumeOhlcGateTests(unittest.TestCase):
     def test_normal_241_grid_is_accepted_without_price_edits(self):
         rows = minute_day()
         accepted = U.normal_qmt_day(rows, CODE, DAY, daily(rows), GATE)
-        self.assertEqual(accepted.num_rows, 240)
+        self.assertEqual(accepted.num_rows, 241)
+        self.assertEqual(accepted["ts"][0].as_py(),
+                         U.P.stamp_ms(rows[0]["datetime_cn"]))
+        self.assertEqual(accepted["ts"][1].as_py(),
+                         U.P.stamp_ms(rows[1]["datetime_cn"]))
+        self.assertAlmostEqual(accepted["volume"][0].as_py(), 0.)
+        self.assertAlmostEqual(accepted["amount"][0].as_py(), 0.)
         self.assertAlmostEqual(accepted["close"][-1].as_py(), 10.)
         self.assertAlmostEqual(accepted["high"][0].as_py(), 10.2)
+        self.assertAlmostEqual(
+            sum(accepted["volume"].to_pylist()),
+            sum(row["volume"] for row in rows) * 100.)
+        self.assertAlmostEqual(
+            sum(accepted["amount"].to_pylist()),
+            sum(row["amount"] for row in rows))
 
 
 if __name__ == "__main__":

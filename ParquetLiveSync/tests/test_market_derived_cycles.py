@@ -182,11 +182,14 @@ class HigherMinuteTests(unittest.TestCase):
                     self.assertEqual(len(paid),241)
                     observed=D._anchor_complete_buckets(
                         paid,period,one_minute_offset_ms=0)
-                    folded,_=D.S._fold_241_day(
-                        paid,0,"2026-09")
                     expected=D.aggregate_stock_day(
-                        folded,period,one_minute_offset_ms=0)
+                        paid,period,one_minute_offset_ms=0)
                     self.assertEqual(observed,expected)
+                    if auction_volume:
+                        folded,_=D.S._fold_241_day(paid,0,"2026-09")
+                        self.assertEqual(
+                            observed,D.aggregate_stock_day(
+                                folded,period,one_minute_offset_ms=0))
                     self.assertEqual(len(observed),240//n)
                     self.assertAlmostEqual(
                         sum(x["volume"] for x in observed),
@@ -194,19 +197,16 @@ class HigherMinuteTests(unittest.TestCase):
                     self.assertAlmostEqual(
                         sum(x["amount"] for x in observed),
                         sum(x["amount"] for x in paid),places=4)
-                    if auction_volume:
-                        self.assertEqual(observed[0]["open"],auction["open"])
-                        self.assertGreaterEqual(observed[0]["high"],
-                                                auction["high"])
-                        self.assertLessEqual(observed[0]["low"],
-                                             auction["low"])
+                    self.assertEqual(observed[0]["open"],auction["open"])
+                    self.assertGreaterEqual(observed[0]["high"],auction["high"])
+                    self.assertLessEqual(observed[0]["low"],auction["low"])
 
     def test_real_241_auction_rejects_invalid_source_without_faking_bars(self):
         full=minute_rows()
         auction={**full[0],"ts":full[0]["ts"]-60000,
                  "volume":200.,"amount":2000.}
         paid=[auction]+full
-        with self.assertRaisesRegex(ValueError,"sub-minute timestamp drift"):
+        with self.assertRaisesRegex(ValueError,"off-minute timestamps"):
             invalid=paid.copy()
             invalid[0]={**invalid[0],"ts":invalid[0]["ts"]+45000}
             D._anchor_complete_buckets(
@@ -216,7 +216,7 @@ class HigherMinuteTests(unittest.TestCase):
             invalid[0]={**invalid[0],"amount":0.}
             D._anchor_complete_buckets(
                 invalid,"5min",one_minute_offset_ms=0)
-        with self.assertRaisesRegex(ValueError,"241-minute grid"):
+        with self.assertRaisesRegex(ValueError,"1minute trading grid mismatch"):
             invalid=paid.copy()
             invalid[1]={**invalid[1],"ts":invalid[1]["ts"]+60000}
             D._anchor_complete_buckets(

@@ -165,6 +165,11 @@ def _read_scoped(finance, pending, exact_manifest):
         counter["physical_DAT_files_double_SHA_verified"] += 1
         counter["DAT_file_bytes_per_read_pass"] += desc[3]
         counter["zero_byte_DAT_files"] += (desc[3] == 0)
+    # Preserve the pending-reason set even when synthetic/partial scopes
+    # contain no matching DAT files, so an absent file never masquerades as
+    # absence of the pending reason itself.
+    for reason in set(pending.values()):
+        reason_totals[reason]
     for ex, ex_id, day, day_id in directories.values():
         need(DAT._safe_dir(ex) == ex_id
              and DAT._safe_dir(day) == day_id,

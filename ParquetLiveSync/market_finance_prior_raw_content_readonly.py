@@ -54,7 +54,7 @@ def _parse_payload(value):
     try:
         obj = json.loads(value, object_pairs_hook=PRIOR._unique_pairs,
                          parse_constant=_json_constant)
-    except (UnicodeError, ValueError, TypeError) as exc:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         if isinstance(exc, ContentError):
             raise
         raise ContentError("PRIOR_FINANCE_PAYLOAD_INVALID_JSON") from exc
@@ -284,6 +284,7 @@ def inspect(module_root, stock_root, expected_ledger_sha256,
         "new_finance_source_consulted": False,
         "new_and_old_finance_records_compared": False,
         "financial_provider_authenticated": False,
+        "full_history_coverage_certified": False,
         "financial_repair_authorized": False,
         "all_finance_pending_cleared": False,
         "original_run_receipt_authenticated": False,

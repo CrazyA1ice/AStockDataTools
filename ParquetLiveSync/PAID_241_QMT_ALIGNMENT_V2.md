@@ -23,6 +23,15 @@
 
 **安全结果**：若在原有 240 月数据上直接使用新版自动日任务，预期先得到 `EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION`，而不是继续更新。该拒绝是保护旧 SHA 的设计，不是行情源错误。单独 Windows 验收通过且迁移完成之前不得切换生产计划任务至此分支，不得声称已完成生产切换。
 
+## 独立工作树只读迁移清单所需的真实路径
+
+**不要使用独立 worktree 下的默认 `work` 目录** 来审查你正式数据；迁移清单 CLI 现在明确要求两个来源路径：
+
+- `--workspace D:\\ChatGPT\\AStockDataTools\\ParquetLiveSync\\work\\market_update`：正式增量程序的 SHA 提交账本目录。
+- `--stage D:\\ChatGPT\\AStockDataTools\\ParquetLiveSync\\work\\qmt_1min_market\\20261014_20261112`：早先已核验的私有原生 QMT 241 源及恢复回执。
+
+`plan_paid241_legacy_month_readonly.py` 同时传入 `--root D:\\stock`、`--month 2026-11`，**仅读**旧 240 物理月 SHA、旧账本与原生 241 私有月 SHA；它仍不具备已入库 11 月全部日期/股票日完整覆盖认证，因此永不提供迁移 Apply。若任一旧文件/回执不存在或 SHA 不匹配应立即退出，而不是把空的新工作树误判成真实股票数据缺失。
+
 ## 验收顺序
 
 - 新增 `test_market_paid_241_contract_v2.py` 的合成检验（零量额与真实 09:30、异量额、241 格点、240 拒绝、**241 直接重构 48/16/8/4 严格量额守恒和零成交开盘价格保留**、旧 240 同月阻断、241 新月提交与追加、临时日 241 SHA 回执、购买旧文件不变）。

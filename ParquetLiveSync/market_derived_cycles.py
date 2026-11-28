@@ -44,7 +44,7 @@ def _source_stamp(ts):
 
 
 def grouped_source(table):
-    """Stock-day source inventory; strict 240 trading bar and grid gate."""
+    """Stock-day source inventory; paid 241 admission checked later."""
     found = defaultdict(list)
     for row in table.to_pylist():
         stock = L.normal_symbol(row["symbol"])
@@ -57,37 +57,66 @@ def grouped_source(table):
 def aggregate_stock_day(rows, period, *, one_minute_offset_ms,
                         period_label_shift_ms=0,
                         volume_factor=1.0, amount_factor=1.0):
+    """Aggregate 241 paid 1m source directly, or legacy 240 END view.
+
+    Purchased 09:30 is INCLUDED once in the first higher-period bucket,
+    even when its own traded volume and amount are both zero. The physical
+    1m source is never folded or mutated by this higher-period calculation.
+    """
     n = BARS[period]
-    if len(rows) != 240:
-        raise ValueError("INCOMPLETE_1MIN_STOCK_DAY: " + str(len(rows)))
     if (type(one_minute_offset_ms) is not int
             or one_minute_offset_ms not in [m*60000 for m in P.OFFSET_MINUTES]):
         raise ValueError("Invalid purchased 1minute grid offset")
     if (type(period_label_shift_ms) is not int
-            or period_label_shift_ms%60000):
+            or period_label_shift_ms % 60000):
         raise ValueError("Invalid purchased higher-period timestamp shift")
+    native_241 = len(rows) == 241
+    if not native_241 and len(rows) != 240:
+        raise ValueError("INCOMPLETE_1MIN_STOCK_DAY: " + str(len(rows)))
     ordered = sorted(rows, key=lambda r: r["ts"])
     if any(type(r["ts"]) is not int for r in ordered):
         raise ValueError("Non-integer original 1minute timestamp")
-    if any(ordered[i]["ts"] >= ordered[i+1]["ts"] for i in range(239)):
+    if any(ordered[i]["ts"] >= ordered[i+1]["ts"]
+           for i in range(len(ordered)-1)):
         raise ValueError("Duplicate/unsorted original 1minute timestamps")
-    # Integer-minute binning alone can silently accept :00:45 and :00:59.
-    # Require *exact* calibrated exchange-local whole-minute labels before
-    # deriving any higher-period bar. Never floor off-grid source timestamps.
-    shifted_ms = [r["ts"]+CN_MS-one_minute_offset_ms for r in ordered]
-    if any(stamp%60000 for stamp in shifted_ms):
-        raise ValueError("Purchased original 240-minute trading grid has off-minute timestamps")
-    slots = [(stamp//60000)%1440 for stamp in shifted_ms]
-    if slots != BASE_CLOCK:
-        raise ValueError("Purchased original 240-minute trading grid mismatch")
+    shifted = [r["ts"] + CN_MS - one_minute_offset_ms for r in ordered]
+    if any(stamp % 60000 for stamp in shifted):
+        raise ValueError("Purchased original 1minute grid has off-minute timestamps")
+    slots = [(stamp // 60000) % 1440 for stamp in shifted]
+    expected = ([h*60+m for h,m in sorted(P.GRID)]
+                if native_241 else BASE_CLOCK)
+    if slots != expected:
+        raise ValueError("Purchased original 1minute trading grid mismatch")
+    if native_241:
+        day = L.market_ts_day(ordered[0]["ts"] - one_minute_offset_ms)
+        if any(L.market_ts_day(row["ts"] - one_minute_offset_ms) != day
+               or L.normal_symbol(row["symbol"]) !=
+               L.normal_symbol(ordered[0]["symbol"]) for row in ordered):
+            raise ValueError("Paid 241 minute mixes trading days or symbols")
     for row in ordered:
-        if any(row[field] is None or
-               not math.isfinite(float(row[field])) for field in FIELDS):
+        if any(row[field] is None or not math.isfinite(float(row[field]))
+               for field in FIELDS):
             raise ValueError("Non-finite or empty 1minute OHLCVA")
+        if (float(row["low"]) <= 0 or
+                float(row["low"]) > min(float(row["open"]),float(row["close"])) or
+                float(row["high"]) < max(float(row["open"]),float(row["close"])) or
+                float(row["volume"]) < 0 or float(row["amount"]) < 0):
+            raise ValueError("Invalid source 1minute OHLCVA geometry")
+        if (float(row["volume"]) > 0) != (float(row["amount"]) > 0):
+            raise ValueError("Paid source 1minute has unpaired volume/amount")
     result = []
-    for session in (ordered[:120], ordered[120:]):
+    sessions = (ordered[:121], ordered[121:]) if native_241 else (
+        ordered[:120], ordered[120:])
+    for session_index, session in enumerate(sessions):
         for pos in range(0, 120, n):
-            bars = session[pos:pos+n]
+            # The paid 09:30 opening bar belongs to the first bucket once;
+            # all following morning intervals contain exactly n 1m bars.
+            extra = int(native_241 and session_index == 0)
+            start = pos if extra == 0 or pos == 0 else pos + 1
+            stop = pos + n + extra
+            bars = session[start:stop]
+            if len(bars) != n + int(extra and pos == 0):
+                raise ValueError("Incomplete purchased higher-minute bucket")
             bar = {
                 "ts": int(bars[-1]["ts"]) + int(period_label_shift_ms),
                 "symbol": L.normal_symbol(bars[0]["symbol"]),
@@ -104,14 +133,14 @@ def aggregate_stock_day(rows, period, *, one_minute_offset_ms,
             result.append(bar)
     if len(result) != 240//n:
         raise ValueError("Derived higher-minute bar count not 240/period")
-    for field in ("volume","amount"):
+    for field in ("volume", "amount"):
         original = math.fsum(float(row[field]) for row in ordered)
         derived = math.fsum(float(row[field]) for row in result)
         factor = volume_factor if field=="volume" else amount_factor
-        if not math.isclose(derived, original*factor, rel_tol=1e-10,abs_tol=1e-5):
+        if not math.isclose(derived, original*factor,
+                            rel_tol=1e-10, abs_tol=1e-5):
             raise ValueError("Higher-period minute amount/volume not conserved")
     return result
-
 
 def _purchased_anchors(root, period, symbols=ANCHORS):
     source, path, sha = source_day_rows(root, period, REFERENCE, symbols)
@@ -136,8 +165,8 @@ def _collect_anchor_minutes(original, sealed):
     """Keep actual purchased 238-241 bars without inventing any minute.
 
     The real 2026-09-30 paid anchors are 241: 09:30 through 15:00,
-    including a separate auction label. In contrast, canonical updated
-    QMT stock-days are exactly 240 after the auction is safely folded.
+    including a separate auction label. New QMT physical stock-days
+    retain the same 241 opening and END labels.
     Incomplete purchased anchors are used for *calibration only* and only
     through their fully observed aggregation buckets.
     """
@@ -153,8 +182,8 @@ def _collect_anchor_minutes(original, sealed):
 def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
     """Calibrate from ONLY genuinely observed entire 5/15/30/60m windows.
 
-    During production, aggregate_stock_day() still requires 240/240 source
-    minute bars. This helper is for purchased-source overlap only.
+    Production consumes 241 physical source minutes and directly includes
+    the separate 09:30 in the first higher-minute aggregation bucket.
     """
     n=BARS[period]
     if (type(one_minute_offset_ms) is not int
@@ -162,18 +191,12 @@ def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
         raise ValueError("Unverified purchased source minute offset")
     if len(rows)<238 or len(rows)>241:
         raise ValueError("Purchased anchor needs 238-241 genuine minute bars")
-    # 09:30 is a real source label, NOT an extra 09:31 interval. Where the
-    # purchase has all 241 labels, apply the same proved auction folding
-    # rule as the QMT physical 1m writer. Never silently discard traded
-    # volume/amount or substitute a synthetic minute.
+    # Complete purchased 241 anchors use an unchanged 09:30 in the
+    # first higher-minute bucket. Partial 238..240 inputs below are used
+    # only for fully observed continuous-trading windows.
     if len(rows)==241:
-        ordered=sorted(rows,key=lambda r:r["ts"])
-        for raw in ordered:
-            if type(raw["ts"]) is not int or (
-                    raw["ts"]+CN_MS-one_minute_offset_ms)%60000:
-                raise ValueError("Purchased minute anchor sub-minute timestamp drift")
-        rows,_=S._fold_241_day(
-            ordered,one_minute_offset_ms,REFERENCE.strftime("%Y-%m"))
+        return aggregate_stock_day(
+            rows,period,one_minute_offset_ms=one_minute_offset_ms)
     canonical={}
     stamp_seen=set()
     label_seen=set()
@@ -398,20 +421,20 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
                 if day.isoformat() not in selected_days:
                     continue
                 key=(sym,day)
-                if day < date(2026,10,14) and len(single)!=240:
+                if day < date(2026,10,14) and len(single)!=241:
                     # The four pre-cutoff H5 fragments have no guaranteed
-                    # 240 bars per stock-day. Never invent missing minutes.
+                    # Purchased 241 per stock-day. Never invent missing minutes.
                     errors["pre_cutoff_incomplete_stockday_fragment"]+=1
                     continue
                 if key in pending:
                     single=pending.pop(key)+single
-                if len(single)<240:
+                if len(single)<241:
                     pending[key]=single
                     if len(pending)>40:
                         raise ValueError("Too many discontiguous QMT stock-days; original source ordering changed")
                     continue
-                if len(single)!=240:
-                    raise ValueError("Duplicate or malformed QMT 1minute stock-day "+
+                if len(single)!=241:
+                    raise ValueError("Duplicate or malformed paid 241 QMT stock-day "+
                                      sym+" "+str(day)+" bars="+str(len(single)))
                 code=sym[2:]+"."+sym[:2]
                 gate=B._calibration(sealed,code)
@@ -499,7 +522,7 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
         # 2026-10-08..13 are the immutable purchased/H5 eight-period
         # baseline, not QMT-backed new stock-days. Some real 1m files
         # have 239 bars. Never regenerate or credit that historical slice
-        # as a successfully completed 240-bar derived period.
+        # as a successfully completed 241-source derived period.
         dates={d for d in meta["days"]
                if date.fromisoformat(d)>=date(2026,10,14)}
         pending={period:sorted(dates-set(
@@ -511,6 +534,8 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
         union=set().union(*(set(d) for d in pending.values()))
         if not union:
             continue
+        if meta.get("minute_grid_contract") != S.PAID_241_CONTRACT:
+            raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
         target=S.target_path(root,month)
         if not target.is_file() or L.hash_file(target)!=meta["sha256"]:
             raise ValueError("Physical 1minute source differs from accepted ledger "+month)

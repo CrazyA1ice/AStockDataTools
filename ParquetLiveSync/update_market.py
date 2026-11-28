@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-command QMT → original canonical eight-period Parquet daily updater.
 
-First run: attach verified legacy Oct 1..13 + existing calibrated
-Oct 14..Nov 12 private increments to real AllCycleAStockData/1min.
+First run on a fresh v2 store: attach verified 241 native QMT sources,
+while any existing 240 minute month remains blocked for reviewed migration.
 Subsequent runs: fetch only not-yet-committed trading days using official
 TDX DAY + QMT 1m, sampled eltdx/Tencent checks, and append atomically.
 Calibrated minute rollups and closed WEEK/MONTH are coordinated by
@@ -62,6 +62,14 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             state["periods"]["1min"].get(month, {}).get("sources", []))
         for month in B.MONTHS
     )
+    if any(
+            state["periods"]["1min"].get(m) is not None
+            and state["periods"]["1min"][m].get("minute_grid_contract")
+            != S.PAID_241_CONTRACT for m in B.MONTHS):
+        # Check BOTH existing months before writing EITHER month. A partial
+        # bootstrap must never create a new 241 October month and then fail
+        # on an already-present 240 November month.
+        raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
     if (completed and state.get("qmt_calibration_sha256")
             and state.get("original_day_bootstrap_attempted")):
         # The current November file can evolve daily. Ledger + transaction
@@ -109,6 +117,9 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             dates = sorted(set(dates) | set(BASELINE_OCT_DAYS))
         source_id = "BOOTSTRAP:" + plan["identity_sha256"] + ":" + month
         old = state["periods"]["1min"].get(month)
+        if old is not None and (
+                old.get("minute_grid_contract") != S.PAID_241_CONTRACT):
+            raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
         if old is not None and source_id in old["sources"]:
             results.append({"month": month, "status": "ALREADY_INSTALLED",
                             "rows": old["rows"], "sha256": old["sha256"]})
@@ -128,7 +139,8 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
         else:
             streams = S.private_oct_nov_batches(month, stage=stage, plan=plan)
         result = S.install_month(root, month, streams, source_id=source_id,
-                                 days=dates, state=state, progress=progress)
+                                 days=dates, state=state, progress=progress,
+                                 minute_contract=S.PAID_241_CONTRACT)
         results.append(result)
         state = S.state_for(root)
     if apply and state.get("qmt_calibration_sha256") is None:
@@ -196,15 +208,19 @@ def quote_only_bucket_advisories(rows):
     Neither fabricate corrected prices nor assert those quotes are trades.
     An independent official DAY envelope violation remains a hard error.
     """
-    if len(rows) != 240:
-        raise ValueError("QMT quote advisory needs exact 240-minute day")
+    if len(rows) != 241:
+        raise ValueError("QMT quote advisory needs exact paid 241-minute day")
     counts = {}
     price_epsilon = .005
-    for session in (rows[:120], rows[120:]):
+    for session_no, session in enumerate((rows[:121], rows[121:])):
         for width in (5, 15, 30, 60):
             key = str(width) + "min"
             for start in range(0, 120, width):
-                bucket = session[start:start + width]
+                # A separate 09:30 bar belongs exactly once to the
+                # first higher-minute bucket; physical 1m remains 241.
+                begin = start + (1 if session_no == 0 and start else 0)
+                end = start + width + (1 if session_no == 0 else 0)
+                bucket = session[begin:end]
                 traded = [r for r in bucket if float(r["volume"]) > 0]
                 untraded = [r for r in bucket if float(r["volume"]) == 0]
                 if not traded or not untraded:
@@ -224,8 +240,8 @@ def verify_materialized_ohlc(rows, expected):
     Zero-volume intrabucket quote differences are advisory only. A quote
     outside the independent DAY envelope remains a hard rejection.
     """
-    if len(rows) != 240:
-        raise ValueError("QMT materialized stock-day must have 240 minutes")
+    if len(rows) != 241:
+        raise ValueError("QMT materialized stock-day must preserve exactly 241 minutes")
     for r in rows:
         if any(not math.isfinite(float(r[k])) or float(r[k]) <= 0
                for k in ("open", "high", "low", "close")):
@@ -281,47 +297,42 @@ def verify_materialized_ohlc(rows, expected):
 
 
 def normal_qmt_day(raw, code, day, expected, calibration):
-    """Normalize one QMT stock/day while conserving genuine 09:30 auction.
+    """Calibrate one native 241-row QMT day to the purchased 241-row grid.
 
-    Keep the original native 241 labels in the QMT API; convert to the paid
-    provider's 240 intervals using the SAME conservation logic as the
-    historical bootstrap. Independently compare the final 240 traded OHLCVA
-    against the official accepted DAY reference before admission.
+    The 09:30 source row is persisted separately, never merged into 09:31.
+    Legacy 240 projections remain available ONLY for in-memory provider/
+    higher-period comparison. No additional opening price is fabricated.
     """
-    if len(raw) not in (240, 241):
-        raise ValueError("QMT day must contain 240/241 native 1minute bars")
-    native = sorted(P.GRID)
-    clocks = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
-              for r in raw]
-    observed = [(d.hour, d.minute) for d in clocks]
-    if any(d.date() != day for d in clocks):
-        raise ValueError("QMT source minute outside official requested date")
-    if observed != (native if len(raw) == 241 else native[1:]):
-        raise ValueError("QMT native minute grid differs from accepted 241/240 labels")
+    if len(raw) != 241:
+        raise ValueError("PAID_241_REQUIRES_COMPLETE_NATIVE_QMT_241")
+    clock = [datetime.fromisoformat(r["datetime_cn"]).astimezone(L.UTC8)
+             for r in raw]
+    if any(stamp.date() != day for stamp in clock):
+        raise ValueError("QMT native minute outside requested date")
+    if [(stamp.hour, stamp.minute) for stamp in clock] != sorted(P.GRID):
+        raise ValueError("PAID_241_NATIVE_SOURCE_GRID_MISMATCH")
     gate = B._calibration(calibration, code)
+    # The old clock-offset fitting concerned TDX's 240 END-minute view;
+    # a shifted 09:30 may no longer align with original paid 09:30.
+    if gate["offset_ms"] != 0:
+        raise ValueError("PAID_241_NATIVE_TIMESTAMP_OFFSET_NOT_PROVEN")
     records = pa.Table.from_pylist([
-        {"ts": P.stamp_ms(r["datetime_cn"]),
+        {"ts": P.stamp_ms(row["datetime_cn"]),
          "symbol": L.normal_symbol(code),
-         **{k: float(r[k]) for k in FIELDS}}
-        for r in raw
-    ], schema=P.PRIVATE_SCHEMA)
+         **{field: float(row[field]) for field in FIELDS}}
+        for row in raw], schema=P.PRIVATE_SCHEMA)
     calibrated = B.calibrate_table(records, gate, day.strftime("%Y-%m"))
-    if len(raw) == 241:
-        approved, _ = S.adapt_241_private(
-            calibrated, gate["offset_ms"], day.strftime("%Y-%m"))
-    else:
-        approved = S._canonical(calibrated)
-    if approved.num_rows != 240:
-        raise ValueError("QMT calibrated day is not 240 compatible intervals")
-    L.checked_records(approved, target_year=day.year, target_month=day.month)
-    target_grid = sorted(P.GRID - {(9, 30)})
-    clocks = [datetime.fromtimestamp((int(ts)-gate["offset_ms"])/1000, L.UTC8)
-              for ts in approved["ts"].to_pylist()]
-    if [(d.hour, d.minute) for d in clocks] != target_grid:
-        raise ValueError("QMT converted 240-grid differs from purchased minute convention")
-    verify_materialized_ohlc(approved.to_pylist(), expected)
-    return approved
-
+    accepted, accepted_days = S.adapt_native_241_private(
+        calibrated, gate["offset_ms"], day.strftime("%Y-%m"))
+    if accepted_days != 1 or accepted.num_rows != 241:
+        raise ValueError("PAID_241_SOURCE_ADMISSION_ROW_COUNT_CHANGED")
+    L.checked_records(accepted, target_year=day.year, target_month=day.month)
+    clock_after = [datetime.fromtimestamp(int(stamp) / 1000, L.UTC8)
+                   for stamp in accepted["ts"].to_pylist()]
+    if [(stamp.hour, stamp.minute) for stamp in clock_after] != sorted(P.GRID):
+        raise ValueError("PAID_241_PURCHASED_MINUTE_LABEL_MISMATCH")
+    verify_materialized_ohlc(accepted.to_pylist(), expected)
+    return accepted
 
 def fetch_one(xtdata, code, day):
     """Only one missing day per code, not a repeated 90-day/history scan."""
@@ -348,6 +359,7 @@ def stage_day(root, day, reference, calib, sources_config, *,
             raise ValueError("Incomplete daily candidate pair")
         meta = S._json(receipt)
         if (meta.get("format") != FORMAT or meta.get("date") != day.isoformat()
+                or meta.get("minute_grid_contract") != S.PAID_241_CONTRACT
                 or meta.get("sha256") != L.hash_file(output)):
             raise ValueError("Saved daily candidate SHA changed")
         return output, meta
@@ -379,7 +391,7 @@ def stage_day(root, day, reference, calib, sources_config, *,
                         if len(quote_advisory_examples) < 12:
                             quote_advisory_examples.append(
                                 {"symbol": symbol, "buckets": advisory})
-                    writer.write_table(ready, row_group_size=240)
+                    writer.write_table(ready, row_group_size=241)
                     valid += 1
                     if symbol in sample:
                         selected_samples[symbol] = ready.to_pylist()
@@ -414,8 +426,8 @@ def stage_day(root, day, reference, calib, sources_config, *,
         tmp = pq.ParquetFile(scratch)
         try:
             if (tmp.schema_arrow != P.PRIVATE_SCHEMA
-                    or tmp.metadata.num_rows != valid * 240):
-                raise ValueError("Daily QMT staged 240-grid row count invalid")
+                    or tmp.metadata.num_rows != valid * 241):
+                raise ValueError("Daily QMT staged 241-grid row count invalid")
         finally:
             tmp.close()
         import os
@@ -428,7 +440,8 @@ def stage_day(root, day, reference, calib, sources_config, *,
                                  "not_hard_failures": True},
                                 ensure_ascii=False, sort_keys=True))
         doc = {"format": FORMAT, "date": day.isoformat(),
-               "sha256": L.hash_file(output), "rows": valid * 240,
+               "minute_grid_contract": S.PAID_241_CONTRACT,
+               "sha256": L.hash_file(output), "rows": valid * 241,
                "stock_days_accepted": valid, "expected_stock_days": len(codes),
                "quarantined": bad, "source_family": "QMT_AND_TDX_OFFICIAL_DAY",
                "quote_only_bucket_advisories": {
@@ -462,6 +475,7 @@ def recheck_sources(day, config=CONFIG_PATH, *, workspace=S.STATE_DIR,
     receipt = folder / (day.isoformat() + ".json")
     doc = S._json(receipt)
     if (doc.get("format") != FORMAT or doc.get("date") != day.isoformat()
+            or doc.get("minute_grid_contract") != S.PAID_241_CONTRACT
             or not isinstance(doc.get("sha256"), str)
             or source.is_symlink() or not source.is_file()
             or L.hash_file(source) != doc["sha256"]):
@@ -470,7 +484,7 @@ def recheck_sources(day, config=CONFIG_PATH, *, workspace=S.STATE_DIR,
     try:
         if (file.schema_arrow != P.PRIVATE_SCHEMA
                 or file.metadata.num_rows != doc.get("rows")
-                or doc.get("rows") != 240 * doc.get("stock_days_accepted", -1)):
+                or doc.get("rows") != 241 * doc.get("stock_days_accepted", -1)):
             raise ValueError("Daily QMT sample source footer/receipt changed")
     finally:
         file.close()
@@ -492,7 +506,7 @@ def recheck_sources(day, config=CONFIG_PATH, *, workspace=S.STATE_DIR,
     for r in selected.to_pylist():
         by_symbol.setdefault(r["symbol"], []).append(r)
     if set(by_symbol) != set(sample) or any(
-            len(rows) != 240 or len({r["ts"] for r in rows}) != 240
+            len(rows) != 241 or len({r["ts"] for r in rows}) != 241
             for rows in by_symbol.values()):
         raise ValueError("Daily QMT sample has missing/duplicate minutes")
     result = X.sample_check(day, by_symbol, cfgchecks, progress=progress)
@@ -576,6 +590,10 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
                 continue
             # Existing TDX DAY download, accepted Parquet source and local
             # monthly day materialization are reused, never reimplemented.
+            current_month = state["periods"]["1min"].get(day.strftime("%Y-%m"))
+            if current_month is not None and (
+                    current_month.get("minute_grid_contract") != S.PAID_241_CONTRACT):
+                raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
             if apply:
                 LIVE._sync_unlocked(root, day, day, max_days=1,
                                     materialize_local=True, logger=progress)
@@ -597,14 +615,16 @@ def update(root, *, mode="auto", apply=True, requested_date=None,
                 (pa.Table.from_batches([b]) for b in
                  pq.ParquetFile(src).iter_batches(batch_size=32768, use_threads=False)),
                 source_id="DAILY:" + str(day) + ":" + doc["sha256"],
-                days=[str(day)], state=state, progress=progress)
+                days=[str(day)], state=state, progress=progress,
+                minute_contract=S.PAID_241_CONTRACT)
             logs.append({**result, "date": str(day),
                          "quarantined_stocks": len(doc["quarantined"])})
             state = S.state_for(root)
         progress("MARKET_UPDATE_SUMMARY=" + json.dumps(
             {"jobs": logs, "market_root": str(L.storage_root(root)),
              "original_history_reprocessed": False,
-             "qmt_0930_zero_trade_discarded": True,
+             "qmt_0930_zero_trade_discarded": False,
+             "minute_grid_contract": S.PAID_241_CONTRACT,
              "current_month_only": True}, ensure_ascii=False, sort_keys=True))
         return logs
 

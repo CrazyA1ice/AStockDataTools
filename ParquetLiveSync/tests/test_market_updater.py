@@ -72,9 +72,10 @@ class MarketUpdaterTests(unittest.TestCase):
         official = {"open": 10., "high": 10.2, "low": 9.8,
                     "close": 10., "volume": 48000., "amount": 48000.}
         candidate = U.normal_qmt_day(raw, "600000.SH", day, official, gate)
-        self.assertEqual(candidate.num_rows, 240)
+        self.assertEqual(candidate.num_rows, 241)
         self.assertEqual(S._daily_group_rows(candidate), ["2026-11-13"])
-        self.assertEqual(candidate["volume"][0].as_py(), 200.0)
+        self.assertEqual(candidate["volume"][0].as_py(), 0.0)
+        self.assertEqual(candidate["volume"][1].as_py(), 200.0)
         self.assertEqual(L.market_ts_day(candidate["ts"][0].as_py()), day)
 
     def test_purchased_vendor_minute_clock_offset_is_respected(self):
@@ -87,10 +88,11 @@ class MarketUpdaterTests(unittest.TestCase):
             "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
         official = {"open": 10., "high": 10.2, "low": 9.8,
                     "close": 10., "volume": 48000., "amount": 48000.}
-        output = U.normal_qmt_day(native, "600000.SH", day, official, cfg)
-        self.assertEqual(output.num_rows, 240)
+        with self.assertRaisesRegex(ValueError, "PAID_241_NATIVE_TIMESTAMP_OFFSET_NOT_PROVEN"):
+            U.normal_qmt_day(native, "600000.SH", day, official, cfg)
+        # The old 240 conversion is still available for explicit TDX
+        # comparisons, but it must not enter the purchased 241 writer.
         native_first = U.P.stamp_ms(native[1]["datetime_cn"])
-        self.assertEqual(output["ts"][0].as_py(), native_first + offset)
         original = canonical([{
             "ts": U.P.stamp_ms(r["datetime_cn"]) + offset,
             **{k: r[k] for k in U.FIELDS}} for r in native])
@@ -98,15 +100,17 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(converted.num_rows, 240)
         self.assertEqual(removed, 1)
 
-    def test_nonzero_0930_and_official_price_mismatch_fail(self):
+    def test_unpaired_0930_and_official_price_mismatch_fail(self):
         raw = stock_day()
         gate = {"providers": {"SH_OTHER": {
             "category": "SH_OTHER", "offset_ms": 0,
             "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
         ref = {"open": 10., "high": 10.2, "low": 9.8,
                "close": 10., "volume": 48000., "amount": 48000.}
+        # Traded 09:30 is valid in paid 241. The deliberately corrupt
+        # positive-volume/zero-amount pair must still be rejected.
         raw[0]["volume"] = 5.
-        with self.assertRaisesRegex(ValueError, "09:30"):
+        with self.assertRaisesRegex(ValueError, "PAID_241_NATIVE_UNPAIRED_VOLUME_AMOUNT"):
             U.normal_qmt_day(raw, "600000.SH", date(2026, 11, 13), ref, gate)
         raw[0]["volume"] = 0.
         ref["open"] = 12.
@@ -165,15 +169,17 @@ class MarketUpdaterTests(unittest.TestCase):
         reference = {"open": 9.95, "high": 10.25, "low": 9.7,
                      "close": 10., "volume": 48400., "amount": 48400.}
         factor = {"providers": {"SH_OTHER": {
-            "category": "SH_OTHER", "offset_ms": 60000,
+            "category": "SH_OTHER", "offset_ms": 0,
             "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
         accepted = U.normal_qmt_day(source, "600000.SH",
                                     date(2026, 11, 13), reference, factor)
-        self.assertEqual(accepted.num_rows, 240)
-        self.assertEqual(accepted["volume"][0].as_py(), 600.)
-        self.assertEqual(accepted["amount"][0].as_py(), 600.)
+        self.assertEqual(accepted.num_rows, 241)
+        self.assertEqual(accepted["volume"][0].as_py(), 400.)
+        self.assertEqual(accepted["amount"][0].as_py(), 400.)
+        self.assertEqual(accepted["volume"][1].as_py(), 200.)
+        self.assertEqual(accepted["amount"][1].as_py(), 200.)
         self.assertEqual(accepted["ts"][0].as_py(),
-                         U.P.stamp_ms(source[1]["datetime_cn"]) + 60000)
+                         U.P.stamp_ms(source[0]["datetime_cn"]))
         reference["volume"] = 40000.
         with self.assertRaisesRegex(ValueError, "official DAY volume"):
             U.normal_qmt_day(source, "600000.SH",
@@ -295,7 +301,8 @@ class MarketUpdaterTests(unittest.TestCase):
 
     def test_bootstrap_short_circuits_historical_5403_receipts_daily(self):
         fake = {"periods": {"1min": {
-            m: {"sources": ["BOOTSTRAP:approved:" + m]}
+            m: {"sources": ["BOOTSTRAP:approved:" + m],
+                "minute_grid_contract": S.PAID_241_CONTRACT}
             for m in U.B.MONTHS}},
             "qmt_calibration_sha256": "a" * 64,
             "original_day_bootstrap_attempted": True}
@@ -424,10 +431,10 @@ class MarketUpdaterTests(unittest.TestCase):
             rows = []
             symbols = ["SH600000", "SZ000001", "SZ000002"]
             for symbol in symbols:
-                for n in range(240):
+                for hour, minute in sorted(U.P.GRID):
                     ts = U.P.stamp_ms(
-                        datetime(2026, 11, 13, 9, 31,
-                                 tzinfo=L.UTC8).isoformat()) + n * 60000
+                        datetime(2026, 11, 13, hour, minute,
+                                 tzinfo=L.UTC8).isoformat())
                     rows.append({"ts": ts, "symbol": symbol,
                                  "open": 10., "high": 10.,
                                  "low": 10., "close": 10.,
@@ -435,17 +442,18 @@ class MarketUpdaterTests(unittest.TestCase):
             f = staged / (day.isoformat() + ".parquet")
             pq.write_table(pa.Table.from_pylist(rows,
                                                  schema=U.P.PRIVATE_SCHEMA),
-                           f, row_group_size=240)
+                           f, row_group_size=241)
             digest = L.hash_file(f)
             (staged / (day.isoformat() + ".json")).write_bytes(
                 U.P.canonical({"format": U.FORMAT,
                                "date": day.isoformat(), "sha256": digest,
                                "rows": len(rows),
+                               "minute_grid_contract": S.PAID_241_CONTRACT,
                                "stock_days_accepted": len(symbols)}))
             def faux_sample(d, stock_data, settings, progress=print):
                 self.assertEqual(d, day)
                 self.assertEqual(set(stock_data), set(symbols))
-                self.assertTrue(all(len(v) == 240 for v in stock_data.values()))
+                self.assertTrue(all(len(v) == 241 for v in stock_data.values()))
                 return {"sampled": len(stock_data), "results": {}}
             before = sorted(str(p) for p in Path(temp).rglob("*"))
             with patch.object(U.X, "sample_check", side_effect=faux_sample):

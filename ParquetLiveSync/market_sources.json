@@ -35,8 +35,9 @@
       "short_history_only": true
     }
   },
-  "minutes_primary_policy": "QMT_only_unless_provider_ohlcva_and_units_independently_certified",
+  "minutes_primary_policy": "QMT_native_241_purchased_1m_grid_only_after_provider_OHLCVA_and_units_certification",
   "existing_key_policy": "keep_existing_never_blind_overwrite",
-  "native_qmt_0930_placeholder_policy": "zero_zero_discard;positive_positive_fold_into_0931;unpaired_reject",
-  "scheduled_default": "after_16_30_Asia_Shanghai_with_source_readiness_fail_closed"
+  "native_qmt_0930_placeholder_policy": "preserve_distinct_0930_zero_or_positive;never_fold_to_0931_in_physical_1minute;unpaired_reject",
+  "scheduled_default": "after_16_30_Asia_Shanghai_with_source_readiness_fail_closed",
+  "purchased_one_minute_grid_contract": "purchased_241_opening_plus_240_end_v2"
 }

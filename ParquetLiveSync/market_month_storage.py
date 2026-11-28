@@ -30,6 +30,7 @@ DAY_MS = 86400000
 BATCH = 65536
 SCHEMA = B.P.PRIVATE_SCHEMA
 FIELDS = ("open", "high", "low", "close", "volume", "amount")
+PAID_241_CONTRACT = "purchased_241_opening_plus_240_end_v2"
 
 
 def _json(path):
@@ -135,8 +136,9 @@ def _canonical(source):
 def _fold_241_day(day_rows, offset_ms, month):
     """Fold genuine 09:30 auction trade into the first regular 09:31 bar.
 
-    Native QMT is 241 labels; purchased 1m format uses 240 interval-end
-    labels. A real 09:30 auction MUST NOT be discarded. Unlike the earlier
+    Native QMT and purchased 1m both retain 241 original labels. This
+    240 END-interval fold is ONLY a legacy TDX/higher-period calculation
+    view, never the new physical 1minute store. Unlike the earlier
     assumption that 09:30 always has zero volume/amount, use its evidence:
     positive volume AND amount are merged, zero/zero is placeholder,
     mismatched zero-ness is quarantined. All source rows remain preserved
@@ -210,8 +212,57 @@ def _fold_241_day(day_rows, offset_ms, month):
     return adjusted, kind
 
 
+def adapt_native_241_private(source, category_offset_ms, month, *, stats=None):
+    """Keep all 241 native labels including a separate 09:30 purchased bar.
+
+    This is the production 1m source adapter. The legacy 241-to-240 fold
+    below remains only for explicit TDX/continuous-interval comparisons.
+    A nonzero historical offset is NOT proof that the 09:30 purchased
+    timestamp will match; fail closed rather than shift away that key.
+    """
+    if type(category_offset_ms) is not int or category_offset_ms != 0:
+        raise ValueError("PAID_241_NATIVE_TIMESTAMP_OFFSET_NOT_PROVEN")
+    raw = _canonical(source)
+    if raw.num_rows == 0 or raw.num_rows % 241:
+        raise ValueError("PAID_241_NATIVE_STOCKDAY_ROW_COUNT")
+    clock = [h * 60 + m for h, m in sorted(B.P.GRID)]
+    results = Counter()
+    original = raw.to_pylist()
+    for index in range(0, len(original), 241):
+        part = original[index:index + 241]
+        first = part[0]
+        symbol = first["symbol"]
+        day = L.market_ts_day(first["ts"])
+        if day.strftime("%Y-%m") != month:
+            raise ValueError("PAID_241_NATIVE_DAY_OUTSIDE_MONTH")
+        actual = [((int(row["ts"]) + CN_MS) // 60000) % 1440 for row in part]
+        if actual != clock:
+            raise ValueError("PAID_241_NATIVE_EXACT_0930_TO_1500_GRID_REQUIRED")
+        if any(row["symbol"] != symbol
+               or L.market_ts_day(row["ts"]) != day for row in part):
+            raise ValueError("PAID_241_NATIVE_MIXED_SYMBOL_DAY")
+        for row in part:
+            if (any(not math.isfinite(float(row[k])) or float(row[k]) <= 0
+                    for k in ("open", "high", "low", "close"))
+                    or float(row["high"]) < max(float(row["open"]), float(row["close"]))
+                    or float(row["low"]) > min(float(row["open"]), float(row["close"]))):
+                raise ValueError("PAID_241_NATIVE_INVALID_OHLC")
+            volume, amount = float(row["volume"]), float(row["amount"])
+            if (not math.isfinite(volume) or not math.isfinite(amount)
+                    or volume < 0 or amount < 0 or (volume > 0) != (amount > 0)):
+                raise ValueError("PAID_241_NATIVE_UNPAIRED_VOLUME_AMOUNT")
+        results["TRADED_0930_PRESERVED" if first["volume"] > 0
+                else "ZERO_0930_PRESERVED"] += 1
+    # Original rows, prices, 09:30 turnover and 09:31 turnover remain
+    # individually visible. Never manufacture a 09:30 from a 240 file.
+    L.checked_records(raw, target_year=int(month[:4]), target_month=int(month[5:]))
+    if stats is not None:
+        stats.update(results)
+    return raw, raw.num_rows // 241
+
+
 def adapt_241_private(source, category_offset_ms, month, *, stats=None):
-    """Return 240 purchased-compatible bars without losing a real auction.
+    """Return legacy TDX-compatible 240 interval view IN MEMORY ONLY.
 
     The 241st 09:30 bar is either zero/zero and discarded, or a genuine
     positive/positive auction folded into 09:31 with value conservation.
@@ -317,19 +368,20 @@ def private_oct_nov_batches(month, *, stage=B.P.BASE / "20261014_20261112",
             code = group["symbol"]
             gate = B._calibration(plan["calib"], code[2:] + "." + code[:2])
             try:
-                out, skipped = adapt_241_private(
+                out, stockdays = adapt_native_241_private(
                     raw, gate["offset_ms"], month, stats=auction_stats)
             except ValueError as exc:
                 raise ValueError("QMT bootstrap source conversion failed " +
                                  month + " stock=" + code +
                                  " source_kind=" + str(group.get("source_kind")) +
                                  " row_group=" + str(i) + ": " + str(exc)) from exc
-            if out.num_rows != group["rows"] - skipped:
-                raise ValueError("QMT private minute count inconsistent with removed placeholder")
+            if out.num_rows != group["rows"] or stockdays * 241 != group["rows"]:
+                raise ValueError("QMT private paid-241 row count mismatch")
             yield out
-        print("MARKET_QMT_0930_CONVERSION_SUMMARY=" + json.dumps(
-            {"month": month, "zero_placeholder_days": auction_stats["ZERO_PLACEHOLDER"],
-             "genuine_auction_folded_days": auction_stats["REAL_AUCTION_FOLDED_TO_0931"],
+        print("MARKET_QMT_PAID_241_PRESERVATION_SUMMARY=" + json.dumps(
+            {"month": month,
+             "zero_0930_preserved": auction_stats["ZERO_0930_PRESERVED"],
+             "traded_0930_preserved": auction_stats["TRADED_0930_PRESERVED"],
              "stock_days": sum(auction_stats.values()), "traded_0930_volume_dropped": 0,
              "traded_0930_amount_dropped": 0}, sort_keys=True), flush=True)
     finally:
@@ -348,8 +400,54 @@ def _verify_writer(temp, expected_rows):
     return L.hash_file(temp)
 
 
+def _verify_paid_241_physical_month(path, month):
+    """Validate exact 241 timestamp keys for every stock-day before commit.
+
+    Only two key columns are read in bounded batches. A 240 day, duplicate
+    key, uncalibrated minute offset, or mixed-version physical month fails.
+    The old physical file and its ledger are not touched by this check.
+    """
+    grid = {h * 60 + m: index for index, (h, m) in
+            enumerate(sorted(B.P.GRID))}
+    if len(grid) != 241:
+        raise ValueError("PAID_241_INTERNAL_CLOCK_GRID_CHANGED")
+    seen = {}
+    reader = pq.ParquetFile(path)
+    try:
+        if reader.metadata.num_rows > 241 * 15000 * 31:
+            raise ValueError("PAID_241_MONTH_SCAN_BUDGET")
+        for batch in reader.iter_batches(batch_size=BATCH,
+                                         columns=["ts", "symbol"],
+                                         use_threads=False):
+            ts_column, sym_column = (batch.column(0).to_pylist(),
+                                    batch.column(1).to_pylist())
+            for ts, symbol in zip(ts_column, sym_column):
+                if type(ts) is not int or type(symbol) is not str or not symbol:
+                    raise ValueError("PAID_241_PHYSICAL_INVALID_MINUTE_KEY")
+                day = L.market_ts_day(ts)
+                if day.strftime("%Y-%m") != month:
+                    raise ValueError("PAID_241_PHYSICAL_CROSS_MONTH_KEY")
+                minute = ((ts + CN_MS) // 60000) % 1440
+                index = grid.get(minute) if (ts + CN_MS) % 60000 == 0 else None
+                if index is None:
+                    raise ValueError("PAID_241_PHYSICAL_OFF_GRID_LABEL")
+                key = (symbol, day)
+                bit = 1 << index
+                before = seen.get(key, 0)
+                if before & bit:
+                    raise ValueError("PAID_241_PHYSICAL_DUPLICATE_STOCK_MINUTE_KEY")
+                seen[key] = before | bit
+        if not seen or any(bits != (1 << 241) - 1 for bits in seen.values()):
+            raise ValueError("PAID_241_PHYSICAL_INCOMPLETE_OR_MIXED_STOCK_DAY")
+        if len(seen) * 241 != reader.metadata.num_rows:
+            raise ValueError("PAID_241_PHYSICAL_COUNT_INCONSISTENT")
+        return len(seen)
+    finally:
+        reader.close()
+
+
 def install_month(root, month, chunks, *, source_id, days, state=None,
-                  workspace=STATE_DIR, progress=print):
+                  workspace=STATE_DIR, progress=print, minute_contract=None):
     """Transaction: idempotent append into existing original monthly file.
 
     Existing months can only be changed by THIS ledger; entirely new month
@@ -362,6 +460,11 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
     work.mkdir(parents=True, exist_ok=True)
     ledger = state if state is not None else state_for(root, workspace=work)
     current = ledger["periods"]["1min"].get(month)
+    if minute_contract is not None and minute_contract != PAID_241_CONTRACT:
+        raise ValueError("UNKNOWN_PAID_MINUTE_CONTRACT")
+    if minute_contract == PAID_241_CONTRACT and current is not None and (
+            current.get("minute_grid_contract") != PAID_241_CONTRACT):
+        raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
     if target.exists() and current is None:
         raise ValueError("Existing physical month has no updater ledger; refuse takeover")
     if current is not None:
@@ -427,6 +530,8 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
         if accepted_days != expected_days:
             raise ValueError("Market increment missing promised date(s)")
         digest = _verify_writer(scratch, old_rows + new_rows)
+        if minute_contract == PAID_241_CONTRACT:
+            _verify_paid_241_physical_month(scratch, month)
         if current and L.hash_file(target) != original_sha:
             raise ValueError("Physical month changed during staging")
         if current:
@@ -448,6 +553,7 @@ def install_month(root, month, chunks, *, source_id, days, state=None,
             backup = None
         next_entry = {"sha256": digest, "rows": old_rows + new_rows,
                       "symbol_style": target_style,
+                      "minute_grid_contract": minute_contract,
                       "days": sorted(present | accepted_days),
                       "sources": sorted(set(current["sources"] if current else []) | {source_id}),
                       "previous_sha256": original_sha,

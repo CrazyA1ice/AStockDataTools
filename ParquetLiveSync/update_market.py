@@ -62,9 +62,13 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             state["periods"]["1min"].get(month, {}).get("sources", []))
         for month in B.MONTHS
     )
-    if completed and any(
-            state["periods"]["1min"].get(m, {}).get("minute_grid_contract")
+    if any(
+            state["periods"]["1min"].get(m) is not None
+            and state["periods"]["1min"][m].get("minute_grid_contract")
             != S.PAID_241_CONTRACT for m in B.MONTHS):
+        # Check BOTH existing months before writing EITHER month. A partial
+        # bootstrap must never create a new 241 October month and then fail
+        # on an already-present 240 November month.
         raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
     if (completed and state.get("qmt_calibration_sha256")
             and state.get("original_day_bootstrap_attempted")):

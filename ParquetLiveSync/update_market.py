@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """One-command QMT → original canonical eight-period Parquet daily updater.
 
-First run: attach verified legacy Oct 1..13 + existing calibrated
-Oct 14..Nov 12 private increments to real AllCycleAStockData/1min.
+First run on a fresh v2 store: attach verified 241 native QMT sources,
+while any existing 240 minute month remains blocked for reviewed migration.
 Subsequent runs: fetch only not-yet-committed trading days using official
 TDX DAY + QMT 1m, sampled eltdx/Tencent checks, and append atomically.
 Calibrated minute rollups and closed WEEK/MONTH are coordinated by

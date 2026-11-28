@@ -136,8 +136,9 @@ def _canonical(source):
 def _fold_241_day(day_rows, offset_ms, month):
     """Fold genuine 09:30 auction trade into the first regular 09:31 bar.
 
-    Native QMT is 241 labels; purchased 1m format uses 240 interval-end
-    labels. A real 09:30 auction MUST NOT be discarded. Unlike the earlier
+    Native QMT and purchased 1m both retain 241 original labels. This
+    240 END-interval fold is ONLY a legacy TDX/higher-period calculation
+    view, never the new physical 1minute store. Unlike the earlier
     assumption that 09:30 always has zero volume/amount, use its evidence:
     positive volume AND amount are merged, zero/zero is placeholder,
     mismatched zero-ness is quarantined. All source rows remain preserved
@@ -261,7 +262,7 @@ def adapt_native_241_private(source, category_offset_ms, month, *, stats=None):
 
 
 def adapt_241_private(source, category_offset_ms, month, *, stats=None):
-    """Return 240 purchased-compatible bars without losing a real auction.
+    """Return legacy TDX-compatible 240 interval view IN MEMORY ONLY.
 
     The 241st 09:30 bar is either zero/zero and discarded, or a genuine
     positive/positive auction folded into 09:31 with value conservation.

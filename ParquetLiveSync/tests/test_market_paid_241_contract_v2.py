@@ -233,5 +233,20 @@ class Paid241DailyStageTests(unittest.TestCase):
         self.assertEqual(rows[0],first_before)
 
 
+    def test_17_bootstrap_blocks_legacy_month_before_resolving_any_source(self):
+        fake={"periods":{"1min":{
+            "2026-10":{"sources":["BOOTSTRAP:old"],
+                       "minute_grid_contract":S.PAID_241_CONTRACT},
+            "2026-11":{"sources":["BOOTSTRAP:old"]}}},
+            "qmt_calibration_sha256":"a"*64,
+            "original_day_bootstrap_attempted":True}
+        with (patch.object(U.S,"recover_intent",return_value=fake),
+              patch.object(U.B,"resolve",
+                           side_effect=AssertionError("MUST_NOT_READ_QMT_OR_WRITE"))):
+            with self.assertRaisesRegex(
+                    ValueError,"EXISTING_240_MONTH_REQUIRES_EXPLICIT"):
+                U.bootstrap(self.root,apply=True,progress=lambda _: None)
+
+
 if __name__ == "__main__":
     unittest.main()

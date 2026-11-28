@@ -62,6 +62,10 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             state["periods"]["1min"].get(month, {}).get("sources", []))
         for month in B.MONTHS
     )
+    if completed and any(
+            state["periods"]["1min"].get(m, {}).get("minute_grid_contract")
+            != S.PAID_241_CONTRACT for m in B.MONTHS):
+        raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
     if (completed and state.get("qmt_calibration_sha256")
             and state.get("original_day_bootstrap_attempted")):
         # The current November file can evolve daily. Ledger + transaction
@@ -109,6 +113,9 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
             dates = sorted(set(dates) | set(BASELINE_OCT_DAYS))
         source_id = "BOOTSTRAP:" + plan["identity_sha256"] + ":" + month
         old = state["periods"]["1min"].get(month)
+        if old is not None and (
+                old.get("minute_grid_contract") != S.PAID_241_CONTRACT):
+            raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
         if old is not None and source_id in old["sources"]:
             results.append({"month": month, "status": "ALREADY_INSTALLED",
                             "rows": old["rows"], "sha256": old["sha256"]})
@@ -128,7 +135,8 @@ def bootstrap(root, *, apply=True, progress=print, stage=B.P.BASE / "20261014_20
         else:
             streams = S.private_oct_nov_batches(month, stage=stage, plan=plan)
         result = S.install_month(root, month, streams, source_id=source_id,
-                                 days=dates, state=state, progress=progress)
+                                 days=dates, state=state, progress=progress,
+                                 minute_contract=S.PAID_241_CONTRACT)
         results.append(result)
         state = S.state_for(root)
     if apply and state.get("qmt_calibration_sha256") is None:

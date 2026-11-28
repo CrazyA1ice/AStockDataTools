@@ -102,6 +102,8 @@ def aggregate_stock_day(rows, period, *, one_minute_offset_ms,
                 float(row["high"]) < max(float(row["open"]),float(row["close"])) or
                 float(row["volume"]) < 0 or float(row["amount"]) < 0):
             raise ValueError("Invalid source 1minute OHLCVA geometry")
+        if (float(row["volume"]) > 0) != (float(row["amount"]) > 0):
+            raise ValueError("Paid source 1minute has unpaired volume/amount")
     result = []
     sessions = (ordered[:121], ordered[121:]) if native_241 else (
         ordered[:120], ordered[120:])

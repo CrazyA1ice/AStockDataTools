@@ -113,6 +113,14 @@ def _snapshot_names(folder):
     return sorted(names), before
 
 
+def _unique_pairs(pairs):
+    obj = {}
+    for key, value in pairs:
+        need(key not in obj, 'PRIOR_SNAPSHOT_ACTIVE_PIN_DUPLICATE_JSON_KEY')
+        obj[key] = value
+    return obj
+
+
 def _active_pin(folder, stock, table, day, files):
     active = folder.parent / 'active'
     if not _dir(active, optional=True):
@@ -126,7 +134,10 @@ def _active_pin(folder, stock, table, day, files):
     need(0 < size <= MAX_PIN_FILE_BYTES and len(digest) == 64,
          'PRIOR_SNAPSHOT_ACTIVE_PIN_BYTES_INVALID')
     try:
-        data = json.loads(raw_pin.decode('utf-8-sig'))
+        data = json.loads(raw_pin.decode('utf-8-sig'),
+                          object_pairs_hook=_unique_pairs)
+    except SnapshotError:
+        raise
     except (UnicodeError, ValueError, OSError) as exc:
         raise SnapshotError('PRIOR_SNAPSHOT_ACTIVE_PIN_INVALID_JSON') from exc
     need(type(data) is dict

@@ -439,6 +439,12 @@ P3.17 已有真实 Windows 只读证据确认：原 11-25 20:05:02 `verification
 
 新增合成临时数据 **16 项专项**；P3.15 旧验证 26 模块 630/630 已实机通过，此次叠加为 **27 模块 646 项**、另旧原审计器单跑 15 项，**本 P3.18 的新 16、646 和用户当前真实两份进度账本还没有 Windows 实机复验**。只有固定 PR 提交测试通过后才能输出实际保存的账本计数、游标和各文件 SHA；不凭代码或 11-25 报告臆断现时余额。P3.11 原 11-25 固定回执 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍无法认证，独立历史阶段/运行旁证不构成恢复回执。禁止主线合并、旧回执合成、现时定时器修改、QMT 下载、行情写盘或解除原九条隔离。
 
+**P3.18 Windows 646 项及当前两份账本原始 SHA 验收（2026-11-28）**：操作者真实 Windows 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 执行：历史原审计器 15/15 PASS、P3.18 新专项 16/16 PASS、27 个选定模块 **646/646 PASS**。随后只读核验实际 `ParquetLiveSync/work/qmt_extra` 下两份分离账本的真实 SHA 与字段身份，结果 `LOCAL_FINANCE_ADJUSTMENT_PROGRESS_BYTES_ONLY_NOT_COMPLETENESS_CERTIFIED`、`ledgers_present=2`。旧 `progress.json` 大小 328 B、SHA `2cb04a81ef86b417d1cb0c6b7375eac2b2bb53ac034f3722444de44a4a428300`，`adjustments_cursor=002966.SZ`、`financial_cursor=000026.SZ`、`financial_pending_count=0`、`last_asof_label=2026-11-25`。独立 `financial-cache-progress.json` 为 13,556 B、SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a`；`daily_date=2026-11-25`、`daily_cursor=002639.SZ`、`daily_sweep_start=2026-11-19`、`daily_sweep_reached_end=false`、`daily_sweep_finished=2026-11-18`、`import_cursor=920992.BJ`、`pending_retry_cursor=688259.SH`、`pending_count=77`，其中 `SOURCE_HISTORY_CONFLICT=76`、`CACHE_DECODE_ERROR=1`。
+
+两个状态文件各自真实字节独立核验，但**未获得同时刻跨文件原子快照/锁**；两个文件中的财务待审属于不同模块，不能相加，也不能用旧账本零条抹去新账本 77 条。P3.17 的 11-25 `pending=77` 与目前被检查的状态 `pending=77` 只是数字相等，不能证明还是同 77 只、还没有其他运行或修复，`daily_date/last_asof_label=2026-11-25` 也不代表当日之后操作事实。11-25 `daily_remaining_unvisited=4526` 是历史报告中的一次遍历剩余数；当前没有与游标一致的完整真实股票全集，不能恢复或宣称现存 4526。源码 `qmt_extra_financial_cache_import.py` 在九张表历史合并信息发生缺失或变更时采取 `SOURCE_HISTORY_CONFLICT` 保护，`CACHE_DECODE_ERROR` 属读取异常，不应视为空数据。76 项冲突是优先分析来源语义的研究队列，**不能通过大规模放宽校验、重复导入、强制快进游标来处理**。
+
+后续 P3.19 只允许对已读 `financial-cache-progress.json` 的**实际待审对象**作只读分布审计（按 `reason`、可能的 `table`、尝试次数、`asof`、白名单化原因片段），不输出股票名单、不推断源语义已经通过，不用外部 QMT 调用；源真实性/全量完整性及原 11-25 收据认证仍是阻断。原回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 没有找回，九条行情隔离不得解除，全部 PR 继续 Draft。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

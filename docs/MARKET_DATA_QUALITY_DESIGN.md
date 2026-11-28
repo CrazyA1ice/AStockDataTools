@@ -537,6 +537,14 @@ P3.24 在固定 `c75d4b5d13c91b502e5cf99685657be496ec7680` 上真实 Windows **3
 
 下一步如需更强且仍离线可核验的**现存原生文件字节证据**，只能在明确的 616 个当前 DAT 文件范围内，以原 ledger SHA 与上面的原元数据清单 SHA 双固定，增加受限物理 SHA 阅读；该能力若实施也**只能证明本地文件字节一致和非瞬时替换**，不能自行反解 QMT 私有文件格式、认证供应商真实采集过程或构成九表 `saved-current` 的原始行对照。所有 76+1 财务待审和原九条市场隔离继续锁定；原 2026-11-25 定时运行回执指定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍缺失。所有相关 PR Draft，不调用 QMT、不写市场/财务文件、不合并 main。
 
+## 8AG. P3.26 已知财务 DAT 文件的有界原生物理 SHA：只读字节，不解码（2026-11-28）
+
+P3.25 已固定 `e6fb7cb0debd84755c99351b50bb74463affe4ca` 在 Windows 实测 **33 模块 757/757 PASS**，财务待审账本 SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a`、DAT 文件名/大小/mtime/身份元数据清单 SHA `b5aa0aa3f0879eabbb65499d962fda3087a090f963399f42b72b13799c8dc711`。经逐股分析证明 77 个待审股票**每只恰有 8 个非空 DAT 文件名**，共 616 份／70,748,048 B；76 个 `SOURCE_HISTORY_CONFLICT` 对应 608 份／70,457,520 B，单独 1 项 `CACHE_DECODE_ERROR` 对应 8 份／290,528 B。来源类型分组内的文件后缀集合一致，但不能由此推断不同原因的两个组使用完全相同的后缀；所有这 616 个文件 mtime 位于 UTC 2026-11，各股票自己的全部 8 个文件最早/最晚 mtime 均在一天内，**本地修改时间非财务报告期/来源版本时间**。此前 P3.24/P3.25 均**只读取文件名与 stat，不读取 DAT 二进制实际内容**。
+
+P3.26 更进一步，新增独立只读 `market_finance_pending_dat_physical_sha_readonly.py`：强制传上述两份**真实已验证**的 SHA；事前/事后完整复验 P3.25 及 P3.24 的全部固定元数据校验；只对这份原财务账本内 77 个 pending 股票匹配的 `D:\software\JHQMT\datadir\Finance\{SH,SZ,BJ}\86400` 直接目录中的 `_7xxx.DAT` 文件读取物理字节。按相同元数据身份 tuple 排序精确重算 P3.24 旧元数据 SHA 后才开始读内容，对每个文件做两次**只读**句柄 SHA256 计算，前后 `fstat`、`stat`、非 symlink/Windows reparse、文件长度和修改时间须一致；同一文件两次内容 SHA 必须相同，否则失败。总直接目录最多 250,000 项，匹配文件最多 2,048，单个 DAT 最多 128 MiB，总已匹配文件单次读取不超过 256 MiB，两遍总物理读字节不超过 512 MiB，读取块最多 1 MiB。只输出整批包含 `stock/market/filename/size/mtime/dev/ino/physical_file_sha256` 的复合不可逆整批清单 SHA 与按 pending 原因聚合的文件数、大小和双遍读取字节数；**不输出逐股票/文件名/单文件 SHA/任何 DAT 原始正文**，也不把原生 DAT 二进制内容交给独立 Python 解码器、QMT SDK 或导入器。实际 `physical_DAT_bytes_read_for_hashing_only=true`，同时 `raw_DAT_format_decoded=false`、`raw_DAT_financial_rows_parsed=false`、`physical_DAT_manifest_proves_provider_origin=false`、`DAT_business_table_mapping_certified=false`、`nine_financial_tables_coverage_certified=false`、`fresh_and_old_finance_rows_compared=false`、`financial_pending_resolved=false`、`financial_repair_authorized=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。无跨文件原子快照锁。
+
+增加 18 项合成旧待审 DAT 内容哈希安全测试，特别验证**相同文件名／文件长度／mtime 下 DAT 字节变化，会令原元数据 SHA 不变，但新物理 SHA 变化**，以及两遍读取间修改字节必须失败。此前真实 P3.25 **757/757**，本阶段选定目标 **34 模块 775 项**另原独立市场审计器 15 项；**P3.26 当前仍仅为开发与远端静态检查，Windows 18/775 和真实本机 616 个原生 DAT 物理 SHA 尚未执行**。本阶段即使通过，也不建立九表财务原始行来源认证或旧 `saved` 与新 `current` 的逐行比较。原 76+1 个财务 pending、九条市场行情隔离、11-25 原定时收据固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 的实际原始收据缺失状态均保持；全部 PR 维持 Draft，不下载 QMT、不合并 main、不修改行情和财务缓存。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

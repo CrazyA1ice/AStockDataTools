@@ -42,6 +42,15 @@ def minute_rows(symbol="SH600000",day=DATA_DAY,*,offset_ms=0,auction=False):
     return rows
 
 
+def paid_241_minute_rows(symbol="SH600000", day=DATA_DAY):
+    """Physical 241: distinct 09:30 (zero trade) plus 240 END bars."""
+    regular = minute_rows(symbol, day)
+    d = datetime(day.year, day.month, day.day, 9, 30, tzinfo=L.UTC8)
+    opening = {**regular[0], "ts": int(d.timestamp() * 1000),
+               "volume": 0., "amount": 0.}
+    return [opening] + regular
+
+
 class HigherMinuteTests(unittest.TestCase):
     def test_all_four_periods_have_exact_daily_time_grid_and_session_break(self):
         bars=minute_rows(auction=True)
@@ -358,8 +367,8 @@ class HigherMinuteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             month="2026-11"
             day=date(2026,11,13)
-            original=minute_rows("SH600000",day)
-            additional=minute_rows("SZ000001",day)
+            original=paid_241_minute_rows("SH600000",day)
+            additional=paid_241_minute_rows("SZ000001",day)
             raw=pa.Table.from_pylist(original+additional,schema=S.SCHEMA)
             src=Path(tmp)/"original_1m.parquet"
             pq.write_table(raw,src,row_group_size=139)
@@ -391,13 +400,15 @@ class HigherMinuteTests(unittest.TestCase):
             day=date(2026,11,13)
             label="2026-11"
             table=pa.Table.from_pylist(
-                minute_rows("SH600000",day)+minute_rows("SZ000001",day),
+                paid_241_minute_rows("SH600000",day)+
+                paid_241_minute_rows("SZ000001",day),
                 schema=S.SCHEMA)
             original=root/"AllCycleAStockData"/"1min"/(label+".parquet")
             pq.write_table(table,original,row_group_size=139)
             source_sha=L.hash_file(original)
             fake_state={"periods":{"1min":{label:{
-                "sha256":source_sha,"days":[str(day)]}}},
+                "sha256":source_sha,"days":[str(day)],
+                "minute_grid_contract": S.PAID_241_CONTRACT}}},
                 "qmt_calibration_sha256":"a"*64}
             rules={p:{"timestamp_shift_from_1min_last_ms":0,
                       "volume_factor":1.,"amount_factor":1.}

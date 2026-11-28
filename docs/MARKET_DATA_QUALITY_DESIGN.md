@@ -473,6 +473,18 @@ P3.18 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 已真实 Windows 
 
 下一步 P3.21 必须坚持旧固定账本 SHA 和 P3.20 原物理快照清单 SHA 双重锁定，再在同一确切的 76 个作用域、91 个已核验文件中只读取存活 Parquet Arrow schema、原始行 `asof/symbol/item/index/payload_json` 和 payload 内部数据；仅当真实行身份、不可变文件名内容指纹均验证通过，才只读计算“每个已选择历史日期取规范化原始行 Counter 并集”的统计和摘要，**不能拿这条旧历史 Counter 与尚未读取的新来源比较或称冲突已解决**。不能更改九条行情隔离、76+1 财务 pending 或原 11-25 运行回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 的未认证状态；不调用 QMT、不改定时器/H5/Parquet、不合并 main。历史 682 项仅是 P3.20 已完成验收，不是 P3.21 回归结果。
 
+## 8AB. P3.21 双 SHA 锁定的旧财务 Arrow/JSON 内容及历史并集语义只读核验（2026-11-28）
+
+用户已对固定 P3.20 `e7f55afcf0acbee20ab6f81064dde9e930f79ece` 进行了 Windows 实机验证：旧审计器 15/15、新专项 19/19、选定 29 模块 682/682 PASS；已固定的财务 pending 账本物理 SHA `2c1ef16dd2e9ef275e08175211d94968be15b55e78fc9e73555b0f3303a9c89a` 下，76 个冲突表/股票范围的旧快照目录全部存在，91 份旧 Parquet 物理文件、总计 1,310,172 B 均通过 SHA 与 91 个同日 `active` 精确版本指针检查，整体物理清单哈希 `12be02042231302b6e1334797eb5751c52971e6497f1b42d5be03ae97095bcb8`。分表 `Capital=14 scopes/28 old snapshots`、`HolderNum=3/3`、`Top10FlowHolder=25/25`、`Top10Holder=34/35`。此结论局限于旧文件物理版本及指针，**尚未执行 Arrow row/raw payload/旧历史并集**；更没有访问新 QMT 财务原始数据或修复、放行。
+
+审查原 `qmt_extra_data.py` 已确认 Arrow schema 为 `asof,symbol,item,index,payload_json`，`_verify_financial_snapshot_file` 对每个原始行的 `asof/symbol/item/index` 精确校验，且按照规范化 Arrow 行重算 16 位**内容指纹**与文件名对比，严格区别于 Parquet 物理 SHA256。原 `qmt_extra_financial_cache_import._prior_rows` 在每个历史观测日期选择正确 active 版本，剥离 JSON 的来源 `_index` 后执行 `Counter` 的逐项最大重复次数历史并集（非简单跨日期行数相加）。新旧实际源逐行对比不存在，所以**只计算旧并集不能认定 `SOURCE_HISTORY_CONFLICT` 已排除**。
+
+新增独立 **Draft PR #289**（stacked on #288）中的 `market_finance_prior_raw_content_readonly.py`，要求操作者同时显式提供上述**同一已验证的账本 SHA 和物理旧快照清单 SHA**。开始与结束均复用 P3.20 原有严格物理文件 SHA/active 状态和原清单对照，在中间仅扫描从固定 76 条 `pending` 已知内部冲突报错完整匹配得来的真实旧 `table/stock` 文件路径；逐目录阻止链接和非法文件。Arrow 加载前检查严格 RAW_SCHEMA、单旧快照最多 20 万行、64 MiB 解码预估，再复用原 `_verify_financial_snapshot_file` 验证真实行身份及不可变文件名内容指纹；解析保存旧 `payload_json` 时必须为有效 JSON 字典且 `_index` 字段为字符串，拒绝重复 JSON 键、NaN/Infinity、超过 1 MiB 的单条正文；全任务最多 100 万行、256 MiB 解压预估和 256 MiB JSON 原始正文，继承 P3.20 的 128 范围/4096 文件/24MiB 单文件/512MiB 总物理文件预算。只计算**旧历史已选版本的**逐股票/表 Counter 并集数量及不可逆摘要，不输出股票名单、payload 内容和异常详情；旧文件在 Arrow 读取前后物理 SHA 重校，全部原文件清单最后再次复核。
+
+新工具结果中明确 `old_selected_historical_counter_union_computed=true` 仅代表旧历史内容并集，`new_finance_source_consulted=false`、`new_and_old_finance_records_compared=false`、`financial_provider_authenticated=false`、`financial_repair_authorized=false`、`all_finance_pending_cleared=false`、`original_run_receipt_authenticated=false`、`original_quarantines_cleared=false`、`market_files_written=false`、`qmt_download_calls=0`。P3.19 原财务 76 来源冲突（62 股东持股历史 raw 缺失/修订、14 Capital 报告日期键新增/减少）和 1 解码错误及九条行情隔离保持不变；原 11-25 定时回执固定 SHA `72a7104bd831e969958507399263ff74fb4092d6f7bf51d4ac3c42e000a1d837` 仍无真实原件，不能由旁证替代。
+
+本阶段新增**21 项合成 Arrow/JSON 临时文件单元测试**，前阶段真实 Windows 29 模块 682/682 已通过，新目标 **30 模块 703 项**另旧原审计器 15 项；**P3.21 的新测试和完整 703 尚未 Windows 验收，也尚未真实解析 91 份旧 Parquet 内容**。后续严禁将测试目标宣称已完成，更不能合入 main、运行 QMT、启动财务重试或修改市场数据。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

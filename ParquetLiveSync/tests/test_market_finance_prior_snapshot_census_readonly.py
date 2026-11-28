@@ -149,10 +149,20 @@ class PriorFinanceSnapshotTests(unittest.TestCase):
 
     def test_08_active_pin_unknown_filename_rejected(self):
         path = self.snapshot()
-        self.pin(path, filename='2026-11-23-'+'b'*16+'.parquet')
+        pin = self.pin(path, filename='2026-11-23-'+'b'*16+'.parquet')
         digest = self.save()
         with self.assertRaisesRegex(S.SnapshotError,
                                     'PRIOR_SNAPSHOT_ACTIVE_PIN_FIELDS_INVALID'):
+            self.run_scan(digest)
+        # Duplicate keys must fail even if the last symbol is valid.
+        value = json.loads(pin.read_text(encoding='utf-8'))
+        serialized = json.dumps(value, separators=(',', ':'))
+        serialized = serialized.replace(
+            '"symbol":"000001.SZ"',
+            '"symbol":"600000.SH","symbol":"000001.SZ"')
+        pin.write_text(serialized, encoding='utf-8')
+        with self.assertRaisesRegex(
+                S.SnapshotError, 'PRIOR_SNAPSHOT_ACTIVE_PIN_DUPLICATE_JSON_KEY'):
             self.run_scan(digest)
 
     def test_09_unexpected_non_snapshot_direct_filename_blocked(self):

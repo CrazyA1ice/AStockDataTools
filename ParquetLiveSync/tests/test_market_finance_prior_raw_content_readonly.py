@@ -83,7 +83,7 @@ class PriorRawContentTests(unittest.TestCase):
                 encoding="utf-8")
         return path
 
-    def run(self, *, ledger=None, manifest=None):
+    def run_scan(self, *, ledger=None, manifest=None):
         if ledger is None:
             ledger = self.progress()
         if manifest is None:
@@ -94,7 +94,7 @@ class PriorRawContentTests(unittest.TestCase):
 
     def test_01_single_valid_snapshot_schema_fingerprint_rows_union(self):
         self.snapshot()
-        out = self.run()
+        out = self.run_scan()
         self.assertEqual(out["conflict_scopes_checked"], 1)
         self.assertEqual(out["active_old_snapshot_files_content_verified"], 1)
         self.assertEqual(out["active_old_raw_rows_checked"], 1)
@@ -111,7 +111,7 @@ class PriorRawContentTests(unittest.TestCase):
                             {"_index": "2", "amount": 10}])
         self.snapshot(day="2026-11-24",
                       rows=[{"_index": "3", "amount": 10}])
-        out = self.run()
+        out = self.run_scan()
         counts = out["table_scoped_counts"][self.table]
         self.assertEqual(counts["active_snapshot_days_checked"], 2)
         self.assertEqual(counts["raw_rows_checked"], 3)
@@ -120,7 +120,7 @@ class PriorRawContentTests(unittest.TestCase):
 
     def test_03_no_source_conflicts_correct_empty_union_not_admission(self):
         ledger = self.progress({})
-        result = self.run(ledger=ledger)
+        result = self.run_scan(ledger=ledger)
         self.assertEqual(result["conflict_scopes_checked"], 0)
         self.assertEqual(result["active_old_raw_rows_checked"], 0)
         self.assertEqual(len(result["prior_content_union_manifest_sha256"]), 64)
@@ -132,21 +132,21 @@ class PriorRawContentTests(unittest.TestCase):
             self.module, self.stock_root, ledger)["physical_snapshot_manifest_sha256"]
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_MISSING_OLD_SNAPSHOT_SCOPE"):
-            self.run(ledger=ledger, manifest=manifest)
+            self.run_scan(ledger=ledger, manifest=manifest)
 
     def test_05_wrong_expected_ledger_sha_blocks_before_parquet(self):
         self.snapshot()
         ledger = self.progress()
         with self.assertRaisesRegex(
                 S.PRIOR.SnapshotError, "PINNED_LEDGER_SHA_MISMATCH"):
-            self.run(ledger="f"*64, manifest="f"*64)
+            self.run_scan(ledger="f"*64, manifest="f"*64)
 
     def test_06_wrong_expected_manifest_sha_blocks_arrow(self):
         self.snapshot()
         ledger = self.progress()
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_PINNED_SNAPSHOT_MANIFEST_SHA_MISMATCH"):
-            self.run(ledger=ledger, manifest="f"*64)
+            self.run_scan(ledger=ledger, manifest="f"*64)
 
     def test_07_missing_per_date_active_pin_blocks_content_promotion(self):
         path = self.snapshot(pin=False)
@@ -155,7 +155,7 @@ class PriorRawContentTests(unittest.TestCase):
             self.module, self.stock_root, ledger)["physical_snapshot_manifest_sha256"]
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_OLD_SNAPSHOT_ACTIVE_PIN_NOT_UNIQUE"):
-            self.run(ledger=ledger, manifest=manifest)
+            self.run_scan(ledger=ledger, manifest=manifest)
         self.assertTrue(path.exists())
 
     def test_08_two_versions_same_day_fail_closed_even_with_valid_pin(self):
@@ -173,14 +173,14 @@ class PriorRawContentTests(unittest.TestCase):
             self.module, self.stock_root, ledger)["physical_snapshot_manifest_sha256"]
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_OLD_SNAPSHOT_ACTIVE_PIN_NOT_UNIQUE"):
-            self.run(ledger=ledger, manifest=manifest)
+            self.run_scan(ledger=ledger, manifest=manifest)
 
     def test_09_arrow_schema_must_match_original_raw_schema(self):
         arrow = pa.Table.from_pylist([{"different": "schema"}])
         self.snapshot(arrow=arrow)
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_ARROW_SCHEMA_MISMATCH"):
-            self.run()
+            self.run_scan()
 
     def test_10_snapshot_wrong_symbol_fails_original_row_identity(self):
         arrow = S.EXTRA.snapshot_table(
@@ -189,13 +189,13 @@ class PriorRawContentTests(unittest.TestCase):
         self.snapshot(arrow=arrow)
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_ORIGINAL_ROW_AND_FILENAME_PROOF_FAILED"):
-            self.run()
+            self.run_scan()
 
     def test_11_snapshot_canonical_filename_fingerprint_required(self):
         self.snapshot(force_name="2026-11-23-"+("a"*16)+".parquet")
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_ORIGINAL_ROW_AND_FILENAME_PROOF_FAILED"):
-            self.run()
+            self.run_scan()
 
     def test_12_invalid_payload_json_fails_after_row_metadata(self):
         arrow = S.EXTRA.snapshot_table(self.day, self.code, self.table,
@@ -206,13 +206,13 @@ class PriorRawContentTests(unittest.TestCase):
         self.snapshot(arrow=arrow)
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_PAYLOAD_INVALID_JSON"):
-            self.run()
+            self.run_scan()
 
     def test_13_payload_needs_original_index_field(self):
         self.snapshot(rows=[{"value": 10}])
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_PAYLOAD_ROW_INDEX_INVALID"):
-            self.run()
+            self.run_scan()
 
     def test_14_duplicate_payload_keys_fail_closed(self):
         raw = S.EXTRA.snapshot_table(self.day, self.code, self.table,
@@ -222,7 +222,7 @@ class PriorRawContentTests(unittest.TestCase):
         self.snapshot(arrow=arrow)
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_PAYLOAD_INVALID_JSON"):
-            self.run()
+            self.run_scan()
 
     def test_15_nonfinite_json_constant_rejected(self):
         raw = S.EXTRA.snapshot_table(self.day, self.code, self.table,
@@ -232,21 +232,21 @@ class PriorRawContentTests(unittest.TestCase):
         self.snapshot(arrow=arrow)
         with self.assertRaisesRegex(
                 S.ContentError, "PRIOR_FINANCE_NON_FINITE_JSON_LITERAL"):
-            self.run()
+            self.run_scan()
 
     def test_16_small_pretend_byte_budget_refuses_instead_of_skipping(self):
         self.snapshot()
         with mock.patch.object(S, "MAX_TOTAL_ROWS", 0):
             with self.assertRaisesRegex(
                     S.ContentError, "PRIOR_FINANCE_TOTAL_ARROW_BUDGET"):
-                self.run()
+                self.run_scan()
 
     def test_17_single_parquet_row_budget_checked_before_decode(self):
         self.snapshot()
         with mock.patch.object(S, "MAX_SNAPSHOT_ROWS", 0):
             with self.assertRaisesRegex(
                     S.ContentError, "PRIOR_FINANCE_SNAPSHOT_ROW_LIMIT"):
-                self.run()
+                self.run_scan()
 
     def test_18_saved_metadata_read_drift_fails_closed(self):
         self.snapshot()
@@ -257,7 +257,7 @@ class PriorRawContentTests(unittest.TestCase):
                                side_effect=lambda *a: ([], 0, 0, 0)):
             with self.assertRaisesRegex(
                     S.ContentError, "PRIOR_FINANCE_METADATA_DRIFT"):
-                self.run(ledger=ledger, manifest=manifest)
+                self.run_scan(ledger=ledger, manifest=manifest)
 
     def test_19_postflight_manifest_change_refused(self):
         self.snapshot()
@@ -270,7 +270,7 @@ class PriorRawContentTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     S.ContentError,
                     "PRIOR_FINANCE_PINNED_SNAPSHOT_PHYSICAL_MANIFEST_CHANGED"):
-                self.run(ledger=ledger,
+                self.run_scan(ledger=ledger,
                          manifest=old["physical_snapshot_manifest_sha256"])
 
     def test_20_cli_error_hides_user_paths(self):
@@ -296,6 +296,7 @@ class PriorRawContentTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         self.assertFalse(S.MAX_TOTAL_ROWS > 1000000)
         self.assertFalse(S.MAX_TOTAL_UNCOMPRESSED > 256*1024*1024)
+        self.assertIs(type(self).run, unittest.TestCase.run)
         self.assertEqual(S.STATUS,
                          "VERIFIED_STORED_PRIOR_RAW_ROWS_ONLY_FRESH_SOURCE_NOT_CHECKED")
 

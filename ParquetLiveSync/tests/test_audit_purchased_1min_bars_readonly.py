@@ -98,5 +98,22 @@ class PurchasedMinuteBarCountsTests(unittest.TestCase):
             A.inspect(self.path,DAY,timezone_hours=99)
 
 
+    def test_09_duplicate_0930_key_is_reported_not_confused_with_auction(self):
+        rows=[("SH600000",t,1.,10.) for t in REGULAR]
+        rows.append(("SH600000",REGULAR[0],1.,10.))
+        self._write(rows)
+        out=A.inspect(self.path,DAY)
+        self.assertEqual(out["stock_days_241_bars"],1)
+        self.assertEqual(out["duplicate_stock_timestamp_rows"],1)
+        self.assertFalse(out["all_symbol_timestamp_keys_unique"])
+        self.assertEqual(out["stocks_with_0930_label"],0)
+
+    def test_10_no_matching_day_fails_closed(self):
+        self._write([("SH600000",BASE-timedelta(days=1),1.,10.)])
+        with self.assertRaisesRegex(
+                ValueError,"PURCHASED_DAY_NOT_OBSERVED_OR_TIMESTAMP_UNVERIFIED"):
+            A.inspect(self.path,DAY)
+
+
 if __name__ == "__main__":
     unittest.main()

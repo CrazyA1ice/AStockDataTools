@@ -83,6 +83,18 @@ def _windows_handle_id(fd):
             (info.nFileIndexHigh << 32) | info.nFileIndexLow)
 
 
+def _pinned_path_match(current, ref):
+    """Compare P3.24 DirEntry metadata, accounting for Windows' zero IDs.
+
+    On Windows, DirEntry.stat has zero st_dev/st_ino, while os.stat(path)
+    can supply real IDs. The actual kernel handle is checked separately.
+    """
+    observed = DAT._id(current)
+    if _is_windows() and ref[:2] == (0, 0):
+        return observed[2:] == ref[2:]
+    return observed == ref
+
+
 def _assert_open_identity(path, fd, ref, status):
     """Match pinned path metadata and opened kernel file, Unix or Windows."""
     opened = os.fstat(fd)
@@ -91,19 +103,20 @@ def _assert_open_identity(path, fd, ref, status):
          status)
     current = os.stat(path, follow_symlinks=False)
     need(stat.S_ISREG(current.st_mode) and not DAT._reparse(current)
-         and not path.is_symlink() and DAT._id(current) == ref,
+         and not path.is_symlink() and _pinned_path_match(current, ref),
          status)
     if not _is_windows():
         need(DAT._id(opened) == ref, status)
+        identity = DAT._id(opened)
     else:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
         verifier = os.open(path, flags)
         try:
-            need(_windows_handle_id(fd) == _windows_handle_id(verifier),
-                 status)
+            identity = _windows_handle_id(fd)
+            need(identity == _windows_handle_id(verifier), status)
         finally:
             os.close(verifier)
-    return opened
+    return opened, identity
 
 
 def _hash_once(path, ref):
@@ -113,7 +126,7 @@ def _hash_once(path, ref):
     fd = None
     try:
         fd = os.open(path, flags)
-        before = _assert_open_identity(
+        before, native_identity = _assert_open_identity(
             path, fd, ref, "FINANCE_DAT_FILE_IDENTITY_CHANGED_BEFORE_READ")
         need(0 <= before.st_size <= MAX_SINGLE_DAT_BYTES,
              "FINANCE_DAT_SINGLE_PHYSICAL_READ_BUDGET")
@@ -125,9 +138,11 @@ def _hash_once(path, ref):
             h.update(block)
             remaining -= len(block)
         need(not os.read(fd, 1), "FINANCE_DAT_PHYSICAL_GREW_DURING_READ")
-        _assert_open_identity(
+        _, final_identity = _assert_open_identity(
             path, fd, ref, "FINANCE_DAT_FILE_IDENTITY_CHANGED_AFTER_READ")
-        return h.hexdigest()
+        need(final_identity == native_identity,
+             "FINANCE_DAT_FILE_IDENTITY_CHANGED_AFTER_READ")
+        return h.hexdigest(), native_identity
     except PhysicalError:
         raise
     except OSError as exc:
@@ -139,14 +154,19 @@ def _hash_once(path, ref):
 
 
 def _hash_two_passes(path, original):
-    first = _hash_once(path, original)
-    need(DAT._id(os.stat(path, follow_symlinks=False)) == original
-         and not path.is_symlink(),
+    first, first_identity = _hash_once(path, original)
+    middle = os.stat(path, follow_symlinks=False)
+    need(stat.S_ISREG(middle.st_mode) and not DAT._reparse(middle)
+         and _pinned_path_match(middle, original) and not path.is_symlink(),
          "FINANCE_DAT_PHYSICAL_PATH_REPLACED")
-    second = _hash_once(path, original)
+    second, second_identity = _hash_once(path, original)
     need(first == second, "FINANCE_DAT_PHYSICAL_TWO_READS_DIFFER")
-    need(DAT._id(os.stat(path, follow_symlinks=False)) == original
-         and not path.is_symlink(), "FINANCE_DAT_PHYSICAL_PATH_CHANGED")
+    need(first_identity == second_identity,
+         "FINANCE_DAT_PHYSICAL_TWO_PASSES_FILE_IDENTITY_CHANGED")
+    final = os.stat(path, follow_symlinks=False)
+    need(stat.S_ISREG(final.st_mode) and not DAT._reparse(final)
+         and _pinned_path_match(final, original) and not path.is_symlink(),
+         "FINANCE_DAT_PHYSICAL_PATH_CHANGED")
     return first
 
 

@@ -485,6 +485,8 @@ P3.18 固定提交 `41b113565f4afeee10bbc6a84eb6ae82b3e772af` 已真实 Windows 
 
 本阶段新增**21 项合成 Arrow/JSON 临时文件单元测试**，前阶段真实 Windows 29 模块 682/682 已通过，新目标 **30 模块 703 项**另旧原审计器 15 项；**P3.21 的新测试和完整 703 尚未 Windows 验收，也尚未真实解析 91 份旧 Parquet 内容**。后续严禁将测试目标宣称已完成，更不能合入 main、运行 QMT、启动财务重试或修改市场数据。
 
+**P3.21 Windows 第一轮遇到 unittest.run 命名遮蔽（2026-11-28）**：操作者运行原 P3.21 固定 SHA `2ec62b20dabb32ca33d69168c86d69a244437205`，原审计器 **15/15 PASS**；随后新专项在测试框架准备调用测试对象时直接抛出 `TypeError: PriorRawContentTests.run() takes 1 positional argument but 2 were given`，因为新测试类错误地将私有辅助运行函数命名为 `run(self, *, ledger=None, manifest=None)`，覆盖了基类 `unittest.TestCase.run(result)`。这**不是**任何 Arrow、财务来源、历史 Counter 并集的检验失败；**21 项 P3.21 新用例实际没有开始执行**，PowerShell 随后按预定安全门 `P321_NEW_21_FAILED` 停止，因此完整选定 **703 项未运行**、91 份真实旧 Parquet 的内容级审计**未执行**，前阶段 P3.20 682/682 与 91 文件物理 SHA/active 指针结论不受影响。已在 Draft PR #289 新固定提交 `c83e3d7045df5ac57686d996478cda9e48c2a7ae` **只修改测试辅助方法**：改名 `run_scan` 并同步 19 个引用，保留总数 21 项；第 21 项新增 `type(self).run is unittest.TestCase.run` 防回归断言，生产读取算法、原九条行情隔离及 76+1 项财务 pending 均未改变。下一轮必须新建独立工作树固定新 SHA 后重新执行 21、703 项并再决定是否可以只读扫描原 91 旧文件内容，**不能将本轮静态修复误写为 Windows 通过**。
+
 ## 9. 维护约束
 
 后续所有 AStockDataTools 行情开发/研究，应先核对本设计，技术决策优先选择**通用清洗算子、独立证据、版本化策略、跨日多股票回归、可回滚事务**。如果当前需求与本规范冲突，应在独立 PR 中解释影响并修订设计，经审核后再变更实现；不能通过临时硬编码、降校验阈值、禁用证书校验或修改历史收据绕过治理。

@@ -145,7 +145,7 @@ def _collect_anchor_minutes(original, sealed):
 
     The real 2026-09-30 paid anchors are 241: 09:30 through 15:00,
     including a separate auction label. In contrast, canonical updated
-    QMT stock-days are exactly 240 after the auction is safely folded.
+    New QMT physical stock-days retain all 241 opening and END labels.
     Incomplete purchased anchors are used for *calibration only* and only
     through their fully observed aggregation buckets.
     """
@@ -161,8 +161,8 @@ def _collect_anchor_minutes(original, sealed):
 def _anchor_complete_buckets(rows,period,*,one_minute_offset_ms):
     """Calibrate from ONLY genuinely observed entire 5/15/30/60m windows.
 
-    During production, aggregate_stock_day() still requires 240/240 source
-    minute bars. This helper is for purchased-source overlap only.
+    Production consumes 241 physical source minutes; this temporary 240
+    interval view is used only for higher-period aggregation and calibration.
     """
     n=BARS[period]
     if (type(one_minute_offset_ms) is not int

@@ -44,7 +44,7 @@ def _source_stamp(ts):
 
 
 def grouped_source(table):
-    """Stock-day source inventory; strict 240 trading bar and grid gate."""
+    """Stock-day source inventory; paid 241 admission checked later."""
     found = defaultdict(list)
     for row in table.to_pylist():
         stock = L.normal_symbol(row["symbol"])
@@ -58,11 +58,19 @@ def aggregate_stock_day(rows, period, *, one_minute_offset_ms,
                         period_label_shift_ms=0,
                         volume_factor=1.0, amount_factor=1.0):
     n = BARS[period]
-    if len(rows) != 240:
-        raise ValueError("INCOMPLETE_1MIN_STOCK_DAY: " + str(len(rows)))
     if (type(one_minute_offset_ms) is not int
             or one_minute_offset_ms not in [m*60000 for m in P.OFFSET_MINUTES]):
         raise ValueError("Invalid purchased 1minute grid offset")
+    if len(rows) == 241:
+        # The purchased physical 09:30 bar stays intact in 1m storage.
+        # Use its turnover once in the first higher-period interval only.
+        ordered_source = sorted(rows, key=lambda row: row["ts"])
+        day = L.market_ts_day(int(ordered_source[0]["ts"]) -
+                              one_minute_offset_ms)
+        rows, _ = S._fold_241_day(
+            ordered_source, one_minute_offset_ms, day.strftime("%Y-%m"))
+    if len(rows) != 240:
+        raise ValueError("INCOMPLETE_1MIN_STOCK_DAY: " + str(len(rows)))
     if (type(period_label_shift_ms) is not int
             or period_label_shift_ms%60000):
         raise ValueError("Invalid purchased higher-period timestamp shift")
@@ -398,20 +406,20 @@ def _derive_from_source(path, selected_days, rules, sealed, *, workspace, month,
                 if day.isoformat() not in selected_days:
                     continue
                 key=(sym,day)
-                if day < date(2026,10,14) and len(single)!=240:
+                if day < date(2026,10,14) and len(single)!=241:
                     # The four pre-cutoff H5 fragments have no guaranteed
-                    # 240 bars per stock-day. Never invent missing minutes.
+                    # Purchased 241 per stock-day. Never invent missing minutes.
                     errors["pre_cutoff_incomplete_stockday_fragment"]+=1
                     continue
                 if key in pending:
                     single=pending.pop(key)+single
-                if len(single)<240:
+                if len(single)<241:
                     pending[key]=single
                     if len(pending)>40:
                         raise ValueError("Too many discontiguous QMT stock-days; original source ordering changed")
                     continue
-                if len(single)!=240:
-                    raise ValueError("Duplicate or malformed QMT 1minute stock-day "+
+                if len(single)!=241:
+                    raise ValueError("Duplicate or malformed paid 241 QMT stock-day "+
                                      sym+" "+str(day)+" bars="+str(len(single)))
                 code=sym[2:]+"."+sym[:2]
                 gate=B._calibration(sealed,code)
@@ -499,7 +507,7 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
         # 2026-10-08..13 are the immutable purchased/H5 eight-period
         # baseline, not QMT-backed new stock-days. Some real 1m files
         # have 239 bars. Never regenerate or credit that historical slice
-        # as a successfully completed 240-bar derived period.
+        # as a successfully completed 241-source derived period.
         dates={d for d in meta["days"]
                if date.fromisoformat(d)>=date(2026,10,14)}
         pending={period:sorted(dates-set(
@@ -511,6 +519,8 @@ def _run_unlocked(root,*,apply=False,progress=print,workspace=S.STATE_DIR):
         union=set().union(*(set(d) for d in pending.values()))
         if not union:
             continue
+        if meta.get("minute_grid_contract") != S.PAID_241_CONTRACT:
+            raise ValueError("EXISTING_240_MONTH_REQUIRES_EXPLICIT_241_MIGRATION")
         target=S.target_path(root,month)
         if not target.is_file() or L.hash_file(target)!=meta["sha256"]:
             raise ValueError("Physical 1minute source differs from accepted ledger "+month)

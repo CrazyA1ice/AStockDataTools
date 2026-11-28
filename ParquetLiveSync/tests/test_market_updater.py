@@ -100,15 +100,17 @@ class MarketUpdaterTests(unittest.TestCase):
         self.assertEqual(converted.num_rows, 240)
         self.assertEqual(removed, 1)
 
-    def test_nonzero_0930_and_official_price_mismatch_fail(self):
+    def test_unpaired_0930_and_official_price_mismatch_fail(self):
         raw = stock_day()
         gate = {"providers": {"SH_OTHER": {
             "category": "SH_OTHER", "offset_ms": 0,
             "volume": {"factor": 100.}, "amount": {"factor": 1.}}}}
         ref = {"open": 10., "high": 10.2, "low": 9.8,
                "close": 10., "volume": 48000., "amount": 48000.}
+        # Traded 09:30 is valid in paid 241. The deliberately corrupt
+        # positive-volume/zero-amount pair must still be rejected.
         raw[0]["volume"] = 5.
-        with self.assertRaisesRegex(ValueError, "09:30"):
+        with self.assertRaisesRegex(ValueError, "PAID_241_NATIVE_UNPAIRED_VOLUME_AMOUNT"):
             U.normal_qmt_day(raw, "600000.SH", date(2026, 11, 13), ref, gate)
         raw[0]["volume"] = 0.
         ref["open"] = 12.
